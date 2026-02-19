@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>06 — Feature Map | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .phase { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 16px 0; }
+  .phase h3 { margin-top: 0; }
+  .phase-num { color: var(--accent); font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .feature { display: flex; gap: 12px; align-items: flex-start; margin: 10px 0; padding: 12px; background: var(--surface); border-radius: 8px; }
+  .feature-name { font-weight: 600; min-width: 180px; }
+  .feature-desc { color: var(--muted); font-size: 0.9rem; }
+  .feature-src { font-size: 0.75rem; color: var(--accent); margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>06</span> — Feature Map</h1>
+<p class="subtitle">Prioritized features and build phases — what to build, when, and why.</p>
+
+<h2>Feature Clusters</h2>
+<p>Features that share architecture patterns are grouped together. Building one lowers the cost of the others.</p>
+
+<div class="diagram"><pre>
+  Cluster A: "Know Me" ─── Memory, Context, Search
+       │
+       ▼  provides context to
+  Cluster B: "Help Me" ─── Email, Tasks, Proactive Alerts
+       │
+       ▼  acts through
+  Cluster C: "Do For Me" ─ Code Execution, Browser, Multi-agent
+       │
+       ▼  learns from
+  Cluster D: "Be Me" ───── Personas, Patterns, Autonomy
+</pre></div>
+
+<h2>Build Phases</h2>
+
+<div class="phase">
+  <div class="phase-num">Phase 1 — Foundation (weeks 1–4)</div>
+  <h3>The substrate everything else depends on</h3>
+  <div class="feature">
+    <div><div class="feature-name">Mediator Pipeline</div><div class="feature-src">AgentClaw + EmailPipeline</div></div>
+    <div class="feature-desc">Replace direct calls with command/query dispatch. Wire existing tools as commands. Pipeline behaviors for logging, auth, validation.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Knowledge Store</div><div class="feature-src">EmailPipeline + AgentClaw</div></div>
+    <div class="feature-desc">SQLite + sqlite-vec + FTS5. Repository pattern. Migration system. The single storage layer for everything.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Gateway + WebChat</div><div class="feature-src">OpenClaw</div></div>
+    <div class="feature-desc">WebSocket control plane, session management, basic web UI. The shell everything plugs into.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Agent Loop</div><div class="feature-src">Agent Zero + OpenClaw</div></div>
+    <div class="feature-desc">Basic agent turn: receive message → generate → execute tools → respond. Single agent, no hierarchy yet.</div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="phase-num">Phase 2 — Know Me (weeks 5–8)</div>
+  <h3>Memory and context — the first user-visible features</h3>
+  <div class="feature">
+    <div><div class="feature-name">Persistent Memory</div><div class="feature-src">Agent Zero</div></div>
+    <div class="feature-desc">Save and recall facts, solutions, instructions across sessions. Vector search for semantic retrieval.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Entity Graph</div><div class="feature-src">AgentClaw</div></div>
+    <div class="feature-desc">Auto-extract people, projects, decisions from conversations. Typed relationships. Context enrichment.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Smart Context</div><div class="feature-src">AgentClaw + OpenClaw</div></div>
+    <div class="feature-desc">RAG retrieval per turn. Session summarization. Replace brute-force context stuffing with relevant retrieval.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Skills Engine</div><div class="feature-src">Agent Zero + OpenClaw</div></div>
+    <div class="feature-desc">SKILL.md loading, skill discovery, managed installation. The extensibility foundation.</div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="phase-num">Phase 3 — Help Me (weeks 9–14)</div>
+  <h3>Productivity integrations that make Bond useful daily</h3>
+  <div class="feature">
+    <div><div class="feature-name">Multi-Agent</div><div class="feature-src">Agent Zero</div></div>
+    <div class="feature-desc">Subordinate spawning, agent profiles, hierarchical delegation. Break complex tasks into focused subtasks.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Code Execution</div><div class="feature-src">Agent Zero</div></div>
+    <div class="feature-desc">Terminal tool, sandbox mode, agent writes its own tools. The computer as a tool.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Email Triage</div><div class="feature-src">EmailPipeline</div></div>
+    <div class="feature-desc">Multi-account sync (IMAP/Gmail/Yahoo), semantic search, classification, task extraction, daily briefing.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Task Engine</div><div class="feature-src">AgentClaw + EmailPipeline</div></div>
+    <div class="feature-desc">CRUD + auto-extraction from conversations and emails. Priority, dependencies, due dates.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Channel Adapters</div><div class="feature-src">OpenClaw</div></div>
+    <div class="feature-desc">Telegram, Discord, Slack, Signal, WhatsApp. Group routing, DM pairing, media handling.</div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="phase-num">Phase 4 — Do For Me (weeks 15–18)</div>
+  <h3>Autonomous action capabilities</h3>
+  <div class="feature">
+    <div><div class="feature-name">Browser Automation</div><div class="feature-src">OpenClaw</div></div>
+    <div class="feature-desc">CDP-based browser control, snapshots, form filling, scraping.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Cron &amp; Scheduling</div><div class="feature-src">OpenClaw + Agent Zero</div></div>
+    <div class="feature-desc">Recurring jobs, one-shot reminders, background agent runs.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Proactive Intelligence</div><div class="feature-src">AgentClaw</div></div>
+    <div class="feature-desc">Cross-domain alerting: task overdue + email urgent + calendar conflict → contextual notification.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Calendar Integration</div><div class="feature-src">EmailPipeline</div></div>
+    <div class="feature-desc">Google Calendar read + event proposals. LLM proposes, user approves, app creates.</div>
+  </div>
+</div>
+
+<div class="phase">
+  <div class="phase-num">Phase 5 — Be Me (weeks 19+)</div>
+  <h3>Higher autonomy, personalization, and polish</h3>
+  <div class="feature">
+    <div><div class="feature-name">Persona Engine</div><div class="feature-src">AgentClaw</div></div>
+    <div class="feature-desc">Identity switching: model, tone, capabilities, memory partition per persona.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Behavior Learning</div><div class="feature-src">AgentClaw</div></div>
+    <div class="feature-desc">Routine detection, communication style profiling, predictive actions.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Companion Apps</div><div class="feature-src">OpenClaw</div></div>
+    <div class="feature-desc">macOS menu bar, iOS/Android nodes, voice wake, talk mode.</div>
+  </div>
+  <div class="feature">
+    <div><div class="feature-name">Dashboard</div><div class="feature-src">AgentClaw + EmailPipeline</div></div>
+    <div class="feature-desc">Visual overview: tasks, calendar, alerts, email status, agent activity.</div>
+  </div>
+</div>
+
+<h2>Feature × Foundation Matrix</h2>
+<table>
+  <thead><tr><th>Feature</th><th>Knowledge Store</th><th>Entity Graph</th><th>Behavior Model</th><th>Capability Gate</th><th>Skills Engine</th></tr></thead>
+  <tbody>
+    <tr><td>Persistent Memory</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
+    <tr><td>Smart Context</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
+    <tr><td>Email Triage</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td></tr>
+    <tr><td>Task Engine</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
+    <tr><td>Code Execution</td><td></td><td></td><td></td><td>✓</td><td>✓</td></tr>
+    <tr><td>Multi-Agent</td><td></td><td></td><td></td><td>✓</td><td>✓</td></tr>
+    <tr><td>Proactive Intelligence</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+    <tr><td>Persona Engine</td><td></td><td></td><td>✓</td><td>✓</td><td></td></tr>
+    <tr><td>Browser Automation</td><td></td><td></td><td></td><td>✓</td><td>✓</td></tr>
+  </tbody>
+</table>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 06 Feature Map</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>02 — Shared Foundations | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; }
+  li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  .foundation { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; }
+  .foundation h3 { margin-top: 0; color: var(--accent2); }
+  .source-tag { display: inline-block; background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: var(--muted); margin: 2px; }
+  .used-by { font-size: 0.85rem; color: var(--muted); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>02</span> — Shared Foundations</h1>
+<p class="subtitle">Subsystems that multiple features depend on. Each is standalone with a clear interface.</p>
+
+<div class="foundation">
+  <h3>F1: Knowledge Store</h3>
+  <div class="used-by">Used by: Memory, RAG Context, Proactive Intelligence, Task Engine, Inbox Triage</div>
+  <span class="source-tag">AgentClaw: design</span>
+  <span class="source-tag">EmailPipeline: SQLite + sqlite-vec + FTS implementation</span>
+  <span class="source-tag">Agent Zero: persistent memory storage</span>
+  <p>A unified local storage layer combining:</p>
+  <ul>
+    <li><strong>SQLite</strong> — relational data (tasks, entities, relationships, audit log)</li>
+    <li><strong>sqlite-vec</strong> — vector similarity search over embeddings</li>
+    <li><strong>FTS5</strong> — full-text search fallback and keyword boosting</li>
+    <li><strong>Blob store</strong> — file-system backed, content-addressed (screenshots, attachments)</li>
+  </ul>
+  <p>Single write path. All writes go through mediator commands so pipeline behaviors (validation, auditing) apply uniformly. From EmailPipeline we take the proven repository pattern that hides database-specific vector operations. From Agent Zero we take the persistent memory approach where solutions and facts survive across sessions.</p>
+</div>
+
+<div class="foundation">
+  <h3>F2: Entity Graph</h3>
+  <div class="used-by">Used by: Memory, Proactive Intelligence, Task Engine, Inbox Triage</div>
+  <span class="source-tag">AgentClaw: entity-relationship model</span>
+  <span class="source-tag">EmailPipeline: email → entity extraction</span>
+  <p>An entity-relationship layer on top of the Knowledge Store. Auto-extracted from conversations, files, emails, and calendar events.</p>
+  <p>Entity types: <code>Person</code>, <code>Project</code>, <code>Task</code>, <code>Decision</code>, <code>Meeting</code>, <code>Document</code>, <code>Event</code>.</p>
+  <p>Relationships are typed and timestamped: <code>Person —works_on→ Project</code>, <code>Task —blocked_by→ Task</code>. Extraction runs as a notification handler on <code>ContentIndexed</code> events — asynchronous, never blocking the main pipeline.</p>
+</div>
+
+<div class="foundation">
+  <h3>F3: Behavior Model</h3>
+  <div class="used-by">Used by: Predictive Actions, Persona Engine, Context Management</div>
+  <span class="source-tag">AgentClaw: behavior model design</span>
+  <span class="source-tag">Agent Zero: learning from user interactions</span>
+  <p>A learned model of the user's patterns and preferences, built from observation over time. Stores:</p>
+  <ul>
+    <li><strong>Routine sequences</strong> — ordered action patterns with time correlation</li>
+    <li><strong>Communication style</strong> — per-channel tone/formality profiles</li>
+    <li><strong>Decision patterns</strong> — how the user responds to categories of decisions</li>
+  </ul>
+  <p>This is structured data injected into prompts as context — not a fine-tuned model. The LLM interprets the patterns; the Behavior Model just captures them.</p>
+</div>
+
+<div class="foundation">
+  <h3>F4: Capability Gate</h3>
+  <div class="used-by">Used by: All features (via pipeline behavior)</div>
+  <span class="source-tag">AgentClaw: capability-based security</span>
+  <span class="source-tag">OpenClaw: exec guards, DM policy, tool allowlists</span>
+  <p>The authorization layer. Every mediator request passes through it.</p>
+  <ul>
+    <li><strong>Capabilities</strong> — granular permissions: <code>exec.shell</code>, <code>file.read</code>, <code>email.send</code>, <code>message.send.external</code></li>
+    <li><strong>Contexts</strong> — scope capabilities: channel, persona, time-of-day, sensitivity</li>
+    <li><strong>Policies</strong> — map contexts to capability sets</li>
+    <li><strong>Approval flows</strong> — when a command requires a capability the current context doesn't have, prompt for approval instead of hard-denying</li>
+  </ul>
+  <p>All decisions logged to the audit trail. Combines OpenClaw's proven DM pairing and exec sandboxing with AgentClaw's more granular capability model.</p>
+</div>
+
+<div class="foundation">
+  <h3>F5: Skills Engine</h3>
+  <div class="used-by">Used by: Agent Runtime, all extensible features</div>
+  <span class="source-tag">Agent Zero: SKILL.md standard, dynamic loading</span>
+  <span class="source-tag">OpenClaw: managed skill lifecycle, ClawHub</span>
+  <p>Skills are portable folders with a <code>SKILL.md</code> file defining instructions, scripts, and assets. The Skills Engine:</p>
+  <ul>
+    <li>Discovers and lists available skills</li>
+    <li>Loads skill instructions into agent context on demand</li>
+    <li>Manages skill installation from registries</li>
+    <li>Provides the agent with <code>skills:list</code> and <code>skills:load</code> operations</li>
+  </ul>
+  <p>Compatible with the open SKILL.md standard (works with Claude Code, Codex, Cursor, and more). From OpenClaw we take the managed lifecycle (install, update, remove). From Agent Zero we take the dynamic loading approach where skills are loaded only when relevant.</p>
+</div>
+
+<div class="foundation">
+  <h3>F6: Embeddings Engine</h3>
+  <div class="used-by">Used by: Knowledge Store, Inbox Triage, Classification</div>
+  <span class="source-tag">EmailPipeline: local sentence-transformers, provider abstraction</span>
+  <p>Pluggable embedding generation with a local-first default:</p>
+  <ul>
+    <li><strong>Default:</strong> <code>sentence-transformers/all-MiniLM-L6-v2</code> (384 dims, runs locally, free)</li>
+    <li><strong>Optional:</strong> OpenAI <code>text-embedding-3-small</code> if API key provided</li>
+    <li>Batch processing (32 items/batch) for efficiency</li>
+    <li>Tracks which model generated each embedding for future re-embedding</li>
+  </ul>
+  <p>Provider abstraction from EmailPipeline — swap models without touching business logic.</p>
+</div>
+
+<h2>Foundation Dependency Map</h2>
+<div class="diagram"><pre>
+  ┌─────────────────────────────────────────────┐
+  │          Capability Gate (F4)               │  ← wraps everything
+  ├─────────────────────────────────────────────┤
+  │        Skills Engine (F5)                   │  ← loads on demand
+  ├──────────┬──────────┬───────────────────────┤
+  │ Knowledge│  Entity  │   Embeddings          │
+  │ Store(F1)│ Graph(F2)│   Engine (F6)         │
+  │          │  ↑ uses  │   ↑ used by F1        │
+  │          │   F1     │                       │
+  ├──────────┴──────────┴───────────────────────┤
+  │          Behavior Model (F3)                │
+  │           ↑ learns from F1 data             │
+  └─────────────────────────────────────────────┘
+</pre></div>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 02 Shared Foundations</p>
+</div>
+</body>
+</html>

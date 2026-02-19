@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>03 — Agent Runtime | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .source-tag { display: inline-block; background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: var(--muted); margin: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>03</span> — Agent Runtime</h1>
+<p class="subtitle">Multi-agent hierarchy, tool execution, code sandbox, and sub-agent delegation.</p>
+<div><span class="source-tag">Agent Zero: multi-agent, code execution, organic growth</span><span class="source-tag">OpenClaw: session model, tool pipeline, spawn</span></div>
+
+<h2>Agent Loop</h2>
+<p>Bond's agent loop combines OpenClaw's session-based RPC model with Agent Zero's organic, self-directing approach. Each agent turn:</p>
+<ol style="margin:0 0 16px 24px;">
+  <li>Receive message (from user, superior agent, or system event)</li>
+  <li>Retrieve relevant context via <code>SearchMemory</code> query (RAG)</li>
+  <li>Load applicable skills via Skills Engine</li>
+  <li>Generate response with tool calls</li>
+  <li>Execute tool calls through the mediator pipeline</li>
+  <li>Emit notifications for memory indexing, proactive evaluation</li>
+  <li>Respond to user/superior, or delegate to subordinate</li>
+</ol>
+
+<div class="diagram"><pre>
+  User / Superior Agent
+         │
+         ▼
+  ┌──────────────────────────────────────┐
+  │           Agent Turn                  │
+  │                                       │
+  │  1. Context retrieval (RAG)           │
+  │  2. Skill loading (if relevant)       │
+  │  3. Send prompt → Gateway LLM proxy    │
+  │  4. Tool execution (mediator)         │
+  │     ├─ code_execute → sandbox         │
+  │     ├─ search_memory → knowledge      │
+  │     ├─ call_subordinate → new agent   │
+  │     ├─ browser_action → CDP           │
+  │     ├─ memory_save → persist          │
+  │     └─ respond → user/superior        │
+  │  5. Emit notifications                │
+  │  6. Loop if more work needed          │
+  └──────────────────────────────────────┘
+</pre></div>
+
+<h2>Multi-Agent Hierarchy</h2>
+<p>From Agent Zero: every agent has a superior (the first agent's superior is the human). Any agent can spawn subordinates for subtasks. This keeps context focused and enables specialization.</p>
+
+<div class="diagram"><pre>
+  Human User
+      │
+      ▼
+  Agent 0 (main)
+      │
+      ├── Agent 1 (researcher) ──── "Find pricing data for competitors"
+      │       │
+      │       └── Agent 2 (coder) ── "Scrape and format the data"
+      │
+      └── Agent 3 (writer) ──────── "Draft the report using the data"
+</pre></div>
+
+<h3>Key principles:</h3>
+<ul>
+  <li><strong>Delegate subtasks, not the whole task</strong> — subordinates get specific, scoped work</li>
+  <li><strong>Reset vs. continue</strong> — spawn a fresh subordinate or continue talking to an existing one</li>
+  <li><strong>Agent profiles</strong> — subordinates can be specialized (coder, researcher, writer) with different system prompts and model configs</li>
+  <li><strong>Clean reporting</strong> — subordinates report results back to their superior; the superior synthesizes</li>
+</ul>
+
+<h2>Tool System</h2>
+<p>Bond's tools are a union of the best from all four projects:</p>
+
+<table>
+  <thead><tr><th>Tool</th><th>Source</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>code_execute</code></td><td>Agent Zero</td><td>Run code in named sandbox profile. Agent writes its own tools. Sandbox selected by agent/skill/channel.</td></tr>
+    <tr><td><code>search_memory</code></td><td>Agent Zero + AgentClaw</td><td>Vector + FTS hybrid search across knowledge store</td></tr>
+    <tr><td><code>memory_save</code></td><td>Agent Zero</td><td>Persist facts, solutions, instructions for future use</td></tr>
+    <tr><td><code>call_subordinate</code></td><td>Agent Zero</td><td>Spawn or continue a sub-agent for subtask delegation</td></tr>
+    <tr><td><code>browser</code></td><td>OpenClaw</td><td>CDP-based browser control: navigate, snapshot, interact</td></tr>
+    <tr><td><code>web_search</code></td><td>OpenClaw + Agent Zero</td><td>Web search via Brave API or similar</td></tr>
+    <tr><td><code>skills</code></td><td>Agent Zero + OpenClaw</td><td>List and load SKILL.md files for specialized capabilities</td></tr>
+    <tr><td><code>cron</code></td><td>OpenClaw</td><td>Schedule recurring or one-shot jobs</td></tr>
+    <tr><td><code>respond</code></td><td>Agent Zero</td><td>Send final response to user/superior</td></tr>
+    <tr><td><code>file_read/write</code></td><td>OpenClaw</td><td>Read and write files in workspace</td></tr>
+    <tr><td><code>email</code></td><td>EmailPipeline</td><td>Search, classify, draft responses to emails</td></tr>
+    <tr><td><code>notify</code></td><td>Agent Zero + OpenClaw</td><td>Send notification to user on any channel</td></tr>
+  </tbody>
+</table>
+
+<h2>Code Execution Sandbox</h2>
+<p>From Agent Zero: the agent uses the computer as a tool. It can write and run code to accomplish tasks. Bond uses <strong>named sandbox profiles</strong> — tailored execution environments assigned to agents, skills, and channels.</p>
+<ul>
+  <li><strong>Each agent profile gets its own sandbox</strong> — a coder agent gets Node + Python + git; a researcher gets a browser; a data analyst gets pandas + matplotlib</li>
+  <li><strong>Skills declare their sandbox requirements</strong> — install a skill and its environment is auto-provisioned</li>
+  <li><strong>Channels map to sandboxes by trust level</strong> — Discord groups get a locked-down sandbox; your private webchat runs on host</li>
+  <li><strong>Main session</strong> — no sandbox by default (full host access for the owner)</li>
+</ul>
+<p>Users configure sandboxes by listing packages — no Dockerfiles needed. Bond builds images automatically. See <a href="08-sandbox.html" style="color:var(--accent);">08 — Sandbox System</a> for full details.</p>
+
+<div class="diagram"><pre>
+  Agent "coder"   → sandbox: coding   (node, python, git, network: lan)
+  Agent "research" → sandbox: research (browser, network: web)
+  Skill "data"    → sandbox: data     (pandas, matplotlib, network: off)
+  Discord groups  → sandbox: minimal  (empty, network: off)
+  Main session    → sandbox: none     (host, full access)
+</pre></div>
+
+<h2>Model Provider Support</h2>
+<p><strong>The Python backend never calls LLMs directly.</strong> All LLM requests are routed through the TypeScript gateway, which owns authentication, streaming, and provider management via <code>pi-agent-core</code> and <code>pi-ai</code> (from OpenClaw). This is a deliberate architectural decision to preserve OAuth subscription support — the killer feature that lets users authenticate with their existing Claude Pro/Max or ChatGPT Plus/Pro subscriptions instead of needing API keys.</p>
+
+<div class="diagram"><pre>
+  Python Backend (brain)              TypeScript Gateway (mouth)
+  ┌──────────────────────┐           ┌──────────────────────────┐
+  │ Agent loop constructs│           │ LLM Proxy                │
+  │ prompt + tools       │──HTTP───▶│  • pi-agent-core (API)   │
+  │                      │           │  • pi-ai (OAuth refresh) │
+  │ Receives streamed    │◀──WS────│  • AuthProfileStore      │
+  │ response + tool calls│           │    ├ OAuth profiles      │
+  │                      │           │    ├ API key profiles    │
+  │ Executes tools       │           │    └ Failover + rotation │
+  │ Sends results back   │──HTTP───▶│  • Streaming relay       │
+  └──────────────────────┘           └──────────────────────────┘
+</pre></div>
+
+<table>
+  <thead><tr><th>Provider</th><th>Auth Methods</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Anthropic (Claude)</td><td>OAuth subscription, API key</td><td>Recommended default. Claude Pro/Max subscription login — no API key needed.</td></tr>
+    <tr><td>OpenAI (GPT)</td><td>OAuth subscription, API key</td><td>ChatGPT Plus/Pro subscription login supported.</td></tr>
+    <tr><td>Google (Gemini)</td><td>API key</td><td>Via pi-agent-core adapter</td></tr>
+    <tr><td>Local (Ollama / LM Studio)</td><td>None</td><td>For fully offline operation</td></tr>
+    <tr><td>DeepSeek, Groq, Mistral</td><td>API key</td><td>Via pi-agent-core adapter</td></tr>
+  </tbody>
+</table>
+
+<h3>Auth Profile System</h3>
+<p>From OpenClaw: the <code>AuthProfileStore</code> manages multiple credential profiles per provider with:</p>
+<ul>
+  <li><strong>OAuth profiles</strong> — subscription-based auth with automatic token refresh</li>
+  <li><strong>API key profiles</strong> — standard API key authentication</li>
+  <li><strong>Rotation</strong> — distribute load across profiles</li>
+  <li><strong>Cooldowns</strong> — back off from rate-limited profiles</li>
+  <li><strong>Failover</strong> — OAuth primary → API key fallback</li>
+  <li><strong>Usage tracking</strong> — per-profile usage metrics</li>
+</ul>
+<p>Per-session model overrides, thinking level control, and automatic failover between providers.</p>
+
+<h2>Session Model</h2>
+<p>From OpenClaw: sessions are the unit of agent context. Each session has its own history, model config, and capability scope.</p>
+<ul>
+  <li><strong>Main session</strong> — direct chat with the user, full access</li>
+  <li><strong>Group sessions</strong> — isolated per group/channel, reduced capabilities</li>
+  <li><strong>Spawned sessions</strong> — sub-agent runs, isolated context, report back when done</li>
+  <li><strong>Cron sessions</strong> — isolated runs triggered by schedule</li>
+</ul>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 03 Agent Runtime</p>
+</div>
+</body>
+</html>

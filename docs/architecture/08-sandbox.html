@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>08 — Sandbox System | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul, ol { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  .config { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .config pre { color: #f8c555; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.6; }
+  .config .comment { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .callout { background: #1a1a2e; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 20px 0; }
+  .callout-title { font-weight: 600; margin-bottom: 6px; color: var(--accent); font-size: 0.9rem; }
+  .layer { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .layer h3 { margin-top: 0; color: var(--accent2); }
+  .source-tag { display: inline-block; background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: var(--muted); margin: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>08</span> — Sandbox System</h1>
+<p class="subtitle">Named sandbox profiles, assignable to agents, skills, and channels. Right tools, zero excess.</p>
+<div><span class="source-tag">Agent Zero: Docker-first execution</span><span class="source-tag">OpenClaw: per-session sandbox config</span><span class="source-tag">New: multi-profile sandbox assignment</span></div>
+
+<h2>The Problem</h2>
+<p>A "one sandbox fits all" model forces a choice: either the sandbox has everything (insecure, bloated) or it has the minimum (useless for most tasks). Different work needs different environments:</p>
+<ul>
+  <li>A <strong>coding agent</strong> needs Node, Python, git, compilers — but not email access or browser</li>
+  <li>A <strong>research agent</strong> needs browser and web search — but not shell access</li>
+  <li>A <strong>data analysis skill</strong> needs pandas, matplotlib, jupyter — but not network access</li>
+  <li>Messages from <strong>Discord groups</strong> should run in a locked-down sandbox with no file access outside workspace</li>
+  <li>Your <strong>main session</strong> might not need a sandbox at all</li>
+</ul>
+
+<h2>Solution: Named Sandbox Profiles</h2>
+<p>Bond uses <strong>named sandbox profiles</strong> — each is a defined environment with specific tools, network access, and filesystem mounts. Profiles are then <strong>assigned</strong> to agents, skills, channels, or sessions.</p>
+
+<div class="diagram"><pre>
+  Sandbox Profiles (defined once)
+  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+  │   coding     │ │   research   │ │   data       │ │   minimal    │
+  │              │ │              │ │              │ │              │
+  │ node, python │ │ browser      │ │ python       │ │ (empty)      │
+  │ git, gcc     │ │ web_search   │ │ pandas, plt  │ │              │
+  │ filesystem   │ │ filesystem   │ │ jupyter      │ │ read-only fs │
+  │ network: lan │ │ network: web │ │ network: off │ │ network: off │
+  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+         │                │                │                │
+         ▼                ▼                ▼                ▼
+  Assignments (who uses what)
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  agent "coder"        → sandbox: coding                         │
+  │  agent "researcher"   → sandbox: research                       │
+  │  skill "data-analysis"→ sandbox: data                           │
+  │  channel discord      → sandbox: minimal                        │
+  │  channel telegram     → sandbox: minimal                        │
+  │  main session         → sandbox: none (host)                    │
+  └──────────────────────────────────────────────────────────────────┘
+</pre></div>
+
+<h2>Configuration</h2>
+<p>The user experience is the priority. Configuration should be obvious and short.</p>
+
+<h3>Step 1: Define profiles</h3>
+<p>Profiles live in <code>bond.json</code> under <code>sandboxes</code>. Each profile says what's inside and what's allowed.</p>
+
+<div class="config"><pre>
+{
+  "sandboxes": {
+    <span class="comment">// Profile name → environment definition</span>
+
+    "coding": {
+      "image": "bond-coding",        <span class="comment">// Docker image (or Dockerfile path)</span>
+      "packages": ["nodejs", "python3", "git", "gcc", "make"],
+      "network": "lan",              <span class="comment">// "off" | "lan" | "web" | "full"</span>
+      "filesystem": "workspace",     <span class="comment">// "none" | "readonly" | "workspace" | "full"</span>
+      "memory": "2g",
+      "timeout": 300
+    },
+
+    "research": {
+      "packages": ["chromium"],
+      "tools": ["browser", "web_search", "web_fetch"],
+      "network": "web",
+      "filesystem": "readonly"
+    },
+
+    "data": {
+      "image": "bond-data",
+      "packages": ["python3", "python3-pip"],
+      "pip": ["pandas", "matplotlib", "numpy", "jupyter"],
+      "network": "off",
+      "filesystem": "workspace"
+    },
+
+    "minimal": {
+      "packages": [],
+      "network": "off",
+      "filesystem": "none",
+      "tools": ["respond", "search_memory"]
+    }
+  }
+}
+</pre></div>
+
+<div class="callout">
+  <div class="callout-title">💡 Easy mode: just name the packages</div>
+  <p style="margin:0;color:var(--muted);font-size:0.9rem;">You don't need to write Dockerfiles. List the packages you want and Bond builds the image automatically. For power users, point <code>image</code> at a custom Docker image or a Dockerfile in your workspace.</p>
+</div>
+
+<h3>Step 2: Assign profiles</h3>
+<p>Profiles are assigned at multiple levels. More specific assignments override less specific ones.</p>
+
+<div class="config"><pre>
+{
+  <span class="comment">// Default sandbox for all non-main sessions</span>
+  "sandbox": "minimal",
+
+  "agents": {
+    "coder": {
+      "profile": "coding-agent",
+      "sandbox": "coding"           <span class="comment">// this agent always uses "coding"</span>
+    },
+    "researcher": {
+      "profile": "research-agent",
+      "sandbox": "research"
+    }
+  },
+
+  "channels": {
+    "discord": {
+      "sandbox": "minimal"          <span class="comment">// all Discord sessions use "minimal"</span>
+    },
+    "telegram": {
+      "sandbox": "minimal"
+    },
+    "webchat": {
+      "sandbox": "none"             <span class="comment">// webchat = trusted, no sandbox</span>
+    }
+  },
+
+  "skills": {
+    "data-analysis": {
+      "sandbox": "data"             <span class="comment">// this skill runs in "data" environment</span>
+    },
+    "web-scraper": {
+      "sandbox": "research"
+    }
+  }
+}
+</pre></div>
+
+<h3>Step 3: That's it</h3>
+<p>Bond resolves the sandbox at runtime based on the context. No manual Docker commands needed.</p>
+
+<h2>Resolution Order</h2>
+<p>When code needs to execute, Bond determines the sandbox by checking assignments in priority order:</p>
+
+<div class="diagram"><pre>
+  Code execution requested
+      │
+      ├─ 1. Is a specific skill active? → use skill's sandbox
+      │
+      ├─ 2. Is the agent assigned a sandbox? → use agent's sandbox
+      │
+      ├─ 3. Is the channel assigned a sandbox? → use channel's sandbox
+      │
+      ├─ 4. Is there a session-level override? → use that
+      │
+      ├─ 5. Is this the main session? → "none" (host) by default
+      │
+      └─ 6. Fallback → global default sandbox
+</pre></div>
+
+<p>The most specific match wins. A skill's sandbox requirement always takes priority — if a skill says it needs the "data" sandbox, it gets it regardless of what channel triggered it.</p>
+
+<h2>Profile Properties</h2>
+
+<table>
+  <thead><tr><th>Property</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td><code>image</code></td><td>string</td><td>auto-built</td><td>Docker image name or path to Dockerfile. If omitted, Bond builds one from <code>packages</code>.</td></tr>
+    <tr><td><code>packages</code></td><td>string[]</td><td>[]</td><td>System packages to install (apt). Bond auto-builds the image.</td></tr>
+    <tr><td><code>pip</code></td><td>string[]</td><td>[]</td><td>Python pip packages to install.</td></tr>
+    <tr><td><code>npm</code></td><td>string[]</td><td>[]</td><td>Global npm packages to install.</td></tr>
+    <tr><td><code>tools</code></td><td>string[]</td><td>all</td><td>Which Bond tools are available inside. If set, only these tools work.</td></tr>
+    <tr><td><code>network</code></td><td>enum</td><td>"off"</td><td><code>off</code>: no network. <code>lan</code>: local only. <code>web</code>: HTTP/S out. <code>full</code>: unrestricted.</td></tr>
+    <tr><td><code>filesystem</code></td><td>enum</td><td>"workspace"</td><td><code>none</code>: no mounts. <code>readonly</code>: workspace read-only. <code>workspace</code>: workspace read-write. <code>full</code>: host filesystem.</td></tr>
+    <tr><td><code>memory</code></td><td>string</td><td>"512m"</td><td>Memory limit (Docker format).</td></tr>
+    <tr><td><code>cpu</code></td><td>number</td><td>1</td><td>CPU core limit.</td></tr>
+    <tr><td><code>timeout</code></td><td>number</td><td>120</td><td>Max execution time per command in seconds.</td></tr>
+    <tr><td><code>persistent</code></td><td>bool</td><td>false</td><td>If true, container persists between commands (faster, retains state). If false, fresh container each time.</td></tr>
+    <tr><td><code>env</code></td><td>object</td><td>{}</td><td>Environment variables injected into the container.</td></tr>
+    <tr><td><code>mounts</code></td><td>string[]</td><td>[]</td><td>Additional bind mounts (power user). Format: <code>host:container:mode</code>.</td></tr>
+    <tr><td><code>ports</code></td><td>string[]</td><td>[]</td><td>Port forwards from container (for dev servers, Jupyter, etc).</td></tr>
+  </tbody>
+</table>
+
+<h2>Skill Sandbox Declarations</h2>
+<p>Skills can declare their sandbox requirements directly in <code>SKILL.md</code>. Bond reads this and auto-creates a matching profile if one doesn't exist.</p>
+
+<div class="config"><pre>
+<span class="comment"># SKILL.md — data-analysis</span>
+
+<span class="comment">## Metadata</span>
+name: data-analysis
+version: 1.0.0
+
+<span class="comment">## Sandbox</span>
+requires:
+  packages: [python3, python3-pip]
+  pip: [pandas, matplotlib, numpy, seaborn]
+  network: "off"
+  filesystem: "workspace"
+  memory: "1g"
+</pre></div>
+
+<p>When a skill declares sandbox requirements:</p>
+<ol>
+  <li>Bond checks if a compatible profile already exists</li>
+  <li>If not, it auto-creates one (named <code>skill-{skill-name}</code>)</li>
+  <li>The image is built on first use and cached</li>
+  <li>The user can override by explicitly assigning a different sandbox in <code>bond.json</code></li>
+</ol>
+
+<div class="callout">
+  <div class="callout-title">🔒 Skill sandboxes are security boundaries</div>
+  <p style="margin:0;color:var(--muted);font-size:0.9rem;">When you install a skill from a registry, its code runs in the sandbox it declares — not on your host. A malicious skill with <code>network: "off"</code> and <code>filesystem: "workspace"</code> can't phone home or read your files. This makes skill installation much safer.</p>
+</div>
+
+<h2>Agent Profiles + Sandboxes</h2>
+<p>Agent profiles (from Agent Zero) naturally pair with sandboxes. Each agent profile defines persona, model, and now also execution environment.</p>
+
+<div class="config"><pre>
+{
+  "agents": {
+    "coder": {
+      "profile": "You are a senior software engineer...",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "sandbox": "coding",
+      "tools": ["code_execute", "file_read", "file_write", "search_memory", "respond"]
+    },
+
+    "researcher": {
+      "profile": "You are a thorough research assistant...",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "sandbox": "research",
+      "tools": ["browser", "web_search", "web_fetch", "search_memory", "respond"]
+    },
+
+    "analyst": {
+      "profile": "You are a data analyst...",
+      "model": "openai/gpt-4o",
+      "sandbox": "data",
+      "tools": ["code_execute", "file_read", "file_write", "respond"]
+    }
+  }
+}
+</pre></div>
+
+<p>When Agent 0 spawns a subordinate with <code>call_subordinate(profile: "coder")</code>, the coder agent automatically runs in the "coding" sandbox. The parent agent doesn't need to know or care about sandbox details.</p>
+
+<h2>Channel Sandboxes</h2>
+<p>Channels carry different trust levels. A message from your private webchat is very different from a message in a public Discord server.</p>
+
+<div class="config"><pre>
+{
+  "channels": {
+    <span class="comment">// Trusted channels: no sandbox (or light sandbox)</span>
+    "webchat": { "sandbox": "none" },
+    "signal":  { "sandbox": "none" },
+
+    <span class="comment">// Semi-trusted: workspace-scoped sandbox</span>
+    "telegram": { "sandbox": "minimal" },
+    "whatsapp": { "sandbox": "minimal" },
+
+    <span class="comment">// Untrusted: locked-down sandbox</span>
+    "discord": {
+      "sandbox": "minimal",
+      "groups": {
+        "*": { "sandbox": "minimal" }   <span class="comment">// all groups</span>
+      },
+      "dm": {
+        "sandbox": "coding"              <span class="comment">// DMs get more access</span>
+      }
+    }
+  }
+}
+</pre></div>
+
+<p>You can even set different sandboxes for DMs vs groups on the same channel.</p>
+
+<h2>Sandbox Lifecycle</h2>
+
+<div class="diagram"><pre>
+  First use of profile "coding"
+      │
+      ├─ Profile has custom image? → pull/build it
+      │
+      ├─ Profile has packages only? → auto-generate Dockerfile
+      │     FROM ubuntu:24.04
+      │     RUN apt-get install -y nodejs python3 git gcc make
+      │     → build and tag as bond-sandbox-coding
+      │
+      ├─ Cache the built image
+      │
+      └─ On code execution:
+           ├─ persistent=true  → start container, keep alive between commands
+           └─ persistent=false → fresh container per command, destroy after
+
+  Image rebuild triggers:
+      • Profile packages/pip/npm changed in bond.json
+      • User runs: bond sandbox rebuild coding
+      • Skill sandbox requirements changed
+</pre></div>
+
+<h2>CLI Commands</h2>
+<div class="config"><pre>
+<span class="comment"># List all sandbox profiles and their assignments</span>
+bond sandbox list
+
+<span class="comment"># Show details of a specific profile</span>
+bond sandbox inspect coding
+
+<span class="comment"># Rebuild a sandbox image (after changing packages)</span>
+bond sandbox rebuild coding
+
+<span class="comment"># Rebuild all sandbox images</span>
+bond sandbox rebuild --all
+
+<span class="comment"># Test a sandbox (opens interactive shell)</span>
+bond sandbox shell coding
+
+<span class="comment"># Show which sandbox would be used for a given context</span>
+bond sandbox resolve --channel discord --agent coder --skill data-analysis
+<span class="comment"># → skill "data-analysis" declares sandbox "data" (priority: skill)</span>
+</pre></div>
+
+<h2>Web UI</h2>
+<p>The Settings page includes a Sandboxes section:</p>
+<ul>
+  <li><strong>Profile cards</strong> — each profile shown with its packages, network/fs settings, and a list of what's assigned to it</li>
+  <li><strong>Create profile</strong> — form with package picker, network/fs dropdowns, resource sliders</li>
+  <li><strong>Assignment view</strong> — see at a glance: which agent/skill/channel uses which sandbox</li>
+  <li><strong>Drag-and-drop</strong> — assign a sandbox to an agent/channel by dragging the profile onto it</li>
+  <li><strong>Build status</strong> — shows whether the image is built, building, or needs rebuild</li>
+</ul>
+
+<h2>Prebuilt Profiles</h2>
+<p>Bond ships with sensible defaults that cover most use cases out of the box:</p>
+
+<table>
+  <thead><tr><th>Profile</th><th>What's inside</th><th>Network</th><th>Filesystem</th><th>Default assignment</th></tr></thead>
+  <tbody>
+    <tr><td><code>coding</code></td><td>Node 22, Python 3, git, build-essential</td><td>lan</td><td>workspace</td><td>coder agent</td></tr>
+    <tr><td><code>research</code></td><td>Chromium, curl</td><td>web</td><td>readonly</td><td>researcher agent</td></tr>
+    <tr><td><code>data</code></td><td>Python 3, pandas, matplotlib, numpy</td><td>off</td><td>workspace</td><td>data-analysis skill</td></tr>
+    <tr><td><code>minimal</code></td><td>(empty)</td><td>off</td><td>none</td><td>untrusted channels</td></tr>
+    <tr><td><code>none</code></td><td colspan="4"><em>Special: runs on host, no container. For trusted contexts.</em></td></tr>
+  </tbody>
+</table>
+
+<p>Users can modify these or create new ones. The prebuilts are a starting point, not a constraint.</p>
+
+<h2>Design Decisions</h2>
+
+<table>
+  <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>Skill sandbox takes priority</td><td>Skills come from registries — their security boundary must be enforced regardless of who triggered them</td></tr>
+    <tr><td>Packages, not Dockerfiles</td><td>90% of users shouldn't need to write Docker anything. List packages, Bond handles the rest.</td></tr>
+    <tr><td>Prebuilt defaults</td><td>Works out of the box. No configuration required for basic use. Power users customize.</td></tr>
+    <tr><td><code>"none"</code> for main session</td><td>The owner should have full host access by default. Sandboxing yourself creates friction without security benefit.</td></tr>
+    <tr><td>Per-channel granularity</td><td>A DM from a known contact and a message in a public Discord server have very different trust levels.</td></tr>
+    <tr><td>Persistent container option</td><td>Some workflows (like running a dev server) need state between commands. Others need clean isolation each time.</td></tr>
+    <tr><td>Auto-build from skill declarations</td><td>Installing a skill should Just Work™. The sandbox is part of the skill's contract.</td></tr>
+  </tbody>
+</table>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 08 Sandbox System</p>
+</div>
+</body>
+</html>

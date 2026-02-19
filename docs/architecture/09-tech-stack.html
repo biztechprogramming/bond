@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>09 — Tech Stack | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .decision { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .decision h3 { margin-top: 0; color: var(--accent2); }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  .config { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .config pre { color: #f8c555; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.6; }
+  .config .comment { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>09</span> — Tech Stack</h1>
+<p class="subtitle">Concrete technology choices, package versions, and rationale.</p>
+
+<h2>Process Architecture</h2>
+<div class="diagram"><pre>
+  ┌──────────────────────────────────────────────────────────┐
+  │                     Bond (production)                     │
+  │                                                          │
+  │  ┌────────────────────────┐  ┌────────────────────────┐  │
+  │  │  Gateway (TypeScript)  │  │  Backend (Python)      │  │
+  │  │  Node 22 + pnpm        │  │  Python 3.12 + uv     │  │
+  │  │                        │  │                        │  │
+  │  │  • WebSocket server    │◄─┤  • FastAPI (REST)      │  │
+  │  │  • Channel adapters    │─►│  • Agent runtime       │  │
+  │  │  • Session management  │  │  • Mediator pipeline   │  │
+  │  │  • Control UI host     │  │  • Knowledge store     │  │
+  │  │  • Cron scheduler      │  │  • Embeddings engine   │  │
+  │  │  • 🔑 LLM Proxy       │  │  • Email sync          │  │
+  │  │    (pi-agent-core)     │  │  • Code execution      │  │
+  │  │  • OAuth subscription  │  │  • Sandbox management  │  │
+  │  │    auth (pi-ai)        │  │  (NO direct LLM calls) │  │
+  │  └────────────────────────┘  └────────────────────────┘  │
+  │              │                           │               │
+  │  ┌────────────────────────┐              │               │
+  │  │  Frontend (TypeScript) │              ▼               │
+  │  │  Next.js 15            │  ┌────────────────────────┐  │
+  │  │  • WebChat             │  │  Sandbox containers    │  │
+  │  │  • Control UI          │  │  (Docker)              │  │
+  │  │  • Settings            │  │  coding | research |   │  │
+  │  │  • Dashboard           │  │  data | minimal | ...  │  │
+  │  └────────────────────────┘  └────────────────────────┘  │
+  └──────────────────────────────────────────────────────────┘
+</pre></div>
+
+<h2>Gateway ↔ Backend Communication</h2>
+<p>The TypeScript gateway and Python backend run as two processes, communicating via a local protocol:</p>
+<ul>
+  <li><strong>Gateway → Backend:</strong> HTTP calls to FastAPI endpoints (agent turns, tool execution, queries)</li>
+  <li><strong>Backend → Gateway:</strong> HTTP calls for LLM completion requests; WebSocket connection for receiving streamed LLM responses, pushing events (notifications, status updates)</li>
+  <li><strong>Shared:</strong> SQLite database (single file, WAL mode for concurrent reads)</li>
+</ul>
+<p>In Docker, both processes run in the same container managed by a simple process supervisor. In development, they run separately with hot reload.</p>
+
+<h2>Backend Stack</h2>
+<table>
+  <thead><tr><th>Component</th><th>Technology</th><th>Version</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>Runtime</td><td>Python</td><td>3.12</td><td>Current stable. Best performance (specializing interpreter). Better typing + error messages.</td></tr>
+    <tr><td>Package manager</td><td>uv</td><td>latest</td><td>10-100x faster than pip. Lockfiles. Becoming the standard.</td></tr>
+    <tr><td>Web framework</td><td>FastAPI</td><td>0.115+</td><td>Async-native, auto OpenAPI docs, Pydantic validation. Proven in EmailPipeline.</td></tr>
+    <tr><td>ASGI server</td><td>uvicorn</td><td>0.34+</td><td>Production ASGI server for FastAPI.</td></tr>
+    <tr><td>Database</td><td>SQLite + aiosqlite</td><td>—</td><td>Zero-config, single file, WAL mode for concurrent reads. Local-first.</td></tr>
+    <tr><td>Vector search</td><td>sqlite-vec</td><td>0.1+</td><td>Vector similarity search as a SQLite extension. No separate vector DB.</td></tr>
+    <tr><td>Full-text search</td><td>SQLite FTS5</td><td>built-in</td><td>Keyword search, BM25 ranking. Bundled with SQLite.</td></tr>
+    <tr><td>Migrations</td><td>golang-migrate</td><td>4.x</td><td>SQL-based, supports both SQLite and Postgres. Proven in EmailPipeline.</td></tr>
+    <tr><td>ORM / query</td><td>SQLAlchemy 2.0</td><td>2.0+</td><td>Async support, repository pattern. Type-safe queries.</td></tr>
+    <tr><td>Validation</td><td>Pydantic v2</td><td>2.x</td><td>FastAPI-native. Command/query schemas for the mediator.</td></tr>
+    <tr><td>LLM providers</td><td><em>None (gateway-proxied)</em></td><td>—</td><td>Backend sends prompts to gateway's LLM proxy via internal API. Gateway handles auth + provider calls via pi-agent-core. See <a href="04-channels-gateway.html" style="color:var(--accent);">04 — Gateway</a>.</td></tr>
+    <tr><td>Embeddings (local)</td><td>sentence-transformers</td><td>3.x</td><td>Local-first. all-MiniLM-L6-v2 (384 dims). No API key needed.</td></tr>
+    <tr><td>Email sync</td><td>aioimaplib + google-api-python-client</td><td>—</td><td>Async IMAP + Gmail API. From EmailPipeline.</td></tr>
+    <tr><td>Encryption</td><td>cryptography (Fernet)</td><td>—</td><td>Credential encryption at rest. From EmailPipeline.</td></tr>
+    <tr><td>Auth</td><td>python-jose (JWT)</td><td>—</td><td>JWT tokens for API auth.</td></tr>
+    <tr><td>Docker SDK</td><td>docker-py</td><td>7.x</td><td>Sandbox container management from Python.</td></tr>
+    <tr><td>Task queue</td><td>In-process (asyncio)</td><td>—</td><td>EventBus + async workers. No Celery/Redis needed. From EmailPipeline.</td></tr>
+    <tr><td>Testing</td><td>pytest + pytest-asyncio</td><td>—</td><td>Standard. Async test support.</td></tr>
+  </tbody>
+</table>
+
+<h2>Gateway Stack</h2>
+<table>
+  <thead><tr><th>Component</th><th>Technology</th><th>Version</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>Runtime</td><td>Node.js</td><td>22 LTS</td><td>Required for OpenClaw's channel adapters.</td></tr>
+    <tr><td>Package manager</td><td>pnpm</td><td>9.x</td><td>Fast, disk-efficient. OpenClaw standard.</td></tr>
+    <tr><td>Language</td><td>TypeScript</td><td>5.x</td><td>Type safety for the protocol layer.</td></tr>
+    <tr><td>WebSocket</td><td>ws</td><td>—</td><td>Lightweight WS library. From OpenClaw.</td></tr>
+    <tr><td>Telegram</td><td>grammY</td><td>—</td><td>Telegram Bot API. From OpenClaw.</td></tr>
+    <tr><td>Discord</td><td>discord.js</td><td>14.x</td><td>Discord Bot API. From OpenClaw.</td></tr>
+    <tr><td>WhatsApp</td><td>Baileys</td><td>—</td><td>WhatsApp Web multi-device. From OpenClaw.</td></tr>
+    <tr><td>Slack</td><td>@slack/bolt</td><td>—</td><td>Slack App framework. From OpenClaw.</td></tr>
+    <tr><td>LLM API</td><td>@mariozechner/pi-agent-core</td><td>—</td><td>Anthropic/OpenAI API protocol: messages, streaming, tool use. From OpenClaw.</td></tr>
+    <tr><td>OAuth auth</td><td>@mariozechner/pi-ai</td><td>—</td><td>OAuth token refresh for Claude Pro/Max, ChatGPT Plus/Pro subscriptions. From OpenClaw.</td></tr>
+    <tr><td>Auth profiles</td><td>AuthProfileStore (built-in)</td><td>—</td><td>Multi-profile credential management: rotation, cooldowns, failover, usage tracking.</td></tr>
+    <tr><td>Build</td><td>tsx / esbuild</td><td>—</td><td>Fast TypeScript execution + bundling.</td></tr>
+  </tbody>
+</table>
+
+<h2>Frontend Stack</h2>
+<table>
+  <thead><tr><th>Component</th><th>Technology</th><th>Version</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>Framework</td><td>Next.js</td><td>15.x</td><td>SSR, file-based routing, API routes. Proven in EmailPipeline.</td></tr>
+    <tr><td>Language</td><td>TypeScript</td><td>5.x</td><td>Type safety throughout.</td></tr>
+    <tr><td>Styling</td><td>Tailwind CSS</td><td>4.x</td><td>Utility-first. Fast iteration. From EmailPipeline.</td></tr>
+    <tr><td>State</td><td>React Query (TanStack)</td><td>5.x</td><td>Server state management, caching, WebSocket integration.</td></tr>
+    <tr><td>WebSocket</td><td>Native WebSocket</td><td>—</td><td>Direct connection to gateway. Real-time streaming.</td></tr>
+  </tbody>
+</table>
+
+<h2>Optional / Upgradeable</h2>
+<table>
+  <thead><tr><th>Component</th><th>Default</th><th>Optional Upgrade</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td>Database</td><td>SQLite</td><td>PostgreSQL + pgvector</td><td>Multi-user, high concurrency, large datasets</td></tr>
+    <tr><td>Embeddings</td><td>Local sentence-transformers</td><td>OpenAI text-embedding-3-small</td><td>Better quality if API key available</td></tr>
+    <tr><td>LLM</td><td>Any via pi-agent-core (OAuth or API key)</td><td>Local via Ollama / LM Studio</td><td>Fully offline operation</td></tr>
+    <tr><td>TTS</td><td>None</td><td>ElevenLabs, OpenAI TTS</td><td>Voice output needed</td></tr>
+    <tr><td>STT</td><td>None</td><td>Whisper (local), Deepgram</td><td>Voice input needed</td></tr>
+    <tr><td>Browser</td><td>None</td><td>Playwright + Chromium</td><td>Browser automation needed</td></tr>
+  </tbody>
+</table>
+
+<h2>Docker Topology</h2>
+<div class="diagram"><pre>
+  docker-compose.yml (production)
+  ┌──────────────────────────────────────────────────┐
+  │  bond (main container)                            │
+  │  ├── Node 22 (gateway)                           │
+  │  ├── Python 3.12 (backend)                       │
+  │  ├── Next.js (frontend, built static)            │
+  │  ├── /var/run/docker.sock (mounted)  ◄── sandbox │
+  │  └── ~/.bond/ (volume)                           │
+  └──────────────────────────────────────────────────┘
+         │
+         │ manages (via docker.sock)
+         ▼
+  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+  │ bond-sandbox- │ │ bond-sandbox- │ │ bond-sandbox- │
+  │ coding       │ │ research     │ │ data         │
+  └──────────────┘ └──────────────┘ └──────────────┘
+</pre></div>
+
+<div class="decision">
+  <h3>Why Docker socket mount for sandboxes?</h3>
+  <p>Bond manages sandbox containers from inside its own container by mounting the host's Docker socket. This is simpler and more performant than Docker-in-Docker (DinD). The tradeoff: the Bond container has Docker access on the host — but it already needs this for sandbox management. For users who don't want socket mounting, we'll support a DinD sidecar as an alternative.</p>
+</div>
+
+<h2>Development Setup</h2>
+<div class="config"><pre>
+<span class="comment"># Clone</span>
+git clone https://github.com/bond-ai/bond.git
+cd bond
+
+<span class="comment"># Backend</span>
+uv sync                        <span class="comment"># install Python deps</span>
+uv run migrate up              <span class="comment"># run database migrations</span>
+uv run dev                     <span class="comment"># start FastAPI with hot reload</span>
+
+<span class="comment"># Gateway (separate terminal)</span>
+cd gateway
+pnpm install
+pnpm dev                       <span class="comment"># start gateway with hot reload</span>
+
+<span class="comment"># Frontend (separate terminal)</span>
+cd frontend
+pnpm install
+pnpm dev                       <span class="comment"># start Next.js dev server</span>
+
+<span class="comment"># Or, all at once:</span>
+make dev                       <span class="comment"># runs all three with process manager</span>
+
+<span class="comment"># First run? Setup wizard handles API keys + config:</span>
+bond setup                     <span class="comment"># interactive setup (secrets → encrypted vault)</span>
+</pre></div>
+
+<h2>Production Setup</h2>
+<div class="config"><pre>
+<span class="comment"># Docker (recommended for end users)</span>
+docker run -d \
+  -p 18789:18789 \
+  -v ~/.bond:/home/bond/.bond \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  bondai/bond:latest
+
+<span class="comment"># Or native (for developers)</span>
+bond start                     <span class="comment"># starts gateway + backend + frontend</span>
+</pre></div>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 09 Tech Stack</p>
+</div>
+</body>
+</html>

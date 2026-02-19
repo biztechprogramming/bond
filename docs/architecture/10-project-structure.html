@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>10 — Project Structure | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .tree { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .tree pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.6; }
+  .tree .comment { color: var(--muted); }
+  .rule { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .rule h3 { margin-top: 0; color: var(--accent2); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>10</span> — Project Structure</h1>
+<p class="subtitle">Repository layout, module boundaries, and the rules that keep things clean.</p>
+
+<h2>Repository Root</h2>
+<div class="tree"><pre>
+bond/
+├── backend/                    <span class="comment">← Python (FastAPI) — the brain</span>
+├── gateway/                    <span class="comment">← TypeScript (Node) — channels + WS</span>
+├── frontend/                   <span class="comment">← TypeScript (Next.js) — web UI</span>
+├── migrations/                 <span class="comment">← SQL migration files (golang-migrate)</span>
+├── sandboxes/                  <span class="comment">← Dockerfile templates for sandbox profiles</span>
+├── skills/                     <span class="comment">← Bundled skills (SKILL.md standard)</span>
+├── prompts/                    <span class="comment">← Agent system prompts (templates)</span>
+├── docs/                       <span class="comment">← Architecture + user docs</span>
+├── tests/                      <span class="comment">← Integration tests (cross-component)</span>
+│
+├── bond.json                   <span class="comment">← Example configuration</span>
+├── docker-compose.yml          <span class="comment">← Production Docker setup</span>
+├── docker-compose.dev.yml      <span class="comment">← Development Docker setup</span>
+├── Dockerfile                  <span class="comment">← Main Bond container</span>
+├── Makefile                    <span class="comment">← Dev commands: make dev, make test, etc.</span>
+├── pyproject.toml              <span class="comment">← Python project config (uv)</span>
+├── uv.lock                     <span class="comment">← Python lockfile</span>
+├── README.md
+├── LICENSE
+└── .env.example
+</pre></div>
+
+<h2>Backend (Python)</h2>
+<div class="tree"><pre>
+backend/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                      <span class="comment">← FastAPI app entry point</span>
+│   ├── config.py                    <span class="comment">← Settings loader (bond.json + env)</span>
+│   │
+│   ├── mediator/                    <span class="comment">← Core mediator pattern</span>
+│   │   ├── __init__.py              <span class="comment">← Mediator class, exports</span>
+│   │   ├── base.py                  <span class="comment">← Command, Query, Handler ABCs</span>
+│   │   ├── pipeline.py              <span class="comment">← PipelineBehavior ABC, run_pipeline()</span>
+│   │   ├── registry.py              <span class="comment">← @handles decorator, handler lookup</span>
+│   │   └── behaviors/
+│   │       ├── exception.py
+│   │       ├── logging.py
+│   │       ├── auth.py
+│   │       ├── validation.py
+│   │       ├── capability_gate.py
+│   │       ├── audit.py
+│   │       ├── transaction.py
+│   │       └── metrics.py
+│   │
+│   ├── agent/                       <span class="comment">← Agent runtime</span>
+│   │   ├── loop.py                  <span class="comment">← Agent turn loop</span>
+│   │   ├── context.py               <span class="comment">← RAG context retrieval</span>
+│   │   ├── profiles.py              <span class="comment">← Agent profile definitions</span>
+│   │   ├── multi.py                 <span class="comment">← Sub-agent spawning + hierarchy</span>
+│   │   └── tools/                   <span class="comment">← Tool implementations</span>
+│   │       ├── __init__.py          <span class="comment">← Tool registry</span>
+│   │       ├── code_execute.py
+│   │       ├── search_memory.py
+│   │       ├── memory_save.py
+│   │       ├── call_subordinate.py
+│   │       ├── web_search.py
+│   │       ├── file_ops.py
+│   │       ├── respond.py
+│   │       ├── skills.py
+│   │       └── email.py
+│   │
+│   ├── foundations/                  <span class="comment">← Shared subsystems (F1–F6)</span>
+│   │   ├── knowledge/               <span class="comment">← F1: Knowledge Store</span>
+│   │   │   ├── store.py             <span class="comment">← Unified storage interface</span>
+│   │   │   ├── vector.py            <span class="comment">← sqlite-vec operations</span>
+│   │   │   ├── fts.py               <span class="comment">← FTS5 operations</span>
+│   │   │   └── search.py            <span class="comment">← Hybrid search (vector + FTS)</span>
+│   │   ├── entities/                <span class="comment">← F2: Entity Graph</span>
+│   │   │   ├── graph.py
+│   │   │   └── extractor.py         <span class="comment">← Auto-extract from content</span>
+│   │   ├── behavior/                <span class="comment">← F3: Behavior Model</span>
+│   │   │   └── model.py
+│   │   ├── capabilities/            <span class="comment">← F4: Capability Gate</span>
+│   │   │   ├── gate.py
+│   │   │   └── policies.py
+│   │   ├── skills/                  <span class="comment">← F5: Skills Engine</span>
+│   │   │   ├── engine.py
+│   │   │   ├── loader.py
+│   │   │   └── registry.py
+│   │   └── embeddings/              <span class="comment">← F6: Embeddings Engine</span>
+│   │       ├── base.py              <span class="comment">← Provider ABC</span>
+│   │       ├── local.py             <span class="comment">← sentence-transformers</span>
+│   │       └── openai.py            <span class="comment">← OpenAI API</span>
+│   │
+│   ├── features/                    <span class="comment">← Feature modules</span>
+│   │   ├── memory/                  <span class="comment">← Persistent memory</span>
+│   │   │   ├── commands.py          <span class="comment">← IndexContent, SaveMemory</span>
+│   │   │   ├── queries.py           <span class="comment">← SearchMemory, GetContext</span>
+│   │   │   └── handlers.py
+│   │   ├── email/                   <span class="comment">← Inbox triage</span>
+│   │   │   ├── sync/
+│   │   │   │   ├── imap.py
+│   │   │   │   ├── gmail.py
+│   │   │   │   └── factory.py
+│   │   │   ├── classification/
+│   │   │   │   ├── rules.py
+│   │   │   │   ├── similarity.py
+│   │   │   │   └── prototypes.py
+│   │   │   ├── intelligence/
+│   │   │   │   ├── analyzer.py
+│   │   │   │   └── prompts.py
+│   │   │   ├── commands.py
+│   │   │   ├── queries.py
+│   │   │   └── handlers.py
+│   │   ├── tasks/                   <span class="comment">← Task engine</span>
+│   │   │   ├── commands.py
+│   │   │   ├── queries.py
+│   │   │   └── handlers.py
+│   │   └── proactive/               <span class="comment">← Proactive intelligence</span>
+│   │       ├── evaluator.py
+│   │       └── handlers.py
+│   │
+│   ├── sandbox/                     <span class="comment">← Sandbox management</span>
+│   │   ├── profiles.py              <span class="comment">← Profile definitions + resolution</span>
+│   │   ├── builder.py               <span class="comment">← Docker image builder</span>
+│   │   ├── runner.py                <span class="comment">← Container lifecycle</span>
+│   │   └── resolver.py              <span class="comment">← Context → sandbox resolution</span>
+│   │
+│   ├── api/                         <span class="comment">← FastAPI routes</span>
+│   │   ├── v1/
+│   │   │   ├── agent.py             <span class="comment">← Agent turn endpoints</span>
+│   │   │   ├── memory.py
+│   │   │   ├── emails.py
+│   │   │   ├── tasks.py
+│   │   │   ├── settings.py
+│   │   │   ├── sandboxes.py
+│   │   │   ├── skills.py
+│   │   │   └── health.py
+│   │   └── deps.py                  <span class="comment">← FastAPI dependencies</span>
+│   │
+│   ├── db/                          <span class="comment">← Database layer</span>
+│   │   ├── session.py               <span class="comment">← SQLAlchemy async session</span>
+│   │   ├── models/                  <span class="comment">← SQLAlchemy models</span>
+│   │   │   ├── content.py
+│   │   │   ├── entity.py
+│   │   │   ├── email.py
+│   │   │   ├── task.py
+│   │   │   ├── skill.py
+│   │   │   ├── audit.py
+│   │   │   └── settings.py
+│   │   └── repositories/            <span class="comment">← Repository pattern</span>
+│   │       ├── content.py
+│   │       ├── entity.py
+│   │       ├── email.py
+│   │       ├── task.py
+│   │       └── settings.py
+│   │
+│   └── workers/                     <span class="comment">← Background async workers</span>
+│       ├── scheduler.py             <span class="comment">← Job scheduler (in-process)</span>
+│       ├── embedding.py             <span class="comment">← Batch embedding worker</span>
+│       ├── email_sync.py            <span class="comment">← Email sync worker</span>
+│       └── classification.py        <span class="comment">← Auto-classification worker</span>
+│
+└── tests/                           <span class="comment">← Backend unit tests</span>
+    ├── test_mediator/
+    ├── test_agent/
+    ├── test_foundations/
+    ├── test_features/
+    └── conftest.py
+</pre></div>
+
+<h2>Gateway (TypeScript)</h2>
+<div class="tree"><pre>
+gateway/
+├── src/
+│   ├── index.ts                     <span class="comment">← Entry point</span>
+│   ├── server.ts                    <span class="comment">← WebSocket server</span>
+│   ├── config.ts                    <span class="comment">← Configuration loader</span>
+│   │
+│   ├── sessions/                    <span class="comment">← Session management</span>
+│   │   ├── manager.ts
+│   │   ├── router.ts               <span class="comment">← Message → session routing</span>
+│   │   └── types.ts
+│   │
+│   ├── channels/                    <span class="comment">← Channel adapters</span>
+│   │   ├── base.ts                  <span class="comment">← Channel adapter ABC</span>
+│   │   ├── webchat.ts
+│   │   ├── telegram.ts
+│   │   ├── discord.ts
+│   │   ├── whatsapp.ts
+│   │   ├── slack.ts
+│   │   ├── signal.ts
+│   │   └── index.ts
+│   │
+│   ├── cron/                        <span class="comment">← Cron scheduler</span>
+│   │   └── scheduler.ts
+│   │
+│   ├── media/                       <span class="comment">← Media pipeline</span>
+│   │   └── pipeline.ts
+│   │
+│   ├── llm/                         <span class="comment">← LLM Proxy (gateway owns ALL LLM calls)</span>
+│   │   ├── proxy.ts                 <span class="comment">← Internal API: POST /internal/llm/chat</span>
+│   │   ├── auth-profiles.ts         <span class="comment">← AuthProfileStore: rotation, cooldowns, failover</span>
+│   │   ├── oauth.ts                 <span class="comment">← OAuth subscription refresh (pi-ai)</span>
+│   │   ├── providers.ts             <span class="comment">← Provider adapters (pi-agent-core)</span>
+│   │   └── streaming.ts             <span class="comment">← Stream relay to backend via WS</span>
+│   │
+│   ├── backend/                     <span class="comment">← Backend client (HTTP + WS)</span>
+│   │   └── client.ts               <span class="comment">← Calls Python FastAPI endpoints</span>
+│   │
+│   └── protocol/                    <span class="comment">← WS protocol types</span>
+│       └── types.ts
+│
+├── package.json
+├── tsconfig.json
+└── pnpm-lock.yaml
+</pre></div>
+
+<h2>Frontend (Next.js)</h2>
+<div class="tree"><pre>
+frontend/
+├── src/
+│   ├── app/
+│   │   ├── page.tsx                 <span class="comment">← Dashboard / home</span>
+│   │   ├── chat/page.tsx            <span class="comment">← WebChat interface</span>
+│   │   ├── emails/
+│   │   │   ├── page.tsx             <span class="comment">← Email inbox view</span>
+│   │   │   └── [id]/page.tsx
+│   │   ├── tasks/page.tsx           <span class="comment">← Task board</span>
+│   │   ├── briefing/page.tsx        <span class="comment">← Daily briefing</span>
+│   │   ├── settings/
+│   │   │   ├── page.tsx             <span class="comment">← General settings</span>
+│   │   │   ├── sandboxes/page.tsx   <span class="comment">← Sandbox profiles</span>
+│   │   │   ├── channels/page.tsx    <span class="comment">← Channel config</span>
+│   │   │   ├── agents/page.tsx      <span class="comment">← Agent profiles</span>
+│   │   │   └── skills/page.tsx      <span class="comment">← Skills manager</span>
+│   │   └── layout.tsx
+│   ├── components/
+│   │   ├── chat/
+│   │   ├── email/
+│   │   ├── tasks/
+│   │   ├── settings/
+│   │   └── shared/
+│   └── lib/
+│       ├── api.ts                   <span class="comment">← API client</span>
+│       └── ws.ts                    <span class="comment">← WebSocket client</span>
+│
+├── package.json
+├── next.config.ts
+├── tailwind.config.ts
+└── pnpm-lock.yaml
+</pre></div>
+
+<h2>Other Directories</h2>
+<div class="tree"><pre>
+migrations/
+├── 000001_init.up.sql               <span class="comment">← Core tables: content, entities, settings</span>
+├── 000001_init.down.sql
+├── 000002_email.up.sql              <span class="comment">← Email tables</span>
+├── 000002_email.down.sql
+├── 000003_tasks.up.sql
+├── 000003_tasks.down.sql
+├── 000004_audit.up.sql
+└── ...
+
+sandboxes/
+├── coding.Dockerfile                <span class="comment">← Prebuilt: node + python + git</span>
+├── research.Dockerfile              <span class="comment">← Prebuilt: chromium</span>
+├── data.Dockerfile                  <span class="comment">← Prebuilt: python + pandas + matplotlib</span>
+└── base.Dockerfile                  <span class="comment">← Minimal base for auto-built profiles</span>
+
+skills/
+├── web-search/SKILL.md
+├── browser/SKILL.md
+└── ...
+
+prompts/
+├── agent.system.main.md             <span class="comment">← Default agent system prompt</span>
+├── agent.system.coder.md            <span class="comment">← Coder profile prompt</span>
+├── agent.system.researcher.md       <span class="comment">← Researcher profile prompt</span>
+└── ...
+</pre></div>
+
+<h2>Module Boundary Rules</h2>
+
+<div class="rule">
+  <h3>Rule 1: Features never import features</h3>
+  <p>The email module never imports from the tasks module. Communication is through mediator notifications only. This keeps features decoupled and independently testable.</p>
+</div>
+
+<div class="rule">
+  <h3>Rule 2: Features depend on foundations, not the reverse</h3>
+  <p>Features import from <code>foundations/</code> (knowledge store, entity graph, etc.). Foundations never import from features. Foundations may import from other foundations.</p>
+</div>
+
+<div class="rule">
+  <h3>Rule 3: The gateway handles transport + LLM, not business logic</h3>
+  <p>The gateway handles transport (WebSocket, channels, sessions) and <strong>all LLM communication</strong> (auth, streaming, provider APIs via pi-agent-core/pi-ai). This preserves OAuth subscription support — the #1 priority feature. All other business logic (tools, mediator, knowledge, orchestration) lives in the Python backend. The gateway is a routing + LLM proxy layer.</p>
+</div>
+
+<div class="rule">
+  <h3>Rule 4: API routes are thin</h3>
+  <p>API routes in <code>api/v1/</code> construct a mediator command/query and dispatch it. They don't contain logic — that's in handlers.</p>
+</div>
+
+<div class="rule">
+  <h3>Rule 5: One handler per command/query</h3>
+  <p>The mediator enforces this: each command type has exactly one handler. Multiple notification handlers are fine (fan-out).</p>
+</div>
+
+<h2>Data Directory (Runtime)</h2>
+<p>This is what <code>~/.bond/</code> looks like at runtime — created by Bond, not in the repo:</p>
+<div class="tree"><pre>
+~/.bond/
+├── bond.json                        <span class="comment">← User configuration</span>
+├── data/
+│   ├── knowledge.db                 <span class="comment">← SQLite database</span>
+│   ├── blobs/                       <span class="comment">← Content-addressed files</span>
+│   └── credentials.enc              <span class="comment">← Encrypted credentials</span>
+├── workspace/                       <span class="comment">← Agent working directory</span>
+│   ├── AGENTS.md
+│   ├── SOUL.md
+│   ├── TOOLS.md
+│   ├── memory/
+│   └── skills/                      <span class="comment">← Installed user skills</span>
+├── logs/
+└── cache/
+    └── sandbox-images/              <span class="comment">← Built sandbox image cache metadata</span>
+</pre></div>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 10 Project Structure</p>
+</div>
+</body>
+</html>

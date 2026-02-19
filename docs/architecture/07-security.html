@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>07 — Security Model | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .layer { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .layer h3 { margin-top: 0; color: var(--accent2); }
+  .source-tag { display: inline-block; background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: var(--muted); margin: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>07</span> — Security Model</h1>
+<p class="subtitle">Capability-based access, progressive trust, sandboxing, and credential management.</p>
+<div><span class="source-tag">OpenClaw: exec guards, DM pairing, sandbox</span><span class="source-tag">AgentClaw: capability gate, audit trail</span><span class="source-tag">EmailPipeline: credential encryption, JWT auth</span></div>
+
+<h2>Philosophy</h2>
+<p>Security is a deliberate tradeoff: <strong>strong defaults without killing capability</strong>. Bond is powerful for real work while making risky paths explicit and operator-controlled. This comes directly from OpenClaw's approach — proven across thousands of deployments.</p>
+
+<h2>Defense Layers</h2>
+
+<div class="layer">
+  <h3>Layer 1: Capability Gate</h3>
+  <p>Every mediator request passes through the Capability Gate behavior. Granular permissions checked against the current context.</p>
+  <table>
+    <thead><tr><th>Capability</th><th>Description</th><th>Default (main)</th><th>Default (group)</th></tr></thead>
+    <tbody>
+      <tr><td><code>exec.shell</code></td><td>Run shell commands</td><td>✓</td><td>✗</td></tr>
+      <tr><td><code>exec.shell.sudo</code></td><td>Elevated shell commands</td><td>opt-in</td><td>✗</td></tr>
+      <tr><td><code>file.read</code></td><td>Read files</td><td>✓</td><td>workspace only</td></tr>
+      <tr><td><code>file.write</code></td><td>Write files</td><td>workspace</td><td>✗</td></tr>
+      <tr><td><code>email.read</code></td><td>Read email</td><td>✓</td><td>✗</td></tr>
+      <tr><td><code>email.send</code></td><td>Send email</td><td>ask first</td><td>✗</td></tr>
+      <tr><td><code>message.send</code></td><td>Send messages externally</td><td>ask first</td><td>✗</td></tr>
+      <tr><td><code>browser</code></td><td>Browser automation</td><td>✓</td><td>✗</td></tr>
+      <tr><td><code>memory.write</code></td><td>Persist to knowledge store</td><td>✓</td><td>✓</td></tr>
+      <tr><td><code>agent.spawn</code></td><td>Create sub-agents</td><td>✓</td><td>limited</td></tr>
+    </tbody>
+  </table>
+  <p>All decisions logged to the immutable audit trail.</p>
+</div>
+
+<div class="layer">
+  <h3>Layer 2: Progressive Trust</h3>
+  <p>From AgentClaw's design: capabilities expand as the user grants more access. Nothing assumes full permissions.</p>
+  <ul>
+    <li><strong>New user / unknown DM</strong> — pairing code required (from OpenClaw). Bot doesn't process until approved.</li>
+    <li><strong>Allowlisted user</strong> — basic conversation, memory, search. No exec, no email.</li>
+    <li><strong>Main session (owner)</strong> — full access: exec, browser, email, all tools.</li>
+    <li><strong>Elevated mode</strong> — opt-in per session for sudo-level operations.</li>
+  </ul>
+</div>
+
+<div class="layer">
+  <h3>Layer 3: Execution Sandbox</h3>
+  <p>Bond uses <strong>named sandbox profiles</strong> — tailored Docker environments assigned per-agent, per-skill, and per-channel. See <a href="08-sandbox.html" style="color:var(--accent);">08 — Sandbox System</a> for full details.</p>
+  <ul>
+    <li><strong>Main session</strong> — no sandbox (host access) by default</li>
+    <li><strong>Agent profiles</strong> — each agent type gets a sandbox with exactly the tools it needs (coder → coding sandbox, researcher → research sandbox)</li>
+    <li><strong>Skills</strong> — declare sandbox requirements in SKILL.md; Bond auto-provisions the environment. Installed skills always run in their declared sandbox.</li>
+    <li><strong>Channels</strong> — map to sandboxes by trust level. Discord groups → locked-down. Your webchat → open.</li>
+    <li><strong>Priority</strong> — skill sandbox > agent sandbox > channel sandbox > session default</li>
+  </ul>
+  <p>Users configure by listing packages — no Dockerfiles needed. Prebuilt profiles (coding, research, data, minimal) work out of the box.</p>
+</div>
+
+<div class="layer">
+  <h3>Layer 4: Credential Security</h3>
+  <p>Bond uses a dedicated encrypted vault for all secrets — they never appear in config files. See <a href="11-configuration.html" style="color:var(--accent);">11 — Configuration</a> for the full secret management design.</p>
+  <ul>
+    <li><strong>Encrypted vault</strong> — <code>~/.bond/data/credentials.enc</code>, Fernet-encrypted. API keys, bot tokens, OAuth tokens all live here.</li>
+    <li><strong>OS keychain for vault key</strong> — the master encryption key lives in macOS Keychain / Linux Secret Service / Windows Credential Manager. Auto-generated, no manual key management.</li>
+    <li><strong>Validated on entry</strong> — every credential is tested before storing. Bad keys are caught immediately, not at 3 AM when a cron job fails.</li>
+    <li><strong>Config references names, not secrets</strong> — <code>bond.json</code> says <code>"provider": "anthropic"</code>, not the actual key. Safe to commit to git.</li>
+    <li><strong>Masked everywhere</strong> — Settings UI, logs, API responses never expose raw secrets.</li>
+    <li><strong>Env var override</strong> — for Docker/CI. Env vars take priority over vault when present.</li>
+  </ul>
+</div>
+
+<div class="layer">
+  <h3>Layer 5: Network Security</h3>
+  <p>From OpenClaw:</p>
+  <ul>
+    <li><strong>Loopback binding</strong> — gateway binds to 127.0.0.1 by default</li>
+    <li><strong>Tailscale integration</strong> — Serve (tailnet-only) or Funnel (public) with automatic HTTPS</li>
+    <li><strong>Password auth required</strong> — any public exposure requires password authentication</li>
+    <li><strong>DM pairing</strong> — unknown senders get a pairing code, bot doesn't engage until approved</li>
+  </ul>
+</div>
+
+<h2>Audit Trail</h2>
+<p>Every capability decision, every command execution, every external action is recorded in an append-only audit log. This is critical for:</p>
+<ul>
+  <li>Debugging what happened and when</li>
+  <li>Understanding what the agent did with your access</li>
+  <li>Post-incident review</li>
+  <li>Building trust over time (the agent earns trust through transparent history)</li>
+</ul>
+
+<div class="diagram"><pre>
+  audit_log
+  ├── timestamp: 2026-02-19T08:30:00Z
+  ├── command: ExecuteCode
+  ├── actor: agent-main
+  ├── capability: exec.shell
+  ├── context: { channel: "webchat", session: "main" }
+  ├── args: { code: "ls -la ~/projects" }
+  └── result: success
+</pre></div>
+
+<h2>Threat Model</h2>
+<table>
+  <thead><tr><th>Threat</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>Prompt injection via inbound DM</td><td>DM pairing gate + capability restrictions for non-owner sessions</td></tr>
+    <tr><td>Agent writes malicious code</td><td>Docker sandbox for non-main sessions + audit trail</td></tr>
+    <tr><td>Credential exfiltration</td><td>Encrypted at rest, never in agent context, masked in UI</td></tr>
+    <tr><td>Agent sends unauthorized messages</td><td><code>message.send</code> capability requires owner approval</td></tr>
+    <tr><td>Data leak to group chat</td><td>Private data (MEMORY.md, emails) only loaded in main session</td></tr>
+    <tr><td>Unauthorized remote access</td><td>Loopback binding + Tailscale + password auth</td></tr>
+    <tr><td>Sub-agent privilege escalation</td><td>Sub-agents inherit ≤ parent capabilities, never more</td></tr>
+  </tbody>
+</table>
+
+<h2>Safe Defaults</h2>
+<p>Bond ships with restrictive defaults that users explicitly relax:</p>
+<ul>
+  <li>DM policy: <code>pairing</code> (unknown users get pairing code)</li>
+  <li>Group activation: <code>mention</code> (bot only responds when mentioned)</li>
+  <li>External actions (email, message): require confirmation</li>
+  <li>Network: loopback only</li>
+  <li>Non-main sessions: sandboxed</li>
+</ul>
+<p>The goal: you should never be surprised by what Bond does. Powerful when you want it, restrained by default.</p>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 07 Security Model</p>
+</div>
+</body>
+</html>

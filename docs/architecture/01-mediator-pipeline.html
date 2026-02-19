@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>01 — Mediator Pipeline | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul, ol { margin: 0 0 16px 24px; }
+  li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .source-tag { display: inline-block; background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: var(--muted); margin: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>01</span> — Mediator Pipeline</h1>
+<p class="subtitle">The central nervous system — every operation flows through here.</p>
+<div><span class="source-tag">from AgentClaw: MediatR design</span><span class="source-tag">from EmailPipeline: Python mediator + behaviors</span></div>
+
+<h2>Why a Mediator</h2>
+<p>Direct service-to-service calls create invisible coupling. Adding a feature means touching existing code paths. The mediator gives us a single dispatch pattern for <strong>commands</strong>, <strong>queries</strong>, and <strong>notifications</strong> with a pipeline that handles cross-cutting concerns uniformly.</p>
+<p>Bond combines the TypeScript MediatR approach from AgentClaw with the proven Python pipeline behaviors from EmailPipeline. The result: typed, ordered, testable middleware for every operation — regardless of language choice.</p>
+
+<h2>Core Primitives</h2>
+
+<h3>Commands (write operations)</h3>
+<p>A command represents intent to change state. One handler per command. Returns a result or void.</p>
+<ul>
+  <li><code>IndexContent</code> — store and embed a piece of content</li>
+  <li><code>CreateTask</code> — create a task from conversation or email</li>
+  <li><code>ClassifyEmail</code> — run classification pipeline on an email</li>
+  <li><code>SpawnAgent</code> — create a sub-agent for a subtask</li>
+  <li><code>ExecuteCode</code> — run code in sandbox</li>
+</ul>
+
+<h3>Queries (read operations)</h3>
+<p>A query retrieves data without side effects. One handler per query.</p>
+<ul>
+  <li><code>SearchMemory</code> — vector + FTS hybrid search</li>
+  <li><code>GetInboxSummary</code> — aggregate email state</li>
+  <li><code>GetActiveContext</code> — retrieve relevant context for agent turn</li>
+  <li><code>ListSkills</code> — enumerate available SKILL.md files</li>
+</ul>
+
+<h3>Notifications (events, fan-out)</h3>
+<p>A notification is a domain event. Zero or many handlers subscribe. This is the primary decoupling mechanism between features.</p>
+<ul>
+  <li><code>MessageReceived</code> → memory indexes it, proactive layer evaluates it</li>
+  <li><code>ContentIndexed</code> → entity extraction runs, dashboard updates</li>
+  <li><code>TaskCompleted</code> → predictive engine updates, notifications fire</li>
+  <li><code>EmailSynced</code> → classification runs, task extraction runs</li>
+</ul>
+
+<h2>Pipeline Behaviors</h2>
+<p>Behaviors wrap every request, forming an onion around every command/query. They execute in order.</p>
+
+<div class="diagram"><pre>
+  Inbound Request
+      │
+      ▼
+  ┌─────────────────────────────────────────┐
+  │  1. Exception Handling                  │  catch all, return clean errors
+  │  2. Logging + Correlation ID            │  structured trace, timing
+  │  3. Authentication                      │  verify identity, inject user
+  │  4. Validation                          │  schema + business rules
+  │  5. Capability Gate                     │  check permissions for context
+  │  6. Audit                               │  immutable audit log write
+  │  7. Transaction                         │  wrap in DB transaction
+  │  8. Retry / Circuit Breaker             │  transient failure handling
+  │  9. Metrics                             │  timing, tokens, cost
+  │                                         │
+  │  ┌───────────────────────────────────┐  │
+  │  │          Handler                  │  │
+  │  │     (your business logic)         │──┼──▶ Notifications (fan-out)
+  │  └───────────────────────────────────┘  │
+  └─────────────────────────────────────────┘
+</pre></div>
+
+<h2>Behavior Details</h2>
+<table>
+  <thead><tr><th>#</th><th>Behavior</th><th>Purpose</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td><code>ExceptionBehavior</code></td><td>Catches unhandled errors, returns clean responses</td><td>EmailPipeline</td></tr>
+    <tr><td>2</td><td><code>LoggingBehavior</code></td><td>Correlation ID, request params, timing, error logging</td><td>EmailPipeline</td></tr>
+    <tr><td>3</td><td><code>AuthBehavior</code></td><td>JWT / session token → user identity injection</td><td>EmailPipeline</td></tr>
+    <tr><td>4</td><td><code>ValidationBehavior</code></td><td>Schema validation after auth mutation</td><td>EmailPipeline + AgentClaw</td></tr>
+    <tr><td>5</td><td><code>CapabilityGateBehavior</code></td><td>Granular permission checks: channel, persona, action</td><td>AgentClaw</td></tr>
+    <tr><td>6</td><td><code>AuditBehavior</code></td><td>Append-only audit log for all capability decisions</td><td>AgentClaw</td></tr>
+    <tr><td>7</td><td><code>TransactionBehavior</code></td><td>DB transaction wrap: commit on success, rollback on error</td><td>EmailPipeline</td></tr>
+    <tr><td>8</td><td><code>RetryBehavior</code></td><td>Retry with backoff for external API calls</td><td>AgentClaw</td></tr>
+    <tr><td>9</td><td><code>MetricsBehavior</code></td><td>Token usage, cost tracking, timing</td><td>AgentClaw + OpenClaw</td></tr>
+  </tbody>
+</table>
+
+<h2>Plugin Extensibility</h2>
+<p>Skills and plugins can register custom behaviors at specific pipeline positions. A security plugin might add an extra classification behavior. A compliance plugin might add data-classification before the transaction layer.</p>
+<p>This replaces hook chains (OpenClaw's current pattern) with something typed, ordered, and testable.</p>
+
+<h2>How Current Tools Map</h2>
+<table>
+  <thead><tr><th>Current Pattern</th><th>Bond Mediator Equivalent</th></tr></thead>
+  <tbody>
+    <tr><td>Direct tool handler calls (OpenClaw)</td><td>Commands dispatched through pipeline</td></tr>
+    <tr><td>Hook chains (<code>before_tool_call</code>)</td><td>Pipeline behaviors (ordered, composable)</td></tr>
+    <tr><td>Event emitters (channel events)</td><td>Notifications with registered handlers</td></tr>
+    <tr><td>Agent Zero tool JSON dispatch</td><td>Commands with typed args and validation</td></tr>
+    <tr><td>EmailPipeline sync jobs</td><td>Commands dispatched with scheduling metadata</td></tr>
+  </tbody>
+</table>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 01 Mediator Pipeline</p>
+</div>
+</body>
+</html>

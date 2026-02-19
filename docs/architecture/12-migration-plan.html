@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>12 — Migration Plan | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; --warn: #ffa06c; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul, ol { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .action { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  .copy { background: #1a3a1a; color: var(--accent3); }
+  .adapt { background: #1a2a3a; color: var(--accent); }
+  .rewrite { background: #3a2a1a; color: var(--warn); }
+  .new { background: #2a1a3a; color: #c08aff; }
+  .skip { background: #2a1a1a; color: #888; }
+  .sprint { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; }
+  .sprint h3 { margin-top: 0; }
+  .sprint-label { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .s1 { background: #1a3a1a; color: var(--accent3); }
+  .s2 { background: #1a2a3a; color: var(--accent); }
+  .s3 { background: #3a2a1a; color: var(--warn); }
+  .s4 { background: #2a1a3a; color: #c08aff; }
+  .task { display: flex; gap: 12px; margin: 8px 0; padding: 12px; background: var(--surface); border-radius: 8px; align-items: flex-start; }
+  .task-check { color: var(--muted); font-size: 1.1rem; flex-shrink: 0; }
+  .task-content { flex: 1; }
+  .task-content strong { display: block; margin-bottom: 2px; }
+  .task-content span { color: var(--muted); font-size: 0.85rem; }
+  .callout { background: #1a1a2e; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 20px 0; }
+  .callout-title { font-weight: 600; margin-bottom: 6px; color: var(--accent); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>12</span> — Migration Plan</h1>
+<p class="subtitle">What we copy, what we adapt, what we rewrite, and what we build new — sprint by sprint.</p>
+
+<h2>Strategy</h2>
+<p>Bond is a <strong>new project</strong> that borrows heavily from four sources. We're not forking any single repo. We're cherry-picking the best modules, adapting them to fit Bond's architecture, and writing new glue code to connect them.</p>
+
+<div class="diagram"><pre>
+  Action Legend:
+
+  COPY    — take the code as-is (minor renames/imports)
+  ADAPT   — take the code, restructure to fit Bond's module layout + patterns
+  REWRITE — same functionality, written from scratch to match Bond's architecture
+  NEW     — doesn't exist in any source project
+  SKIP    — exists in a source but we don't need it (yet)
+</pre></div>
+
+<h2>Source → Bond Module Map</h2>
+
+<h3>From EmailPipeline (Python backend)</h3>
+<table>
+  <thead><tr><th>Source</th><th>Bond Target</th><th>Action</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>app/mediator/</code></td><td><code>backend/app/mediator/</code></td><td><span class="action copy">copy</span></td><td>The entire mediator pattern: base, pipeline, registry, all behaviors. This is production-tested. Copy it wholesale.</td></tr>
+    <tr><td><code>app/mediator/behaviors/</code></td><td><code>backend/app/mediator/behaviors/</code></td><td><span class="action adapt">adapt</span></td><td>Copy exception, logging, auth, validation, transaction. Add new: capability_gate, audit, metrics.</td></tr>
+    <tr><td><code>app/core/embeddings/</code></td><td><code>backend/app/foundations/embeddings/</code></td><td><span class="action copy">copy</span></td><td>Provider abstraction + local sentence-transformers + OpenAI. Works as-is.</td></tr>
+    <tr><td><code>app/core/email_sync/</code></td><td><code>backend/app/features/email/sync/</code></td><td><span class="action copy">copy</span></td><td>IMAP, Gmail, factory. Proven code.</td></tr>
+    <tr><td><code>app/core/classification/</code></td><td><code>backend/app/features/email/classification/</code></td><td><span class="action copy">copy</span></td><td>Rules engine, cosine similarity, prototypes.</td></tr>
+    <tr><td><code>app/core/intelligence/</code></td><td><code>backend/app/features/email/intelligence/</code></td><td><span class="action copy">copy</span></td><td>LLM email analyzer, prompts.</td></tr>
+    <tr><td><code>app/core/pipeline/</code></td><td><code>backend/app/workers/</code></td><td><span class="action adapt">adapt</span></td><td>EventBus + SyncQueue + SyncWorker → adapt to Bond's worker pattern.</td></tr>
+    <tr><td><code>app/db/vector/</code></td><td><code>backend/app/foundations/knowledge/vector.py</code></td><td><span class="action adapt">adapt</span></td><td>sqlite-vec abstraction. Adapt to Bond's knowledge store interface.</td></tr>
+    <tr><td><code>app/db/repositories/</code></td><td><code>backend/app/db/repositories/</code></td><td><span class="action adapt">adapt</span></td><td>Repository pattern. Keep the pattern, adapt to Bond's schema.</td></tr>
+    <tr><td><code>app/models/</code></td><td><code>backend/app/db/models/</code></td><td><span class="action adapt">adapt</span></td><td>SQLAlchemy models. Keep email models, add new ones for entities, tasks, audit.</td></tr>
+    <tr><td><code>app/schemas/</code></td><td><code>backend/app/api/ (inline)</code></td><td><span class="action adapt">adapt</span></td><td>Pydantic schemas. Merge into mediator command/query definitions.</td></tr>
+    <tr><td><code>app/core/auth/</code></td><td><code>backend/app/mediator/behaviors/auth.py</code></td><td><span class="action copy">copy</span></td><td>JWT auth. Already a mediator behavior.</td></tr>
+    <tr><td><code>app/core/oauth/</code></td><td><code>backend/app/features/email/oauth/</code></td><td><span class="action copy">copy</span></td><td>Google OAuth flow for Gmail + Calendar.</td></tr>
+    <tr><td><code>migrations/</code></td><td><code>migrations/</code></td><td><span class="action adapt">adapt</span></td><td>Take email-related migrations. Write new ones for entities, tasks, audit, settings.</td></tr>
+    <tr><td><code>app/core/calendar/</code></td><td><code>backend/app/features/email/calendar/</code></td><td><span class="action skip">skip</span></td><td>Phase 4. Copy when ready.</td></tr>
+  </tbody>
+</table>
+
+<h3>From Agent Zero (Python agent runtime)</h3>
+<table>
+  <thead><tr><th>Source</th><th>Bond Target</th><th>Action</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>python/helpers/call_llm.py</code></td><td><code>backend/app/agent/llm.py</code></td><td><span class="action adapt">adapt</span></td><td>LiteLLM-based multi-provider LLM calling. Adapt to Bond's config + secret vault.</td></tr>
+    <tr><td><code>python/helpers/history.py</code></td><td><code>backend/app/agent/context.py</code></td><td><span class="action adapt">adapt</span></td><td>Conversation history management. Merge with Bond's RAG context retrieval.</td></tr>
+    <tr><td><code>python/helpers/memory.py</code><br><code>python/helpers/memory_consolidation.py</code></td><td><code>backend/app/features/memory/</code></td><td><span class="action adapt">adapt</span></td><td>Memory save/load/search/consolidation. Adapt to use Bond's knowledge store (SQLite) instead of FAISS.</td></tr>
+    <tr><td><code>python/helpers/vector_db.py</code></td><td><code>backend/app/foundations/knowledge/</code></td><td><span class="action rewrite">rewrite</span></td><td>Agent Zero uses FAISS. Bond uses sqlite-vec. Same concept, different implementation.</td></tr>
+    <tr><td><code>python/helpers/docker.py</code></td><td><code>backend/app/sandbox/runner.py</code></td><td><span class="action adapt">adapt</span></td><td>Docker container management. Adapt to Bond's named profile system.</td></tr>
+    <tr><td><code>python/helpers/shell_local.py</code></td><td><code>backend/app/agent/tools/code_execute.py</code></td><td><span class="action adapt">adapt</span></td><td>Local shell execution. Adapt to route through sandbox resolver.</td></tr>
+    <tr><td><code>python/helpers/subagents.py</code></td><td><code>backend/app/agent/multi.py</code></td><td><span class="action adapt">adapt</span></td><td>Sub-agent spawning and profiles. Adapt to Bond's session model.</td></tr>
+    <tr><td><code>python/helpers/skills.py</code><br><code>python/helpers/skills_cli.py</code></td><td><code>backend/app/foundations/skills/</code></td><td><span class="action adapt">adapt</span></td><td>SKILL.md loader + discovery. Keep the standard, adapt to Bond's engine interface.</td></tr>
+    <tr><td><code>python/helpers/extract_tools.py</code><br><code>python/helpers/tool.py</code></td><td><code>backend/app/agent/tools/__init__.py</code></td><td><span class="action adapt">adapt</span></td><td>Tool parsing from LLM output (JSON extraction). Adapt to Bond's mediator dispatch.</td></tr>
+    <tr><td><code>python/helpers/providers.py</code></td><td><code>backend/app/agent/providers.py</code></td><td><span class="action adapt">adapt</span></td><td>Model provider YAML config. Adapt to Bond's config system.</td></tr>
+    <tr><td><code>python/helpers/settings.py</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Bond has its own settings system (DB-backed, UI-editable).</td></tr>
+    <tr><td><code>python/helpers/duckduckgo_search.py</code><br><code>python/helpers/perplexity_search.py</code></td><td><code>backend/app/agent/tools/web_search.py</code></td><td><span class="action adapt">adapt</span></td><td>Web search implementations. Wrap as Bond tool.</td></tr>
+    <tr><td><code>python/helpers/browser.py</code><br><code>python/helpers/browser_use.py</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Phase 4. Bond uses OpenClaw's CDP browser approach instead.</td></tr>
+    <tr><td><code>python/tools/*.py</code></td><td><code>backend/app/agent/tools/</code></td><td><span class="action adapt">adapt</span></td><td>Tool implementations (code_execute, memory_save/load, search, respond, call_subordinate, skills_tool). Adapt to Bond's mediator command dispatch.</td></tr>
+    <tr><td><code>python/helpers/task_scheduler.py</code></td><td><code>backend/app/workers/scheduler.py</code></td><td><span class="action adapt">adapt</span></td><td>Scheduled task system. Merge with Bond's cron model.</td></tr>
+    <tr><td><code>python/extensions/</code></td><td>—</td><td><span class="action rewrite">rewrite</span></td><td>Extension hooks become mediator pipeline behaviors + notification handlers. Different pattern.</td></tr>
+    <tr><td><code>python/api/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Agent Zero's Flask API. Bond uses FastAPI with mediator dispatch. Rewritten.</td></tr>
+    <tr><td><code>python/websocket_handlers/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Bond's gateway handles WebSocket. Backend connects as a client.</td></tr>
+    <tr><td><code>prompts/</code></td><td><code>prompts/</code></td><td><span class="action adapt">adapt</span></td><td>System prompts. Take the structure, rewrite content for Bond's tool names and personality.</td></tr>
+    <tr><td><code>conf/model_providers.yaml</code></td><td><code>backend/app/agent/providers.yaml</code></td><td><span class="action copy">copy</span></td><td>Provider definitions for LiteLLM. Works as-is.</td></tr>
+  </tbody>
+</table>
+
+<h3>From OpenClaw (TypeScript gateway)</h3>
+<table>
+  <thead><tr><th>Source</th><th>Bond Target</th><th>Action</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/gateway/</code></td><td><code>gateway/src/</code></td><td><span class="action adapt">adapt</span></td><td>WebSocket server, protocol, server-methods. Strip agent logic (moves to Python backend). Keep session + transport.</td></tr>
+    <tr><td><code>src/sessions/</code></td><td><code>gateway/src/sessions/</code></td><td><span class="action adapt">adapt</span></td><td>Session model (main, group, spawned, cron). Adapt to dispatch agent turns to Python backend via HTTP.</td></tr>
+    <tr><td><code>src/channels/</code></td><td><code>gateway/src/channels/</code></td><td><span class="action adapt">adapt</span></td><td>Channel plugin system + allowlists. Keep the adapter pattern.</td></tr>
+    <tr><td><code>src/telegram/</code></td><td><code>gateway/src/channels/telegram.ts</code></td><td><span class="action adapt">adapt</span></td><td>Telegram adapter (grammY). Consolidate into single file per channel.</td></tr>
+    <tr><td><code>src/discord/</code></td><td><code>gateway/src/channels/discord.ts</code></td><td><span class="action adapt">adapt</span></td><td>Discord adapter (discord.js).</td></tr>
+    <tr><td><code>src/whatsapp/</code></td><td><code>gateway/src/channels/whatsapp.ts</code></td><td><span class="action adapt">adapt</span></td><td>WhatsApp adapter (Baileys).</td></tr>
+    <tr><td><code>src/slack/</code></td><td><code>gateway/src/channels/slack.ts</code></td><td><span class="action adapt">adapt</span></td><td>Slack adapter (Bolt).</td></tr>
+    <tr><td><code>src/signal/</code></td><td><code>gateway/src/channels/signal.ts</code></td><td><span class="action adapt">adapt</span></td><td>Signal adapter (signal-cli).</td></tr>
+    <tr><td><code>src/web/</code></td><td><code>gateway/src/channels/webchat.ts</code></td><td><span class="action adapt">adapt</span></td><td>WebChat inbound handling.</td></tr>
+    <tr><td><code>src/cron/</code></td><td><code>gateway/src/cron/</code></td><td><span class="action adapt">adapt</span></td><td>Cron scheduler. Keep scheduling, adapt to dispatch to Python backend.</td></tr>
+    <tr><td><code>src/media/</code><br><code>src/media-understanding/</code></td><td><code>gateway/src/media/</code></td><td><span class="action adapt">adapt</span></td><td>Media pipeline: image/audio/video handling, transcription hooks.</td></tr>
+    <tr><td><code>src/routing/</code></td><td><code>gateway/src/sessions/router.ts</code></td><td><span class="action adapt">adapt</span></td><td>Message → session routing logic.</td></tr>
+    <tr><td><code>src/config/</code></td><td><code>gateway/src/config.ts</code></td><td><span class="action rewrite">rewrite</span></td><td>Bond has its own config system (bond.json + vault). Gateway reads a subset.</td></tr>
+    <tr><td><code>src/security/</code></td><td><code>gateway/src/sessions/</code></td><td><span class="action adapt">adapt</span></td><td>DM pairing, exec guards. Merge into session routing.</td></tr>
+    <tr><td><code>src/pairing/</code></td><td><code>gateway/src/sessions/pairing.ts</code></td><td><span class="action adapt">adapt</span></td><td>DM pairing flow.</td></tr>
+    <tr><td><code>src/browser/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Phase 4. Copy when ready.</td></tr>
+    <tr><td><code>src/tts/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Phase 5. Copy when ready.</td></tr>
+    <tr><td><code>src/agents/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Agent runtime moves to Python. This is the biggest architectural change vs OpenClaw.</td></tr>
+    <tr><td><code>src/providers/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>LLM providers move to Python (LiteLLM). Gateway doesn't call LLMs.</td></tr>
+    <tr><td><code>src/hooks/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Replaced by mediator pipeline behaviors.</td></tr>
+    <tr><td><code>src/plugins/</code><br><code>src/plugin-sdk/</code></td><td>—</td><td><span class="action skip">skip</span></td><td>Replaced by skills + mediator extensibility.</td></tr>
+    <tr><td><code>src/wizard/</code></td><td>—</td><td><span class="action rewrite">rewrite</span></td><td>Bond's setup wizard is new (three-tier config). Different UX.</td></tr>
+  </tbody>
+</table>
+
+<h3>From AgentClaw (Architecture only)</h3>
+<table>
+  <thead><tr><th>Source</th><th>Bond Target</th><th>Action</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>architecture/*.md</code></td><td>Design reference</td><td><span class="action new">reference</span></td><td>AgentClaw's architecture docs informed Bond's design. No code is copied — AgentClaw is a fork of OpenClaw with architecture docs but minimal new code.</td></tr>
+  </tbody>
+</table>
+
+<h3>New Code (doesn't exist in any source)</h3>
+<table>
+  <thead><tr><th>Module</th><th>Location</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td>Capability Gate</td><td><code>backend/app/foundations/capabilities/</code></td><td><span class="action new">new</span> Granular permission system. Pipeline behavior + policy engine.</td></tr>
+    <tr><td>Entity Graph</td><td><code>backend/app/foundations/entities/</code></td><td><span class="action new">new</span> Auto-extraction of people, projects, decisions from content.</td></tr>
+    <tr><td>Secret Vault</td><td><code>backend/app/core/vault.py</code></td><td><span class="action new">new</span> Encrypted credential storage with OS keychain integration.</td></tr>
+    <tr><td>Sandbox Profiles</td><td><code>backend/app/sandbox/</code></td><td><span class="action new">new</span> Named sandbox profiles, resolution logic, auto-build from packages.</td></tr>
+    <tr><td>Config System</td><td><code>backend/app/config.py</code></td><td><span class="action new">new</span> Three-tier config: bond.json + vault + env merge.</td></tr>
+    <tr><td>Setup Wizard</td><td><code>backend/app/api/v1/setup.py</code> + <code>frontend/</code></td><td><span class="action new">new</span> First-run guided setup (web + CLI).</td></tr>
+    <tr><td>Gateway↔Backend Bridge</td><td><code>gateway/src/backend/client.ts</code></td><td><span class="action new">new</span> HTTP+WS client connecting TS gateway to Python backend.</td></tr>
+    <tr><td>Audit Log</td><td><code>backend/app/mediator/behaviors/audit.py</code></td><td><span class="action new">new</span> Append-only audit trail for all capability decisions.</td></tr>
+    <tr><td>Task Engine</td><td><code>backend/app/features/tasks/</code></td><td><span class="action new">new</span> Task CRUD + auto-extraction. Informed by EmailPipeline's email_tasks but standalone.</td></tr>
+    <tr><td>Hybrid Search</td><td><code>backend/app/foundations/knowledge/search.py</code></td><td><span class="action new">new</span> Reciprocal rank fusion of vector + FTS results.</td></tr>
+    <tr><td>Frontend</td><td><code>frontend/</code></td><td><span class="action new">new</span> Next.js UI. Fresh build. EmailPipeline's frontend is reference only.</td></tr>
+  </tbody>
+</table>
+
+<h2>Build Sprints</h2>
+
+<div class="sprint">
+  <span class="sprint-label s1">Sprint 1 — Skeleton (week 1)</span>
+  <h3>Goal: repo exists, processes start, "hello world" agent turn via webchat</h3>
+
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Init repo + project structure</strong><span>Create all directories from doc 10. pyproject.toml, package.json files. Makefile with <code>make dev</code>.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Copy mediator from EmailPipeline</strong><span><code>app/mediator/</code> — base, pipeline, registry, behaviors (exception, logging, validation, transaction). First thing that exists. <span class="action copy">copy</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>FastAPI shell</strong><span><code>app/main.py</code> — health endpoint, CORS, mediator wiring. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Config system + secret vault</strong><span>bond.json loader, env merge, Fernet vault, OS keychain key. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Database init</strong><span>SQLAlchemy async session, first migration (settings table). <span class="action adapt">adapt</span> from EmailPipeline.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>LLM client</strong><span>LiteLLM wrapper, provider config, reads API key from vault. <span class="action adapt">adapt</span> from Agent Zero.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Minimal agent loop</strong><span>Receive message → call LLM → return response. No tools yet. <span class="action new">new</span> (informed by Agent Zero's loop).</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Gateway skeleton</strong><span>WebSocket server, webchat channel, session manager. Calls Python backend for agent turns. <span class="action adapt">adapt</span> from OpenClaw.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Gateway↔Backend bridge</strong><span>HTTP client in TS calling FastAPI. WS connection for pushing responses back. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>WebChat frontend</strong><span>Bare-bones Next.js app with a chat interface connected to the gateway WS. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Setup wizard (CLI)</strong><span><code>bond setup</code> — pick provider, enter API key (→ vault), done. <span class="action new">new</span></span></div></div>
+
+  <div class="callout">
+    <div class="callout-title">🎯 Sprint 1 milestone</div>
+    <p style="margin:0;color:var(--muted);font-size:0.9rem;">Run <code>bond setup</code>, enter an API key, open webchat, type a message, get a response from Claude/GPT. Nothing fancy — but the full pipeline works: webchat → gateway → backend → LLM → response → gateway → webchat.</p>
+  </div>
+</div>
+
+<div class="sprint">
+  <span class="sprint-label s1">Sprint 2 — Tools + Memory (week 2–3)</span>
+  <h3>Goal: agent can use tools, remember things, and search its knowledge</h3>
+
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Tool dispatch system</strong><span>JSON tool extraction from LLM output → mediator command dispatch. <span class="action adapt">adapt</span> from Agent Zero's extract_tools + tool.py.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Knowledge store foundation</strong><span>SQLite + sqlite-vec + FTS5 setup. Content chunks table. Vector + text indexing. <span class="action adapt">adapt</span> from EmailPipeline's vector/ + new.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Embeddings engine</strong><span>Local sentence-transformers provider. Batch processing worker. <span class="action copy">copy</span> from EmailPipeline.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Hybrid search</strong><span>Vector + FTS5 → reciprocal rank fusion. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Memory tools</strong><span>memory_save, search_memory — agent can persist and recall knowledge. <span class="action adapt">adapt</span> from Agent Zero.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>File tools</strong><span>file_read, file_write — workspace scoped. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Web search tool</strong><span>DuckDuckGo / Brave API. <span class="action adapt">adapt</span> from Agent Zero.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>RAG context retrieval</strong><span>Each agent turn auto-retrieves relevant memories + session history. <span class="action new">new</span> (design from AgentClaw).</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>System prompts</strong><span>Default agent system prompt. <span class="action adapt">adapt</span> from Agent Zero's prompts/.</span></div></div>
+
+  <div class="callout">
+    <div class="callout-title">🎯 Sprint 2 milestone</div>
+    <p style="margin:0;color:var(--muted);font-size:0.9rem;">Agent can search the web, save facts to memory, recall them later, read/write files. It actually remembers things between sessions. The assistant is useful.</p>
+  </div>
+</div>
+
+<div class="sprint">
+  <span class="sprint-label s2">Sprint 3 — Multi-agent + Code + Sandbox (week 4–5)</span>
+  <h3>Goal: agent spawns sub-agents, runs code in sandboxes</h3>
+
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Sub-agent spawning</strong><span>call_subordinate tool. Agent profiles (coder, researcher). Hierarchical delegation. <span class="action adapt">adapt</span> from Agent Zero.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Sandbox profile system</strong><span>Named profiles in bond.json. Resolution: skill → agent → channel → default. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Sandbox image builder</strong><span>Auto-generate Dockerfiles from package lists. Build + cache images. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Sandbox runner</strong><span>Container lifecycle: create, execute, destroy. Persistent + ephemeral modes. <span class="action adapt">adapt</span> from Agent Zero's docker.py.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Code execution tool</strong><span>code_execute routes through sandbox resolver. Host mode for main session. <span class="action adapt">adapt</span> from Agent Zero.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Skills engine</strong><span>SKILL.md loader, discovery, skill sandbox declarations. <span class="action adapt">adapt</span> from Agent Zero + OpenClaw.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Prebuilt sandbox profiles</strong><span>Dockerfiles for coding, research, data, minimal. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Sandbox CLI</strong><span><code>bond sandbox list/inspect/rebuild/shell</code>. <span class="action new">new</span></span></div></div>
+
+  <div class="callout">
+    <div class="callout-title">🎯 Sprint 3 milestone</div>
+    <p style="margin:0;color:var(--muted);font-size:0.9rem;">"Write a Python script to analyze this CSV" → agent spawns a coder sub-agent → runs in the data sandbox with pandas → returns results. Multi-agent + sandboxed execution works.</p>
+  </div>
+</div>
+
+<div class="sprint">
+  <span class="sprint-label s2">Sprint 4 — Channels + Security (week 6–7)</span>
+  <h3>Goal: talk to Bond from Telegram/Discord, with proper access control</h3>
+
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Channel adapter framework</strong><span>Base adapter, message normalization, outbound routing. <span class="action adapt">adapt</span> from OpenClaw.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Telegram adapter</strong><span><span class="action adapt">adapt</span> from OpenClaw. First external channel.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Discord adapter</strong><span><span class="action adapt">adapt</span> from OpenClaw.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>DM pairing</strong><span>Pairing flow for unknown senders. <span class="action adapt">adapt</span> from OpenClaw.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Capability gate</strong><span>Pipeline behavior. Granular permissions per context. Audit trail. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Channel → sandbox assignment</strong><span>Per-channel and per-group sandbox config. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Channel setup flows in UI</strong><span>Guided setup for each channel in Settings. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Settings UI</strong><span>Full settings page: API keys, channels, agents, sandboxes. <span class="action new">new</span></span></div></div>
+
+  <div class="callout">
+    <div class="callout-title">🎯 Sprint 4 milestone</div>
+    <p style="margin:0;color:var(--muted);font-size:0.9rem;">Message Bond on Telegram → get a response. Discord bot responds in a server. DM from unknown user → pairing flow. Group messages sandboxed. Settings page works for managing everything.</p>
+  </div>
+</div>
+
+<div class="sprint">
+  <span class="sprint-label s3">Sprint 5 — Email + Tasks (week 8–10)</span>
+  <h3>Goal: Bond triages your email and tracks tasks</h3>
+
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Email sync</strong><span>IMAP + Gmail account sync, incremental via UID. <span class="action copy">copy</span> from EmailPipeline.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Email classification</strong><span>Auto-categorization via cosine similarity + rules. <span class="action copy">copy</span> from EmailPipeline.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Email intelligence</strong><span>LLM task extraction, calendar proposals. <span class="action copy">copy</span> from EmailPipeline.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Email UI</strong><span>Inbox view, search, category filtering. <span class="action new">new</span> (informed by EmailPipeline frontend).</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Task engine</strong><span>CRUD + auto-extraction from conversations and emails. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Task UI</strong><span>Task board, briefing view. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Remaining channel adapters</strong><span>WhatsApp, Slack, Signal. <span class="action adapt">adapt</span> from OpenClaw.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Cron scheduler</strong><span>Recurring + one-shot jobs. <span class="action adapt">adapt</span> from OpenClaw.</span></div></div>
+</div>
+
+<div class="sprint">
+  <span class="sprint-label s4">Sprint 6+ — Polish + Advanced (week 11+)</span>
+  <h3>Goal: production quality, remaining features</h3>
+
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Entity graph</strong><span>Auto-extraction, relationship tracking. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Browser automation</strong><span><span class="action adapt">adapt</span> from OpenClaw's CDP browser.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Proactive intelligence</strong><span>Cross-domain alerting. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Docker packaging</strong><span>Dockerfile, docker-compose, sandbox socket mount. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>OpenClaw import</strong><span><code>bond import openclaw</code> migration tool. <span class="action new">new</span></span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Comprehensive tests</strong><span>Unit + integration test suite.</span></div></div>
+  <div class="task"><div class="task-check">☐</div><div class="task-content"><strong>Documentation</strong><span>User docs, API reference, contribution guide.</span></div></div>
+</div>
+
+<h2>First Commit</h2>
+<p>The very first commit creates the empty project structure and copies the mediator. Nothing runs yet, but the shape is right.</p>
+
+<div class="diagram"><pre>
+  git init ~/bond
+  
+  # Create structure (from doc 10)
+  mkdir -p backend/app/{mediator/behaviors,agent/tools,foundations,features,sandbox,api/v1,db,workers}
+  mkdir -p gateway/src/{channels,sessions,cron,media,backend}
+  mkdir -p frontend/src/{app,components,lib}
+  mkdir -p {migrations,sandboxes,skills,prompts,docs,tests}
+  
+  # Copy mediator wholesale from EmailPipeline
+  cp -r ~/EmailPipeline/backend/app/mediator/* backend/app/mediator/
+  
+  # Copy embeddings engine
+  cp -r ~/EmailPipeline/backend/app/core/embeddings/* backend/app/foundations/embeddings/
+  
+  # Copy model providers config from Agent Zero
+  cp ~/agent-zero/conf/model_providers.yaml backend/app/agent/
+  
+  # Create pyproject.toml, package.json, Makefile, etc.
+  # Create bond.json example
+  # Create Dockerfile
+  
+  git add -A
+  git commit -m "init: project structure + mediator + embeddings from source projects"
+</pre></div>
+
+<h2>Risk Register</h2>
+<table>
+  <thead><tr><th>Risk</th><th>Impact</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>Gateway ↔ Backend latency</td><td>Slow agent turns if HTTP overhead is high</td><td>Keep them on localhost. Use streaming responses. Benchmark early in Sprint 1.</td></tr>
+    <tr><td>Agent Zero's tool parsing is fragile with small models</td><td>Tool extraction fails</td><td>Agent Zero's extract_tools is battle-tested. Copy its robust JSON parser. Validate with multiple models in Sprint 2.</td></tr>
+    <tr><td>OpenClaw channel adapters have deep coupling to OpenClaw internals</td><td>Adapting takes longer than expected</td><td>Start with Telegram (simplest). If coupling is bad, wrap in thin bridge instead of deep refactor.</td></tr>
+    <tr><td>sqlite-vec + sentence-transformers first-run is slow</td><td>Bad first experience</td><td>Pre-download embedding model in setup wizard. Show progress bar.</td></tr>
+    <tr><td>Docker socket mount security</td><td>Container escape → host access</td><td>Document the risk clearly. Offer DinD sidecar as alternative. Sandbox containers run as non-root.</td></tr>
+  </tbody>
+</table>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 12 Migration Plan</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bond — Architecture Overview</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  h1 { font-size: 2.8rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1.15rem; margin-bottom: 48px; }
+  h2 { font-size: 1.5rem; font-weight: 600; margin: 48px 0 16px; color: var(--accent); }
+  p, li { color: var(--text); font-size: 1rem; }
+  p { margin-bottom: 16px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .principles { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+  .principle { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .principle h3 { font-size: 1rem; font-weight: 600; margin-bottom: 6px; }
+  .principle p { font-size: 0.9rem; color: var(--muted); margin: 0; }
+
+  .doc-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 24px 0; }
+  .doc-link { display: flex; align-items: center; gap: 16px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; transition: border-color 0.2s; }
+  .doc-link:hover { border-color: var(--accent); text-decoration: none; }
+  .doc-num { font-size: 1.4rem; font-weight: 700; color: var(--accent); min-width: 36px; }
+  .doc-title { font-weight: 600; font-size: 1.05rem; }
+  .doc-desc { font-size: 0.85rem; color: var(--muted); }
+
+  .sources { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 40px; }
+  .source-tag { background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 6px 14px; font-size: 0.8rem; color: var(--muted); }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 24px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.85rem; line-height: 1.5; }
+
+  @media (max-width: 640px) { .principles { grid-template-columns: 1fr; } h1 { font-size: 2rem; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1><span>Bond</span> Architecture</h1>
+<p class="subtitle">A lightweight, local-first AI assistant for everyone — synthesized from the best of four projects.</p>
+
+<div class="sources">
+  <span class="source-tag">OpenClaw — gateway, channels, tools, sessions</span>
+  <span class="source-tag">AgentClaw — MediatR pipeline, upstream separation</span>
+  <span class="source-tag">EmailPipeline — mediator pattern, embeddings, classification</span>
+  <span class="source-tag">Agent Zero — multi-agent, skills, memory, code execution</span>
+</div>
+
+<h2>Design Principles</h2>
+<div class="principles">
+  <div class="principle">
+    <h3>🏠 Local-first</h3>
+    <p>Everything runs on your machine. SQLite, local embeddings, no cloud required. Degrade gracefully when offline.</p>
+  </div>
+  <div class="principle">
+    <h3>🪶 Lightweight</h3>
+    <p>Single process, single database. No Docker required for basic usage. Minimal dependencies, fast startup.</p>
+  </div>
+  <div class="principle">
+    <h3>🔌 Mediator-driven</h3>
+    <p>All operations flow through a pipeline of behaviors — logging, auth, validation, transactions. Features never call each other directly.</p>
+  </div>
+  <div class="principle">
+    <h3>🤖 Multi-agent</h3>
+    <p>Agents spawn sub-agents for complex tasks. Each keeps focused context. Hierarchical delegation with clean reporting.</p>
+  </div>
+  <div class="principle">
+    <h3>🧠 Persistent memory</h3>
+    <p>Vector + full-text search over everything. Entity extraction, relationship graphs. The assistant remembers and learns.</p>
+  </div>
+  <div class="principle">
+    <h3>🔒 Progressive trust</h3>
+    <p>Capabilities expand as the user grants access. Safe defaults, explicit opt-in for powerful actions.</p>
+  </div>
+  <div class="principle">
+    <h3>🧩 Skills, not hard-coding</h3>
+    <p>Capabilities come from portable SKILL.md files. Install, remove, share. The agent loads what it needs.</p>
+  </div>
+  <div class="principle">
+    <h3>💬 Channel-agnostic</h3>
+    <p>Talk to Bond from any surface — web, terminal, messaging apps. Same assistant, same memory, any interface.</p>
+  </div>
+  <div class="principle">
+    <h3>⚡ Simple config</h3>
+    <p>One API key to start. Secrets encrypted automatically, never in config files. Progressive disclosure — wizard → UI → file.</p>
+  </div>
+</div>
+
+<h2>High-level Architecture</h2>
+<div class="diagram"><pre>
+  Channels (Web / CLI / Telegram / Discord / Signal / …)
+         │
+         ▼
+  ┌─────────────────────────────────────────┐
+  │              Bond Gateway               │
+  │          (WebSocket control plane)      │
+  └──────────────────┬──────────────────────┘
+                     │
+         ┌───────────┼───────────┐
+         ▼           ▼           ▼
+  ┌────────────┐ ┌────────┐ ┌────────────┐
+  │  Mediator   │ │ Agent  │ │   Cron /   │
+  │  Pipeline   │ │ Runtime│ │  Scheduler │
+  │  (behaviors)│ │ (multi)│ │            │
+  └──────┬─────┘ └───┬────┘ └────────────┘
+         │           │
+         ▼           ▼
+  ┌─────────────────────────────────────────┐
+  │          Shared Foundations              │
+  │  ┌──────────┐ ┌───────┐ ┌───────────┐  │
+  │  │Knowledge │ │Entity │ │ Behavior  │  │
+  │  │Store     │ │Graph  │ │ Model     │  │
+  │  │(SQLite+  │ │       │ │           │  │
+  │  │ vec+FTS) │ │       │ │           │  │
+  │  └──────────┘ └───────┘ └───────────┘  │
+  │  ┌──────────┐ ┌───────────────────────┐ │
+  │  │Capability│ │   Skills Engine       │ │
+  │  │Gate      │ │   (SKILL.md loader)   │ │
+  │  └──────────┘ └───────────────────────┘ │
+  └─────────────────────────────────────────┘
+</pre></div>
+
+<h2>Architecture Documents</h2>
+<div class="doc-grid">
+  <a class="doc-link" href="01-mediator-pipeline.html">
+    <span class="doc-num">01</span>
+    <div><div class="doc-title">Mediator Pipeline</div><div class="doc-desc">Commands, queries, notifications, and pipeline behaviors — the central nervous system.</div></div>
+  </a>
+  <a class="doc-link" href="02-foundations.html">
+    <span class="doc-num">02</span>
+    <div><div class="doc-title">Shared Foundations</div><div class="doc-desc">Knowledge store, entity graph, behavior model, capability gate, skills engine.</div></div>
+  </a>
+  <a class="doc-link" href="03-agent-runtime.html">
+    <span class="doc-num">03</span>
+    <div><div class="doc-title">Agent Runtime</div><div class="doc-desc">Multi-agent hierarchy, tool execution, code sandbox, sub-agent delegation.</div></div>
+  </a>
+  <a class="doc-link" href="04-channels-gateway.html">
+    <span class="doc-num">04</span>
+    <div><div class="doc-title">Channels &amp; Gateway</div><div class="doc-desc">WebSocket control plane, multi-channel inbox, session model, media pipeline.</div></div>
+  </a>
+  <a class="doc-link" href="05-data-architecture.html">
+    <span class="doc-num">05</span>
+    <div><div class="doc-title">Data Architecture</div><div class="doc-desc">SQLite schema, vector search, embeddings, retention, encryption.</div></div>
+  </a>
+  <a class="doc-link" href="06-features.html">
+    <span class="doc-num">06</span>
+    <div><div class="doc-title">Feature Map</div><div class="doc-desc">Memory, inbox triage, task engine, proactive intelligence, and build phases.</div></div>
+  </a>
+  <a class="doc-link" href="07-security.html">
+    <span class="doc-num">07</span>
+    <div><div class="doc-title">Security Model</div><div class="doc-desc">Capability-based access, progressive trust, credential management.</div></div>
+  </a>
+  <a class="doc-link" href="08-sandbox.html">
+    <span class="doc-num">08</span>
+    <div><div class="doc-title">Sandbox System</div><div class="doc-desc">Named sandbox profiles assignable to agents, skills, and channels. Right tools, zero excess.</div></div>
+  </a>
+  <a class="doc-link" href="09-tech-stack.html">
+    <span class="doc-num">09</span>
+    <div><div class="doc-title">Tech Stack</div><div class="doc-desc">Python 3.12 + FastAPI backend, TypeScript gateway, Next.js frontend. All packages and versions.</div></div>
+  </a>
+  <a class="doc-link" href="10-project-structure.html">
+    <span class="doc-num">10</span>
+    <div><div class="doc-title">Project Structure</div><div class="doc-desc">Repository layout, module boundaries, and the rules that keep things clean.</div></div>
+  </a>
+  <a class="doc-link" href="11-configuration.html">
+    <span class="doc-num">11</span>
+    <div><div class="doc-title">Configuration</div><div class="doc-desc">Three-tier config (wizard → UI → file), encrypted secret vault, smart defaults. Simple by default, powerful when needed.</div></div>
+  </a>
+  <a class="doc-link" href="12-migration-plan.html">
+    <span class="doc-num">12</span>
+    <div><div class="doc-title">Migration Plan</div><div class="doc-desc">What to copy, adapt, rewrite, and build new — with 6 build sprints and a concrete first commit.</div></div>
+  </a>
+</div>
+
+<h2>What comes from where</h2>
+<table style="width:100%; border-collapse:collapse; margin:24px 0;">
+  <thead><tr style="border-bottom:2px solid var(--border);text-align:left;">
+    <th style="padding:10px;color:var(--muted);font-size:0.85rem;">Component</th>
+    <th style="padding:10px;color:var(--muted);font-size:0.85rem;">Primary Source</th>
+    <th style="padding:10px;color:var(--muted);font-size:0.85rem;">Why</th>
+  </tr></thead>
+  <tbody>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Gateway + WS control plane</td><td style="padding:10px;">OpenClaw</td><td style="padding:10px;color:var(--muted);">Battle-tested, multi-channel, session management</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Mediator pipeline</td><td style="padding:10px;">AgentClaw + EmailPipeline</td><td style="padding:10px;color:var(--muted);">Clean MediatR + proven Python mediator with behaviors</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Multi-agent runtime</td><td style="padding:10px;">Agent Zero</td><td style="padding:10px;color:var(--muted);">Hierarchical delegation, subordinate spawning, organic growth</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Skills system</td><td style="padding:10px;">Agent Zero + OpenClaw</td><td style="padding:10px;color:var(--muted);">SKILL.md standard + managed skill lifecycle</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Memory &amp; knowledge</td><td style="padding:10px;">Agent Zero + AgentClaw</td><td style="padding:10px;color:var(--muted);">Persistent memory + entity graph + vector search</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Embeddings + classification</td><td style="padding:10px;">EmailPipeline</td><td style="padding:10px;color:var(--muted);">Local sentence-transformers, cosine classifiers, zero-shot prototypes</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Email / inbox triage</td><td style="padding:10px;">EmailPipeline</td><td style="padding:10px;color:var(--muted);">Multi-account sync, semantic search, task extraction</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Channel adapters</td><td style="padding:10px;">OpenClaw</td><td style="padding:10px;color:var(--muted);">14+ channels, group routing, DM pairing</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Code execution</td><td style="padding:10px;">Agent Zero</td><td style="padding:10px;color:var(--muted);">Terminal tool, agent writes own tools, Docker sandbox</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Browser automation</td><td style="padding:10px;">OpenClaw</td><td style="padding:10px;color:var(--muted);">CDP-based browser control with snapshots</td></tr>
+    <tr style="border-bottom:1px solid var(--border);"><td style="padding:10px;">Cron / scheduling</td><td style="padding:10px;">OpenClaw + Agent Zero</td><td style="padding:10px;color:var(--muted);">Cron jobs + Agent Zero's task scheduler</td></tr>
+    <tr><td style="padding:10px;">Security model</td><td style="padding:10px;">OpenClaw + AgentClaw</td><td style="padding:10px;color:var(--muted);">Capability gate, progressive trust, audit trail</td></tr>
+  </tbody>
+</table>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture Docs — Generated 2026-02-19</p>
+</div>
+</body>
+</html>

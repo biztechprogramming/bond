@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>04 — Channels &amp; Gateway | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .source-tag { display: inline-block; background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: var(--muted); margin: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>04</span> — Channels &amp; Gateway</h1>
+<p class="subtitle">WebSocket control plane, multi-channel inbox, and the session model.</p>
+<div><span class="source-tag">OpenClaw: gateway, channels, media pipeline</span><span class="source-tag">Agent Zero: WebSocket UI, real-time streaming</span></div>
+
+<h2>Gateway Architecture</h2>
+<p>The Bond Gateway is a single-process WebSocket server that acts as the control plane for everything. It's taken directly from OpenClaw's proven architecture — battle-tested across 14+ messaging channels. <strong>Critically, the gateway also owns all LLM communication</strong> — the Python backend never calls LLMs directly. This preserves OpenClaw's OAuth subscription support, the killer feature that lets users authenticate with Claude Pro/Max or ChatGPT Plus/Pro subscriptions instead of API keys.</p>
+
+<div class="diagram"><pre>
+  Telegram ─┐
+  Discord ──┤
+  Signal ───┤    ┌──────────────────────────────────┐
+  WhatsApp ─┼───▶│         Bond Gateway              │
+  Slack ────┤    │      ws://127.0.0.1:18789        │
+  WebChat ──┤    │                                   │
+  CLI ──────┤    │  • Session management             │
+  Web UI ───┘    │  • Channel routing                │
+                 │  • Agent dispatch                 │
+                 │  • Cron scheduling                │
+                 │  • Media pipeline                 │
+                 │  • Control UI                     │
+                 │                                   │
+                 │  🔑 LLM Proxy (pi-agent-core)    │
+                 │  • OAuth subscription auth        │
+                 │  • API key auth                   │
+                 │  • AuthProfileStore (rotation,    │
+                 │    cooldowns, failover)           │
+                 │  • Streaming relay to backend     │
+                 └──────────────────────────────────┘
+                           │
+                           │ HTTP + WS
+                           ▼
+                 ┌──────────────────────────────────┐
+                 │     Python Backend (brain)        │
+                 │  • Agent runtime + tools          │
+                 │  • Mediator pipeline              │
+                 │  • Knowledge store + embeddings   │
+                 │  • Sends prompts → gateway LLM    │
+                 │  • Executes tool calls locally    │
+                 └──────────────────────────────────┘
+</pre></div>
+
+<h2>Channel Adapters</h2>
+<p>Each messaging platform gets a thin adapter that normalizes inbound messages into a common format and handles outbound delivery (chunking, media, formatting).</p>
+
+<table>
+  <thead><tr><th>Channel</th><th>Library</th><th>Features</th></tr></thead>
+  <tbody>
+    <tr><td>WebChat</td><td>Built-in (WS)</td><td>Zero-config, served from gateway</td></tr>
+    <tr><td>Telegram</td><td>grammY</td><td>Bot API, webhooks, groups</td></tr>
+    <tr><td>Discord</td><td>discord.js</td><td>Guilds, threads, reactions, slash commands</td></tr>
+    <tr><td>WhatsApp</td><td>Baileys</td><td>Multi-device, groups, media</td></tr>
+    <tr><td>Slack</td><td>Bolt</td><td>App-level token, threads, reactions</td></tr>
+    <tr><td>Signal</td><td>signal-cli</td><td>E2E encrypted messaging</td></tr>
+    <tr><td>iMessage</td><td>BlueBubbles</td><td>macOS server required</td></tr>
+    <tr><td>Google Chat</td><td>Chat API</td><td>Workspace integration</td></tr>
+    <tr><td>MS Teams</td><td>Bot Framework</td><td>Enterprise messaging</td></tr>
+    <tr><td>CLI</td><td>Built-in</td><td>Terminal interface</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Adding a channel:</strong> Write an adapter that emits <code>MessageReceived</code> notifications and handles <code>SendMessage</code> commands. The mediator pipeline handles everything else.</p>
+
+<p><strong>Configuring a channel:</strong> Each channel has a guided setup flow in the Settings UI — paste a token, Bond validates it, encrypts it into the secret vault, and the channel is live. No JSON editing required. See <a href="11-configuration.html" style="color:var(--accent);">11 — Configuration</a> for details.</p>
+
+<h2>Message Flow</h2>
+<div class="diagram"><pre>
+  Inbound message (any channel)
+      │
+      ▼
+  Channel Adapter
+      │ normalize → common message format
+      ▼
+  Gateway Router
+      │ determine session (by sender + channel + group)
+      ▼
+  Session Manager
+      │ find or create session, apply activation rules
+      ▼
+  Mediator: MessageReceived notification (fan-out)
+      ├──▶ Memory indexer (indexes the message)
+      ├──▶ Proactive evaluator (should we alert?)
+      └──▶ Agent dispatcher (run agent turn)
+              │
+              ▼
+          Agent Turn → tool calls → mediator → responses
+              │
+              ▼
+          Outbound: route back through channel adapter
+</pre></div>
+
+<h2>Session Routing</h2>
+<p>From OpenClaw: sessions are isolated context buckets. Routing rules determine which session handles each inbound message.</p>
+<ul>
+  <li><strong>DM → main session</strong> (if allowlisted) or pairing flow</li>
+  <li><strong>Group message → group session</strong> (isolated per group, mention-gated)</li>
+  <li><strong>Webhook → designated session</strong></li>
+  <li><strong>Cron → isolated session</strong> (clean context each run)</li>
+</ul>
+
+<h2>Web UI</h2>
+<p>Bond ships a built-in web interface combining the best of both:</p>
+<ul>
+  <li><strong>From OpenClaw:</strong> Control UI for gateway management, WebChat for direct conversation</li>
+  <li><strong>From Agent Zero:</strong> Rich streaming output with process groups, code blocks, step-by-step visibility, and real-time WebSocket updates</li>
+</ul>
+<p>The web UI is served directly from the gateway — no separate frontend server needed.</p>
+
+<h2>LLM Proxy</h2>
+<p>The gateway is the <strong>sole point of contact with LLM providers</strong>. The Python backend constructs prompts (with tool definitions, context, and system instructions) and sends them to the gateway via an internal HTTP endpoint. The gateway handles authentication, streaming, and response relay.</p>
+
+<h3>Why the gateway owns LLM calls:</h3>
+<ul>
+  <li><strong>OAuth subscription support</strong> — <code>pi-ai</code> handles OAuth token refresh for Claude Pro/Max and ChatGPT Plus/Pro subscriptions. This is the #1 priority feature — it lets anyone use Bond with their existing subscription, no API key needed.</li>
+  <li><strong>AuthProfileStore</strong> — manages multiple credential profiles per provider with rotation, cooldowns, failover (OAuth primary → API key fallback), and usage tracking. Already proven in OpenClaw.</li>
+  <li><strong>Zero rewrite risk</strong> — <code>pi-agent-core</code> already handles the Anthropic/OpenAI API protocol (messages API, streaming, tool use). No need to reimplement in Python.</li>
+  <li><strong>Single auth boundary</strong> — credentials stay in the gateway process, never passed to the Python backend.</li>
+</ul>
+
+<h3>Internal LLM API flow:</h3>
+<div class="diagram"><pre>
+  Backend                        Gateway
+     │                              │
+     │  POST /internal/llm/chat     │
+     │  { model, messages, tools }  │
+     │─────────────────────────────▶│
+     │                              │── resolve auth profile
+     │                              │── OAuth token refresh (if needed)
+     │                              │── call provider API (streaming)
+     │                              │
+     │  WS: stream chunks           │
+     │◀─────────────────────────────│
+     │  WS: stream chunks           │
+     │◀─────────────────────────────│
+     │  WS: complete (tool_calls)   │
+     │◀─────────────────────────────│
+     │                              │
+     │  (backend executes tools)    │
+     │  POST /internal/llm/chat     │
+     │  { ...with tool results }    │
+     │─────────────────────────────▶│
+     │         ...continues...      │
+</pre></div>
+
+<h2>Media Pipeline</h2>
+<p>From OpenClaw: unified handling for images, audio, video across all channels. Transcription hooks for audio messages, size caps, temp file lifecycle management.</p>
+
+<h2>Remote Access</h2>
+<p>The gateway binds to loopback by default. For remote access:</p>
+<ul>
+  <li><strong>Tailscale Serve/Funnel</strong> — zero-config HTTPS over tailnet or public</li>
+  <li><strong>SSH tunnels</strong> — for headless Linux servers</li>
+  <li><strong>Password auth</strong> — required for any public exposure</li>
+</ul>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 04 Channels & Gateway</p>
+</div>
+</body>
+</html>

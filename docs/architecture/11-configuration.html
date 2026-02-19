@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>11 — Configuration | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; --warn: #ffa06c; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul, ol { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  .config { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .config pre { color: #f8c555; font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.6; }
+  .config .comment { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .callout { background: #1a1a2e; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 16px 20px; margin: 20px 0; }
+  .callout-warn { border-left-color: var(--warn); }
+  .callout-title { font-weight: 600; margin-bottom: 6px; color: var(--accent); font-size: 0.9rem; }
+  .callout-warn .callout-title { color: var(--warn); }
+  .pain { background: var(--card-bg); border: 1px solid #442222; border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .pain h3 { margin-top: 0; color: var(--accent2); }
+  .fix { background: var(--card-bg); border: 1px solid #224422; border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .fix h3 { margin-top: 0; color: var(--accent3); }
+  .tier { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 16px 0; }
+  .tier h3 { margin-top: 0; }
+  .tier-label { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .tier-1 { background: #1a3a1a; color: var(--accent3); }
+  .tier-2 { background: #1a2a3a; color: var(--accent); }
+  .tier-3 { background: #3a2a1a; color: var(--warn); }
+  .flow-step { display: flex; gap: 16px; margin: 12px 0; padding: 16px; background: var(--surface); border-radius: 8px; align-items: flex-start; }
+  .flow-num { background: var(--accent); color: var(--bg); font-weight: 700; min-width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.85rem; flex-shrink: 0; }
+  .flow-content { flex: 1; }
+  .flow-content strong { display: block; margin-bottom: 2px; }
+  .flow-content span { color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>11</span> — Configuration</h1>
+<p class="subtitle">Simple by default, powerful when you need it. The app does the right thing so you don't have to.</p>
+
+<h2>The Problem with OpenClaw's Config</h2>
+
+<div class="pain">
+  <h3>Pain points we're fixing</h3>
+  <ul>
+    <li><strong>Flat JSON wall</strong> — one huge <code>openclaw.json</code> with deeply nested keys. Hard to know what matters and what's optional.</li>
+    <li><strong>Secrets in config files</strong> — API keys and tokens sit in plain text JSON alongside non-sensitive settings. Easy to accidentally commit to git.</li>
+    <li><strong>Too many knobs on day one</strong> — a new user has to understand channels, agents, models, sandbox modes, DM policies, and more before anything works.</li>
+    <li><strong>No guided setup</strong> — you read docs, then edit JSON by hand. If you get a key wrong, you find out at runtime.</li>
+    <li><strong>Environment variables compete with config</strong> — some settings come from env, some from JSON, some from either. Unclear which wins.</li>
+  </ul>
+</div>
+
+<h2>Bond's Approach: Three Tiers of Configuration</h2>
+<p>Not all config is equal. API keys aren't the same kind of setting as sandbox memory limits. Bond separates configuration into three tiers based on <strong>who needs it and when</strong>.</p>
+
+<div class="diagram"><pre>
+  ┌─────────────────────────────────────────────────────────────┐
+  │                                                             │
+  │   Tier 1: Setup Wizard                                      │
+  │   "Get Bond running in 2 minutes"                           │
+  │   API keys, model choice, first channel                     │
+  │   ───────────────────────────────────────────                │
+  │                                                             │
+  │   Tier 2: Settings UI                                       │
+  │   "Customize Bond to your liking"                           │
+  │   Channels, agents, sandboxes, email, skills                │
+  │   ───────────────────────────────────────────                │
+  │                                                             │
+  │   Tier 3: Config File                                       │
+  │   "Full control for power users"                            │
+  │   bond.json — everything, version-controllable              │
+  │                                                             │
+  └─────────────────────────────────────────────────────────────┘
+
+  Each tier exposes the same underlying settings.
+  Changes at any tier sync to the others.
+</pre></div>
+
+<div class="tier">
+  <span class="tier-label tier-1">Tier 1</span>
+  <h3>Setup Wizard — "Just get me running"</h3>
+  <p>First-run experience. A guided flow that asks only what's necessary to start. Everything else gets smart defaults.</p>
+  
+  <div class="flow-step">
+    <div class="flow-num">1</div>
+    <div class="flow-content">
+      <strong>Pick your AI provider</strong>
+      <span>Buttons: Anthropic / OpenAI / Google / Local (Ollama) / Other. One click.</span>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">2</div>
+    <div class="flow-content">
+      <strong>Enter your API key</strong>
+      <span>Single text field. Bond validates it live (calls the API with a tiny request). Green check = you're good. Bond encrypts and stores it automatically — it never touches a config file.</span>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">3</div>
+    <div class="flow-content">
+      <strong>Pick a model (optional)</strong>
+      <span>Dropdown pre-filtered to models available with your key. Default is pre-selected (Claude Sonnet for Anthropic, GPT-4o for OpenAI). Skip = use the default.</span>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">4</div>
+    <div class="flow-content">
+      <strong>Connect a channel (optional)</strong>
+      <span>"Where do you want to talk to Bond?" Buttons: Web (already works), Telegram, Discord, etc. Each has a 3-step sub-flow. Skip = just use webchat.</span>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num">5</div>
+    <div class="flow-content">
+      <strong>Done</strong>
+      <span>Bond is running. Webchat opens. Everything else is defaults. The user configured 1-2 things.</span>
+    </div>
+  </div>
+
+  <div class="callout">
+    <div class="callout-title">💡 The wizard also works from CLI</div>
+    <p style="margin:0;color:var(--muted);font-size:0.9rem;"><code>bond setup</code> runs the same flow as an interactive terminal wizard. Headless servers get the same easy experience.</p>
+  </div>
+</div>
+
+<div class="tier">
+  <span class="tier-label tier-2">Tier 2</span>
+  <h3>Settings UI — "Let me customize things"</h3>
+  <p>A web-based settings page organized by category. Every setting has a label, description, and appropriate input type. Changes take effect immediately — no restart needed for most settings.</p>
+
+  <p><strong>Categories:</strong></p>
+  <table>
+    <thead><tr><th>Section</th><th>What's in it</th><th>Complexity</th></tr></thead>
+    <tbody>
+      <tr><td>🔑 API Keys</td><td>Provider credentials. Add/remove/test. Always encrypted.</td><td>Simple</td></tr>
+      <tr><td>🤖 Model</td><td>Default model, thinking level, fallback chain</td><td>Simple</td></tr>
+      <tr><td>💬 Channels</td><td>Enable/configure Telegram, Discord, etc. Per-channel settings.</td><td>Medium</td></tr>
+      <tr><td>🧑‍💻 Agents</td><td>Agent profiles (coder, researcher, etc.), model overrides, sandbox assignments</td><td>Medium</td></tr>
+      <tr><td>📦 Sandboxes</td><td>Profile cards, package lists, network/fs settings, assignments</td><td>Medium</td></tr>
+      <tr><td>📧 Email</td><td>Account connections, sync intervals, classification settings</td><td>Medium</td></tr>
+      <tr><td>🧩 Skills</td><td>Installed skills, enable/disable, skill settings</td><td>Simple</td></tr>
+      <tr><td>🧠 Memory</td><td>Embedding provider, retention policies, search settings</td><td>Advanced</td></tr>
+      <tr><td>🔒 Security</td><td>DM policies, capability overrides, sandbox defaults</td><td>Advanced</td></tr>
+      <tr><td>⚙️ Advanced</td><td>Gateway port, database path, logging, performance tuning</td><td>Advanced</td></tr>
+    </tbody>
+  </table>
+
+  <p>Advanced sections are collapsed by default. A new user sees API Keys, Model, Channels, and Skills — that's it.</p>
+</div>
+
+<div class="tier">
+  <span class="tier-label tier-3">Tier 3</span>
+  <h3>Config File — "Give me full control"</h3>
+  <p><code>~/.bond/bond.json</code> for power users who want to version-control their config, copy it between machines, or edit in their editor. Every setting from the UI is represented here.</p>
+  <p><strong>But secrets are never in this file.</strong></p>
+</div>
+
+<h2>Secret Management</h2>
+<p>This is the biggest change from OpenClaw. Secrets get their own system — they're never mixed with regular config.</p>
+
+<div class="fix">
+  <h3>How Bond handles secrets</h3>
+  <ol>
+    <li><strong>Secrets are stored in an encrypted vault</strong> — <code>~/.bond/data/credentials.enc</code>, encrypted with Fernet. Not in <code>bond.json</code>. Not in environment variables (though env vars are accepted as an override for CI/Docker).</li>
+    <li><strong>The vault key</strong> lives in your OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager). On first run, Bond generates a key and stores it there. No manual key management.</li>
+    <li><strong>Secrets are entered via UI or CLI</strong> — <code>bond secret set ANTHROPIC_API_KEY sk-ant-...</code> or the API Keys settings page. Both encrypt and store.</li>
+    <li><strong>Secrets are validated on entry</strong> — Bond makes a lightweight API call to verify the key works before saving. Immediate feedback.</li>
+    <li><strong>Secrets are referenced by name in config</strong> — <code>bond.json</code> says <code>"model_provider": "anthropic"</code>, not the actual key. Bond resolves the key at runtime from the vault.</li>
+    <li><strong>Secrets are masked everywhere</strong> — Settings UI shows <code>sk-ant-****...****1234</code>. Logs never print secrets. The API never returns them.</li>
+    <li><strong>Secrets can be rotated</strong> — update via UI or CLI. Old value is overwritten. No manual file editing.</li>
+  </ol>
+</div>
+
+<div class="diagram"><pre>
+  User enters API key
+      │
+      ▼
+  Validate (call provider API)
+      │ ✓ valid
+      ▼
+  Encrypt (Fernet, key from OS keychain)
+      │
+      ▼
+  Store in ~/.bond/data/credentials.enc
+      │
+      ▼
+  bond.json just says: "provider": "anthropic"
+      │ (no secrets in config file)
+      ▼
+  At runtime: Bond reads provider name → looks up key from vault → injects into LLM client
+</pre></div>
+
+<h3>Secret types</h3>
+<table>
+  <thead><tr><th>Secret</th><th>How it's entered</th><th>How it's stored</th></tr></thead>
+  <tbody>
+    <tr><td>LLM API keys (Anthropic, OpenAI, etc.)</td><td>Wizard / Settings UI / CLI</td><td>Encrypted vault</td></tr>
+    <tr><td>Channel tokens (Telegram bot, Discord bot, etc.)</td><td>Channel setup flow in Settings UI</td><td>Encrypted vault</td></tr>
+    <tr><td>Email credentials (IMAP password, OAuth tokens)</td><td>Email account setup in Settings UI</td><td>Encrypted vault</td></tr>
+    <tr><td>OAuth refresh tokens (Gmail, Google Calendar)</td><td>OAuth flow (browser redirect)</td><td>Encrypted vault</td></tr>
+    <tr><td>Encryption key (vault master key)</td><td>Auto-generated on first run</td><td>OS keychain</td></tr>
+  </tbody>
+</table>
+
+<h3>Environment variable override</h3>
+<p>For Docker / CI / headless setups, secrets can also come from environment variables. Env vars take priority over the vault when present. This is the <em>only</em> way secrets touch env — never as the primary storage mechanism for interactive users.</p>
+
+<div class="config"><pre>
+<span class="comment"># Docker: pass secrets as env vars</span>
+docker run -d \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e TELEGRAM_BOT_TOKEN=123456:ABC... \
+  bondai/bond:latest
+
+<span class="comment"># Bond checks: env var → vault → not configured</span>
+</pre></div>
+
+<h2>The Config File (bond.json)</h2>
+<p>Clean, minimal, no secrets. A new user's config after the wizard might be just this:</p>
+
+<div class="config"><pre>
+{
+  "model": {
+    "provider": "anthropic",
+    "default": "claude-sonnet-4-20250514"
+  }
+}
+</pre></div>
+
+<p>That's it. Everything else is defaults. As the user customizes through the UI, the file grows:</p>
+
+<div class="config"><pre>
+{
+  "model": {
+    "provider": "anthropic",
+    "default": "claude-sonnet-4-20250514",
+    "thinking": "low"
+  },
+
+  "channels": {
+    "telegram": {
+      "enabled": true
+      <span class="comment">// bot token is in the vault, not here</span>
+    },
+    "discord": {
+      "enabled": true,
+      "sandbox": "minimal"
+    }
+  },
+
+  "agents": {
+    "coder": {
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "sandbox": "coding"
+    }
+  },
+
+  "sandboxes": {
+    "coding": {
+      "packages": ["nodejs", "python3", "git"],
+      "network": "lan",
+      "filesystem": "workspace"
+    }
+  }
+}
+</pre></div>
+
+<div class="callout">
+  <div class="callout-title">💡 Only non-default values are written</div>
+  <p style="margin:0;color:var(--muted);font-size:0.9rem;">Bond doesn't dump every possible key into the config. If you haven't changed it from the default, it's not in the file. This keeps configs small, readable, and diffable. <code>bond config show --full</code> shows all resolved values (defaults + overrides) for debugging.</p>
+</div>
+
+<h2>Smart Defaults</h2>
+<p>Every setting has a sensible default. The goal: Bond works with zero config beyond an API key.</p>
+
+<table>
+  <thead><tr><th>Setting</th><th>Default</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Model</td><td>Best available from configured provider</td><td>Claude Sonnet for Anthropic, GPT-4o for OpenAI</td></tr>
+    <tr><td>Channels</td><td>WebChat only</td><td>Works immediately, no external setup</td></tr>
+    <tr><td>Sandbox (main session)</td><td>none (host)</td><td>Owner should have full access</td></tr>
+    <tr><td>Sandbox (other sessions)</td><td>minimal</td><td>Safe default for untrusted input</td></tr>
+    <tr><td>DM policy</td><td>pairing</td><td>Unknown senders need approval</td></tr>
+    <tr><td>Embeddings</td><td>Local (sentence-transformers)</td><td>Free, no API key needed, works offline</td></tr>
+    <tr><td>Database</td><td>SQLite at <code>~/.bond/data/knowledge.db</code></td><td>Zero-config</td></tr>
+    <tr><td>Gateway port</td><td>18789</td><td>High port, unlikely to conflict</td></tr>
+    <tr><td>Memory retention</td><td>Never auto-delete</td><td>Users expect their assistant to remember</td></tr>
+    <tr><td>Email</td><td>Disabled</td><td>Requires account setup — can't default</td></tr>
+    <tr><td>Skills</td><td>Bundled basics (web search, browser)</td><td>Useful out of the box</td></tr>
+  </tbody>
+</table>
+
+<h2>Config Validation &amp; Feedback</h2>
+<p>Bond validates config aggressively and gives clear, actionable feedback.</p>
+
+<div class="fix">
+  <h3>At startup</h3>
+  <ul>
+    <li><strong>Schema validation</strong> — every key is checked against a typed schema. Unknown keys produce a warning (not an error — forward compatibility). Wrong types produce an error with the expected type.</li>
+    <li><strong>Dependency checks</strong> — if you enable Telegram but have no bot token in the vault, Bond tells you: <code>"Telegram is enabled but no bot token found. Run: bond secret set TELEGRAM_BOT_TOKEN"</code></li>
+    <li><strong>Credential validation</strong> — on first startup (or after a key change), Bond tests each credential. Failed keys get a clear error: <code>"Anthropic API key is invalid (HTTP 401). Update it: bond secret set ANTHROPIC_API_KEY"</code></li>
+  </ul>
+</div>
+
+<div class="fix">
+  <h3>In the Settings UI</h3>
+  <ul>
+    <li><strong>Live validation</strong> — fields validate as you type. API keys show a spinner → green check / red X.</li>
+    <li><strong>Test buttons</strong> — "Test Connection" for every external integration (email, channels, LLM providers).</li>
+    <li><strong>Dependency hints</strong> — if you enable a feature that requires something else, the UI tells you what's missing before you save.</li>
+    <li><strong>Diff view</strong> — before applying changes, show what will change (like a git diff for your config).</li>
+  </ul>
+</div>
+
+<div class="fix">
+  <h3>CLI doctor</h3>
+  <p><code>bond doctor</code> — checks everything and reports issues:</p>
+</div>
+
+<div class="config"><pre>
+$ bond doctor
+
+✓ Configuration valid
+✓ Anthropic API key valid (Claude Sonnet 4 available)
+✓ Database accessible (847 memories, 12,430 emails)
+✓ WebChat channel active
+⚠ Telegram enabled but bot token expired — run: bond secret set TELEGRAM_BOT_TOKEN
+✓ Sandbox "coding" image built (2 days ago)
+⚠ Sandbox "data" image needs rebuild (packages changed)
+  Run: bond sandbox rebuild data
+✓ 3 skills installed, all healthy
+</pre></div>
+
+<h2>Config Sync Between Tiers</h2>
+<p>All three tiers (wizard, UI, file) read and write the same underlying state. There's no "the UI wrote one thing but the file says another" confusion.</p>
+
+<div class="diagram"><pre>
+  ┌──────────┐     ┌──────────┐     ┌──────────┐
+  │  Wizard  │     │ Settings │     │bond.json │
+  │  (CLI/   │     │   UI     │     │ (file)   │
+  │   Web)   │     │          │     │          │
+  └────┬─────┘     └────┬─────┘     └────┬─────┘
+       │                │                │
+       └────────┬───────┴────────┬───────┘
+                ▼                ▼
+         ┌─────────────┐  ┌──────────────┐
+         │ Config Store │  │ Secret Vault │
+         │ (bond.json)  │  │ (encrypted)  │
+         └──────┬──────┘  └──────┬───────┘
+                │                │
+                ▼                ▼
+         ┌──────────────────────────────┐
+         │    Runtime Config Object     │
+         │  (merged: defaults + file    │
+         │   + env overrides + vault)   │
+         └──────────────────────────────┘
+</pre></div>
+
+<h3>Merge order (last wins):</h3>
+<ol>
+  <li><strong>Built-in defaults</strong> — hardcoded sensible values</li>
+  <li><strong>bond.json</strong> — user overrides</li>
+  <li><strong>Environment variables</strong> — for Docker/CI (format: <code>BOND_MODEL_DEFAULT=claude-sonnet-4-20250514</code>)</li>
+  <li><strong>Secret vault</strong> — credentials resolved by provider name</li>
+</ol>
+
+<h2>Config File Schema (Complete)</h2>
+
+<div class="config"><pre>
+{
+  <span class="comment">// ─── Model ───────────────────────────────────────────</span>
+  "model": {
+    "provider": "anthropic",               <span class="comment">// default LLM provider</span>
+    "default": "claude-sonnet-4-20250514",  <span class="comment">// default model</span>
+    "thinking": "low",                     <span class="comment">// off|minimal|low|medium|high</span>
+    "fallback": ["openai/gpt-4o"],         <span class="comment">// fallback chain if primary fails</span>
+    "temperature": 0.7                     <span class="comment">// default temperature</span>
+  },
+
+  <span class="comment">// ─── Gateway ─────────────────────────────────────────</span>
+  "gateway": {
+    "port": 18789,
+    "bind": "loopback",                    <span class="comment">// "loopback" | "all"</span>
+    "auth": "password"                     <span class="comment">// "none" | "password" | "tailscale"</span>
+  },
+
+  <span class="comment">// ─── Channels ────────────────────────────────────────</span>
+  "channels": {
+    "webchat": { "enabled": true },
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",              <span class="comment">// "open" | "pairing" | "closed"</span>
+      "sandbox": "minimal"
+    },
+    "discord": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "sandbox": "minimal",
+      "groups": {
+        "*": { "requireMention": true, "sandbox": "minimal" }
+      }
+    }
+    <span class="comment">// ... same shape for slack, signal, whatsapp, etc.</span>
+  },
+
+  <span class="comment">// ─── Agents ──────────────────────────────────────────</span>
+  "agents": {
+    "coder": {
+      "prompt": "prompts/agent.system.coder.md",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "sandbox": "coding",
+      "tools": ["code_execute", "file_ops", "search_memory", "respond"]
+    },
+    "researcher": {
+      "prompt": "prompts/agent.system.researcher.md",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "sandbox": "research",
+      "tools": ["browser", "web_search", "web_fetch", "search_memory", "respond"]
+    }
+  },
+
+  <span class="comment">// ─── Sandboxes ───────────────────────────────────────</span>
+  "sandboxes": {
+    "coding": {
+      "packages": ["nodejs", "python3", "git", "build-essential"],
+      "network": "lan",
+      "filesystem": "workspace",
+      "memory": "2g",
+      "timeout": 300
+    },
+    "research": {
+      "packages": ["chromium"],
+      "tools": ["browser", "web_search", "web_fetch"],
+      "network": "web",
+      "filesystem": "readonly"
+    },
+    "data": {
+      "packages": ["python3", "python3-pip"],
+      "pip": ["pandas", "matplotlib", "numpy"],
+      "network": "off",
+      "filesystem": "workspace"
+    },
+    "minimal": {
+      "packages": [],
+      "network": "off",
+      "filesystem": "none"
+    }
+  },
+
+  <span class="comment">// ─── Sandbox defaults ────────────────────────────────</span>
+  "sandbox": {
+    "default": "minimal",                  <span class="comment">// default for non-main sessions</span>
+    "main": "none"                         <span class="comment">// default for main session</span>
+  },
+
+  <span class="comment">// ─── Email ───────────────────────────────────────────</span>
+  "email": {
+    "enabled": false,
+    "accounts": [],                        <span class="comment">// configured via UI (creds in vault)</span>
+    "classification": {
+      "enabled": true,
+      "threshold": 0.3,
+      "multiLabel": false
+    },
+    "intelligence": {
+      "enabled": false,
+      "provider": "default",               <span class="comment">// uses the default model provider</span>
+      "batchSize": 10
+    }
+  },
+
+  <span class="comment">// ─── Memory ──────────────────────────────────────────</span>
+  "memory": {
+    "embeddings": {
+      "provider": "local",                 <span class="comment">// "local" | "openai"</span>
+      "model": "all-MiniLM-L6-v2"
+    },
+    "retention": {
+      "sessions": "30d",                   <span class="comment">// summarize after 24h, prune after 30d</span>
+      "memories": "forever",
+      "blobs": "30d"
+    }
+  },
+
+  <span class="comment">// ─── Security ────────────────────────────────────────</span>
+  "security": {
+    "dmPolicy": "pairing",                 <span class="comment">// global default</span>
+    "externalActions": "confirm"           <span class="comment">// "confirm" | "allow" | "deny"</span>
+  }
+}
+</pre></div>
+
+<div class="callout">
+  <div class="callout-title">📝 Remember: secrets are never in this file</div>
+  <p style="margin:0;color:var(--muted);font-size:0.9rem;">Notice there are no API keys, bot tokens, or passwords anywhere in <code>bond.json</code>. The file is safe to commit to git, share, or back up without risk. Secrets live in the encrypted vault.</p>
+</div>
+
+<h2>CLI Secret Commands</h2>
+<div class="config"><pre>
+<span class="comment"># Set a secret (validates before storing)</span>
+bond secret set ANTHROPIC_API_KEY
+<span class="comment"># → prompts for value (hidden input), validates, encrypts, stores</span>
+
+<span class="comment"># Or pass inline (for scripts)</span>
+bond secret set ANTHROPIC_API_KEY sk-ant-...
+
+<span class="comment"># List configured secrets (masked)</span>
+bond secret list
+<span class="comment"># ANTHROPIC_API_KEY    sk-ant-****...****a1b2   ✓ valid</span>
+<span class="comment"># TELEGRAM_BOT_TOKEN   1234****...****ABCD      ✓ valid</span>
+<span class="comment"># DISCORD_BOT_TOKEN    (not set)</span>
+
+<span class="comment"># Remove a secret</span>
+bond secret remove TELEGRAM_BOT_TOKEN
+
+<span class="comment"># Validate all secrets</span>
+bond secret test
+<span class="comment"># ✓ ANTHROPIC_API_KEY — valid (Claude Sonnet 4 available)</span>
+<span class="comment"># ✗ OPENAI_API_KEY — expired (HTTP 401)</span>
+
+<span class="comment"># Export secrets for Docker (to stdout, ephemeral)</span>
+bond secret export --env
+<span class="comment"># ANTHROPIC_API_KEY=sk-ant-...</span>
+<span class="comment"># TELEGRAM_BOT_TOKEN=123456:ABC...</span>
+</pre></div>
+
+<h2>Channel Setup Flows</h2>
+<p>Each channel has a streamlined setup flow in the Settings UI — not a wall of config keys.</p>
+
+<h3>Example: Telegram setup</h3>
+<div class="flow-step">
+  <div class="flow-num">1</div>
+  <div class="flow-content">
+    <strong>Create a bot</strong>
+    <span>Link to @BotFather with step-by-step instructions shown inline. "Done? Paste your token below."</span>
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">2</div>
+  <div class="flow-content">
+    <strong>Paste bot token</strong>
+    <span>Bond validates it (calls getMe), shows the bot's name and username as confirmation. Encrypts and stores in vault.</span>
+  </div>
+</div>
+<div class="flow-step">
+  <div class="flow-num">3</div>
+  <div class="flow-content">
+    <strong>Done</strong>
+    <span>Telegram is live. Default DM policy is "pairing" — safe. Optional: configure group settings, DM allowlist.</span>
+  </div>
+</div>
+
+<p>Every channel follows this pattern: guided instructions → paste credential → validate → done. Advanced settings are available but tucked away.</p>
+
+<h2>Migration from OpenClaw</h2>
+<p>For users coming from OpenClaw:</p>
+<div class="config"><pre>
+<span class="comment"># Import OpenClaw config (extracts settings + migrates secrets to vault)</span>
+bond import openclaw ~/.openclaw/openclaw.json
+
+<span class="comment"># What it does:</span>
+<span class="comment"># 1. Reads openclaw.json</span>
+<span class="comment"># 2. Extracts secrets (API keys, bot tokens) → encrypts into Bond vault</span>
+<span class="comment"># 3. Translates remaining config → bond.json format</span>
+<span class="comment"># 4. Reports what was migrated and what needs manual attention</span>
+</pre></div>
+
+<h2>Design Principles (Summary)</h2>
+<table>
+  <thead><tr><th>Principle</th><th>Implementation</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Secrets never in config files</strong></td><td>Encrypted vault + OS keychain. Config references providers by name.</td></tr>
+    <tr><td><strong>Works with one setting</strong></td><td>API key → everything else is smart defaults.</td></tr>
+    <tr><td><strong>Progressive disclosure</strong></td><td>Three tiers: wizard → UI → file. Advanced settings hidden until needed.</td></tr>
+    <tr><td><strong>Validate early, explain clearly</strong></td><td>Every credential tested on entry. Startup checks with actionable messages.</td></tr>
+    <tr><td><strong>One source of truth</strong></td><td>All tiers read/write the same state. No conflicts.</td></tr>
+    <tr><td><strong>Minimal config files</strong></td><td>Only non-default values written. Config is short and readable.</td></tr>
+    <tr><td><strong>Safe to share</strong></td><td>bond.json has zero secrets. Safe to commit, copy, post.</td></tr>
+    <tr><td><strong>Docker-friendly</strong></td><td>Env vars override vault for containerized deployments.</td></tr>
+  </tbody>
+</table>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 11 Configuration</p>
+</div>
+</body>
+</html>

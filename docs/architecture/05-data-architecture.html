@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>05 — Data Architecture | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { text-align: left; padding: 10px; color: var(--muted); font-size: 0.85rem; border-bottom: 2px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+  .schema { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .schema h3 { margin-top: 0; color: var(--accent2); }
+  .source-tag { display: inline-block; background: var(--card-bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 0.75rem; color: var(--muted); margin: 2px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<h1><span>05</span> — Data Architecture</h1>
+<p class="subtitle">SQLite-first storage with vectors, full-text search, and content-addressed blobs.</p>
+<div><span class="source-tag">EmailPipeline: schema, migrations, sqlite-vec</span><span class="source-tag">AgentClaw: storage topology</span><span class="source-tag">Agent Zero: memory persistence</span></div>
+
+<h2>Storage Topology</h2>
+<p>Everything lives in a single directory per agent. SQLite is the default — zero config, single file, fast. PostgreSQL is an optional upgrade path for scale.</p>
+
+<div class="diagram"><pre>
+  ~/.bond/
+  ├── bond.json                 ← configuration
+  ├── data/
+  │   ├── knowledge.db          ← SQLite + sqlite-vec + FTS5
+  │   ├── blobs/                ← content-addressed file store
+  │   │   ├── attachments/
+  │   │   └── screenshots/
+  │   └── credentials.enc       ← encrypted credential store
+  ├── workspace/                ← agent working directory
+  │   ├── AGENTS.md
+  │   ├── SOUL.md
+  │   ├── skills/
+  │   └── memory/
+  └── logs/
+</pre></div>
+
+<h2>Schema Domains</h2>
+
+<div class="schema">
+  <h3>Memory &amp; Content</h3>
+  <p>From Agent Zero's persistent memory + EmailPipeline's embedding approach.</p>
+  <ul>
+    <li><code>content_chunks</code> — id, source, text, embedding (vec), summary, timestamp</li>
+    <li><code>memories</code> — id, type (fact/solution/instruction), content, embedding, created_at</li>
+    <li><code>session_summaries</code> — session_key, summary, key_decisions, timestamp</li>
+  </ul>
+</div>
+
+<div class="schema">
+  <h3>Entities &amp; Relationships</h3>
+  <p>From AgentClaw's entity graph design.</p>
+  <ul>
+    <li><code>entities</code> — id, type, name, metadata (JSON), embedding, created, updated</li>
+    <li><code>relationships</code> — source_id, target_id, type, weight, context, timestamp</li>
+    <li><code>entity_mentions</code> — entity_id, source_type, source_id, timestamp</li>
+  </ul>
+</div>
+
+<div class="schema">
+  <h3>Email</h3>
+  <p>From EmailPipeline's comprehensive email schema.</p>
+  <ul>
+    <li><code>email_accounts</code> — id, provider, credentials (enc), sync_mode, poll_interval</li>
+    <li><code>emails</code> — id, account_id, message_id, subject, from, body, embedding, date</li>
+    <li><code>email_categories</code> — email_id, category_id, confidence, source</li>
+    <li><code>category_prototypes</code> — category_id, prototype_embedding, source</li>
+    <li><code>email_tasks</code> — id, email_id, task_type, title, priority, status, due_date</li>
+  </ul>
+</div>
+
+<div class="schema">
+  <h3>Tasks</h3>
+  <p>From AgentClaw's task engine + EmailPipeline's task extraction.</p>
+  <ul>
+    <li><code>tasks</code> — id, title, status, priority, due, parent_id, source_type, source_id</li>
+    <li><code>task_dependencies</code> — task_id, depends_on_id, type</li>
+  </ul>
+</div>
+
+<div class="schema">
+  <h3>Skills &amp; Tools</h3>
+  <ul>
+    <li><code>installed_skills</code> — id, name, version, path, source, installed_at</li>
+  </ul>
+</div>
+
+<div class="schema">
+  <h3>Audit &amp; Security</h3>
+  <p>From AgentClaw's capability gate design.</p>
+  <ul>
+    <li><code>audit_log</code> — id, timestamp, command, actor, capability_used, context, result</li>
+    <li><code>capability_policies</code> — id, context_pattern, capabilities (JSON)</li>
+  </ul>
+</div>
+
+<div class="schema">
+  <h3>Settings</h3>
+  <p>From EmailPipeline's UI-editable settings system.</p>
+  <ul>
+    <li><code>settings</code> — key, value (JSON), value_type, category, is_secret</li>
+  </ul>
+</div>
+
+<h2>Search Architecture</h2>
+<p>Hybrid search combining vector similarity with keyword matching — the best of both worlds.</p>
+<div class="diagram"><pre>
+  Search Query
+      │
+      ├──▶ Embed query → sqlite-vec cosine similarity
+      │    (semantic match: "budget discussions" finds "Q4 financial review")
+      │
+      ├──▶ FTS5 keyword search
+      │    (exact match: finds specific names, IDs, dates)
+      │
+      └──▶ Merge & rank
+           (reciprocal rank fusion, recency weighting)
+           → Final results
+</pre></div>
+
+<h2>Embedding Pipeline</h2>
+<p>From EmailPipeline: content flows through a pipeline of processors.</p>
+<ol style="margin:0 0 16px 24px;">
+  <li>Content saved to database with <code>processed_at = NULL</code></li>
+  <li>Background worker picks up unprocessed items in batches of 32</li>
+  <li>Generate embeddings (local sentence-transformers or API)</li>
+  <li>Store embedding + set <code>processed_at</code> + <code>embedding_model</code></li>
+  <li>For emails: run classification (cosine similarity vs category prototypes)</li>
+</ol>
+
+<h2>Classification</h2>
+<p>From EmailPipeline: zero-shot classification using embedding similarity. No LLM required for basic classification — fast and free after initial embedding.</p>
+<ul>
+  <li>Each category has a prototype embedding (seeded from description, refined from user actions)</li>
+  <li>New content classified by comparing embedding to all prototypes</li>
+  <li>Manual user categorization updates the prototype (rolling centroid)</li>
+  <li>Configurable threshold (default 0.3), multi-label support optional</li>
+</ul>
+
+<h2>Migrations</h2>
+<p>SQL-based migrations using golang-migrate (from EmailPipeline). Compatible with both SQLite and PostgreSQL.</p>
+<ul>
+  <li>Files: <code>NNNNNN_description.up.sql</code> / <code>NNNNNN_description.down.sql</code></li>
+  <li>Run automatically on first start, or via CLI: <code>bond migrate up</code></li>
+</ul>
+
+<h2>Retention &amp; Pruning</h2>
+<table>
+  <thead><tr><th>Data</th><th>Retention</th></tr></thead>
+  <tbody>
+    <tr><td>Raw session transcripts</td><td>Summarized after 24h, originals pruned per config</td></tr>
+    <tr><td>Memories</td><td>Never auto-pruned</td></tr>
+    <tr><td>Entity graph</td><td>Relationships decay in weight without reinforcement</td></tr>
+    <tr><td>Audit log</td><td>Append-only, never pruned</td></tr>
+    <tr><td>Emails</td><td>User's retention preference</td></tr>
+    <tr><td>Screenshots / blobs</td><td>Configurable (default 30 days)</td></tr>
+  </tbody>
+</table>
+
+<h2>Encryption</h2>
+<ul>
+  <li><strong>Credentials</strong> — Fernet symmetric encryption, key from environment or device keychain</li>
+  <li><strong>Standard mode</strong> — SQLite WAL, no encryption. Fast.</li>
+  <li><strong>Vault mode</strong> (optional) — SQLCipher for the entire database at rest</li>
+</ul>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 05 Data Architecture</p>
+</div>
+</body>
+</html>
