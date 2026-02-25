@@ -585,31 +585,35 @@ The agent loop filters the tool list before each LLM call based on the active co
 
 ### 4.1 Docker Container Model
 
-Code execution runs inside Docker containers. Each sandbox profile maps to a Docker image.
+Code execution runs inside persistent Docker containers. Each agent has at most one container, created on first use and kept alive for the session.
 
 ```
 Agent calls code_execute
     │
     ▼
-SandboxManager.execute(profile, language, code)
+SandboxManager.execute(sandbox, language, code)
     │
-    ├─ Resolve sandbox profile for current context
+    ├─ Agent has sandbox_image = null?
+    │    → HostExecutor (no Docker, direct on host)
     │
-    ├─ Image exists? → use it
-    │  Image missing? → build from profile spec
+    ├─ Persistent container already running for this agent?
+    │    → docker exec into existing container
     │
-    ├─ persistent=true?
-    │    → find or create long-lived container
-    │    → exec into existing container
+    ├─ No container yet?
+    │    → docker create with:
+    │       • agent's sandbox_image
+    │       • workspace mounts: -v {host}:/workspace/{name}[:ro] for each
+    │       • resource limits (memory, cpu)
+    │       • security opts (no-new-privileges, non-root)
+    │    → docker start
+    │    → docker exec
     │
-    ├─ persistent=false?
-    │    → docker run --rm (fresh container, destroyed after)
+    ├─ Capture stdout, stderr, exit_code
     │
-    ├─ Apply resource limits (memory, cpu, timeout)
+    ├─ Container stays alive for next command
+    │   (cleaned up after idle timeout or session end)
     │
-    ├─ Mount workspace volume (based on filesystem setting)
-    │
-    └─ Return stdout, stderr, exit_code
+    └─ Return ExecutionResult
 ```
 
 ### 4.2 SandboxManager
@@ -617,81 +621,98 @@ SandboxManager.execute(profile, language, code)
 ```python
 # backend/app/sandbox/manager.py
 
-class SandboxProfile:
-    """Resolved sandbox configuration."""
-    name: str
-    image: str | None          # Docker image or None (auto-build)
-    packages: list[str]        # apt packages
-    pip: list[str]             # pip packages
-    npm: list[str]             # npm packages
-    network: str               # "off" | "lan" | "web" | "full"
-    filesystem: str            # "none" | "readonly" | "workspace" | "full"
-    memory: str                # "512m", "2g", etc.
-    cpu: float                 # CPU limit
+@dataclass
+class ResolvedSandbox:
+    """Fully resolved sandbox configuration for a specific agent execution."""
+    agent_id: str
+    agent_name: str
+    image: str | None          # Docker image or None (host mode)
+    workspace_mounts: list[WorkspaceMount]  # from agent_workspace_mounts table
+    tools: list[str]           # enabled tools for this agent
     timeout: int               # seconds
-    persistent: bool           # keep container alive between commands
-    tools: list[str] | None    # allowed tools (None = all)
-    env: dict[str, str]        # environment variables
-    mounts: list[str]          # additional bind mounts
-    ports: list[str]           # port forwards
+    max_iterations: int
+    container_id: str | None   # if persistent container already running
+
+@dataclass
+class WorkspaceMount:
+    host_path: str             # /home/andrew/projects/bond
+    mount_name: str            # "bond" → /workspace/bond
+    readonly: bool
 
 class SandboxManager:
     """Manages Docker sandbox lifecycle and code execution."""
 
     async def execute(
         self,
-        profile: SandboxProfile,
+        sandbox: ResolvedSandbox,
         language: str,
         code: str,
         timeout: int | None = None,
     ) -> ExecutionResult:
-        """Execute code in the sandbox."""
+        """Execute code in the sandbox container.
+        
+        If persistent container exists for this agent, exec into it.
+        Otherwise, create a new persistent container and exec.
+        """
         ...
 
-    async def ensure_image(self, profile: SandboxProfile) -> str:
-        """Build or pull the Docker image for a profile."""
-        ...
-
-    async def resolve_profile(
+    async def get_or_create_container(
         self,
-        agent: str | None,
-        skill: str | None,
-        channel: str | None,
-    ) -> SandboxProfile:
-        """Resolve which sandbox profile to use based on context."""
+        sandbox: ResolvedSandbox,
+    ) -> str:
+        """Find existing persistent container or create a new one.
+        
+        Container is tagged with agent_id for lookup.
+        Workspace mounts applied on creation:
+          -v {host_path}:/workspace/{mount_name}[:ro]
+        """
+        ...
+
+    async def resolve_sandbox(
+        self,
+        agent_id: str,
+        channel_override: str | None = None,
+    ) -> ResolvedSandbox:
+        """Build a ResolvedSandbox from agent config + optional channel override."""
+        ...
+
+    async def stop_container(self, agent_id: str) -> None:
+        """Stop the persistent container for an agent."""
         ...
 
     async def list_containers(self) -> list[ContainerInfo]:
         """List active sandbox containers."""
         ...
 
-    async def cleanup(self) -> None:
-        """Stop and remove stale containers."""
+    async def cleanup_idle(self, idle_seconds: int = 1800) -> None:
+        """Stop containers that have been idle beyond threshold."""
         ...
 ```
 
-### 4.3 Image Auto-Build
+### 4.3 Prebuilt Sandbox Images
 
-When a profile specifies `packages` but no `image`, Bond generates a Dockerfile and builds it:
+Bond ships Dockerfiles in `docker/sandboxes/` for common use cases. Users build them with `make sandbox-build`:
 
-```dockerfile
-# Auto-generated for profile "coding"
-FROM ubuntu:24.04
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs python3 python3-pip git gcc make \
-    && rm -rf /var/lib/apt/lists/*
-
-# pip packages (if specified)
-RUN pip3 install --no-cache-dir pandas matplotlib
-
-WORKDIR /workspace
+```
+docker/sandboxes/
+├── coding/Dockerfile      # Node 22, Python 3, git, build-essential
+├── research/Dockerfile    # Chromium, curl
+├── data/Dockerfile        # Python 3, pandas, matplotlib, numpy
+└── minimal/Dockerfile     # Bare Ubuntu base
 ```
 
-Built images are tagged `bond-sandbox-{profile_name}` and cached. Rebuild triggers:
-- Profile packages changed in `bond.json`
-- User runs `bond sandbox rebuild {name}`
-- Skill sandbox requirements changed
+```makefile
+# Makefile
+sandbox-build:
+	docker build -t bond-sandbox-coding docker/sandboxes/coding/
+	docker build -t bond-sandbox-research docker/sandboxes/research/
+	docker build -t bond-sandbox-data docker/sandboxes/data/
+	docker build -t bond-sandbox-minimal docker/sandboxes/minimal/
+```
+
+Users can also use any Docker image they've pulled (`ubuntu:24.04`, `python:3.12`, custom images, etc.) — the Settings UI lets them type any image name or select from locally available images.
+
+Future enhancement: auto-build images from package lists declared in skill metadata (per architecture doc 08).
 
 ### 4.4 Network Modes
 
@@ -702,43 +723,54 @@ Built images are tagged `bond-sandbox-{profile_name}` and cached. Rebuild trigge
 | `web` | default bridge + outbound HTTP/S only (iptables rules) | Internet web access |
 | `full` | `--network=host` or default bridge | Unrestricted |
 
-### 4.5 Filesystem Modes
+### 4.5 Workspace Mounts
 
-| Mode | Docker mount | Description |
-|------|-------------|-------------|
-| `none` | No volumes | No host filesystem access |
-| `readonly` | `-v workspace:/workspace:ro` | Read-only workspace |
-| `workspace` | `-v workspace:/workspace:rw` | Read-write workspace |
-| `full` | `-v /:/host:rw` | Full host filesystem (dangerous, trusted only) |
+Each agent has a list of workspace directory mappings (configured in the UI). These are the ONLY host directories the container can see.
 
-The workspace directory is `~/.bond/workspace` by default (configurable).
+```
+Agent "coder" workspace mounts:
+  /home/andrew/projects/bond    → /workspace/bond     (rw)
+  /home/andrew/projects/webapp  → /workspace/webapp    (rw)
+  /home/andrew/docs             → /workspace/docs      (ro)
 
-### 4.6 Profile Resolution Order
+Becomes:
+  docker create ... \
+    -v /home/andrew/projects/bond:/workspace/bond:rw \
+    -v /home/andrew/projects/webapp:/workspace/webapp:rw \
+    -v /home/andrew/docs:/workspace/docs:ro \
+    ...
+```
 
-Per architecture doc 08:
+No mounts configured = no host filesystem access (container has only its own filesystem).
 
-1. Active skill declares sandbox → use skill's sandbox
-2. Agent has assigned sandbox → use agent's sandbox
-3. Channel has assigned sandbox → use channel's sandbox
-4. Session-level override → use that
-5. Main session → `none` (host, no container)
-6. Fallback → global default sandbox
+For `sandbox_image: null` (host mode), the workspace mounts serve as an **allowlist** — `file_read`/`file_write` only work on paths within the listed directories.
 
-### 4.7 `sandbox: none` Mode
+### 4.6 Sandbox Resolution
 
-For trusted contexts (main webchat session), code executes directly on the host. `file_read`/`file_write` operate on the real filesystem. This is the default for the owner's direct chat — sandboxing yourself creates friction without security benefit.
+Resolution is straightforward — the agent's config determines everything:
 
-Host execution still enforces:
-- Timeout limits
-- Path traversal prevention on file operations
+1. Look up the agent handling this session
+2. Check if the channel has a `sandbox_override` → use that image instead of agent's
+3. Agent's `sandbox_image` is null → host mode (no container)
+4. Agent's `sandbox_image` is set → Docker mode with that image
+
+Skill sandbox requirements (from architecture doc 08) are a future enhancement. For now, skills run in the agent's sandbox.
+
+### 4.7 Host Mode (`sandbox_image: null`)
+
+For agents without a sandbox image (like the default "Bond" agent), code executes directly on the host. This is the owner's direct assistant with full access.
+
+Host mode enforces:
+- **Workspace allowlist** — `file_read`/`file_write` restricted to directories listed in `agent_workspace_mounts` (if any are configured; if none, the agent has full filesystem access)
+- Timeout limits on code execution
 - Audit logging of all commands
 
 ### 4.8 Docker Availability
 
 Bond must work without Docker (degraded mode):
-- If Docker is not available, `code_execute` returns an error: "Docker is required for sandboxed code execution. Install Docker or set sandbox to 'none' for trusted sessions."
-- `sandbox: none` always works (host execution)
-- Startup logs a warning if Docker is unavailable but sandbox profiles are configured
+- If Docker is not available and an agent has `sandbox_image` set, `code_execute` returns an error: "Docker is required for this agent's sandbox. Install Docker or switch to an agent without a sandbox."
+- Agents with `sandbox_image: null` always work (host execution)
+- Startup logs a warning if Docker is unavailable but agents have sandbox images configured
 - `capabilities` endpoint reports Docker availability
 
 ---
@@ -777,75 +809,158 @@ Backend (Python)                    Gateway (TypeScript)
 
 ## 6. Configuration
 
-### 6.1 Sandbox Profiles in bond.json
+### 6.1 Agent Configuration (Database — managed via Settings UI)
+
+Agents are the primary unit of configuration in Bond. Each agent is a named profile stored in the database and managed through the Settings UI. The user creates agents, picks a model, assigns a sandbox image, selects which tools to enable, maps workspace directories, and writes a system prompt.
+
+#### Agent Schema
+
+```sql
+-- Migration 000005: Agent profiles
+CREATE TABLE agents (
+    id TEXT PRIMARY KEY,                    -- ULID
+    name TEXT NOT NULL UNIQUE,              -- 'bond', 'coder', 'researcher'
+    display_name TEXT NOT NULL,             -- 'Bond (Main)', 'Coder', 'Researcher'
+    system_prompt TEXT NOT NULL,            -- The agent's persona / instructions
+    model TEXT NOT NULL,                    -- 'anthropic/claude-sonnet-4-20250514'
+    sandbox_image TEXT,                     -- Docker image name, NULL = host execution
+    tools JSON NOT NULL DEFAULT '[]',       -- JSON array of enabled tool names
+    max_iterations INTEGER NOT NULL DEFAULT 25,
+    auto_rag INTEGER NOT NULL DEFAULT 1,    -- boolean: auto-search before each turn
+    auto_rag_limit INTEGER NOT NULL DEFAULT 5,
+    is_default INTEGER NOT NULL DEFAULT 0,  -- exactly one agent is the default
+    is_active INTEGER NOT NULL DEFAULT 1,   -- soft disable
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- Each agent can have multiple workspace directory mappings
+-- These become subdirectories under /workspace in the container
+CREATE TABLE agent_workspace_mounts (
+    id TEXT PRIMARY KEY,                    -- ULID
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    host_path TEXT NOT NULL,                -- e.g., '/home/andrew/projects/bond'
+    mount_name TEXT NOT NULL,               -- e.g., 'bond' → /workspace/bond
+    readonly INTEGER NOT NULL DEFAULT 0,    -- mount as read-only?
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE(agent_id, mount_name)
+);
+
+CREATE INDEX idx_awm_agent ON agent_workspace_mounts(agent_id);
+```
+
+#### Default Agent (seeded on first run)
 
 ```json
 {
-  "sandboxes": {
-    "coding": {
-      "packages": ["nodejs", "python3", "git", "gcc", "make"],
-      "network": "lan",
-      "filesystem": "workspace",
-      "memory": "2g",
-      "timeout": 300
-    },
-    "research": {
-      "packages": ["chromium"],
-      "tools": ["browser", "web_search", "web_fetch", "search_memory", "respond"],
-      "network": "web",
-      "filesystem": "readonly"
-    },
-    "data": {
-      "packages": ["python3", "python3-pip"],
-      "pip": ["pandas", "matplotlib", "numpy"],
-      "network": "off",
-      "filesystem": "workspace"
-    },
-    "minimal": {
-      "packages": [],
-      "network": "off",
-      "filesystem": "none",
-      "tools": ["respond", "search_memory"]
-    }
-  },
+  "name": "bond",
+  "display_name": "Bond",
+  "system_prompt": "You are Bond, a helpful personal AI assistant running locally on the user's machine. Be concise, helpful, and friendly. You have tools to search your memory, save information, read and write files, and execute code. Use them when needed.",
+  "model": "anthropic/claude-sonnet-4-20250514",
+  "sandbox_image": null,
+  "tools": ["respond", "search_memory", "memory_save", "memory_update",
+            "code_execute", "file_read", "file_write", "web_search",
+            "skills", "notify"],
+  "max_iterations": 25,
+  "is_default": true,
+  "workspace_mounts": []
+}
+```
 
-  "agents": {
-    "default": {
-      "sandbox": "none",
-      "tools": ["respond", "search_memory", "memory_save", "memory_update",
-                "code_execute", "file_read", "file_write", "web_search",
-                "skills", "notify"]
-    },
-    "coder": {
-      "sandbox": "coding",
-      "tools": ["respond", "code_execute", "file_read", "file_write",
-                "search_memory", "memory_save"]
-    },
-    "researcher": {
-      "sandbox": "research",
-      "tools": ["respond", "web_search", "browser", "search_memory",
-                "memory_save", "file_write"]
-    }
-  },
+When `sandbox_image` is null, the agent runs in host mode (no Docker container). The default "Bond" agent starts this way — it's the owner's direct assistant with full access.
 
+#### Settings UI — Agent Configuration Page
+
+The Settings UI gets a new **Agents** section (`/settings/agents`) where the user can:
+
+1. **List agents** — cards showing name, model, sandbox, tool count, workspace count
+2. **Create agent** — form with:
+   - Name and display name
+   - System prompt (textarea)
+   - **Model dropdown** — populated from the LLM providers list (same source as current LLM settings). Shows provider + model name.
+   - **Sandbox image dropdown** — "None (host execution)" + list of available Docker images (pulled from `docker images` or pre-configured). User can also type a custom image name.
+   - **Tools checklist** — all 14 tools listed with checkboxes. All checked by default. Each tool shows its name and one-line description.
+   - **Workspace directories** — add/remove host paths with a mount name for each:
+     - Host path: file picker or text input (e.g., `/home/andrew/projects/bond`)
+     - Mount name: auto-derived from last path segment, editable (e.g., `bond`)
+     - Read-only toggle
+     - Multiple directories supported — each becomes `/workspace/{mount_name}` in the container
+   - Max iterations slider (1–50, default 25)
+   - Auto-RAG toggle + result count
+3. **Edit agent** — same form, pre-populated
+4. **Delete agent** — with confirmation (can't delete the default agent)
+5. **Set as default** — one agent is always the default (handles the main chat)
+
+#### How Workspace Mounts Work
+
+When the agent's sandbox container starts, each workspace mount becomes a subdirectory:
+
+```bash
+# Agent "coder" has two workspace mounts:
+#   /home/andrew/projects/bond → mount_name: "bond"
+#   /home/andrew/projects/webapp → mount_name: "webapp"
+
+docker run --rm \
+  -v /home/andrew/projects/bond:/workspace/bond:rw \
+  -v /home/andrew/projects/webapp:/workspace/webapp:rw \
+  bond-sandbox-coding \
+  ...
+
+# Inside the container:
+# /workspace/
+# ├── bond/        ← /home/andrew/projects/bond
+# └── webapp/      ← /home/andrew/projects/webapp
+```
+
+The agent sees a clean `/workspace` with named subdirectories. It can work across multiple projects. The host paths are validated on save (must exist, must be absolute).
+
+For `sandbox_image: null` (host mode), workspace mounts are informational — `file_read`/`file_write` use the host paths directly, restricted to the listed directories (allowlist). This prevents the host-mode agent from accessing arbitrary files.
+
+### 6.2 Sandbox Images
+
+Sandbox images are Docker images available for agents to use. Bond provides a few prebuilt ones and users can add custom images.
+
+#### Prebuilt Images
+
+| Image | Contents | Network | Use Case |
+|-------|----------|---------|----------|
+| `bond-sandbox-coding` | Node 22, Python 3, git, build-essential | lan | General development |
+| `bond-sandbox-research` | Chromium, curl | web | Web research |
+| `bond-sandbox-data` | Python 3, pandas, matplotlib, numpy | off | Data analysis |
+| `bond-sandbox-minimal` | (empty base) | off | Restricted execution |
+
+Images are built from Dockerfiles in `docker/sandboxes/` and cached locally. Users can also reference any Docker image they have pulled.
+
+#### Container Defaults
+
+- **`persistent=true`** (default) — container stays alive between commands. Faster, retains state (installed packages, running processes). Cleaned up on session end or after idle timeout (configurable, default 30 minutes).
+- Non-root user inside container
+- `--security-opt=no-new-privileges`
+- Resource limits from agent config or sandbox image defaults
+
+### 6.3 Channel Sandbox Overrides
+
+Channels can override which agent (and thus which sandbox) handles their messages:
+
+```json
+{
   "channels": {
-    "webchat": { "sandbox": "none" },
-    "signal": { "sandbox": "none" },
-    "telegram": { "sandbox": "minimal" },
-    "discord": { "sandbox": "minimal" }
+    "webchat": { "agent": "bond" },
+    "signal": { "agent": "bond" },
+    "telegram": { "agent": "bond", "sandbox_override": "minimal" },
+    "discord": { "agent": "bond", "sandbox_override": "minimal" }
   }
 }
 ```
 
-### 6.2 Settings Table Keys
+When `sandbox_override` is set, it forces that sandbox image regardless of what the agent normally uses. This lets you use your full-featured "bond" agent on Discord but in a locked-down container.
+
+### 6.4 Settings Table Keys
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `agent.max_iterations` | int | 25 | Max tool-loop iterations per turn |
-| `agent.auto_rag` | bool | true | Auto-search knowledge store before each turn |
-| `agent.auto_rag_limit` | int | 5 | Number of RAG results to inject |
-| `sandbox.workspace_path` | string | `~/.bond/workspace` | Host path for workspace mounts |
 | `sandbox.default_timeout` | int | 120 | Default code execution timeout (seconds) |
+| `sandbox.idle_timeout` | int | 1800 | Seconds before idle persistent container is stopped |
 | `sandbox.docker_available` | bool | (auto-detected) | Whether Docker is available |
 | `search.api_key.brave` | string | null | Brave Search API key (encrypted) |
 
@@ -857,6 +972,7 @@ Backend (Python)                    Gateway (TypeScript)
 backend/app/
 ├── agent/
 │   ├── loop.py              # Agent loop with tool-use cycle (UPGRADE)
+│   ├── profiles.py          # Agent profile loading from DB
 │   ├── tools/
 │   │   ├── __init__.py      # Tool registry
 │   │   ├── definitions.py   # All tool JSON definitions
@@ -873,65 +989,96 @@ backend/app/
 │   │   ├── notify.py        # notify handler
 │   │   └── skills.py        # skills list/load handler
 │   └── llm.py               # LLM client (unchanged for now)
+├── api/v1/
+│   ├── agents.py            # Agent CRUD API (for Settings UI)
+│   └── ...
 ├── sandbox/
 │   ├── __init__.py           # Currently empty, gets real code
-│   ├── manager.py            # SandboxManager — Docker lifecycle
-│   ├── profiles.py           # Profile loading from bond.json
-│   ├── docker.py             # Docker client wrapper (docker-py)
-│   └── host.py               # Host execution for sandbox: none
+│   ├── manager.py            # SandboxManager — Docker lifecycle + persistent containers
+│   ├── docker_client.py      # Docker client wrapper (docker-py)
+│   └── host.py               # Host execution for sandbox_image: null
 ```
 
 ---
 
 ## 8. Implementation Stories
 
-### Story 11a: Tool Registry & Definitions
+### Story 11a: Migration 000005 — Agent Profiles
+- Create migration `000005_agents.up.sql` with `agents` and `agent_workspace_mounts` tables
+- Seed default "bond" agent (no sandbox, all tools, `is_default=true`)
+- Down migration drops both tables
+- Tests: migration up/down, default agent seeded
+
+### Story 11b: Agent CRUD API + Settings UI
+- Create `backend/app/api/v1/agents.py` — full CRUD for agents and workspace mounts
+  - `GET /api/v1/agents` — list all agents
+  - `GET /api/v1/agents/{id}` — get agent with workspace mounts
+  - `POST /api/v1/agents` — create agent
+  - `PUT /api/v1/agents/{id}` — update agent
+  - `DELETE /api/v1/agents/{id}` — delete (can't delete default)
+  - `POST /api/v1/agents/{id}/default` — set as default
+  - `GET /api/v1/agents/tools` — list all available tools with descriptions
+  - `GET /api/v1/agents/sandbox-images` — list available Docker images
+- Create `frontend/src/app/settings/agents/page.tsx` — agent management UI
+  - Agent list with cards
+  - Create/edit form: name, system prompt, model dropdown, sandbox image, tool checkboxes, workspace mounts, max iterations, auto-RAG
+  - Delete with confirmation
+  - Set as default
+- Tests: all CRUD endpoints, validation, default agent protection
+
+### Story 11c: Tool Registry & Definitions
 - Create `backend/app/agent/tools/definitions.py` with all 14 tool JSON schemas
 - Create `backend/app/agent/tools/__init__.py` with a `ToolRegistry` that maps tool names to handlers
-- Tool filtering based on context (agent profile, sandbox, channel)
+- Tool filtering based on agent's `tools` list from DB
 - Tests: tool definition validation, registry lookup, filtering
 
-### Story 11b: Agent Loop Upgrade
+### Story 11d: Agent Loop Upgrade
 - Upgrade `backend/app/agent/loop.py` to a tool-use loop
+- Load agent config from DB (system prompt, model, tools, max_iterations, auto_rag)
 - Auto-RAG: search knowledge store with user message before each turn
 - Iterate: LLM call → tool execution → append results → repeat until `respond` or max iterations
 - Handle both streaming and non-streaming modes
 - Tests: mock LLM returning tool calls, verify loop execution, max iteration safety
 
-### Story 11c: Core Tool Handlers (respond, search, memory)
+### Story 11e: Core Tool Handlers (respond, search, memory)
 - Implement `respond`, `search_memory`, `memory_save`, `memory_update` handlers
 - Wire to existing mediator commands (already built in Story 10)
 - Tests: each handler with mock mediator
 
-### Story 11d: File Tool Handlers
+### Story 11f: File Tool Handlers
 - Implement `file_read` and `file_write` with path traversal prevention
-- Workspace path resolution (sandbox mode vs host mode)
-- Tests: read/write in workspace, path traversal rejection
+- Workspace allowlist from `agent_workspace_mounts` — only allowed directories
+- Host mode: direct filesystem access within allowlist
+- Docker mode: paths map to `/workspace/{mount_name}/...`
+- Tests: read/write in workspace, path traversal rejection, allowlist enforcement
 
-### Story 11e: SandboxManager — Docker Code Execution
-- Implement `SandboxManager` with Docker container lifecycle
-- Profile resolution from `bond.json`
-- Image auto-build from package lists
+### Story 11g: SandboxManager — Docker Code Execution
+- Implement `SandboxManager` with persistent container lifecycle
+- `get_or_create_container()` — find running container for agent or create new one
+- Workspace mounts applied from agent config
+- `execute()` — `docker exec` into persistent container
+- `cleanup_idle()` — stop containers idle beyond threshold
 - `code_execute` tool handler
 - Graceful degradation when Docker unavailable
-- Tests: mock Docker client, profile resolution, image build
+- Tests: mock Docker client, container lifecycle, workspace mount generation
 
-### Story 11f: Host Execution (sandbox: none)
-- Implement `HostExecutor` for trusted sessions without Docker
+### Story 11h: Host Execution (sandbox_image: null)
+- Implement `HostExecutor` for agents without a sandbox image
 - Subprocess-based code execution with timeout, stdout/stderr capture
-- Security: timeout enforcement, audit logging
-- Tests: execute Python/bash, timeout enforcement
+- Workspace allowlist enforcement
+- Security: timeout, audit logging
+- Tests: execute Python/bash, timeout enforcement, allowlist enforcement
 
-### Story 11g: Stub Tool Handlers
+### Story 11i: Stub Tool Handlers
 - Implement stubs for `web_search`, `browser`, `email`, `cron`, `notify`, `call_subordinate`, `skills`
 - Stubs return clear "not yet configured" or "coming in Phase N" messages
 - Tests: each stub returns appropriate message
 
-### Story 11h: Integration Test — Full Agent Turn with Tools
-- End-to-end test: user sends message → auto-RAG → LLM returns tool calls → tools execute → final response
+### Story 11j: Integration Test — Full Agent Turn with Tools
+- End-to-end test: user sends message → agent loaded from DB → auto-RAG → LLM returns tool calls → tools execute → final response
 - Test with mock LLM that returns a `search_memory` call followed by `respond`
 - Test max iteration safety
-- Test tool filtering by context
+- Test tool filtering by agent config
 
 ---
 
