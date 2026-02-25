@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 
 const API_BASE = "http://localhost:18790/api/v1/agents";
 
@@ -63,8 +63,11 @@ function DirBrowser({
   const [loading, setLoading] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
 
+  const showHiddenRef = React.useRef(showHidden);
+  showHiddenRef.current = showHidden;
+
   const browse = useCallback(async (path: string, hidden?: boolean) => {
-    const h = hidden ?? showHidden;
+    const h = hidden ?? showHiddenRef.current;
     setLoading(true);
     try {
       const res = await fetch(
