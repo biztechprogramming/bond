@@ -229,16 +229,6 @@ export class WebChatChannel {
         agentStatus: "idle",
       });
 
-      // Also send a response message for backward compatibility
-      if (responseContent) {
-        this.send(socket, {
-          type: "response",
-          sessionId,
-          content: responseContent,
-          conversationId: responseConversationId,
-        });
-      }
-
       // Refresh conversation list
       this.handleListConversations(socket).catch(() => {});
 
