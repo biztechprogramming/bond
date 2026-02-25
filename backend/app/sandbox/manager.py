@@ -72,8 +72,9 @@ class SandboxManager:
             for mount in workspace_mounts:
                 host_path = mount.get("host_path", "")
                 mount_name = mount.get("mount_name", "workspace")
+                container_path = mount.get("container_path") or f"/workspace/{mount_name}"
                 readonly = mount.get("readonly", False)
-                mount_str = f"{host_path}:/workspace/{mount_name}"
+                mount_str = f"{host_path}:{container_path}"
                 if readonly:
                     mount_str += ":ro"
                 cmd.extend(["-v", mount_str])

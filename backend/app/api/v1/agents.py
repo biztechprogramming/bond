@@ -27,6 +27,7 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 class WorkspaceMount(BaseModel):
     host_path: str
     mount_name: str
+    container_path: str = ""
     readonly: bool = False
 
 
@@ -92,6 +93,7 @@ async def _get_agent_with_relations(db: AsyncSession, agent_id: str) -> dict | N
             "id": m["id"],
             "host_path": m["host_path"],
             "mount_name": m["mount_name"],
+            "container_path": m["container_path"] or f"/workspace/{m['mount_name']}",
             "readonly": bool(m["readonly"]),
         }
         for m in mounts_result.mappings().all()
@@ -232,8 +234,8 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
         mount_id = str(ULID())
         await db.execute(
             text(
-                "INSERT INTO agent_workspace_mounts (id, agent_id, host_path, mount_name, readonly) "
-                "VALUES (:id, :agent_id, :host_path, :mount_name, :readonly)"
+                "INSERT INTO agent_workspace_mounts (id, agent_id, host_path, mount_name, readonly, container_path) "
+                "VALUES (:id, :agent_id, :host_path, :mount_name, :readonly, :container_path)"
             ),
             {
                 "id": mount_id,
@@ -241,6 +243,7 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
                 "host_path": mount.host_path,
                 "mount_name": mount.mount_name,
                 "readonly": 1 if mount.readonly else 0,
+                "container_path": mount.container_path or f"/workspace/{mount.mount_name}",
             },
         )
 
@@ -324,8 +327,8 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depe
             mount_id = str(ULID())
             await db.execute(
                 text(
-                    "INSERT INTO agent_workspace_mounts (id, agent_id, host_path, mount_name, readonly) "
-                    "VALUES (:id, :agent_id, :host_path, :mount_name, :readonly)"
+                    "INSERT INTO agent_workspace_mounts (id, agent_id, host_path, mount_name, readonly, container_path) "
+                    "VALUES (:id, :agent_id, :host_path, :mount_name, :readonly, :container_path)"
                 ),
                 {
                     "id": mount_id,
@@ -333,6 +336,7 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depe
                     "host_path": mount.host_path,
                     "mount_name": mount.mount_name,
                     "readonly": 1 if mount.readonly else 0,
+                    "container_path": mount.container_path or f"/workspace/{mount.mount_name}",
                 },
             )
 

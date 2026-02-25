@@ -6,6 +6,7 @@ interface WorkspaceMount {
   id?: string;
   host_path: string;
   mount_name: string;
+  container_path: string;
   readonly: boolean;
 }
 
@@ -286,6 +287,7 @@ export default function AgentsTab() {
         workspace_mounts: editing.workspace_mounts.map((m) => ({
           host_path: m.host_path,
           mount_name: m.mount_name,
+          container_path: m.container_path || `/workspace/${m.mount_name}`,
           readonly: m.readonly,
         })),
         channels: editing.channels.map((c) => ({
@@ -374,7 +376,7 @@ export default function AgentsTab() {
       ...editing,
       workspace_mounts: [
         ...editing.workspace_mounts,
-        { host_path: "", mount_name: "", readonly: false },
+        { host_path: "", mount_name: "", container_path: "", readonly: false },
       ],
     });
   };
@@ -390,7 +392,15 @@ export default function AgentsTab() {
   const updateMount = (index: number, field: keyof WorkspaceMount, value: string | boolean) => {
     if (!editing) return;
     const mounts = [...editing.workspace_mounts];
-    mounts[index] = { ...mounts[index], [field]: value };
+    const updated = { ...mounts[index], [field]: value };
+    // Auto-update container_path when mount_name changes (if container_path wasn't manually set)
+    if (field === "mount_name" && typeof value === "string") {
+      const oldDefault = `/workspace/${mounts[index].mount_name}`;
+      if (!mounts[index].container_path || mounts[index].container_path === oldDefault) {
+        updated.container_path = `/workspace/${value}`;
+      }
+    }
+    mounts[index] = updated;
     setEditing({ ...editing, workspace_mounts: mounts });
   };
 
@@ -528,25 +538,28 @@ export default function AgentsTab() {
                 <button style={styles.smallButton} onClick={addMount}>+ Add</button>
               </label>
               {editing.workspace_mounts.map((mount, i) => (
-                <div key={i} style={styles.mountRow}>
-                  <input
-                    style={{ ...styles.input, flex: 1 }}
-                    value={mount.host_path}
-                    onChange={(e) => updateMount(i, "host_path", e.target.value)}
-                    placeholder="/path/on/host"
-                  />
-                  <button style={styles.smallButton} onClick={() => setBrowsingMountIndex(i)} title="Browse">📂</button>
-                  <input
-                    style={{ ...styles.input, width: "140px" }}
-                    value={mount.mount_name}
-                    onChange={(e) => updateMount(i, "mount_name", e.target.value)}
-                    placeholder="name"
-                  />
-                  <label style={styles.checkboxLabel}>
-                    <input type="checkbox" checked={mount.readonly} onChange={(e) => updateMount(i, "readonly", e.target.checked)} style={styles.checkbox} />
-                    RO
-                  </label>
-                  <button style={styles.dangerSmall} onClick={() => removeMount(i)}>X</button>
+                <div key={i} style={{ marginBottom: "8px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <div style={styles.mountRow}>
+                    <input
+                      style={{ ...styles.input, flex: 1 }}
+                      value={mount.host_path}
+                      onChange={(e) => updateMount(i, "host_path", e.target.value)}
+                      placeholder="Host path"
+                    />
+                    <button style={styles.smallButton} onClick={() => setBrowsingMountIndex(i)} title="Browse">📂</button>
+                    <span style={{ color: "#8888a0", fontSize: "0.85rem" }}>→</span>
+                    <input
+                      style={{ ...styles.input, flex: 1 }}
+                      value={mount.container_path || `/workspace/${mount.mount_name}`}
+                      onChange={(e) => updateMount(i, "container_path", e.target.value)}
+                      placeholder="Container path (e.g. /workspace/myproject)"
+                    />
+                    <label style={styles.checkboxLabel}>
+                      <input type="checkbox" checked={mount.readonly} onChange={(e) => updateMount(i, "readonly", e.target.checked)} style={styles.checkbox} />
+                      RO
+                    </label>
+                    <button style={styles.dangerSmall} onClick={() => removeMount(i)}>X</button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -584,12 +597,19 @@ export default function AgentsTab() {
             {browsingMountIndex !== null && (
               <DirBrowser
                 onSelect={(path) => {
-                  updateMount(browsingMountIndex, "host_path", path);
-                  // Auto-fill mount_name from last path segment
+                  const idx = browsingMountIndex;
                   const name = path.split("/").filter(Boolean).pop() || "";
-                  if (!editing.workspace_mounts[browsingMountIndex].mount_name) {
-                    updateMount(browsingMountIndex, "mount_name", name);
-                  }
+                  setEditing((prev) => {
+                    if (!prev) return prev;
+                    const mounts = [...prev.workspace_mounts];
+                    mounts[idx] = {
+                      ...mounts[idx],
+                      host_path: path,
+                      mount_name: mounts[idx].mount_name || name,
+                      container_path: mounts[idx].container_path || `/workspace/${mounts[idx].mount_name || name}`,
+                    };
+                    return { ...prev, workspace_mounts: mounts };
+                  });
                   setBrowsingMountIndex(null);
                 }}
                 onClose={() => setBrowsingMountIndex(null)}
