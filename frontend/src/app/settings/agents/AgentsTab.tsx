@@ -489,6 +489,41 @@ export default function AgentsTab() {
               </select>
             </div>
 
+            <div style={styles.field}>
+              <label style={styles.label}>Max Iterations</label>
+              <input
+                type="number"
+                style={styles.input}
+                value={editing.max_iterations}
+                onChange={(e) => setEditing({ ...editing, max_iterations: parseInt(e.target.value) || 25 })}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Auto-RAG</label>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <label style={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={editing.auto_rag}
+                    onChange={(e) => setEditing({ ...editing, auto_rag: e.target.checked })}
+                    style={styles.checkbox}
+                  />
+                  Enabled
+                </label>
+                {editing.auto_rag && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <span style={{ color: "#8888a0", fontSize: "0.85rem" }}>Limit:</span>
+                    <input
+                      type="number"
+                      style={{ ...styles.input, width: "70px" }}
+                      value={editing.auto_rag_limit}
+                      onChange={(e) => setEditing({ ...editing, auto_rag_limit: parseInt(e.target.value) || 5 })}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div style={{ ...styles.field, ...styles.formFull }}>
               <label style={styles.label}>System Prompt</label>
               <textarea
@@ -562,36 +597,6 @@ export default function AgentsTab() {
                   </div>
                 </div>
               ))}
-            </div>
-
-            <div style={styles.field}>
-              <label style={styles.label}>Max Iterations</label>
-              <input
-                type="number"
-                style={{ ...styles.input, width: "100px" }}
-                value={editing.max_iterations}
-                onChange={(e) => setEditing({ ...editing, max_iterations: parseInt(e.target.value) || 25 })}
-              />
-            </div>
-            <div style={styles.field}>
-              <label style={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={editing.auto_rag}
-                  onChange={(e) => setEditing({ ...editing, auto_rag: e.target.checked })}
-                  style={styles.checkbox}
-                />
-                Auto-RAG
-              </label>
-              {editing.auto_rag && (
-                <input
-                  type="number"
-                  style={{ ...styles.input, width: "80px", marginTop: "8px" }}
-                  value={editing.auto_rag_limit}
-                  onChange={(e) => setEditing({ ...editing, auto_rag_limit: parseInt(e.target.value) || 5 })}
-                  placeholder="limit"
-                />
-              )}
             </div>
 
             {browsingMountIndex !== null && (
