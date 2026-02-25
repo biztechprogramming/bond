@@ -9,10 +9,23 @@ interface ChatMessage {
 }
 
 export default function Home() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("bond-chat-history");
+      if (saved) {
+        try { return JSON.parse(saved); } catch { /* ignore */ }
+      }
+    }
+    return [];
+  });
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Persist chat history
+  useEffect(() => {
+    localStorage.setItem("bond-chat-history", JSON.stringify(messages));
+  }, [messages]);
   const wsRef = useRef<GatewayWebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
