@@ -6,8 +6,8 @@ import type { WebSocket } from "ws";
 
 export interface Session {
   id: string;
+  conversationId: string | null;
   createdAt: Date;
-  history: Array<{ role: string; content: string }>;
 }
 
 export interface ConnectedClient {

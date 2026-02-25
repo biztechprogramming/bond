@@ -14,6 +14,7 @@ from backend.app.api.v1.health import router as health_router
 from backend.app.api.v1.agent import router as agent_router
 from backend.app.api.v1.agents import router as agents_router
 from backend.app.api.v1.settings import router as settings_router
+from backend.app.api.v1.conversations import router as conversations_router
 
 
 @asynccontextmanager
@@ -60,3 +61,4 @@ app.include_router(health_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(agents_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
+app.include_router(conversations_router, prefix="/api/v1")

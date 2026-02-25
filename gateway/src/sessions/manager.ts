@@ -1,7 +1,8 @@
 /**
  * Session manager — tracks sessions and connected clients.
  *
- * Sprint 1: Simple in-memory session store. Each webchat tab gets one session.
+ * History is now stored server-side in the backend database.
+ * The gateway only tracks the conversation ID per session.
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -12,11 +13,11 @@ export class SessionManager {
   private sessions = new Map<string, Session>();
   private clients = new Map<WebSocket, ConnectedClient>();
 
-  createSession(): Session {
+  createSession(conversationId?: string): Session {
     const session: Session = {
       id: uuidv4(),
+      conversationId: conversationId || null,
       createdAt: new Date(),
-      history: [],
     };
     this.sessions.set(session.id, session);
     return session;
@@ -32,6 +33,13 @@ export class SessionManager {
       if (existing) return existing;
     }
     return this.createSession();
+  }
+
+  setConversationId(sessionId: string, conversationId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      session.conversationId = conversationId;
+    }
   }
 
   registerClient(socket: WebSocket, sessionId: string): ConnectedClient {
@@ -50,16 +58,5 @@ export class SessionManager {
 
   getClient(socket: WebSocket): ConnectedClient | undefined {
     return this.clients.get(socket);
-  }
-
-  addToHistory(
-    sessionId: string,
-    role: string,
-    content: string
-  ): void {
-    const session = this.sessions.get(sessionId);
-    if (session) {
-      session.history.push({ role, content });
-    }
   }
 }

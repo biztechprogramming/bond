@@ -89,6 +89,46 @@ async def _auto_rag(db: AsyncSession, query: str, limit: int) -> str:
         return ""
 
 
+async def _load_agent_by_id(db: AsyncSession, agent_id: str) -> dict[str, Any]:
+    """Load a specific agent config by ID."""
+    fallback = {
+        "id": agent_id,
+        "name": "bond",
+        "system_prompt": DEFAULT_SYSTEM_PROMPT,
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "sandbox_image": None,
+        "tools": '["respond","search_memory","memory_save","memory_update"]',
+        "max_iterations": 25,
+        "auto_rag": 1,
+        "auto_rag_limit": 5,
+        "workspace_mounts": [],
+    }
+    try:
+        result = await db.execute(
+            text("SELECT * FROM agents WHERE id = :id"),
+            {"id": agent_id},
+        )
+    except Exception:
+        logger.debug("Could not query agents table for id=%s, using fallback", agent_id)
+        return fallback
+    row = result.mappings().first()
+    if row is None:
+        return await _load_default_agent(db)
+
+    agent = dict(row)
+
+    mounts_result = await db.execute(
+        text("SELECT host_path, mount_name, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
+        {"id": agent["id"]},
+    )
+    agent["workspace_mounts"] = [
+        {"host_path": m["host_path"], "mount_name": m["mount_name"], "readonly": bool(m["readonly"])}
+        for m in mounts_result.mappings().all()
+    ]
+
+    return agent
+
+
 async def agent_turn(
     user_message: str,
     history: list[dict[str, str]] | None = None,
@@ -96,6 +136,7 @@ async def agent_turn(
     system_prompt: str | None = None,
     stream: bool = False,
     db: AsyncSession | None = None,
+    agent_id: str | None = None,
 ) -> str | AsyncIterator[str]:
     """Execute a single agent turn with tool-use loop.
 
@@ -114,7 +155,10 @@ async def agent_turn(
         return await chat_completion(messages, stream=stream)
 
     # Full tool-use loop
-    agent = await _load_default_agent(db)
+    if agent_id:
+        agent = await _load_agent_by_id(db, agent_id)
+    else:
+        agent = await _load_default_agent(db)
     agent_tools = json.loads(agent["tools"]) if isinstance(agent["tools"], str) else agent["tools"]
     max_iterations = agent.get("max_iterations", 25)
     effective_prompt = system_prompt or agent.get("system_prompt", DEFAULT_SYSTEM_PROMPT)

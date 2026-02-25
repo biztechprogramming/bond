@@ -1,8 +1,8 @@
 /**
  * WebChat channel — handles messages from the web frontend via WebSocket.
  *
- * This is the primary channel for Sprint 1. The frontend connects via WS,
- * sends messages, and receives responses streamed back.
+ * History is now managed server-side. The gateway forwards conversation_id
+ * between frontend and backend.
  */
 
 import type { WebSocket } from "ws";
@@ -47,38 +47,140 @@ export class WebChatChannel {
     socket: WebSocket,
     msg: IncomingMessage
   ): Promise<void> {
-    if (msg.type !== "message") return;
-
     const client = this.sessionManager.getClient(socket);
     if (!client) return;
 
     const session = this.sessionManager.getSession(client.sessionId);
     if (!session) return;
 
-    // Add user message to history
-    this.sessionManager.addToHistory(session.id, "user", msg.content);
+    switch (msg.type) {
+      case "message":
+        await this.handleChatMessage(socket, session.id, msg);
+        break;
+      case "switch_conversation":
+        await this.handleSwitchConversation(socket, session.id, msg);
+        break;
+      case "new_conversation":
+        this.sessionManager.setConversationId(session.id, "");
+        session.conversationId = null;
+        this.send(socket, {
+          type: "connected",
+          sessionId: session.id,
+          conversationId: undefined,
+        });
+        break;
+      case "list_conversations":
+        await this.handleListConversations(socket);
+        break;
+      case "delete_conversation":
+        await this.handleDeleteConversation(socket, session.id, msg);
+        break;
+    }
+  }
 
-    // Call backend agent
+  private async handleChatMessage(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage
+  ): Promise<void> {
+    if (!msg.content) return;
+
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
     try {
       const result = await this.backendClient.agentTurn({
         message: msg.content,
-        history: session.history.slice(0, -1), // Exclude last (it's in the message)
+        conversation_id: msg.conversationId || session.conversationId || undefined,
       });
 
-      // Add assistant response to history
-      this.sessionManager.addToHistory(session.id, "assistant", result.response);
+      // Store conversation ID in session
+      this.sessionManager.setConversationId(sessionId, result.conversation_id);
 
       // Send response back to client
       this.send(socket, {
         type: "response",
-        sessionId: session.id,
+        sessionId,
         content: result.response,
+        conversationId: result.conversation_id,
       });
     } catch (err) {
       this.send(socket, {
         type: "error",
-        sessionId: session.id,
+        sessionId,
         error: err instanceof Error ? err.message : "Agent error",
+      });
+    }
+  }
+
+  private async handleSwitchConversation(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage
+  ): Promise<void> {
+    if (!msg.conversationId) return;
+
+    try {
+      const conv = await this.backendClient.getConversation(msg.conversationId);
+      this.sessionManager.setConversationId(sessionId, msg.conversationId);
+
+      this.send(socket, {
+        type: "history",
+        sessionId,
+        conversationId: msg.conversationId,
+        messages: conv.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          id: m.id,
+          created_at: m.created_at,
+        })),
+      });
+    } catch (err) {
+      this.send(socket, {
+        type: "error",
+        sessionId,
+        error: err instanceof Error ? err.message : "Failed to load conversation",
+      });
+    }
+  }
+
+  private async handleListConversations(socket: WebSocket): Promise<void> {
+    try {
+      const conversations = await this.backendClient.listConversations();
+      this.send(socket, {
+        type: "conversations_list",
+        conversations,
+      });
+    } catch (err) {
+      this.send(socket, {
+        type: "error",
+        error: err instanceof Error ? err.message : "Failed to list conversations",
+      });
+    }
+  }
+
+  private async handleDeleteConversation(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage
+  ): Promise<void> {
+    if (!msg.conversationId) return;
+
+    try {
+      await this.backendClient.deleteConversation(msg.conversationId);
+
+      // If we deleted the active conversation, clear it
+      const session = this.sessionManager.getSession(sessionId);
+      if (session?.conversationId === msg.conversationId) {
+        session.conversationId = null;
+      }
+
+      // Refresh conversation list
+      await this.handleListConversations(socket);
+    } catch (err) {
+      this.send(socket, {
+        type: "error",
+        error: err instanceof Error ? err.message : "Failed to delete conversation",
       });
     }
   }

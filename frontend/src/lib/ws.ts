@@ -4,11 +4,22 @@
 
 export type MessageHandler = (msg: GatewayMessage) => void;
 
+export interface ConversationSummary {
+  id: string;
+  title: string | null;
+  message_count: number;
+  updated_at: string;
+  agent_name: string | null;
+}
+
 export interface GatewayMessage {
-  type: "response" | "chunk" | "error" | "connected";
+  type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list";
   sessionId?: string;
   content?: string;
   error?: string;
+  conversationId?: string;
+  messages?: Array<{ role: string; content: string; id?: string; created_at?: string }>;
+  conversations?: ConversationSummary[];
 }
 
 export class GatewayWebSocket {
@@ -56,7 +67,7 @@ export class GatewayWebSocket {
     };
   }
 
-  send(content: string): void {
+  send(content: string, conversationId?: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.error("[ws] Not connected");
       return;
@@ -67,6 +78,37 @@ export class GatewayWebSocket {
         type: "message",
         sessionId: this.sessionId || "",
         content,
+        conversationId,
+      })
+    );
+  }
+
+  switchConversation(conversationId: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "switch_conversation",
+        conversationId,
+      })
+    );
+  }
+
+  newConversation(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ type: "new_conversation" }));
+  }
+
+  listConversations(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ type: "list_conversations" }));
+  }
+
+  deleteConversation(conversationId: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "delete_conversation",
+        conversationId,
       })
     );
   }
