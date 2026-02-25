@@ -50,7 +50,27 @@ async def async_client(_reset_db_globals):
 
 @pytest.fixture()
 def mock_chat_completion():
-    """Mock the LLM chat_completion so tests don't call real APIs."""
-    with patch("backend.app.agent.loop.chat_completion", new_callable=AsyncMock) as mock:
-        mock.return_value = "Hello from Bond!"
-        yield mock
+    """Mock the LLM so tests don't call real APIs.
+
+    Patches both the simple chat_completion path and litellm.acompletion
+    for the tool-use loop path.
+    """
+    from unittest.mock import MagicMock
+
+    # Build a mock litellm response for the tool-use path
+    message = MagicMock()
+    message.content = "Hello from Bond!"
+    message.tool_calls = None
+    message.model_dump.return_value = {"role": "assistant", "content": "Hello from Bond!"}
+    choice = MagicMock()
+    choice.message = message
+    response = MagicMock()
+    response.choices = [choice]
+
+    with (
+        patch("backend.app.agent.loop.chat_completion", new_callable=AsyncMock) as mock_cc,
+        patch("backend.app.agent.loop.litellm") as mock_litellm,
+    ):
+        mock_cc.return_value = "Hello from Bond!"
+        mock_litellm.acompletion = AsyncMock(return_value=response)
+        yield mock_cc

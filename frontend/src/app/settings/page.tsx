@@ -224,6 +224,16 @@ export default function SettingsPage() {
       </header>
 
       <div style={styles.content}>
+        {/* Agent Management Link */}
+        <section style={styles.section}>
+          <a href="/settings/agents" style={{ color: "#6c8aff", textDecoration: "none", fontSize: "1rem", fontWeight: 600 }}>
+            Agent Management &rarr;
+          </a>
+          <div style={{ fontSize: "0.8rem", color: "#8888a0", marginTop: "4px" }}>
+            Configure agent profiles, tools, sandbox images, and communication channels.
+          </div>
+        </section>
+
         {/* LLM Configuration Section */}
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>LLM Configuration</h2>

@@ -1,0 +1,341 @@
+"""Tool JSON schemas for all 14 agent tools."""
+
+from __future__ import annotations
+
+TOOL_DEFINITIONS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "respond",
+            "description": "Send a text response to the user. Use this when you have a final answer or want to communicate something. This ends your turn.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message to send to the user.",
+                    }
+                },
+                "required": ["message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_memory",
+            "description": "Search your memory for relevant information. Use this to recall facts, preferences, past conversations, or any stored knowledge.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query to find relevant memories.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return.",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_save",
+            "description": "Save new information to long-term memory. Use this to remember facts, preferences, or important details for future reference.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "The content to save to memory.",
+                    },
+                    "memory_type": {
+                        "type": "string",
+                        "description": "Type of memory: fact, preference, event, person, project, or general.",
+                        "default": "general",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "A brief summary of the memory.",
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "memory_update",
+            "description": "Update an existing memory with new content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "string",
+                        "description": "The ID of the memory to update.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The new content for the memory.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Reason for the update.",
+                    },
+                },
+                "required": ["memory_id", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_execute",
+            "description": "Execute code in a sandboxed environment. Supports Python and shell scripts.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "description": "Programming language: python or shell.",
+                        "enum": ["python", "shell"],
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "The code to execute.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds.",
+                        "default": 30,
+                    },
+                },
+                "required": ["language", "code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_read",
+            "description": "Read the contents of a file from the workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to read (relative to workspace root).",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_write",
+            "description": "Write content to a file in the workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to write (relative to workspace root).",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The content to write to the file.",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "call_subordinate",
+            "description": "Delegate a task to a subordinate agent for specialized processing.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Name of the subordinate agent to call.",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "The task description for the subordinate agent.",
+                    },
+                },
+                "required": ["agent_name", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web for information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query.",
+                    },
+                    "num_results": {
+                        "type": "integer",
+                        "description": "Number of results to return.",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browser",
+            "description": "Open a URL in a headless browser and extract content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to navigate to.",
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "Action to perform: get_text, get_html, screenshot.",
+                        "default": "get_text",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "email",
+            "description": "Send or read email messages.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action: send, read, list.",
+                        "enum": ["send", "read", "list"],
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient email address (for send).",
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject (for send).",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email body (for send).",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cron",
+            "description": "Schedule a recurring task or one-time delayed execution.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action: create, list, delete.",
+                        "enum": ["create", "list", "delete"],
+                    },
+                    "schedule": {
+                        "type": "string",
+                        "description": "Cron expression or ISO timestamp for when to run.",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Description of the task to execute.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "notify",
+            "description": "Send a notification to the user via configured channels.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The notification message.",
+                    },
+                    "urgency": {
+                        "type": "string",
+                        "description": "Urgency level: low, normal, high.",
+                        "default": "normal",
+                    },
+                },
+                "required": ["message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "skills",
+            "description": "List or execute a saved skill (reusable tool sequence).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action: list, execute, create.",
+                        "enum": ["list", "execute", "create"],
+                    },
+                    "skill_name": {
+                        "type": "string",
+                        "description": "Name of the skill to execute or create.",
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": "Parameters to pass to the skill.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+]
+
+# Quick lookup: tool name -> short description (used by the tools listing API)
+TOOL_SUMMARIES: dict[str, str] = {
+    d["function"]["name"]: d["function"]["description"]
+    for d in TOOL_DEFINITIONS
+}
+
+# Quick lookup: tool name -> full definition
+TOOL_MAP: dict[str, dict] = {
+    d["function"]["name"]: d for d in TOOL_DEFINITIONS
+}

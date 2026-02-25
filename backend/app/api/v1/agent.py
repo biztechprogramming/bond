@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pydantic import BaseModel
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.loop import agent_turn
+from backend.app.db.session import get_db
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -22,10 +24,10 @@ class AgentTurnResponse(BaseModel):
 
 
 @router.post("/turn")
-async def post_agent_turn(req: AgentTurnRequest):
+async def post_agent_turn(req: AgentTurnRequest, db: AsyncSession = Depends(get_db)):
     """Execute an agent turn: send a message, get a response."""
     if req.stream:
-        result = await agent_turn(req.message, req.history, stream=True)
+        result = await agent_turn(req.message, req.history, stream=True, db=db)
 
         async def generate():
             async for chunk in result:
@@ -34,5 +36,5 @@ async def post_agent_turn(req: AgentTurnRequest):
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
-    result = await agent_turn(req.message, req.history, stream=False)
+    result = await agent_turn(req.message, req.history, stream=False, db=db)
     return AgentTurnResponse(response=result)

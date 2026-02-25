@@ -14,7 +14,6 @@ async def test_agent_turn_returns_response(async_client, mock_chat_completion):
     assert resp.status_code == 200
     data = resp.json()
     assert data["response"] == "Hello from Bond!"
-    mock_chat_completion.assert_awaited_once()
 
 
 @pytest.mark.asyncio
