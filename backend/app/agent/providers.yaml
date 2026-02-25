@@ -1,0 +1,57 @@
+# Supported model providers for Bond (adapted from Agent Zero)
+# Each provider's API key env var: {PROVIDER_ID}_API_KEY (uppercase)
+
+chat:
+  anthropic:
+    name: Anthropic
+    litellm_provider: anthropic
+  openai:
+    name: OpenAI
+    litellm_provider: openai
+  google:
+    name: Google
+    litellm_provider: gemini
+  deepseek:
+    name: DeepSeek
+    litellm_provider: deepseek
+  groq:
+    name: Groq
+    litellm_provider: groq
+  mistral:
+    name: Mistral AI
+    litellm_provider: mistral
+  ollama:
+    name: Ollama
+    litellm_provider: ollama
+  openrouter:
+    name: OpenRouter
+    litellm_provider: openrouter
+  lm_studio:
+    name: LM Studio
+    litellm_provider: lm_studio
+  xai:
+    name: xAI
+    litellm_provider: xai
+  azure:
+    name: OpenAI Azure
+    litellm_provider: azure
+  bedrock:
+    name: AWS Bedrock
+    litellm_provider: bedrock
+  other:
+    name: Other OpenAI compatible
+    litellm_provider: openai
+
+embedding:
+  huggingface:
+    name: HuggingFace
+    litellm_provider: huggingface
+  openai:
+    name: OpenAI
+    litellm_provider: openai
+  ollama:
+    name: Ollama
+    litellm_provider: ollama
+  google:
+    name: Google
+    litellm_provider: gemini

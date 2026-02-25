@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.ruff_cache/
+.pytest_cache/
+.venv/
+uv.lock
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Bond runtime data (not in repo)
+.bond/
+
+# Environment
+.env
+.env.local
+
+# Lockfiles generated on install
+gateway/pnpm-lock.yaml
+frontend/pnpm-lock.yaml

@@ -1,0 +1,17 @@
+{
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514"
+  },
+  "backend": {
+    "host": "127.0.0.1",
+    "port": 18790
+  },
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 18789
+  },
+  "frontend": {
+    "port": 18788
+  }
+}

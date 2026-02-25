@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      target: backend-base
+    command: uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload
+    ports:
+      - "18790:18790"
+    volumes:
+      - .:/app
+      - bond-data:/home/bond/.bond
+    environment:
+      - BOND_HOME=/home/bond/.bond
+      - PYTHONPATH=/app
+
+  gateway:
+    build:
+      context: .
+      target: backend-base
+    command: sh -c "cd gateway && pnpm dev"
+    ports:
+      - "18789:18789"
+    volumes:
+      - ./gateway:/app/gateway
+      - bond-data:/home/bond/.bond
+    environment:
+      - BOND_BACKEND_URL=http://backend:18790
+
+  frontend:
+    build:
+      context: .
+      target: backend-base
+    command: sh -c "cd frontend && pnpm dev"
+    ports:
+      - "18788:18788"
+    volumes:
+      - ./frontend:/app/frontend
+
+volumes:
+  bond-data:

@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  bond:
+    build: .
+    ports:
+      - "18788:18788"  # Frontend
+      - "18789:18789"  # Gateway WS
+      - "18790:18790"  # Backend API
+    volumes:
+      - bond-data:/home/bond/.bond
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - BOND_HOME=/home/bond/.bond
+    restart: unless-stopped
+
+volumes:
+  bond-data:
