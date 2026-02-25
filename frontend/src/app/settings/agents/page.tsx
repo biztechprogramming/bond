@@ -144,9 +144,10 @@ const modalStyles: Record<string, React.CSSProperties> = {
     border: "1px solid #1e1e2e",
     borderRadius: "12px",
     width: "500px",
-    maxHeight: "70vh",
+    height: "70vh",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
   },
   header: {
     display: "flex",
@@ -181,9 +182,11 @@ const modalStyles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   dirList: {
-    overflowY: "auto" as const,
+    overflowY: "scroll" as const,
     flex: 1,
+    minHeight: 0,
     maxHeight: "400px",
+    WebkitOverflowScrolling: "touch",
   },
   dirItem: {
     padding: "10px 20px",
