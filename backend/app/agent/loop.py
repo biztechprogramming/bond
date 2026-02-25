@@ -56,11 +56,11 @@ async def _load_default_agent(db: AsyncSession) -> dict[str, Any]:
 
     # Load workspace mounts
     mounts_result = await db.execute(
-        text("SELECT host_path, mount_name, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
+        text("SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
         {"id": agent["id"]},
     )
     agent["workspace_mounts"] = [
-        {"host_path": m["host_path"], "mount_name": m["mount_name"], "readonly": bool(m["readonly"])}
+        {"host_path": m["host_path"], "mount_name": m["mount_name"], "container_path": m["container_path"], "readonly": bool(m["readonly"])}
         for m in mounts_result.mappings().all()
     ]
 
@@ -119,11 +119,11 @@ async def _load_agent_by_id(db: AsyncSession, agent_id: str) -> dict[str, Any]:
     agent = dict(row)
 
     mounts_result = await db.execute(
-        text("SELECT host_path, mount_name, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
+        text("SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
         {"id": agent["id"]},
     )
     agent["workspace_mounts"] = [
-        {"host_path": m["host_path"], "mount_name": m["mount_name"], "readonly": bool(m["readonly"])}
+        {"host_path": m["host_path"], "mount_name": m["mount_name"], "container_path": m["container_path"], "readonly": bool(m["readonly"])}
         for m in mounts_result.mappings().all()
     ]
 
