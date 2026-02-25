@@ -395,15 +395,27 @@ export default function AgentsTab() {
   };
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-        <h2 style={{ fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 }}>Agent Management</h2>
-        <button style={styles.button} onClick={startCreate}>+ New Agent</button>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      {/* Top bar: contextual — list vs edit mode */}
+      <div style={styles.topBar}>
+        <h2 style={{ fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 }}>
+          {editing ? (isNew ? "New Agent" : `Editing: ${editing.display_name || editing.name}`) : "Agent Management"}
+        </h2>
+        <div style={{ display: "flex", gap: "8px" }}>
+          {editing ? (
+            <>
+              <button style={styles.button} onClick={save}>Save</button>
+              <button style={styles.secondaryButton} onClick={() => { setEditing(null); setMsg(""); }}>Cancel</button>
+            </>
+          ) : (
+            <button style={styles.button} onClick={startCreate}>+ New Agent</button>
+          )}
+        </div>
       </div>
 
       {msg && <div style={styles.msg}>{msg}</div>}
 
-      <div style={styles.content}>
+      <div style={{ flex: 1, overflowY: "auto" }}>
         {!editing ? (
           <div style={styles.cardGrid}>
             {agents.map((agent) => (
@@ -422,68 +434,58 @@ export default function AgentsTab() {
           </div>
         ) : (
           <div style={styles.form}>
-            <div style={styles.formRow}>
-              <div style={styles.field}>
-                <label style={styles.label}>Name (slug)</label>
-                <input
-                  style={styles.input}
-                  value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  placeholder="my-agent"
-                />
-              </div>
-              <div style={styles.field}>
-                <label style={styles.label}>Display Name</label>
-                <input
-                  style={styles.input}
-                  value={editing.display_name}
-                  onChange={(e) => setEditing({ ...editing, display_name: e.target.value })}
-                  placeholder="My Agent"
-                />
-              </div>
-            </div>
-
             <div style={styles.field}>
-              <label style={styles.label}>System Prompt</label>
-              <textarea
-                style={{ ...styles.input, minHeight: "120px", resize: "vertical" }}
-                value={editing.system_prompt}
-                onChange={(e) => setEditing({ ...editing, system_prompt: e.target.value })}
+              <label style={styles.label}>Name (slug)</label>
+              <input
+                style={styles.input}
+                value={editing.name}
+                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                placeholder="my-agent"
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Display Name</label>
+              <input
+                style={styles.input}
+                value={editing.display_name}
+                onChange={(e) => setEditing({ ...editing, display_name: e.target.value })}
+                placeholder="My Agent"
               />
             </div>
 
-            <div style={styles.formRow}>
-              <div style={styles.field}>
-                <label style={styles.label}>Model</label>
-                <select
-                  style={styles.select}
-                  value={editing.model}
-                  onChange={(e) => setEditing({ ...editing, model: e.target.value })}
-                >
-                  {MODELS.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div style={styles.field}>
-                <label style={styles.label}>Sandbox Image</label>
-                <select
-                  style={styles.select}
-                  value={editing.sandbox_image || ""}
-                  onChange={(e) =>
-                    setEditing({ ...editing, sandbox_image: e.target.value || null })
-                  }
-                >
-                  <option value="">None (host execution)</option>
-                  {sandboxImages.map((img) => (
-                    <option key={img} value={img}>
-                      {img}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Model</label>
+              <select
+                style={styles.select}
+                value={editing.model}
+                onChange={(e) => setEditing({ ...editing, model: e.target.value })}
+              >
+                {MODELS.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Sandbox Image</label>
+              <select
+                style={styles.select}
+                value={editing.sandbox_image || ""}
+                onChange={(e) => setEditing({ ...editing, sandbox_image: e.target.value || null })}
+              >
+                <option value="">None (host execution)</option>
+                {sandboxImages.map((img) => (
+                  <option key={img} value={img}>{img}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ ...styles.field, ...styles.formFull }}>
+              <label style={styles.label}>System Prompt</label>
+              <textarea
+                style={{ ...styles.input, minHeight: "100px", resize: "vertical" }}
+                value={editing.system_prompt}
+                onChange={(e) => setEditing({ ...editing, system_prompt: e.target.value })}
+              />
             </div>
 
             <div style={styles.field}>
@@ -520,12 +522,10 @@ export default function AgentsTab() {
               </div>
             </div>
 
-            <div style={styles.field}>
+            <div style={{ ...styles.field, ...styles.formFull }}>
               <label style={styles.label}>
                 Workspace Mounts{" "}
-                <button style={styles.smallButton} onClick={addMount}>
-                  + Add
-                </button>
+                <button style={styles.smallButton} onClick={addMount}>+ Add</button>
               </label>
               {editing.workspace_mounts.map((mount, i) => (
                 <div key={i} style={styles.mountRow}>
@@ -535,13 +535,7 @@ export default function AgentsTab() {
                     onChange={(e) => updateMount(i, "host_path", e.target.value)}
                     placeholder="/path/on/host"
                   />
-                  <button
-                    style={styles.smallButton}
-                    onClick={() => setBrowsingMountIndex(i)}
-                    title="Browse directories"
-                  >
-                    📂
-                  </button>
+                  <button style={styles.smallButton} onClick={() => setBrowsingMountIndex(i)} title="Browse">📂</button>
                   <input
                     style={{ ...styles.input, width: "140px" }}
                     value={mount.mount_name}
@@ -549,55 +543,42 @@ export default function AgentsTab() {
                     placeholder="name"
                   />
                   <label style={styles.checkboxLabel}>
-                    <input
-                      type="checkbox"
-                      checked={mount.readonly}
-                      onChange={(e) => updateMount(i, "readonly", e.target.checked)}
-                      style={styles.checkbox}
-                    />
+                    <input type="checkbox" checked={mount.readonly} onChange={(e) => updateMount(i, "readonly", e.target.checked)} style={styles.checkbox} />
                     RO
                   </label>
-                  <button style={styles.dangerSmall} onClick={() => removeMount(i)}>
-                    X
-                  </button>
+                  <button style={styles.dangerSmall} onClick={() => removeMount(i)}>X</button>
                 </div>
               ))}
             </div>
 
-            <div style={styles.formRow}>
-              <div style={styles.field}>
-                <label style={styles.label}>Max Iterations</label>
+            <div style={styles.field}>
+              <label style={styles.label}>Max Iterations</label>
+              <input
+                type="number"
+                style={{ ...styles.input, width: "100px" }}
+                value={editing.max_iterations}
+                onChange={(e) => setEditing({ ...editing, max_iterations: parseInt(e.target.value) || 25 })}
+              />
+            </div>
+            <div style={styles.field}>
+              <label style={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={editing.auto_rag}
+                  onChange={(e) => setEditing({ ...editing, auto_rag: e.target.checked })}
+                  style={styles.checkbox}
+                />
+                Auto-RAG
+              </label>
+              {editing.auto_rag && (
                 <input
                   type="number"
-                  style={{ ...styles.input, width: "100px" }}
-                  value={editing.max_iterations}
-                  onChange={(e) =>
-                    setEditing({ ...editing, max_iterations: parseInt(e.target.value) || 25 })
-                  }
+                  style={{ ...styles.input, width: "80px", marginTop: "8px" }}
+                  value={editing.auto_rag_limit}
+                  onChange={(e) => setEditing({ ...editing, auto_rag_limit: parseInt(e.target.value) || 5 })}
+                  placeholder="limit"
                 />
-              </div>
-              <div style={styles.field}>
-                <label style={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={editing.auto_rag}
-                    onChange={(e) => setEditing({ ...editing, auto_rag: e.target.checked })}
-                    style={styles.checkbox}
-                  />
-                  Auto-RAG
-                </label>
-                {editing.auto_rag && (
-                  <input
-                    type="number"
-                    style={{ ...styles.input, width: "80px", marginLeft: "8px" }}
-                    value={editing.auto_rag_limit}
-                    onChange={(e) =>
-                      setEditing({ ...editing, auto_rag_limit: parseInt(e.target.value) || 5 })
-                    }
-                    placeholder="limit"
-                  />
-                )}
-              </div>
+              )}
             </div>
 
             {browsingMountIndex !== null && (
@@ -615,30 +596,16 @@ export default function AgentsTab() {
               />
             )}
 
-            <div style={styles.buttonRow}>
-              <button style={styles.button} onClick={save}>
-                Save
-              </button>
-              {!isNew && !editing.is_default && (
-                <>
-                  <button style={styles.secondaryButton} onClick={() => setDefault(editing.id)}>
-                    Set Default
-                  </button>
-                  <button style={styles.dangerButton} onClick={() => deleteAgent(editing.id)}>
-                    Delete
-                  </button>
-                </>
-              )}
-              <button
-                style={styles.secondaryButton}
-                onClick={() => {
-                  setEditing(null);
-                  setMsg("");
-                }}
-              >
-                Cancel
-              </button>
-            </div>
+            {!isNew && !editing.is_default && (
+              <div style={styles.buttonRow}>
+                <button style={styles.secondaryButton} onClick={() => setDefault(editing.id)}>
+                  Set Default
+                </button>
+                <button style={styles.dangerButton} onClick={() => deleteAgent(editing.id)}>
+                  Delete
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -660,6 +627,10 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     padding: "16px 24px",
     borderBottom: "1px solid #1e1e2e",
+  },
+  topBar: {
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "12px 0", borderBottom: "1px solid #1e1e2e", marginBottom: "16px", flexShrink: 0,
   },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
@@ -699,10 +670,11 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "12px",
     padding: "24px",
     border: "1px solid #1e1e2e",
-    display: "flex",
-    flexDirection: "column",
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
     gap: "16px",
   },
+  formFull: { gridColumn: "1 / -1" },
   formRow: { display: "flex", gap: "16px" },
   field: { flex: 1 },
   label: {

@@ -295,7 +295,7 @@ export default function SettingsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "900px", margin: "0 auto" },
+  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%" },
   header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottom: "1px solid #1e1e2e" },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
@@ -306,7 +306,7 @@ const s: Record<string, React.CSSProperties> = {
     cursor: "pointer", transition: "color 0.2s, border-color 0.2s",
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
-  content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px" },
+  content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0 },
   section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", border: "1px solid #1e1e2e" },
   sectionTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 20px 0" },
   field: { marginBottom: "16px" },
