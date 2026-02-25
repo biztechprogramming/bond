@@ -61,12 +61,14 @@ function DirBrowser({
   const [dirs, setDirs] = useState<{ name: string; path: string }[]>([]);
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
 
-  const browse = useCallback(async (path: string) => {
+  const browse = useCallback(async (path: string, hidden?: boolean) => {
+    const h = hidden ?? showHidden;
     setLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:18790/api/v1/agents/browse-dirs?path=${encodeURIComponent(path)}`
+        `http://localhost:18790/api/v1/agents/browse-dirs?path=${encodeURIComponent(path)}&show_hidden=${h}`
       );
       if (res.ok) {
         const data = await res.json();
@@ -81,7 +83,7 @@ function DirBrowser({
   }, []);
 
   useEffect(() => {
-    browse(currentPath);
+    browse(currentPath, false);
   }, []);
 
   return (
@@ -92,11 +94,23 @@ function DirBrowser({
           <button style={modalStyles.close} onClick={onClose}>✕</button>
         </div>
         <div style={modalStyles.pathBar}>
-          <span style={{ color: "#6c8aff", fontSize: "0.85rem", wordBreak: "break-all" }}>
+          <span style={{ color: "#6c8aff", fontSize: "0.85rem", wordBreak: "break-all", flex: 1 }}>
             {currentPath}
           </span>
+          <label style={{ display: "flex", alignItems: "center", gap: "4px", color: "#8888a0", fontSize: "0.8rem", flexShrink: 0, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={showHidden}
+              onChange={(e) => {
+                setShowHidden(e.target.checked);
+                browse(currentPath, e.target.checked);
+              }}
+              style={{ accentColor: "#6c8aff" }}
+            />
+            Hidden
+          </label>
           <button
-            style={{ ...modalStyles.selectBtn, marginLeft: "auto", flexShrink: 0 }}
+            style={{ ...modalStyles.selectBtn, flexShrink: 0 }}
             onClick={() => onSelect(currentPath)}
           >
             Select This

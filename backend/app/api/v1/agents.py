@@ -162,7 +162,7 @@ async def list_sandbox_images():
 
 
 @router.get("/browse-dirs")
-async def browse_directories(path: str = "/"):
+async def browse_directories(path: str = "/", show_hidden: bool = False):
     """List directories at the given path for the workspace mount picker."""
     from pathlib import Path as P
 
@@ -173,6 +173,8 @@ async def browse_directories(path: str = "/"):
     dirs = []
     try:
         for entry in sorted(target.iterdir()):
+            if not show_hidden and entry.name.startswith("."):
+                continue
             if entry.is_dir():
                 dirs.append({
                     "name": entry.name,
