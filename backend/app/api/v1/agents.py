@@ -173,8 +173,6 @@ async def browse_directories(path: str = "/"):
     dirs = []
     try:
         for entry in sorted(target.iterdir()):
-            if entry.name.startswith("."):
-                continue
             if entry.is_dir():
                 dirs.append({
                     "name": entry.name,
