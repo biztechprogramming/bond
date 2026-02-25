@@ -38,6 +38,8 @@ async def turn_client(_clear_settings_cache):
         await _apply_sql(db, MIGRATIONS_DIR / "000004_audit_log.up.sql")
         await _apply_sql(db, MIGRATIONS_DIR / "000005_agents.up.sql")
         await _apply_sql(db, MIGRATIONS_DIR / "000006_conversations.up.sql")
+        await _apply_sql(db, MIGRATIONS_DIR / "000007_mount_container_path.up.sql")
+        await _apply_sql(db, MIGRATIONS_DIR / "000008_message_queue.up.sql")
 
     from backend.app.config import get_settings
     get_settings.cache_clear()
@@ -109,6 +111,9 @@ async def test_agent_turn_with_conversation_id(turn_client, mock_llm):
 
 
 @pytest.mark.asyncio
-async def test_agent_turn_validation_error(turn_client):
+async def test_agent_turn_empty_request(turn_client):
+    """Empty request (no message, no conversation) creates conv and returns empty."""
     resp = await turn_client.post("/api/v1/agent/turn", json={})
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "conversation_id" in data

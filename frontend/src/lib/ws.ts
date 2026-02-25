@@ -13,11 +13,16 @@ export interface ConversationSummary {
 }
 
 export interface GatewayMessage {
-  type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list";
+  type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list"
+    | "queued" | "status" | "done" | "new_input";
   sessionId?: string;
   content?: string;
   error?: string;
   conversationId?: string;
+  messageId?: string;
+  agentStatus?: "idle" | "thinking" | "tool_calling" | "responding";
+  queuePosition?: number;
+  queuedCount?: number;
   messages?: Array<{ role: string; content: string; id?: string; created_at?: string }>;
   conversations?: ConversationSummary[];
 }
@@ -101,6 +106,16 @@ export class GatewayWebSocket {
   listConversations(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify({ type: "list_conversations" }));
+  }
+
+  interrupt(conversationId?: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "interrupt",
+        conversationId,
+      })
+    );
   }
 
   deleteConversation(conversationId: string): void {

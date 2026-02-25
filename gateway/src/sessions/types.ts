@@ -7,6 +7,7 @@ import type { WebSocket } from "ws";
 export interface Session {
   id: string;
   conversationId: string | null;
+  agentBusy: boolean;
   createdAt: Date;
 }
 

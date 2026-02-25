@@ -37,6 +37,7 @@ async def db_session(_clear_settings_cache):
         await _apply_sql(db, MIGRATIONS_DIR / "000003_entity_graph.up.sql")
         await _apply_sql(db, MIGRATIONS_DIR / "000004_audit_log.up.sql")
         await _apply_sql(db, MIGRATIONS_DIR / "000005_agents.up.sql")
+        await _apply_sql(db, MIGRATIONS_DIR / "000007_mount_container_path.up.sql")
 
     from backend.app.config import get_settings
     get_settings.cache_clear()

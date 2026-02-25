@@ -57,12 +57,16 @@ export class WebChatChannel {
       case "message":
         await this.handleChatMessage(socket, session.id, msg);
         break;
+      case "interrupt":
+        await this.handleInterrupt(socket, session.id, msg);
+        break;
       case "switch_conversation":
         await this.handleSwitchConversation(socket, session.id, msg);
         break;
       case "new_conversation":
         this.sessionManager.setConversationId(session.id, "");
         session.conversationId = null;
+        session.agentBusy = false;
         this.send(socket, {
           type: "connected",
           sessionId: session.id,
@@ -88,23 +92,170 @@ export class WebChatChannel {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
 
+    const conversationId = msg.conversationId || session.conversationId || undefined;
+
+    if (session.agentBusy && conversationId) {
+      // Agent is busy — queue the message in DB
+      try {
+        const queueResult = await this.backendClient.queueMessage(conversationId, msg.content);
+        this.send(socket, {
+          type: "queued",
+          sessionId,
+          messageId: queueResult.message_id,
+          queuePosition: queueResult.queue_position,
+          conversationId,
+        });
+      } catch (err) {
+        this.send(socket, {
+          type: "error",
+          sessionId,
+          error: err instanceof Error ? err.message : "Failed to queue message",
+        });
+      }
+      return;
+    }
+
+    // Agent is idle — start a new turn with SSE streaming
+    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId);
+  }
+
+  private async handleInterrupt(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const conversationId = msg.conversationId || session.conversationId;
+    if (!conversationId) return;
+
     try {
-      const result = await this.backendClient.agentTurn({
-        message: msg.content,
-        conversation_id: msg.conversationId || session.conversationId || undefined,
-      });
-
-      // Store conversation ID in session
-      this.sessionManager.setConversationId(sessionId, result.conversation_id);
-
-      // Send response back to client
+      await this.backendClient.interrupt(conversationId);
       this.send(socket, {
-        type: "response",
+        type: "status",
         sessionId,
-        content: result.response,
-        conversationId: result.conversation_id,
+        agentStatus: "idle",
+        conversationId,
       });
     } catch (err) {
+      this.send(socket, {
+        type: "error",
+        sessionId,
+        error: err instanceof Error ? err.message : "Failed to interrupt",
+      });
+    }
+  }
+
+  private async startStreamingTurn(
+    socket: WebSocket,
+    sessionId: string,
+    message: string | undefined,
+    conversationId: string | undefined,
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    session.agentBusy = true;
+    this.send(socket, {
+      type: "status",
+      sessionId,
+      agentStatus: "thinking",
+      conversationId,
+    });
+
+    try {
+      let responseContent = "";
+      let responseConversationId = conversationId || "";
+      let responseMessageId = "";
+      let queuedCount = 0;
+
+      for await (const event of this.backendClient.agentTurnStream({
+        message: message || undefined,
+        conversation_id: conversationId,
+      })) {
+        switch (event.event) {
+          case "status":
+            this.send(socket, {
+              type: "status",
+              sessionId,
+              agentStatus: event.data.state as "thinking" | "tool_calling" | "responding",
+              conversationId: (event.data.conversation_id as string) || responseConversationId,
+            });
+            if (event.data.conversation_id) {
+              responseConversationId = event.data.conversation_id as string;
+            }
+            break;
+          case "chunk":
+            responseContent += (event.data.content as string) || "";
+            this.send(socket, {
+              type: "chunk",
+              sessionId,
+              content: event.data.content as string,
+              conversationId: responseConversationId,
+            });
+            break;
+          case "new_input":
+            this.send(socket, {
+              type: "new_input",
+              sessionId,
+              conversationId: responseConversationId,
+              queuedCount: event.data.count as number,
+            });
+            break;
+          case "done":
+            responseMessageId = (event.data.message_id as string) || "";
+            responseConversationId = (event.data.conversation_id as string) || responseConversationId;
+            queuedCount = (event.data.queued_count as number) || 0;
+            break;
+        }
+      }
+
+      // Store conversation ID in session
+      if (responseConversationId) {
+        this.sessionManager.setConversationId(sessionId, responseConversationId);
+        session.conversationId = responseConversationId;
+      }
+
+      session.agentBusy = false;
+
+      // Send done + full response
+      this.send(socket, {
+        type: "done",
+        sessionId,
+        conversationId: responseConversationId,
+        messageId: responseMessageId,
+        queuedCount,
+        agentStatus: "idle",
+      });
+
+      // Also send a response message for backward compatibility
+      if (responseContent) {
+        this.send(socket, {
+          type: "response",
+          sessionId,
+          content: responseContent,
+          conversationId: responseConversationId,
+        });
+      }
+
+      // Refresh conversation list
+      this.handleListConversations(socket).catch(() => {});
+
+      // Auto-continue if there are queued messages
+      if (queuedCount > 0) {
+        setTimeout(() => {
+          this.startStreamingTurn(socket, sessionId, undefined, responseConversationId);
+        }, 500);
+      }
+    } catch (err) {
+      session.agentBusy = false;
+      this.send(socket, {
+        type: "status",
+        sessionId,
+        agentStatus: "idle",
+        conversationId,
+      });
       this.send(socket, {
         type: "error",
         sessionId,

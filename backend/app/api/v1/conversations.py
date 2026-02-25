@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
+from backend.app.agent.interrupts import set_interrupt, is_turn_active
 from backend.app.db.session import get_db
 
 logger = logging.getLogger("bond.api.conversations")
@@ -28,6 +29,11 @@ class ConversationCreate(BaseModel):
 
 class ConversationUpdate(BaseModel):
     title: str
+
+
+class QueueMessageRequest(BaseModel):
+    content: str
+    role: str = "user"
 
 
 # -- Helpers --
@@ -184,6 +190,87 @@ async def delete_conversation(
     )
     await db.commit()
     return {"status": "deleted", "conversation_id": conversation_id}
+
+
+# -- Message queue --
+
+
+@router.post("/{conversation_id}/messages")
+async def queue_message(
+    conversation_id: str,
+    body: QueueMessageRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Save a user message immediately with status='queued'."""
+    result = await db.execute(
+        text("SELECT id FROM conversations WHERE id = :id"),
+        {"id": conversation_id},
+    )
+    if result.fetchone() is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    msg_id = str(ULID())
+    await db.execute(
+        text(
+            "INSERT INTO conversation_messages (id, conversation_id, role, content, status) "
+            "VALUES (:id, :conv_id, :role, :content, 'queued')"
+        ),
+        {
+            "id": msg_id,
+            "conv_id": conversation_id,
+            "role": body.role,
+            "content": body.content,
+        },
+    )
+
+    # Get queue position
+    pos_result = await db.execute(
+        text(
+            "SELECT COUNT(*) FROM conversation_messages "
+            "WHERE conversation_id = :conv_id AND status = 'queued'"
+        ),
+        {"conv_id": conversation_id},
+    )
+    queue_position = pos_result.fetchone()[0]
+
+    # Update message count
+    await db.execute(
+        text(
+            "UPDATE conversations SET message_count = message_count + 1 "
+            "WHERE id = :id"
+        ),
+        {"id": conversation_id},
+    )
+    await db.commit()
+
+    return {
+        "message_id": msg_id,
+        "status": "queued",
+        "queue_position": queue_position,
+    }
+
+
+# -- Interrupt --
+
+
+@router.post("/{conversation_id}/interrupt")
+async def interrupt_conversation(
+    conversation_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Signal the agent to interrupt and check for new messages."""
+    result = await db.execute(
+        text("SELECT id FROM conversations WHERE id = :id"),
+        {"id": conversation_id},
+    )
+    if result.fetchone() is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    if not is_turn_active(conversation_id):
+        return {"status": "no_active_turn"}
+
+    set_interrupt(conversation_id)
+    return {"status": "interrupt_sent"}
 
 
 # -- Internal helpers --

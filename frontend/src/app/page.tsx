@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from "@/lib/ws";
 
+type AgentStatus = "idle" | "thinking" | "tool_calling" | "responding";
+
 interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
+  status?: "sending" | "queued" | "delivered";
 }
 
 export default function Home() {
@@ -13,6 +16,8 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
+  const [streamingContent, setStreamingContent] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(() => {
     if (typeof window !== "undefined") {
       return localStorage.getItem("bond-conversation-id");
@@ -41,21 +46,58 @@ export default function Home() {
     ws.onMessage((msg: GatewayMessage) => {
       if (msg.type === "connected") {
         setConnected(true);
-        // Request conversation list
         ws.listConversations();
-        // If we have a stored conversation, load it
         const storedId = localStorage.getItem("bond-conversation-id");
         if (storedId) {
           ws.switchConversation(storedId);
         }
-      } else if (msg.type === "response" && msg.content) {
-        setMessages((prev) => [...prev, { role: "assistant", content: msg.content! }]);
+      } else if (msg.type === "status") {
+        const status = msg.agentStatus || "idle";
+        setAgentStatus(status);
+        if (status !== "idle") {
+          setLoading(true);
+        }
+      } else if (msg.type === "chunk" && msg.content) {
+        setStreamingContent((prev) => prev + msg.content!);
+        setAgentStatus("responding");
+      } else if (msg.type === "done") {
+        // Finalize streaming content into a message
+        setStreamingContent((prev) => {
+          if (prev) {
+            setMessages((msgs) => [...msgs, { role: "assistant", content: prev }]);
+          }
+          return "";
+        });
         setLoading(false);
+        setAgentStatus("idle");
         if (msg.conversationId) {
           setConversationId(msg.conversationId);
         }
-        // Refresh conversation list
         ws.listConversations();
+      } else if (msg.type === "response" && msg.content) {
+        // Backward-compatible full response (skip if we already got it via chunks)
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg?.role === "assistant" && lastMsg.content === msg.content) {
+            return prev; // Already added via streaming
+          }
+          return [...prev, { role: "assistant", content: msg.content! }];
+        });
+        setLoading(false);
+        setAgentStatus("idle");
+        if (msg.conversationId) {
+          setConversationId(msg.conversationId);
+        }
+        ws.listConversations();
+      } else if (msg.type === "queued") {
+        // Message was queued while agent is busy
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === prev.length - 1 && m.role === "user" && m.status === "sending"
+              ? { ...m, status: "queued" as const }
+              : m
+          )
+        );
       } else if (msg.type === "history" && msg.messages) {
         setMessages(
           msg.messages
@@ -76,6 +118,7 @@ export default function Home() {
           { role: "system", content: `Error: ${msg.error || "Unknown error"}` },
         ]);
         setLoading(false);
+        setAgentStatus("idle");
       }
     });
 
@@ -91,14 +134,22 @@ export default function Home() {
   }, [messages]);
 
   const sendMessage = useCallback(() => {
-    if (!input.trim() || !wsRef.current?.connected || loading) return;
+    if (!input.trim() || !wsRef.current?.connected) return;
 
     const content = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content }]);
-    setLoading(true);
+    // Show message immediately (optimistic) with "sending" status
+    setMessages((prev) => [...prev, { role: "user", content, status: "sending" }]);
+    if (!loading) {
+      setLoading(true);
+    }
     wsRef.current.send(content, conversationId || undefined);
   }, [input, loading, conversationId]);
+
+  const handleStop = useCallback(() => {
+    if (!wsRef.current?.connected || !conversationId) return;
+    wsRef.current.interrupt(conversationId);
+  }, [conversationId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -229,10 +280,16 @@ export default function Home() {
               <div style={styles.messageContent}>{msg.content}</div>
             </div>
           ))}
-          {loading && (
+          {(loading || streamingContent) && (
             <div style={styles.message}>
               <div style={styles.messageRole}>Bond</div>
-              <div style={{ ...styles.messageContent, color: "#8888a0" }}>Thinking...</div>
+              <div style={{ ...styles.messageContent, color: streamingContent ? "#e0e0e8" : "#8888a0" }}>
+                {streamingContent || (
+                  agentStatus === "tool_calling" ? "Using tools..." :
+                  agentStatus === "responding" ? "Responding..." :
+                  "Thinking..."
+                )}
+              </div>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -244,17 +301,26 @@ export default function Home() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
+            placeholder={loading ? "Type to queue a message..." : "Type a message..."}
             rows={1}
             disabled={!connected}
           />
+          {loading && (
+            <button
+              style={styles.stopButton}
+              onClick={handleStop}
+              title="Stop agent"
+            >
+              Stop
+            </button>
+          )}
           <button
             style={{
               ...styles.sendButton,
-              opacity: !input.trim() || !connected || loading ? 0.5 : 1,
+              opacity: !input.trim() || !connected ? 0.5 : 1,
             }}
             onClick={sendMessage}
-            disabled={!input.trim() || !connected || loading}
+            disabled={!input.trim() || !connected}
           >
             Send
           </button>
@@ -432,6 +498,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "inherit",
     resize: "none",
     outline: "none",
+  },
+  stopButton: {
+    backgroundColor: "#ff4444",
+    color: "#fff",
+    border: "none",
+    borderRadius: "12px",
+    padding: "12px 16px",
+    fontSize: "1rem",
+    fontWeight: 600,
+    cursor: "pointer",
   },
   sendButton: {
     backgroundColor: "#6c8aff",

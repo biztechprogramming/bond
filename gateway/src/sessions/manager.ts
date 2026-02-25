@@ -17,6 +17,7 @@ export class SessionManager {
     const session: Session = {
       id: uuidv4(),
       conversationId: conversationId || null,
+      agentBusy: false,
       createdAt: new Date(),
     };
     this.sessions.set(session.id, session);
