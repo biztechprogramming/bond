@@ -38,20 +38,20 @@ lint:
 	cd /home/andrew/bond/frontend && pnpm lint
 
 # Run migrations (Docker)
+# Run migrations (tries local first, falls back to Docker)
 migrate:
-	docker compose run --rm migrate
-
-# Run migrations (local, requires migrate CLI with SQLite support)
-migrate-local:
 	@./scripts/migrate.sh
+
+# Run migrations via Docker
+migrate-docker:
+	docker compose -f docker-compose.dev.yml run --rm migrate
 
 # Roll back last migration (Docker)
 migrate-down:
-	docker compose run --rm migrate -path=/migrations -database="sqlite3:///home/bond/.bond/data/knowledge.db" down 1
+	~/go/bin/migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" down 1
 
-# Roll back last migration (local)
-migrate-down-local:
-	migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" down 1
+migrate-down-docker:
+	docker compose -f docker-compose.dev.yml run --rm migrate -path=/migrations -database="sqlite3:///home/bond/.bond/data/knowledge.db" down 1
 
 # Show current migration version
 migrate-version:

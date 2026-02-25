@@ -161,6 +161,35 @@ async def list_sandbox_images():
         return []
 
 
+@router.get("/browse-dirs")
+async def browse_directories(path: str = "/"):
+    """List directories at the given path for the workspace mount picker."""
+    from pathlib import Path as P
+
+    target = P(path).resolve()
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+
+    dirs = []
+    try:
+        for entry in sorted(target.iterdir()):
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                dirs.append({
+                    "name": entry.name,
+                    "path": str(entry),
+                })
+    except PermissionError:
+        pass
+
+    return {
+        "current": str(target),
+        "parent": str(target.parent) if target != target.parent else None,
+        "directories": dirs,
+    }
+
+
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
     """Get a single agent with mounts and channels."""
