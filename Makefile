@@ -37,17 +37,29 @@ lint:
 	cd /home/andrew/bond/gateway && pnpm lint
 	cd /home/andrew/bond/frontend && pnpm lint
 
-# Run database migrations
+# Run migrations (Docker)
 migrate:
-	uv run python -m migrations.runner up
+	docker compose run --rm migrate
 
-# Migration status
-migrate-status:
-	uv run python -m migrations.runner status
+# Run migrations (local, requires migrate CLI with SQLite support)
+migrate-local:
+	@./scripts/migrate.sh
 
-# Roll back last migration
+# Roll back last migration (Docker)
 migrate-down:
-	uv run python -m migrations.runner down
+	docker compose run --rm migrate -path=/migrations -database="sqlite3:///home/bond/.bond/data/knowledge.db" down 1
+
+# Roll back last migration (local)
+migrate-down-local:
+	migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" down 1
+
+# Show current migration version
+migrate-version:
+	migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" version
+
+# Install golang-migrate with SQLite support (requires Go)
+install-migrate:
+	go install -tags 'sqlite3' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 
 # Clean generated files
 clean:

@@ -38,5 +38,19 @@ services:
     volumes:
       - ./frontend:/app/frontend
 
+  migrate:
+    image: migrate/migrate
+    volumes:
+      - ./migrations:/migrations
+      - bond-data:/home/bond/.bond/data
+    command:
+      [
+        "-path", "/migrations",
+        "-database", "sqlite3:///home/bond/.bond/data/knowledge.db",
+        "up"
+      ]
+    profiles:
+      - tools
+
 volumes:
   bond-data:
