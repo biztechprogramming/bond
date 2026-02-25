@@ -37,7 +37,7 @@ class SandboxManager:
             # Container died — remove tracking
             del self._containers[key]
 
-        # Check if a container already exists with this name
+        # Check if a container already exists with this name (from a previous run)
         proc = await asyncio.create_subprocess_exec(
             "docker", "ps", "-aq", "--filter", f"name={key}",
             stdout=asyncio.subprocess.PIPE,
@@ -47,7 +47,7 @@ class SandboxManager:
         existing_id = stdout.decode().strip()
 
         if existing_id:
-            # Start it if stopped
+            # Start and reuse
             await asyncio.create_subprocess_exec(
                 "docker", "start", existing_id,
                 stdout=asyncio.subprocess.PIPE,
@@ -131,6 +131,32 @@ class SandboxManager:
         except asyncio.TimeoutError:
             proc.kill()
             return {"error": f"Execution timed out after {timeout}s", "exit_code": -1}
+
+    async def destroy_agent_container(self, agent_id: str) -> bool:
+        """Destroy the sandbox container for an agent (e.g., after config change).
+
+        Returns True if a container was destroyed.
+        """
+        key = f"bond-sandbox-{agent_id}"
+
+        # Remove from tracking
+        if key in self._containers:
+            del self._containers[key]
+
+        # Find and destroy the Docker container
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "rm", "-f", key,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode == 0:
+            logger.info("Destroyed sandbox container for agent %s (settings changed)", agent_id)
+            return True
+
+        # No container existed — that's fine
+        return False
 
     async def cleanup_idle(self, max_idle_seconds: int = 3600) -> int:
         """Stop containers idle for longer than max_idle_seconds. Returns count stopped."""

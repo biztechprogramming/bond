@@ -268,12 +268,22 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
 @router.put("/{agent_id}")
 async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depends(get_db)):
     """Update an agent, replacing mounts and channels if provided."""
-    # Check agent exists
+    # Load current agent state (for sandbox change detection)
     existing = await db.execute(
-        text("SELECT id FROM agents WHERE id = :id"), {"id": agent_id}
+        text("SELECT id, sandbox_image FROM agents WHERE id = :id"), {"id": agent_id}
     )
-    if existing.fetchone() is None:
+    old_row = existing.fetchone()
+    if old_row is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    old_image = old_row[1]
+
+    # Load current mounts for comparison
+    old_mounts_result = await db.execute(
+        text("SELECT host_path, mount_name, readonly FROM agent_workspace_mounts WHERE agent_id = :id ORDER BY mount_name"),
+        {"id": agent_id},
+    )
+    old_mounts = [(r[0], r[1], r[2]) for r in old_mounts_result.fetchall()]
 
     # Build SET clause dynamically
     updates = {}
@@ -349,6 +359,24 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depe
             )
 
     await db.commit()
+
+    # Detect sandbox-relevant changes and destroy old container if needed
+    needs_recreate = False
+    new_image = body.sandbox_image if body.sandbox_image is not None else old_image
+
+    if new_image != old_image:
+        needs_recreate = True
+
+    if body.workspace_mounts is not None:
+        new_mounts = [(m.host_path, m.mount_name, 1 if m.readonly else 0) for m in body.workspace_mounts]
+        if new_mounts != old_mounts:
+            needs_recreate = True
+
+    if needs_recreate:
+        from backend.app.sandbox.manager import get_sandbox_manager
+        manager = get_sandbox_manager()
+        await manager.destroy_agent_container(agent_id)
+
     return await _get_agent_with_relations(db, agent_id)
 
 
