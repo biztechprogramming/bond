@@ -65,7 +65,6 @@ class SandboxManager:
         cmd = [
             "docker", "run", "-d",
             "--name", key,
-            "--user", "root",
             "--memory", "512m",
             "--cpus", "1",
         ]
@@ -100,6 +99,10 @@ class SandboxManager:
             "last_used": time.time(),
         }
         logger.info("Created sandbox container %s for agent %s", container_id, agent_id)
+
+        # Post-creation: copy SSH keys from /tmp/.ssh if mounted
+        await self._setup_ssh(container_id)
+
         return container_id
 
     async def execute(
@@ -185,6 +188,29 @@ class SandboxManager:
             logger.info("Cleaned up idle container %s", cid)
 
         return len(to_remove)
+
+    async def _setup_ssh(self, container_id: str) -> None:
+        """Copy SSH keys from /tmp/.ssh mount into the container user's home."""
+        # Check if /tmp/.ssh exists in the container
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", "-u", "root", container_id,
+            "sh", "-c",
+            "if [ -d /tmp/.ssh ]; then "
+            "  USER_HOME=$(getent passwd $(docker inspect --format '{{.Config.User}}' 2>/dev/null || echo node) | cut -d: -f6 || echo /home/node); "
+            "  mkdir -p $USER_HOME/.ssh /root/.ssh; "
+            "  cp -r /tmp/.ssh/* /root/.ssh/ 2>/dev/null; "
+            "  cp -r /tmp/.ssh/* $USER_HOME/.ssh/ 2>/dev/null; "
+            "  chmod 700 /root/.ssh $USER_HOME/.ssh 2>/dev/null; "
+            "  chmod 600 /root/.ssh/* $USER_HOME/.ssh/* 2>/dev/null; "
+            "  chown -R $(stat -c '%u:%g' $USER_HOME) $USER_HOME/.ssh 2>/dev/null; "
+            "  echo ssh_setup_done; "
+            "fi",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if b"ssh_setup_done" in stdout:
+            logger.info("SSH keys configured in container %s", container_id)
 
     async def _is_running(self, container_id: str) -> bool:
         """Check if a container is currently running."""
