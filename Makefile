@@ -37,6 +37,18 @@ lint:
 	cd /home/andrew/bond/gateway && pnpm lint
 	cd /home/andrew/bond/frontend && pnpm lint
 
+# Run database migrations
+migrate:
+	uv run python -m migrations.runner up
+
+# Migration status
+migrate-status:
+	uv run python -m migrations.runner status
+
+# Roll back last migration
+migrate-down:
+	uv run python -m migrations.runner down
+
 # Clean generated files
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
