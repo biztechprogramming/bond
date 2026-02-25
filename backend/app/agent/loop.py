@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any, AsyncIterator
 
 import litellm
@@ -184,7 +185,7 @@ async def agent_turn(
     tool_defs = registry.get_definitions_for(agent_tools)
 
     # Build context for tool handlers
-    workspace_dirs = [m["host_path"] for m in agent.get("workspace_mounts", [])]
+    workspace_dirs = [os.path.expanduser(m["host_path"]) for m in agent.get("workspace_mounts", [])]
     tool_context: dict[str, Any] = {
         "db": db,
         "agent_id": agent["id"],

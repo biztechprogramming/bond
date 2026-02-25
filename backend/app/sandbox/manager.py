@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("bond.sandbox.manager")
@@ -70,7 +72,7 @@ class SandboxManager:
         # Add workspace mounts
         if workspace_mounts:
             for mount in workspace_mounts:
-                host_path = mount.get("host_path", "")
+                host_path = os.path.expanduser(mount.get("host_path", ""))
                 mount_name = mount.get("mount_name", "workspace")
                 container_path = mount.get("container_path") or f"/workspace/{mount_name}"
                 readonly = mount.get("readonly", False)
