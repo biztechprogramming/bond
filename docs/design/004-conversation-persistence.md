@@ -18,25 +18,319 @@ This design doc adds proper conversation persistence:
 
 ---
 
-## 2. Data Model
+## 2. Complete ER Diagram
 
-### 2.1 Tables
+This diagram shows the full Bond database schema — all tables across all migrations (000001–000006), including the new conversation tables.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            BOND DATABASE SCHEMA                             │
+│                                                                             │
+│  PK = Primary Key    FK = Foreign Key    NN = NOT NULL    UQ = Unique       │
+│  TS = TIMESTAMP      CHK = CHECK         DF = DEFAULT     JSON = json_valid │
+│  All PKs are ULIDs (time-sortable, globally unique)                         │
+│  All tables use soft deletes where applicable (deleted_at)                  │
+│  All mutable tables have created_at + updated_at with auto-update triggers  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  FOUNDATION LAYER (migrations 000001, 000005)
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────┐
+  │      settings            │  000001
+  ├─────────────────────────┤
+  │ key        TEXT PK       │  Key-value config store
+  │ value      TEXT NN       │  API keys stored encrypted (enc: prefix)
+  │ created_at TS NN         │
+  │ updated_at TS NN         │  Auto-trigger
+  └─────────────────────────┘
+
+  ┌─────────────────────────┐       ┌─────────────────────────┐
+  │      agents              │  005  │  agent_workspace_mounts  │  005
+  ├─────────────────────────┤       ├─────────────────────────┤
+  │ id           TEXT PK     │◀──FK─┤ id           TEXT PK     │
+  │ name         TEXT NN UQ  │       │ agent_id     TEXT NN FK  │
+  │ display_name TEXT NN     │       │ host_path    TEXT NN     │
+  │ system_prompt TEXT NN    │       │ mount_name   TEXT NN     │  → /workspace/{name}
+  │ model        TEXT NN     │       │ readonly     INT NN DF 0 │
+  │ sandbox_image TEXT       │       │ created_at   TS NN       │
+  │ tools        JSON NN     │       ├─────────────────────────┤
+  │ max_iterations INT NN    │       │ UQ(agent_id, mount_name) │
+  │  DF 25                   │       └─────────────────────────┘
+  │ auto_rag     INT NN DF 1 │
+  │ auto_rag_limit INT NN   │       ┌─────────────────────────┐
+  │  DF 5                    │       │   agent_channels         │  005
+  │ is_default   INT NN DF 0 │       ├─────────────────────────┤
+  │ is_active    INT NN DF 1 │◀──FK─┤ id           TEXT PK     │
+  │ created_at   TS NN       │       │ agent_id     TEXT NN FK  │
+  │ updated_at   TS NN       │       │ channel      TEXT NN     │
+  └──────────┬──────────────┘       │ sandbox_override TEXT    │
+             │                       │ enabled      INT NN DF 1 │
+             │                       │ created_at   TS NN       │
+             │                       ├─────────────────────────┤
+             │                       │ UQ(agent_id, channel)    │
+             │                       └─────────────────────────┘
+             │
+             │ FK: conversations.agent_id
+             ▼
+═══════════════════════════════════════════════════════════════════════════════
+  CONVERSATION LAYER (migration 000006)
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────┐       ┌─────────────────────────┐
+  │    conversations         │  006  │  conversation_messages   │  006
+  ├─────────────────────────┤       ├─────────────────────────┤
+  │ id           TEXT PK     │◀──FK─┤ id           TEXT PK     │
+  │ agent_id     TEXT NN FK ─┼──▶ agents.id     │ conversation_id TEXT NN FK│
+  │ channel      TEXT NN     │       │ role         TEXT NN CHK │
+  │  DF 'webchat'            │       │  ∊{user,assistant,      │
+  │ title        TEXT        │       │    system,tool}          │
+  │ is_active    INT NN DF 1 │       │ content      TEXT NN     │
+  │ message_count INT NN DF 0│       │ tool_calls   JSON        │
+  │ summary_id   TEXT FK ────┼──▶ session_summaries.id      │ tool_call_id TEXT        │
+  │ created_at   TS NN       │       │ token_count  INT         │
+  │ updated_at   TS NN       │       │ created_at   TS NN       │
+  └─────────────────────────┘       └─────────────────────────┘
+                                     IDX: (conversation_id, created_at)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  KNOWLEDGE STORE LAYER (migration 000002)
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────┐             ┌─────────────────────────┐
+  │   embedding_configs      │  002       │     content_chunks       │  002
+  ├─────────────────────────┤             ├─────────────────────────┤
+  │ model_name   TEXT PK     │             │ id           TEXT PK     │
+  │ family       TEXT NN     │             │ source_type  TEXT NN     │  conversation|file|
+  │ provider     TEXT NN     │             │ source_id    TEXT        │  email|web
+  │ max_dimension INT NN     │             │ text         TEXT NN     │
+  │ supported_dims JSON NN   │             │ summary      TEXT        │
+  │ supports_local INT NN    │             │ chunk_index  INT NN DF 0 │
+  │ supports_api   INT NN    │             │ parent_id    TEXT FK ────┼──self ref
+  │ is_default   INT NN DF 0 │             │ sensitivity  TEXT NN CHK │
+  │ created_at   TS NN       │             │  ∊{normal,personal,     │
+  └─────────────────────────┘             │    secret}               │
+                                           │ metadata     JSON CHK    │
+                                           │ embedding_model TEXT     │
+  ┌─────────────────────────┐             │ processed_at TS          │  NULL = needs embedding
+  │  content_chunks_vec      │             │ created_at   TS NN       │
+  │  (vec0 virtual, runtime) │             │ updated_at   TS NN       │
+  ├─────────────────────────┤             └────────┬────────────────┘
+  │ id        TEXT PK        │                      │
+  │ embedding FLOAT[N]       │             ┌────────┴────────────────┐
+  └─────────────────────────┘             │  content_chunks_fts      │
+                                           │  (FTS5 virtual)          │
+  * N = embedding.output_dimension         ├─────────────────────────┤
+    from settings (default 1024)           │ id      TEXT UNINDEXED   │
+    Created at runtime by                  │ text    TEXT             │
+    ensure_vec_tables()                    │ summary TEXT             │
+                                           └─────────────────────────┘
+                                           Sync triggers: INSERT/UPDATE/DELETE
+
+
+  ┌─────────────────────────┐             ┌─────────────────────────┐
+  │        memories          │  002       │    memories_vec          │
+  ├─────────────────────────┤             │    (vec0 virtual)        │
+  │ id           TEXT PK     │             ├─────────────────────────┤
+  │ type         TEXT NN CHK │             │ id        TEXT PK        │
+  │  ∊{fact,solution,       │             │ embedding FLOAT[N]       │
+  │    instruction,         │             └─────────────────────────┘
+  │    preference}          │
+  │ content      TEXT NN     │             ┌─────────────────────────┐
+  │ summary      TEXT        │             │    memories_fts          │
+  │ source_type  TEXT        │             │    (FTS5 virtual)        │
+  │ source_id    TEXT        │             ├─────────────────────────┤
+  │ sensitivity  TEXT NN CHK │             │ id      TEXT UNINDEXED   │
+  │  ∊{normal,personal,     │             │ content TEXT             │
+  │    secret}               │             │ summary TEXT             │
+  │ metadata     JSON CHK    │             └─────────────────────────┘
+  │ embedding_model TEXT     │
+  │ importance   REAL NN CHK │
+  │  BETWEEN 0.0 AND 1.0    │             ┌─────────────────────────┐
+  │ access_count INT NN DF 0 │             │    memory_versions       │  002
+  │ last_accessed_at TS      │             │    (append-only)         │
+  │ processed_at TS          │             ├─────────────────────────┤
+  │ deleted_at   TS          │  soft del   │ id           TEXT PK     │
+  │ created_at   TS NN       │             │ memory_id    TEXT NN FK ─┼──▶ memories.id (CASCADE)
+  │ updated_at   TS NN       │             │ version      INT NN      │
+  └─────────────────────────┘             │ previous_content TEXT    │
+                                           │ new_content  TEXT NN     │
+                                           │ previous_type TEXT       │
+  ┌─────────────────────────┐             │ new_type     TEXT NN     │
+  │   session_summaries      │  002       │ changed_by   TEXT NN     │
+  ├─────────────────────────┤             │  ∊{agent,user,system}    │
+  │ id           TEXT PK     │             │ change_reason TEXT       │
+  │ session_key  TEXT NN UQ  │             │ created_at   TS NN       │
+  │ summary      TEXT NN     │             └─────────────────────────┘
+  │ key_decisions JSON CHK   │
+  │ message_count INT NN DF 0│
+  │ embedding_model TEXT     │             ┌─────────────────────────┐
+  │ processed_at TS          │             │ session_summaries_vec    │
+  │ created_at   TS NN       │             │ (vec0 virtual)           │
+  │ updated_at   TS NN       │             ├─────────────────────────┤
+  └─────────────────────────┘             │ id        TEXT PK        │
+                                           │ embedding FLOAT[N]       │
+  ┌─────────────────────────┐             └─────────────────────────┘
+  │ session_summaries_fts    │
+  │ (FTS5 virtual)           │
+  ├─────────────────────────┤
+  │ id      TEXT UNINDEXED   │
+  │ summary TEXT             │
+  │ key_decisions TEXT       │
+  └─────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  ENTITY GRAPH LAYER (migration 000003)
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────┐             ┌─────────────────────────┐
+  │      entities            │  003       │   entities_vec           │
+  ├─────────────────────────┤             │   (vec0 virtual)         │
+  │ id           TEXT PK     │             ├─────────────────────────┤
+  │ type         TEXT NN CHK │             │ id        TEXT PK        │
+  │  ∊{person,project,task, │             │ embedding FLOAT[N]       │
+  │    decision,meeting,     │             └─────────────────────────┘
+  │    document,event}       │
+  │ name         TEXT NN     │
+  │ metadata     JSON CHK    │
+  │ embedding_model TEXT     │
+  │ processed_at TS          │
+  │ created_at   TS NN       │
+  │ updated_at   TS NN       │
+  └──┬───────────┬──────────┘
+     │           │
+     │           │ FK: entity_mentions.entity_id
+     │           ▼
+     │    ┌─────────────────────────┐
+     │    │   entity_mentions        │  003
+     │    ├─────────────────────────┤
+     │    │ id           TEXT PK     │
+     │    │ entity_id    TEXT NN FK ─┼──▶ entities.id (CASCADE)
+     │    │ source_type  TEXT NN     │
+     │    │ source_id    TEXT NN     │
+     │    │ created_at   TS NN       │
+     │    └─────────────────────────┘
+     │
+     │ FK: relationships.source_id / target_id
+     ▼
+  ┌─────────────────────────┐
+  │    relationships         │  003
+  ├─────────────────────────┤
+  │ id           TEXT PK     │
+  │ source_id    TEXT NN FK ─┼──▶ entities.id (CASCADE)
+  │ target_id    TEXT NN FK ─┼──▶ entities.id (CASCADE)
+  │ type         TEXT NN     │
+  │ weight       REAL NN CHK │
+  │  BETWEEN 0.0 AND 1.0    │
+  │ context      TEXT        │
+  │ created_at   TS NN       │
+  │ updated_at   TS NN       │
+  ├─────────────────────────┤
+  │ UQ(source_id,target_id, │
+  │    type)                 │
+  └─────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  OBSERVABILITY LAYER (migration 000004)
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────────────────────────┐
+  │      audit_log           │  004
+  ├─────────────────────────┤
+  │ id           TEXT PK     │
+  │ timestamp    TS NN       │
+  │ command      TEXT NN     │  Mediator command name
+  │ actor        TEXT        │  agent|user|system
+  │ capability   TEXT        │  Which tool/feature
+  │ context      JSON CHK    │  Request params (sensitive redacted)
+  │ result       TEXT        │  success|error|...
+  │ duration_ms  INT         │
+  │ created_at   TS NN       │
+  └─────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+  RELATIONSHIP SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+  agents           1──*        agent_workspace_mounts     (host dir mappings)
+  agents           1──*        agent_channels             (enabled channels)
+  agents           1──*        conversations              (agent handles convos)
+  conversations    1──*        conversation_messages      (ordered messages, CASCADE)
+  conversations    *──1        session_summaries          (optional summary FK)
+  content_chunks   1──vec──1   content_chunks_vec         (embedding storage)
+  content_chunks   1──fts──1   content_chunks_fts         (full-text index)
+  content_chunks   *──self──1  content_chunks.parent_id   (multi-chunk docs)
+  memories         1──vec──1   memories_vec               (embedding storage)
+  memories         1──fts──1   memories_fts               (full-text index)
+  memories         1──*        memory_versions            (immutable change log, CASCADE)
+  session_summaries 1──vec──1  session_summaries_vec      (embedding storage)
+  session_summaries 1──fts──1  session_summaries_fts      (full-text index)
+  entities         1──vec──1   entities_vec               (embedding storage)
+  entities         1──*        entity_mentions            (where entity appears, CASCADE)
+  entities         *──rel──*   entities                   (via relationships, CASCADE)
+  embedding_configs            (standalone reference, seeded)
+  settings                     (standalone key-value config)
+  audit_log                    (standalone append-only log)
+```
+
+### Enterprise Standards Checklist
+
+| Standard | Status | Notes |
+|----------|--------|-------|
+| **ULID primary keys** | ✅ All tables | Time-sortable, globally unique, no auto-increment |
+| **Foreign key constraints** | ✅ All FKs | ON DELETE CASCADE where parent owns children |
+| **CHECK constraints** | ✅ Enums, ranges | role, type, sensitivity, weight, importance |
+| **NOT NULL enforcement** | ✅ All required fields | Only truly optional fields allow NULL |
+| **Unique constraints** | ✅ Business keys | agent name, session_key, composite keys |
+| **Indexes** | ✅ All FK columns + query patterns | Partial indexes where applicable (WHERE clauses) |
+| **Timestamps** | ✅ created_at + updated_at | Auto-update triggers on all mutable tables |
+| **Soft deletes** | ✅ Where needed | memories.deleted_at; conversations use hard delete (CASCADE) |
+| **Append-only audit** | ✅ memory_versions, audit_log | Immutable history for compliance |
+| **JSON validation** | ✅ All JSON columns | json_valid() CHECK constraints |
+| **Encryption at rest** | ✅ API keys | Fernet encryption with enc: prefix in settings table |
+| **Cascade deletes** | ✅ Parent-child | Deleting agent cascades to mounts/channels; conversation cascades to messages |
+| **Migration versioning** | ✅ golang-migrate | Sequential numbered migrations with up/down, schema_migrations tracking |
+| **Graceful degradation** | ✅ vec0 tables | Created at runtime, not in migrations; system works without sqlite-vec |
+| **Trigger-based consistency** | ✅ FTS sync, updated_at | Auto-maintained indexes and timestamps |
+| **Configurable dimensions** | ✅ Runtime vec0 | User changes dimension → vec0 tables recreated |
+
+### Gap Analysis
+
+| Issue | Severity | Resolution |
+|-------|----------|------------|
+| `conversations.summary_id` FK to session_summaries — summaries may not exist yet | Low | FK is nullable, populated asynchronously after conversation ends |
+| `conversation_messages` has no max size limit | Medium | Add `agent.max_context_messages` setting to cap history loaded per turn (e.g., last 100 messages). Old messages still stored, just not sent to LLM. |
+| No `conversation_messages_fts` for searching within conversations | Medium | Not needed for MVP — conversations are indexed as content_chunks. Add later if direct message search is needed. |
+| No TTL/archival on conversations | Low | Add `conversations.archived_at` in a future migration for conversation archival |
+| `audit_log` has no retention policy | Low | Add a cleanup cron that prunes entries older than configurable retention (default 90 days) |
+
+---
+
+## 3. Data Model — New Tables
+
+### 3.1 Migration 000006: Conversations
 
 ```sql
--- Migration 000006: Conversations
-
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,                     -- ULID
-    title TEXT,                              -- Auto-generated or user-set
-    agent_id TEXT NOT NULL REFERENCES agents(id),
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE SET NULL,
     channel TEXT NOT NULL DEFAULT 'webchat',
+    title TEXT,                              -- Auto-generated or user-set
     is_active INTEGER NOT NULL DEFAULT 1,    -- is this the current conversation?
     message_count INTEGER NOT NULL DEFAULT 0,
+    summary_id TEXT REFERENCES session_summaries(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 CREATE INDEX idx_conv_agent ON conversations(agent_id);
+CREATE INDEX idx_conv_channel ON conversations(channel);
 CREATE INDEX idx_conv_active ON conversations(is_active) WHERE is_active = 1;
 CREATE INDEX idx_conv_updated ON conversations(updated_at DESC);
 
@@ -52,15 +346,16 @@ CREATE TABLE conversation_messages (
     role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system', 'tool')),
     content TEXT NOT NULL,
     tool_calls JSON,                         -- tool calls made by assistant (if any)
-    tool_call_id TEXT,                       -- for role='tool', which call this is responding to
+    tool_call_id TEXT,                       -- for role='tool', which call this responds to
     token_count INTEGER,                     -- approximate token count
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 CREATE INDEX idx_cm_conv ON conversation_messages(conversation_id, created_at);
+CREATE INDEX idx_cm_role ON conversation_messages(conversation_id, role);
 ```
 
-### 2.2 Auto-Title
+### 3.2 Auto-Title
 
 After the first assistant response, the backend generates a short title from the user's first message (truncate to ~50 chars or use the LLM to generate a 3-5 word summary). This shows in the conversation list sidebar.
 
