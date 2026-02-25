@@ -63,7 +63,6 @@ class SandboxManager:
         cmd = [
             "docker", "run", "-d",
             "--name", key,
-            "--network", "none",
             "--memory", "512m",
             "--cpus", "1",
         ]
