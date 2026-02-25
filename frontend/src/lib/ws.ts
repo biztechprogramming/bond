@@ -32,16 +32,31 @@ export class GatewayWebSocket {
   private handlers: MessageHandler[] = [];
   private sessionId: string | null = null;
   private url: string;
+  private shouldReconnect = true;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectDelay = 30000;
 
   constructor(url?: string) {
     this.url = url || `ws://localhost:18789/ws`;
   }
 
   connect(): void {
+    this.shouldReconnect = true;
+    this._connect();
+  }
+
+  private _connect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
       console.log("[ws] Connected to gateway");
+      this.reconnectAttempts = 0;
     };
 
     this.ws.onmessage = (event) => {
@@ -58,6 +73,14 @@ export class GatewayWebSocket {
 
     this.ws.onclose = () => {
       console.log("[ws] Disconnected from gateway");
+      if (this.shouldReconnect) {
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+        console.log(`[ws] Reconnecting in ${delay}ms...`);
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectAttempts++;
+          this._connect();
+        }, delay);
+      }
     };
 
     this.ws.onerror = (err) => {
@@ -129,6 +152,11 @@ export class GatewayWebSocket {
   }
 
   disconnect(): void {
+    this.shouldReconnect = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.ws?.close();
     this.ws = null;
   }
