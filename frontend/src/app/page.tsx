@@ -67,12 +67,17 @@ export default function Home() {
     <div style={styles.container}>
       <header style={styles.header}>
         <h1 style={styles.title}>Bond</h1>
-        <span style={{
-          ...styles.status,
-          color: connected ? "#6cffa0" : "#ff6c8a",
-        }}>
-          {connected ? "Connected" : "Connecting..."}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <a href="/settings" style={{ color: "#6c8aff", textDecoration: "none", fontSize: "0.85rem" }}>
+            Settings
+          </a>
+          <span style={{
+            ...styles.status,
+            color: connected ? "#6cffa0" : "#ff6c8a",
+          }}>
+            {connected ? "Connected" : "Connecting..."}
+          </span>
+        </div>
       </header>
 
       <div style={styles.messages}>

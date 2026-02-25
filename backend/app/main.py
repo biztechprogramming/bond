@@ -12,6 +12,7 @@ from backend.app.db.session import get_db, init_db
 from backend.app.mediator import configure_logging
 from backend.app.api.v1.health import router as health_router
 from backend.app.api.v1.agent import router as agent_router
+from backend.app.api.v1.settings import router as settings_router
 
 
 @asynccontextmanager
@@ -56,3 +57,4 @@ async def inject_db_session(request: Request, call_next):
 # Routes
 app.include_router(health_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
+app.include_router(settings_router, prefix="/api/v1")
