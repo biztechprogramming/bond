@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from backend.app.config import get_settings
@@ -27,6 +28,21 @@ def get_engine():
             echo=False,
             connect_args={"check_same_thread": False},
         )
+
+        # Load sqlite-vec extension on every connection
+        @event.listens_for(_engine.sync_engine, "connect")
+        def _load_vec_extension(dbapi_conn, connection_record):
+            try:
+                import sqlite_vec
+                # aiosqlite wraps the real sqlite3 connection
+                raw_conn = getattr(dbapi_conn, "_connection", dbapi_conn)
+                raw_conn = getattr(raw_conn, "_conn", raw_conn)
+                raw_conn.enable_load_extension(True)
+                sqlite_vec.load(raw_conn)
+                raw_conn.enable_load_extension(False)
+                logger.debug("sqlite-vec loaded")
+            except Exception as e:
+                logger.error("Failed to load sqlite-vec: %s", e)
     return _engine
 
 

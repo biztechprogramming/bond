@@ -43,8 +43,9 @@ async def ensure_vec_tables(
             caps.has_vec = True
             logger.info("sqlite-vec extension loaded successfully")
         except Exception:
-            logger.warning(
-                "sqlite-vec not available — vector search disabled, FTS-only mode"
+            logger.error(
+                "CRITICAL: sqlite-vec not available — vector search disabled! "
+                "Install with: uv add sqlite-vec"
             )
             return caps
 
