@@ -10,6 +10,8 @@ import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from backend.app.core.crypto import decrypt_value, encrypt_value, is_encrypted
+
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
 
 
@@ -322,3 +324,164 @@ async def test_embedding_persists_after_update(settings_client):
     assert data["model"] == "Qwen3-Embedding-4B"
     assert data["dimension"] == 2560
     assert data["execution_mode"] == "local"
+
+
+# ── Encryption round-trip ──
+
+
+def test_encrypt_decrypt_roundtrip():
+    plaintext = "sk-ant-api03-secret-key-12345"
+    encrypted = encrypt_value(plaintext)
+    assert encrypted.startswith("enc:")
+    assert plaintext not in encrypted
+    assert decrypt_value(encrypted) == plaintext
+
+
+def test_is_encrypted():
+    assert is_encrypted("enc:something") is True
+    assert is_encrypted("plaintext-value") is False
+
+
+def test_decrypt_plaintext_passthrough():
+    """Legacy plaintext values are returned as-is."""
+    assert decrypt_value("plain-value") == "plain-value"
+
+
+# ── API key stored encrypted in DB ──
+
+
+@pytest.mark.asyncio
+async def test_api_key_stored_encrypted(settings_client):
+    """Verify the raw DB value has the enc: prefix."""
+    await settings_client.put(
+        "/api/v1/settings/embedding.api_key.voyage",
+        json={"value": "sk-voyage-supersecret99"},
+    )
+
+    # Read raw value from DB
+    import backend.app.db.session as sess
+
+    factory = sess.get_session_factory()
+    async with factory() as session:
+        from sqlalchemy import text
+
+        result = await session.execute(
+            text("SELECT value FROM settings WHERE key = 'embedding.api_key.voyage'")
+        )
+        row = result.fetchone()
+        raw = row[0]
+
+    assert raw.startswith("enc:")
+    assert "supersecret99" not in raw
+    # Decrypt should recover original
+    assert decrypt_value(raw) == "sk-voyage-supersecret99"
+
+
+@pytest.mark.asyncio
+async def test_llm_api_key_stored_encrypted(settings_client):
+    """LLM API keys are also encrypted at rest."""
+    await settings_client.put(
+        "/api/v1/settings/llm.api_key.anthropic",
+        json={"value": "sk-ant-api03-secret"},
+    )
+    resp = await settings_client.get("/api/v1/settings/llm.api_key.anthropic")
+    masked = resp.json()["value"]
+    assert masked.endswith("cret")
+    assert masked.startswith("*")
+    assert "sk-ant" not in masked
+
+    # Verify raw value is encrypted
+    import backend.app.db.session as sess
+
+    factory = sess.get_session_factory()
+    async with factory() as session:
+        from sqlalchemy import text
+
+        result = await session.execute(
+            text("SELECT value FROM settings WHERE key = 'llm.api_key.anthropic'")
+        )
+        raw = result.fetchone()[0]
+
+    assert raw.startswith("enc:")
+
+
+# ── LLM providers endpoint ──
+
+
+@pytest.mark.asyncio
+async def test_get_llm_providers(settings_client):
+    resp = await settings_client.get("/api/v1/settings/llm/providers")
+    assert resp.status_code == 200
+    providers = resp.json()
+    assert isinstance(providers, list)
+    assert len(providers) > 0
+
+    ids = {p["id"] for p in providers}
+    assert "anthropic" in ids
+    assert "openai" in ids
+    assert "google" in ids
+
+    # Check structure
+    p = providers[0]
+    assert "id" in p
+    assert "name" in p
+
+
+# ── LLM current config endpoint ──
+
+
+@pytest.mark.asyncio
+async def test_get_llm_current(settings_client):
+    resp = await settings_client.get("/api/v1/settings/llm/current")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "provider" in data
+    assert "model" in data
+    assert "keys_set" in data
+    assert isinstance(data["keys_set"], dict)
+    # No keys set by default
+    assert data["keys_set"]["anthropic"] is False
+
+
+@pytest.mark.asyncio
+async def test_llm_current_reflects_saved_key(settings_client):
+    # Save an anthropic key
+    await settings_client.put(
+        "/api/v1/settings/llm.api_key.anthropic",
+        json={"value": "sk-ant-test123456"},
+    )
+    resp = await settings_client.get("/api/v1/settings/llm/current")
+    data = resp.json()
+    assert data["keys_set"]["anthropic"] is True
+    assert data["keys_set"]["openai"] is False
+
+
+# ── _get_decrypted helper ──
+
+
+@pytest.mark.asyncio
+async def test_get_decrypted_helper(settings_client):
+    """Test the internal _get_decrypted helper returns actual key."""
+    await settings_client.put(
+        "/api/v1/settings/llm.api_key.openai",
+        json={"value": "sk-openai-realkey123"},
+    )
+
+    from backend.app.api.v1.settings import _get_decrypted
+    import backend.app.db.session as sess
+
+    factory = sess.get_session_factory()
+    async with factory() as session:
+        val = await _get_decrypted(session, "llm.api_key.openai")
+    assert val == "sk-openai-realkey123"
+
+
+@pytest.mark.asyncio
+async def test_get_decrypted_returns_none_missing(settings_client):
+    from backend.app.api.v1.settings import _get_decrypted
+    import backend.app.db.session as sess
+
+    factory = sess.get_session_factory()
+    async with factory() as session:
+        val = await _get_decrypted(session, "llm.api_key.nonexistent")
+    assert val is None

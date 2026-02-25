@@ -48,13 +48,56 @@ def _resolve_model_string(provider: str, model: str) -> str:
     return f"{litellm_provider}/{model}"
 
 
-def _inject_api_key(provider: str) -> None:
-    """Set the API key env var from vault for the given provider."""
+async def _get_api_key_from_settings(provider: str) -> str | None:
+    """Read and decrypt an LLM API key from the settings table."""
+    from backend.app.db.session import get_session_factory
+    from backend.app.core.crypto import decrypt_value
+
+    setting_key = f"llm.api_key.{provider}"
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            from sqlalchemy import text
+
+            result = await session.execute(
+                text("SELECT value FROM settings WHERE key = :key"),
+                {"key": setting_key},
+            )
+            row = result.fetchone()
+            if row and row[0]:
+                return decrypt_value(row[0])
+    except Exception:
+        logger.debug("Could not read API key from settings for %s", provider)
+    return None
+
+
+def _inject_api_key(provider: str) -> str | None:
+    """Get API key from env var, returning it without mutating os.environ."""
+    env_var = f"{provider.upper()}_API_KEY"
+    env_key = os.environ.get(env_var)
+    if env_key:
+        return env_key
+    # Try vault file
     vault = Vault()
-    key = vault.get_api_key(provider)
-    if key:
-        env_var = f"{provider.upper()}_API_KEY"
-        os.environ[env_var] = key
+    return vault.get(f"{provider.upper()}_API_KEY")
+
+
+async def _resolve_api_key(provider: str) -> str | None:
+    """Resolve API key with priority: env var > settings DB > vault file."""
+    # 1. Environment variable
+    env_var = f"{provider.upper()}_API_KEY"
+    env_key = os.environ.get(env_var)
+    if env_key:
+        return env_key
+
+    # 2. Settings DB (encrypted)
+    db_key = await _get_api_key_from_settings(provider)
+    if db_key:
+        return db_key
+
+    # 3. Vault file
+    vault = Vault()
+    return vault.get(f"{provider.upper()}_API_KEY")
 
 
 async def chat_completion(
@@ -74,10 +117,14 @@ async def chat_completion(
     provider = provider or settings.llm_provider
     model = model or settings.llm_model
 
-    _inject_api_key(provider)
+    api_key = await _resolve_api_key(provider)
     model_string = _resolve_model_string(provider, model)
 
     logger.info("LLM call: provider=%s model=%s messages=%d", provider, model, len(messages))
+
+    extra_kwargs: dict = {}
+    if api_key:
+        extra_kwargs["api_key"] = api_key
 
     if stream:
         response = await litellm.acompletion(
@@ -86,6 +133,7 @@ async def chat_completion(
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,
+            **extra_kwargs,
         )
         return _stream_response(response)
     else:
@@ -94,6 +142,7 @@ async def chat_completion(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            **extra_kwargs,
         )
         return response.choices[0].message.content
 

@@ -23,6 +23,17 @@ interface EmbeddingCurrent {
   has_gemini_key: boolean;
 }
 
+interface LlmProvider {
+  id: string;
+  name: string;
+}
+
+interface LlmCurrent {
+  provider: string;
+  model: string;
+  keys_set: Record<string, boolean>;
+}
+
 export default function SettingsPage() {
   const [models, setModels] = useState<EmbeddingModel[]>([]);
   const [current, setCurrent] = useState<EmbeddingCurrent | null>(null);
@@ -41,16 +52,28 @@ export default function SettingsPage() {
 
   const [allSettings, setAllSettings] = useState<Record<string, string>>({});
 
+  // LLM state
+  const [llmProviders, setLlmProviders] = useState<LlmProvider[]>([]);
+  const [llmCurrent, setLlmCurrent] = useState<LlmCurrent | null>(null);
+  const [anthropicKey, setAnthropicKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState("");
+  const [googleKey, setGoogleKey] = useState("");
+  const [llmKeySaveMsg, setLlmKeySaveMsg] = useState("");
+
   const fetchData = useCallback(async () => {
     try {
-      const [modelsRes, currentRes, settingsRes] = await Promise.all([
+      const [modelsRes, currentRes, settingsRes, llmProvidersRes, llmCurrentRes] = await Promise.all([
         fetch(`${API_BASE}/embedding/models`),
         fetch(`${API_BASE}/embedding/current`),
         fetch(API_BASE),
+        fetch(`${API_BASE}/llm/providers`),
+        fetch(`${API_BASE}/llm/current`),
       ]);
       const modelsData: EmbeddingModel[] = await modelsRes.json();
       const currentData: EmbeddingCurrent = await currentRes.json();
       const settingsData: Record<string, string> = await settingsRes.json();
+      const llmProvidersData: LlmProvider[] = await llmProvidersRes.json();
+      const llmCurrentData: LlmCurrent = await llmCurrentRes.json();
 
       setModels(modelsData);
       setCurrent(currentData);
@@ -61,6 +84,9 @@ export default function SettingsPage() {
 
       setVoyageMasked(settingsData["embedding.api_key.voyage"] || "");
       setGeminiMasked(settingsData["embedding.api_key.gemini"] || "");
+
+      setLlmProviders(llmProvidersData);
+      setLlmCurrent(llmCurrentData);
     } catch {
       // API not available
     }
@@ -163,6 +189,29 @@ export default function SettingsPage() {
     }
   };
 
+  const saveLlmKey = async (provider: string, value: string, clearFn: (v: string) => void) => {
+    if (!value.trim()) return;
+    setLlmKeySaveMsg("");
+    try {
+      const res = await fetch(`${API_BASE}/llm.api_key.${provider}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: value.trim() }),
+      });
+      if (res.ok) {
+        setLlmKeySaveMsg(`${provider} key saved.`);
+        clearFn("");
+        await fetchData();
+      } else {
+        setLlmKeySaveMsg("Failed to save key.");
+      }
+    } catch {
+      setLlmKeySaveMsg("Failed to save key.");
+    }
+  };
+
+  const llmKeyMasked = (provider: string) => allSettings[`llm.api_key.${provider}`] || "";
+
   return (
     <div style={styles.container}>
       <header style={styles.header}>
@@ -175,6 +224,93 @@ export default function SettingsPage() {
       </header>
 
       <div style={styles.content}>
+        {/* LLM Configuration Section */}
+        <section style={styles.section}>
+          <h2 style={styles.sectionTitle}>LLM Configuration</h2>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Provider</label>
+            <div style={styles.readOnly}>
+              {llmCurrent?.provider || "anthropic"} (from bond.json)
+            </div>
+          </div>
+          <div style={styles.field}>
+            <label style={styles.label}>Model</label>
+            <div style={styles.readOnly}>
+              {llmCurrent?.model || "claude-sonnet-4-20250514"} (from bond.json)
+            </div>
+          </div>
+
+          <div style={{ ...styles.field, marginTop: "20px" }}>
+            <label style={styles.label}>
+              Anthropic API Key{" "}
+              {llmKeyMasked("anthropic") && <span style={styles.masked}>Current: {llmKeyMasked("anthropic")}</span>}
+            </label>
+            <div style={styles.keyRow}>
+              <input
+                type="password"
+                style={styles.input}
+                value={anthropicKey}
+                onChange={(e) => setAnthropicKey(e.target.value)}
+                placeholder="Enter Anthropic API key (sk-ant-...)"
+              />
+              <button style={styles.button} onClick={() => saveLlmKey("anthropic", anthropicKey, setAnthropicKey)}>
+                Save
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>
+              OpenAI API Key{" "}
+              {llmKeyMasked("openai") && <span style={styles.masked}>Current: {llmKeyMasked("openai")}</span>}
+            </label>
+            <div style={styles.keyRow}>
+              <input
+                type="password"
+                style={styles.input}
+                value={openaiKey}
+                onChange={(e) => setOpenaiKey(e.target.value)}
+                placeholder="Enter OpenAI API key (sk-...)"
+              />
+              <button style={styles.button} onClick={() => saveLlmKey("openai", openaiKey, setOpenaiKey)}>
+                Save
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>
+              Google API Key{" "}
+              {llmKeyMasked("google") && <span style={styles.masked}>Current: {llmKeyMasked("google")}</span>}
+            </label>
+            <div style={styles.keyRow}>
+              <input
+                type="password"
+                style={styles.input}
+                value={googleKey}
+                onChange={(e) => setGoogleKey(e.target.value)}
+                placeholder="Enter Google API key"
+              />
+              <button style={styles.button} onClick={() => saveLlmKey("google", googleKey, setGoogleKey)}>
+                Save
+              </button>
+            </div>
+          </div>
+
+          {llmKeySaveMsg && <div style={{ ...styles.msg, color: "#6cffa0" }}>{llmKeySaveMsg}</div>}
+
+          {llmCurrent && (
+            <div style={{ ...styles.modelDetails, marginTop: "12px" }}>
+              {Object.entries(llmCurrent.keys_set).map(([p, set]) => (
+                <span key={p}>
+                  {p}: {set ? "\u2705" : "\u274c"}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+
         {/* Embedding Model Section */}
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>Embedding Model</h2>
@@ -254,9 +390,9 @@ export default function SettingsPage() {
           )}
         </section>
 
-        {/* API Keys Section */}
+        {/* Embedding API Keys Section */}
         <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>API Keys</h2>
+          <h2 style={styles.sectionTitle}>Embedding API Keys</h2>
 
           <div style={styles.field}>
             <label style={styles.label}>
@@ -295,23 +431,6 @@ export default function SettingsPage() {
           </div>
 
           {keySaveMsg && <div style={{ ...styles.msg, color: "#6cffa0" }}>{keySaveMsg}</div>}
-        </section>
-
-        {/* General Section */}
-        <section style={styles.section}>
-          <h2 style={styles.sectionTitle}>General</h2>
-          <div style={styles.field}>
-            <label style={styles.label}>LLM Provider</label>
-            <div style={styles.readOnly}>
-              {allSettings["llm.provider"] || "anthropic"} (from config)
-            </div>
-          </div>
-          <div style={styles.field}>
-            <label style={styles.label}>LLM Model</label>
-            <div style={styles.readOnly}>
-              {allSettings["llm.model"] || "claude-sonnet-4-20250514"} (from config)
-            </div>
-          </div>
         </section>
       </div>
     </div>
