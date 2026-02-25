@@ -847,6 +847,20 @@ CREATE TABLE agent_workspace_mounts (
 );
 
 CREATE INDEX idx_awm_agent ON agent_workspace_mounts(agent_id);
+
+-- Which communication channels each agent listens on
+CREATE TABLE agent_channels (
+    id TEXT PRIMARY KEY,                    -- ULID
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    channel TEXT NOT NULL,                  -- 'webchat', 'signal', 'telegram', etc.
+    sandbox_override TEXT,                  -- Override sandbox image for this channel
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE(agent_id, channel)
+);
+
+CREATE INDEX idx_ac_agent ON agent_channels(agent_id);
+CREATE INDEX idx_ac_channel ON agent_channels(channel);
 ```
 
 #### Default Agent (seeded on first run)
@@ -863,7 +877,8 @@ CREATE INDEX idx_awm_agent ON agent_workspace_mounts(agent_id);
             "skills", "notify"],
   "max_iterations": 25,
   "is_default": true,
-  "workspace_mounts": []
+  "workspace_mounts": [],
+  "channels": ["webchat"]
 }
 ```
 
@@ -938,22 +953,53 @@ Images are built from Dockerfiles in `docker/sandboxes/` and cached locally. Use
 - `--security-opt=no-new-privileges`
 - Resource limits from agent config or sandbox image defaults
 
-### 6.3 Channel Sandbox Overrides
+### 6.3 Communication Channels (per agent)
 
-Channels can override which agent (and thus which sandbox) handles their messages:
+Each agent has a set of enabled communication channels, configured via checkboxes in the agent edit form within the Settings UI.
 
-```json
-{
-  "channels": {
-    "webchat": { "agent": "bond" },
-    "signal": { "agent": "bond" },
-    "telegram": { "agent": "bond", "sandbox_override": "minimal" },
-    "discord": { "agent": "bond", "sandbox_override": "minimal" }
-  }
-}
+#### Available Channels
+
+| Channel | Description | Trust Level |
+|---------|-------------|-------------|
+| `webchat` | Local web UI (default, always available) | Trusted |
+| `signal` | Signal messenger | Trusted |
+| `telegram` | Telegram bot | Semi-trusted |
+| `discord` | Discord bot | Untrusted |
+| `whatsapp` | WhatsApp (via gateway) | Semi-trusted |
+| `email` | Email (inbound) | Untrusted |
+| `slack` | Slack bot | Semi-trusted |
+
+#### Settings UI — Channel Checkboxes
+
+In the agent edit form, a **Channels** section shows checkboxes:
+
+```
+Channels
+  ☑ Webchat (always enabled for default agent)
+  ☐ Signal
+  ☐ Telegram         [Advanced ▾] Sandbox override: bond-sandbox-minimal
+  ☐ Discord          [Advanced ▾] Sandbox override: bond-sandbox-minimal
+  ☐ WhatsApp
+  ☐ Email
+  ☐ Slack
 ```
 
-When `sandbox_override` is set, it forces that sandbox image regardless of what the agent normally uses. This lets you use your full-featured "bond" agent on Discord but in a locked-down container.
+Each channel can optionally override the agent's sandbox image (e.g., enable Discord but force `bond-sandbox-minimal`). This is an advanced option — collapsed by default, expandable per channel.
+
+#### Channel Routing
+
+When a message arrives on a channel, Bond resolves which agent handles it:
+
+1. Find agents that have this channel enabled
+2. If exactly one → use that agent
+3. If multiple → use the default agent (if it has the channel enabled), otherwise first match
+4. If none → reject the message (channel not configured)
+
+Different agents can handle different channels. Your "Bond" agent handles webchat and Signal, while a locked-down "Discord Bot" agent handles Discord with a minimal sandbox.
+
+#### Default Agent Channel Setup
+
+The seeded "Bond" agent starts with only `webchat` enabled. The user enables additional channels as they configure them (each channel requires its own setup — API tokens, bot registration, etc.).
 
 ### 6.4 Settings Table Keys
 
@@ -1004,10 +1050,10 @@ backend/app/
 ## 8. Implementation Stories
 
 ### Story 11a: Migration 000005 — Agent Profiles
-- Create migration `000005_agents.up.sql` with `agents` and `agent_workspace_mounts` tables
-- Seed default "bond" agent (no sandbox, all tools, `is_default=true`)
-- Down migration drops both tables
-- Tests: migration up/down, default agent seeded
+- Create migration `000005_agents.up.sql` with `agents`, `agent_workspace_mounts`, and `agent_channels` tables
+- Seed default "bond" agent (no sandbox, all tools, `is_default=true`, webchat channel enabled)
+- Down migration drops all three tables
+- Tests: migration up/down, default agent seeded, webchat channel seeded
 
 ### Story 11b: Agent CRUD API + Settings UI
 - Create `backend/app/api/v1/agents.py` — full CRUD for agents and workspace mounts
@@ -1021,9 +1067,10 @@ backend/app/
   - `GET /api/v1/agents/sandbox-images` — list available Docker images
 - Create `frontend/src/app/settings/agents/page.tsx` — agent management UI
   - Agent list with cards
-  - Create/edit form: name, system prompt, model dropdown, sandbox image, tool checkboxes, workspace mounts, max iterations, auto-RAG
+  - Create/edit form: name, system prompt, model dropdown, sandbox image, tool checkboxes, workspace mounts, channel checkboxes (with optional sandbox override per channel), max iterations, auto-RAG
   - Delete with confirmation
   - Set as default
+  - Channel CRUD: `POST/DELETE /api/v1/agents/{id}/channels`
 - Tests: all CRUD endpoints, validation, default agent protection
 
 ### Story 11c: Tool Registry & Definitions
