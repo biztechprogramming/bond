@@ -180,7 +180,7 @@ export class WebChatChannel {
       if (resolution.mode === "container" && resolution.worker_url) {
         await this.startContainerTurn(socket, sessionId, message, resolution);
       } else {
-        await this.startHostTurn(socket, sessionId, message, resolution.conversation_id);
+        await this.startHostTurn(socket, sessionId, message, resolution);
       }
     } catch (err) {
       this.send(socket, {
@@ -195,16 +195,20 @@ export class WebChatChannel {
     socket: WebSocket,
     sessionId: string,
     message: string | undefined,
-    conversationId: string | undefined,
+    resolution: import("../backend/client.js").AgentResolution,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
+
+    const conversationId = resolution.conversation_id;
+    const agentName = resolution.agent_display_name || resolution.agent_name || "Agent";
 
     session.agentBusy = true;
     this.send(socket, {
       type: "status",
       sessionId,
       agentStatus: "thinking",
+      agentName,
       conversationId,
     });
 
@@ -236,6 +240,7 @@ export class WebChatChannel {
               type: "chunk",
               sessionId,
               content: event.data.content as string,
+              agentName,
               conversationId: responseConversationId,
             });
             break;
@@ -269,6 +274,7 @@ export class WebChatChannel {
         sessionId,
         conversationId: responseConversationId,
         messageId: responseMessageId,
+        agentName,
         queuedCount,
         agentStatus: "idle",
       });
