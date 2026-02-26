@@ -314,7 +314,7 @@ async def _run_agent_loop(
             messages=messages,
             tools=tool_defs if tool_defs else None,
             temperature=0.7,
-            max_tokens=16384,
+            max_tokens=65536,
             **extra_kwargs,
         )
 
