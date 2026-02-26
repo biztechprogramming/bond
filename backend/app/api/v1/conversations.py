@@ -220,7 +220,6 @@ async def save_or_queue_message(
         raise HTTPException(status_code=404, detail="Conversation not found")
 
     if body.role == "assistant":
-        # Gateway saving assistant response after container turn
         msg_id = str(ULID())
         await db.execute(
             text(

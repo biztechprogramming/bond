@@ -165,6 +165,22 @@ export class BackendClient {
     return (await res.json()) as AgentResolution;
   }
 
+  async saveUserMessage(
+    conversationId: string,
+    content: string,
+  ): Promise<{ message_id: string }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "user", content }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+    return (await res.json()) as { message_id: string };
+  }
+
   async saveAssistantMessage(
     conversationId: string,
     content: string,

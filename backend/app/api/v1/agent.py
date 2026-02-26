@@ -370,46 +370,77 @@ async def resolve_agent(
         # No conversation found, use provided agent_id — create conversation
         resolved_agent_id = agent_id
 
+    # Resolve "default" to the actual default agent
+    if resolved_agent_id == "default":
+        default_result = await db.execute(
+            text("SELECT id FROM agents WHERE is_default = 1 LIMIT 1"),
+        )
+        default_row = default_result.mappings().first()
+        if default_row:
+            resolved_agent_id = default_row["id"]
+        else:
+            raise HTTPException(status_code=404, detail="No default agent configured")
+
     # Look up agent
     agent_result = await db.execute(
-        text("SELECT id, sandbox_image FROM agents WHERE id = :id"),
+        text("SELECT id, sandbox_image, model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
         {"id": resolved_agent_id},
     )
     agent_row = agent_result.mappings().first()
     if agent_row is None:
-        # Try default agent
-        if not agent_id and not conversation_id:
-            raise HTTPException(status_code=400, detail="Either conversation_id or agent_id is required")
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Fetch workspace mounts
+    mounts_result = await db.execute(
+        text("SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
+        {"id": resolved_agent_id},
+    )
+    workspace_mounts = [
+        {
+            "host_path": m["host_path"],
+            "mount_name": m["mount_name"],
+            "container_path": m["container_path"] or f"/workspace/{m['mount_name']}",
+            "readonly": bool(m["readonly"]),
+        }
+        for m in mounts_result.mappings().all()
+    ]
 
     # Create conversation if needed
     if not resolved_conversation_id or (conversation_id and not await _conversation_exists(db, conversation_id)):
         resolved_conversation_id = await _get_or_create_conversation(db, resolved_conversation_id)
+
+    # Fetch prompt fragments for this agent
+    frag_result = await db.execute(
+        text(
+            "SELECT pf.content, apf.enabled FROM agent_prompt_fragments apf "
+            "JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
+            "WHERE apf.agent_id = :id AND pf.is_active = 1 "
+            "ORDER BY apf.rank"
+        ),
+        {"id": resolved_agent_id},
+    )
+    prompt_fragments = [
+        {"content": r["content"], "enabled": bool(r["enabled"])}
+        for r in frag_result.mappings().all()
+    ]
 
     sandbox_image = agent_row["sandbox_image"]
     if sandbox_image:
         # Containerized agent — ensure worker is running
         try:
             sandbox_manager = get_sandbox_manager()
-            # Read encrypted API keys from settings DB (no decryption — stays encrypted)
-            encrypted_keys = {}
-            for provider in ("anthropic", "openai", "google", "voyage"):
-                setting_key = f"llm.api_key.{provider}"
-                result = await db.execute(
-                    text("SELECT value FROM settings WHERE key = :key"),
-                    {"key": setting_key},
-                )
-                row = result.fetchone()
-                if row and row[0]:
-                    encrypted_keys[provider] = row[0]
 
             # Build agent dict for ensure_running
+            # API keys are resolved inside the container via the mounted Vault
             agent_dict = {
                 "id": agent_row["id"],
                 "sandbox_image": sandbox_image,
-                "model": agent_row.get("model", "claude-sonnet-4-20250514"),
-                "system_prompt": agent_row.get("system_prompt", ""),
-                "encrypted_api_keys": encrypted_keys,
+                "model": agent_row["model"],
+                "system_prompt": agent_row["system_prompt"],
+                "tools": json.loads(agent_row["tools"]),
+                "max_iterations": agent_row["max_iterations"],
+                "prompt_fragments": prompt_fragments,
+                "workspace_mounts": workspace_mounts,
             }
             info = await sandbox_manager.ensure_running(agent_dict)
             return {

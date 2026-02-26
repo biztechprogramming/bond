@@ -169,8 +169,8 @@ export class WebChatChannel {
     if (!session) return;
 
     try {
-      // Resolve agent mode
-      const resolution = await this.backendClient.resolveAgent(conversationId);
+      // Resolve agent mode — pass default agent ID if no conversation yet
+      const resolution = await this.backendClient.resolveAgent(conversationId, conversationId ? undefined : "default");
       console.log(
         `[gateway] Resolving agent for conversation ${resolution.conversation_id} → ${resolution.mode}` +
         (resolution.worker_url ? ` (worker ${resolution.worker_url})` : ""),
@@ -328,6 +328,17 @@ export class WebChatChannel {
         messages.push({ role: "user", content: message });
       }
 
+      // Persist user message before sending to worker
+      if (message) {
+        try {
+          await this.backendClient.saveUserMessage(conversationId, message);
+        } catch (err) {
+          console.error(
+            `[gateway] ERROR Failed to save user message: conversation=${conversationId} error=${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
       const worker = this.workerPool.get(workerUrl);
       let responseContent = "";
       let toolCallsMade = 0;
@@ -444,9 +455,23 @@ export class WebChatChannel {
     } catch (err) {
       session.agentBusy = false;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      const errorMsg = err instanceof Error ? err.message : "Container turn error";
       console.error(
-        `[gateway] ERROR Container turn failed: conversation=${conversationId} error=${err instanceof Error ? err.message : String(err)} elapsed=${elapsed}s`,
+        `[gateway] ERROR Container turn failed: conversation=${conversationId} error=${errorMsg} elapsed=${elapsed}s`,
       );
+
+      // Persist error as assistant message so it shows in history
+      try {
+        await this.backendClient.saveAssistantMessage(
+          conversationId,
+          `Error: ${errorMsg}`,
+          0,
+        );
+      } catch (saveErr) {
+        console.error(
+          `[gateway] ERROR Failed to save error message: ${saveErr instanceof Error ? saveErr.message : String(saveErr)}`,
+        );
+      }
 
       this.send(socket, {
         type: "status",
@@ -457,7 +482,7 @@ export class WebChatChannel {
       this.send(socket, {
         type: "error",
         sessionId,
-        error: err instanceof Error ? err.message : "Container turn error",
+        error: errorMsg,
       });
     }
   }

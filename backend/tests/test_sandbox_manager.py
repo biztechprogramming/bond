@@ -197,8 +197,8 @@ class TestWorkerContainerCreation:
             assert ":/bond:ro" in cmd_str
             # Workspace mount
             assert "/workspace/project" in cmd_str
-            # Agent data volume
-            assert "bond-agent-agent-abc123:/data:rw" in cmd_str
+            # Agent data bind mount
+            assert "agents/agent-abc123:/data:rw" in cmd_str
             # Shared memory
             assert ":/data/shared:ro" in cmd_str
             # Config file mount
@@ -739,22 +739,18 @@ class TestCleanupLifecycle:
             assert not config_file.exists()
 
     @pytest.mark.asyncio
-    async def test_destroy_agent_data_removes_volume(self):
+    async def test_destroy_agent_data_removes_directory(self):
         manager = SandboxManager()
 
-        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec, \
+             patch("shutil.rmtree") as mock_rmtree:
             mock_exec.return_value = _mock_proc()
             await manager.destroy_agent_data("agent-abc123")
 
-            # Should have called docker volume rm
-            calls = mock_exec.call_args_list
-            volume_rm_found = False
-            for call in calls:
-                args = list(call[0])
-                if "volume" in args and "rm" in args and "bond-agent-agent-abc123" in args:
-                    volume_rm_found = True
-                    break
-            assert volume_rm_found
+            # Should have called shutil.rmtree on the agent data directory
+            mock_rmtree.assert_called_once()
+            rm_path = str(mock_rmtree.call_args[0][0])
+            assert "agents/agent-abc123" in rm_path
 
     @pytest.mark.asyncio
     async def test_cleanup_idle_releases_ports(self):

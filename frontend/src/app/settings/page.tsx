@@ -2,11 +2,13 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import AgentsTab from "./agents/AgentsTab";
+import PromptsTab from "./prompts/PromptsTab";
 
 const API_BASE = "http://localhost:18790/api/v1/settings";
 
 const TABS = [
   { id: "agents", label: "Agents" },
+  { id: "prompts", label: "Prompts" },
   { id: "llm", label: "LLM" },
   { id: "embedding", label: "Embedding" },
   { id: "api-keys", label: "API Keys" },
@@ -183,6 +185,8 @@ export default function SettingsPage() {
       {/* Tab content */}
       <div style={s.content}>
         {activeTab === "agents" && <AgentsTab />}
+
+        {activeTab === "prompts" && <PromptsTab />}
 
         {activeTab === "llm" && (
           <section style={s.section}>

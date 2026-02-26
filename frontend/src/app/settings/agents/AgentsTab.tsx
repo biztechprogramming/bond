@@ -216,11 +216,14 @@ const modalStyles: Record<string, React.CSSProperties> = {
 export default function AgentsTab() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [tools, setTools] = useState<ToolInfo[]>([]);
+  const allToolNames = tools.map((t) => t.name);
   const [sandboxImages, setSandboxImages] = useState<string[]>([]);
   const [editing, setEditing] = useState<Agent | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [msg, setMsg] = useState("");
   const [browsingMountIndex, setBrowsingMountIndex] = useState<number | null>(null);
+  const [allFragments, setAllFragments] = useState<{ id: string; name: string; display_name: string; category: string; is_active: number }[]>([]);
+  const [agentFragments, setAgentFragments] = useState<{ id: string; display_name: string; category: string; enabled: number; rank: number; fragment_id?: string }[]>([]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -232,6 +235,10 @@ export default function AgentsTab() {
       setAgents(await agentsRes.json());
       setTools(await toolsRes.json());
       setSandboxImages(await imagesRes.json());
+      try {
+        const fragRes = await fetch("http://localhost:18790/api/v1/prompts/fragments");
+        if (fragRes.ok) setAllFragments(await fragRes.json());
+      } catch { /* prompts API not available */ }
     } catch {
       // API not available
     }
@@ -259,13 +266,37 @@ export default function AgentsTab() {
   });
 
   const startCreate = () => {
-    setEditing(newAgent());
+    setEditing({ ...newAgent(), tools: allToolNames });
     setIsNew(true);
     setMsg("");
   };
 
+  const loadAgentFragments = async (agentId: string) => {
+    try {
+      const res = await fetch(`http://localhost:18790/api/v1/prompts/agents/${agentId}/fragments`);
+      if (res.ok) setAgentFragments(await res.json());
+      else setAgentFragments([]);
+    } catch { setAgentFragments([]); }
+  };
+
+  const toggleAgentFragment = async (agentId: string, fragmentId: string, isAttached: boolean) => {
+    try {
+      if (isAttached) {
+        await fetch(`http://localhost:18790/api/v1/prompts/agents/${agentId}/fragments/${fragmentId}`, { method: "DELETE" });
+      } else {
+        await fetch(`http://localhost:18790/api/v1/prompts/agents/${agentId}/fragments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fragment_id: fragmentId, rank: agentFragments.length }),
+        });
+      }
+      await loadAgentFragments(agentId);
+    } catch { /* ignore */ }
+  };
+
   const startEdit = (agent: Agent) => {
     setEditing({ ...agent });
+    loadAgentFragments(agent.id);
     setIsNew(false);
     setMsg("");
   };
@@ -619,6 +650,33 @@ export default function AgentsTab() {
                 }}
                 onClose={() => setBrowsingMountIndex(null)}
               />
+            )}
+
+            {!isNew && (
+              <div style={{ ...styles.field, ...styles.formFull }}>
+                <label style={styles.label}>Prompt Fragments</label>
+                <div style={styles.checkboxGrid}>
+                  {allFragments.filter(f => f.is_active).map((frag) => {
+                    const attached = agentFragments.some(af => af.id === frag.id);
+                    const catColor: Record<string, string> = { behavior: "#6cffa0", tools: "#6c8aff", safety: "#ff6c8a", context: "#ffcc44" };
+                    return (
+                      <label key={frag.id} style={styles.checkboxLabel}>
+                        <input
+                          type="checkbox"
+                          checked={attached}
+                          onChange={() => toggleAgentFragment(editing.id, frag.id, attached)}
+                          style={styles.checkbox}
+                        />
+                        <span style={{ color: catColor[frag.category] || "#888", fontSize: "0.7rem", marginRight: "4px" }}>●</span>
+                        {frag.display_name}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: "0.8rem", color: "#5a5a6e", marginTop: "4px" }}>
+                  Manage fragments in the Prompts tab
+                </div>
+              </div>
             )}
 
             {!isNew && !editing.is_default && (

@@ -92,10 +92,11 @@ class SandboxManager:
         config_path = config_dir / f"{agent_id}.json"
         config_data = {
             "agent_id": agent_id,
-            "model": agent.get("model", "claude-sonnet-4-20250514"),
-            "system_prompt": agent.get("system_prompt", "You are a helpful assistant."),
-            "tools": agent.get("tools", ["respond", "search_memory", "memory_save"]),
-            # No API keys here — they go directly to agent DB (encrypted)
+            "model": agent["model"],
+            "system_prompt": agent["system_prompt"],
+            "tools": agent["tools"],
+            "max_iterations": agent["max_iterations"],
+            "prompt_fragments": agent.get("prompt_fragments", []),
         }
 
         # Use os.open with explicit mode to avoid race window between open() and chmod()
@@ -171,6 +172,77 @@ class SandboxManager:
 
                 await asyncio.sleep(interval)
 
+    async def _recover_existing_container(
+        self, key: str, agent_id: str,
+    ) -> dict[str, Any] | None:
+        """Check if a container with this name exists in Docker and recover it.
+
+        Handles backend restarts where in-memory tracking is lost but the
+        container is still running.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "inspect", "-f",
+            "{{.State.Running}} {{(index (index .NetworkSettings.Ports \"18791/tcp\") 0).HostPort}}",
+            key,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return None  # No such container
+
+        parts = stdout.decode().strip().split()
+        if len(parts) < 2:
+            return None
+
+        is_running = parts[0].lower() == "true"
+        host_port = int(parts[1])
+
+        if not is_running:
+            # Container exists but stopped — remove it
+            logger.info("Found stopped container %s, removing", key)
+            await asyncio.create_subprocess_exec(
+                "docker", "rm", "-f", key,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            return None
+
+        # Container is running — recover tracking
+        worker_url = f"http://localhost:{host_port}"
+        cid_proc = await asyncio.create_subprocess_exec(
+            "docker", "inspect", "-f", "{{.Id}}", key,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        cid_out, _ = await cid_proc.communicate()
+        container_id = cid_out.decode().strip()[:12]
+
+        try:
+            await self._wait_for_health(worker_url, agent_id, container_id, timeout=5.0)
+        except RuntimeError:
+            logger.warning("Recovered container %s unhealthy, removing", key)
+            await asyncio.create_subprocess_exec(
+                "docker", "rm", "-f", key,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            return None
+
+        # Restore tracking
+        self._port_map[key] = host_port
+        self._containers[key] = {
+            "container_id": container_id,
+            "worker_url": worker_url,
+            "worker_port": host_port,
+            "last_used": time.time(),
+        }
+        logger.info(
+            "Recovered running container %s for agent %s (port=%d)",
+            container_id, agent_id, host_port,
+        )
+        return {"worker_url": worker_url, "container_id": container_id}
+
     async def _capture_container_logs(self, container_id: str, tail: int = 50) -> str:
         """Capture recent docker logs from a container."""
         try:
@@ -200,13 +272,13 @@ class SandboxManager:
 
         async with lock:
             # Check if container already running + healthy (Task 8)
+            # First check in-memory tracking
             if key in self._containers:
                 info = self._containers[key]
                 cid = info["container_id"]
                 worker_url = info.get("worker_url", "")
 
                 if await self._is_running(cid):
-                    # Container running — verify worker is also healthy
                     try:
                         await self._wait_for_health(worker_url, agent_id, cid, timeout=5.0)
                         self._containers[key]["last_used"] = time.time()
@@ -224,6 +296,11 @@ class SandboxManager:
                     )
                     await self.destroy_agent_container(agent_id)
                 # Fall through to create new container
+            else:
+                # Not in memory — check Docker directly (e.g., after backend restart)
+                existing = await self._recover_existing_container(key, agent_id)
+                if existing:
+                    return existing
 
             # Create new worker container
             config_path: Path | None = None
@@ -231,11 +308,6 @@ class SandboxManager:
             try:
                 port = self._allocate_port(key)
                 config_path = self._write_agent_config(agent)
-
-                # Seed encrypted API keys into agent DB before worker starts
-                encrypted_keys = agent.get("encrypted_api_keys", {})
-                if encrypted_keys:
-                    await self._seed_agent_db(agent_id, encrypted_keys)
 
                 container_id = await self._create_worker_container(
                     agent, key, port, config_path,
@@ -283,6 +355,13 @@ class SandboxManager:
         agent_id = agent["id"]
         sandbox_image = agent["sandbox_image"]
 
+        # Remove any stale container with the same name
+        await asyncio.create_subprocess_exec(
+            "docker", "rm", "-f", key,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
         cmd = [
             "docker", "run", "-d",
             "--name", key,
@@ -322,27 +401,32 @@ class SandboxManager:
                     mount_str += ":ro"
                 cmd.extend(["-v", mount_str])
 
-        # Agent data: named Docker volume (persists across restarts)
-        cmd.extend(["-v", f"bond-agent-{agent_id}:/data:rw"])
+        # Agent data: bind mount (host-accessible, persists across restarts)
+        agent_data_dir = self._agent_data_dir(agent_id)
+        os.makedirs(str(agent_data_dir), exist_ok=True)
+        cmd.extend(["-v", f"{agent_data_dir}:/data:rw"])
 
         # Shared memory (read-only)
         shared_dir = project_root / "data" / "shared"
         os.makedirs(str(shared_dir), exist_ok=True)
         cmd.extend(["-v", f"{shared_dir}:/data/shared:ro"])
 
-        # SSH keys (only if ~/.ssh exists)
+        # SSH keys (only if ~/.ssh exists and not already covered by a workspace mount)
         ssh_dir = Path.home() / ".ssh"
-        if ssh_dir.exists():
+        workspace_targets = {m.get("container_path", "") for m in workspace_mounts}
+        if ssh_dir.exists() and "/tmp/.ssh" not in workspace_targets:
             cmd.extend(["-v", f"{ssh_dir}:/tmp/.ssh:ro"])
 
         # Agent config file (read-only, mount specific file)
         cmd.extend(["-v", f"{config_path}:/config/agent.json:ro"])
 
-        # Vault key for decrypting API keys (read-only)
+        # Vault data (credentials.enc + .vault_key) for API key access (read-only)
+        # BOND_HOME defaults to ~/.bond — vault files live in BOND_HOME/data/
         from backend.app.config import get_settings
-        vault_key_path = Path(get_settings().bond_home) / "data" / ".vault_key"
-        if vault_key_path.exists():
-            cmd.extend(["-v", f"{vault_key_path}:/bond-home/data/.vault_key:ro"])
+        bond_home = Path(get_settings().bond_home)
+        vault_data_dir = bond_home / "data"
+        if vault_data_dir.exists():
+            cmd.extend(["-v", f"{vault_data_dir}:/bond-home/data:ro"])
 
         # --- Entrypoint (Task 1) ---
         cmd.extend([
@@ -373,71 +457,9 @@ class SandboxManager:
 
         return container_id
 
-    async def _seed_agent_db(
-        self,
-        agent_id: str,
-        encrypted_keys: dict[str, str],
-    ) -> None:
-        """Seed encrypted API keys into the agent DB via a one-shot init container.
-
-        Runs a short-lived container that mounts the same Docker volume,
-        creates the settings table if needed, and writes encrypted key blobs.
-        Keys are never decrypted here — they stay encrypted at rest.
-        """
-        volume_name = f"bond-agent-{agent_id}"
-
-        # Build SQL statements to seed keys
-        sql_parts = [
-            "CREATE TABLE IF NOT EXISTS settings "
-            "(key TEXT PRIMARY KEY, value TEXT NOT NULL, "
-            "created_at TEXT NOT NULL DEFAULT (datetime('now')), "
-            "updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
-        ]
-        params = []
-        for provider, encrypted_value in encrypted_keys.items():
-            setting_key = f"llm.api_key.{provider}"
-            # Use parameter binding via Python script to avoid shell escaping issues
-            params.append((setting_key, encrypted_value))
-
-        # Build a small Python script that does the DB writes
-        # This avoids shell escaping issues with encrypted values containing special chars
-        import base64
-        params_b64 = base64.b64encode(json.dumps(params).encode()).decode()
-
-        script = (
-            "import sqlite3, json, base64, os; "
-            "db = sqlite3.connect('/data/agent.db'); "
-            f"db.execute('{sql_parts[0]}'); "
-            f"params = json.loads(base64.b64decode('{params_b64}')); "
-            "[db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', p) for p in params]; "
-            "db.commit(); db.close(); "
-            f"print(f'Seeded {{len(params)}} encrypted key(s) into agent DB')"
-        )
-
-        cmd = [
-            "docker", "run", "--rm",
-            "-v", f"{volume_name}:/data",
-            "bond-agent-worker",
-            "python", "-c", script,
-        ]
-
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            logger.warning(
-                "Failed to seed agent DB for %s: %s",
-                agent_id, stderr.decode(),
-            )
-        else:
-            logger.info(
-                "Seeded agent DB for %s: %s",
-                agent_id, stdout.decode().strip(),
-            )
+    def _agent_data_dir(self, agent_id: str) -> Path:
+        """Return the host-side data directory for an agent."""
+        return _PROJECT_ROOT / "data" / "agents" / agent_id
 
     # ------------------------------------------------------------------
     # Host-mode container (backward compat — Task 7)
@@ -652,26 +674,26 @@ class SandboxManager:
         return len(to_remove)
 
     async def destroy_agent_data(self, agent_id: str) -> None:
-        """Permanently delete agent data — removes Docker volume and config.
+        """Permanently delete agent data — removes data directory and config.
 
         Called when an agent is deleted (not just stopped). Data is gone.
         """
+        import shutil
+
         # Ensure container is destroyed first
         await self.destroy_agent_container(agent_id)
 
-        # Remove the Docker volume
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "volume", "rm", f"bond-agent-{agent_id}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            logger.info("Removed data volume for agent %s", agent_id)
-        else:
+        # Remove the agent data directory
+        agent_data_dir = self._agent_data_dir(agent_id)
+        try:
+            shutil.rmtree(str(agent_data_dir))
+            logger.info("Removed data directory for agent %s: %s", agent_id, agent_data_dir)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
             logger.warning(
-                "Failed to remove data volume for agent %s: %s",
-                agent_id, stderr.decode().strip(),
+                "Failed to remove data directory for agent %s: %s",
+                agent_id, e,
             )
 
     # ------------------------------------------------------------------

@@ -32,3 +32,4 @@ Thumbs.db
 # Lockfiles generated on install
 gateway/pnpm-lock.yaml
 frontend/pnpm-lock.yaml
+data/

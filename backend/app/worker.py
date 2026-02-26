@@ -244,28 +244,22 @@ async def _run_agent_loop(
     from backend.app.agent.tools.native_registry import build_native_registry
 
     config = _state.config
-    model = config.get("model", "anthropic/claude-sonnet-4-20250514")
-    system_prompt = config.get("system_prompt", "You are Bond, a helpful AI assistant.")
-    agent_tools = config.get("tools", ["respond", "search_memory", "memory_save"])
-    max_iterations = config.get("max_iterations", 25)
+    model = config["model"]
+    system_prompt = config["system_prompt"]
+    agent_tools = config["tools"]
+    max_iterations = config["max_iterations"]
 
-    # Resolve API key: agent DB (encrypted) → env var fallback
+    # Resolve API key: Vault (encrypted file) → env var fallback
     provider = model.split("/")[0] if "/" in model else "anthropic"
     api_key = None
 
-    # 1. Agent DB settings (encrypted at rest, decrypt on demand)
-    if _state.agent_db:
-        try:
-            cursor = await _state.agent_db.execute(
-                "SELECT value FROM settings WHERE key = ?",
-                (f"llm.api_key.{provider}",),
-            )
-            row = await cursor.fetchone()
-            if row and row[0]:
-                from backend.app.core.crypto import decrypt_value
-                api_key = decrypt_value(row[0])
-        except Exception as e:
-            logger.debug("Could not read API key from agent DB for %s: %s", provider, e)
+    # 1. Vault (mounted read-only from host)
+    try:
+        from backend.app.core.vault import Vault
+        vault = Vault()
+        api_key = vault.get_api_key(provider)
+    except Exception as e:
+        logger.debug("Could not read API key from vault for %s: %s", provider, e)
 
     # 2. Environment variable fallback
     if not api_key:
@@ -275,8 +269,15 @@ async def _run_agent_loop(
     if api_key:
         extra_kwargs["api_key"] = api_key
 
+    # Assemble full prompt from system prompt + fragments (from config)
+    prompt_parts = [system_prompt]
+    for fragment in config.get("prompt_fragments", []):
+        if fragment.get("enabled", True):
+            prompt_parts.append(fragment["content"])
+    full_system_prompt = "\n\n".join(prompt_parts)
+
     # Build messages
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    messages: list[dict] = [{"role": "system", "content": full_system_prompt}]
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_message})
@@ -303,6 +304,11 @@ async def _run_agent_loop(
                 messages.append(msg)
             _state.pending_messages.clear()
 
+        logger.info(
+            "LLM request: model=%s tools=%d tool_names=%s",
+            model, len(tool_defs), [t["function"]["name"] for t in tool_defs],
+        )
+
         response = await litellm.acompletion(
             model=model,
             messages=messages,
@@ -315,6 +321,13 @@ async def _run_agent_loop(
         choice = response.choices[0]
         llm_message = choice.message
 
+        logger.info(
+            "LLM response: has_tool_calls=%s finish_reason=%s content_len=%d",
+            bool(llm_message.tool_calls),
+            choice.finish_reason,
+            len(llm_message.content or ""),
+        )
+
         if llm_message.tool_calls:
             messages.append(llm_message.model_dump())
 
@@ -326,12 +339,16 @@ async def _run_agent_loop(
                     tool_args = {}
 
                 tool_calls_made += 1
-                logger.info("Tool call [%d]: %s", tool_calls_made, tool_name)
+                logger.info("Tool call [%d]: %s args=%s", tool_calls_made, tool_name,
+                            {k: (v[:80] + '...' if isinstance(v, str) and len(v) > 80 else v) for k, v in tool_args.items()})
 
                 if tool_name not in agent_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled."}
                 else:
                     result = await registry.execute(tool_name, tool_args, tool_context)
+
+                logger.info("Tool result [%d]: %s",  tool_calls_made,
+                            {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in result.items()} if isinstance(result, dict) else result)
 
                 # Check for promotable memory -> emit SSE memory event
                 if "_promote" in result:
@@ -350,6 +367,32 @@ async def _run_agent_loop(
                 })
         else:
             return llm_message.content or "", tool_calls_made
+
+    # Hit max iterations — save a memory of what was attempted
+    try:
+        # Build a summary from the tool calls in the conversation
+        tool_summary_parts = []
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    fn = tc.get("function", {})
+                    tool_summary_parts.append(fn.get("name", "unknown"))
+
+        if tool_summary_parts and _state.agent_db:
+            from backend.app.agent.tools.native import handle_memory_save
+            summary = (
+                f"Reached max iterations ({max_iterations}) while working on: "
+                f"{messages[1]['content'][:200] if len(messages) > 1 else 'unknown task'}. "
+                f"Tools used: {', '.join(tool_summary_parts[:10])}. "
+                f"Task may be incomplete."
+            )
+            await handle_memory_save(
+                {"content": summary, "memory_type": "general", "importance": 0.7},
+                {"agent_db": _state.agent_db, "agent_id": _state.agent_id},
+            )
+            logger.info("Saved max-iterations memory: %s", summary[:100])
+    except Exception as e:
+        logger.warning("Failed to save max-iterations memory: %s", e)
 
     return (
         "I've reached my maximum number of steps. Please try rephrasing.",
@@ -405,21 +448,6 @@ async def _startup(config_path: str, data_dir: str) -> None:
     # Point BOND_HOME to the mounted vault key location for decryption
     if not os.environ.get("BOND_HOME"):
         os.environ["BOND_HOME"] = "/bond-home"
-
-    # Verify encrypted keys are available in agent DB (seeded by host init container)
-    if _state.agent_db:
-        try:
-            cursor = await _state.agent_db.execute(
-                "SELECT COUNT(*) FROM settings WHERE key LIKE 'llm.api_key.%'"
-            )
-            row = await cursor.fetchone()
-            key_count = row[0] if row else 0
-            if key_count > 0:
-                logger.info("Found %d encrypted API key(s) in agent DB", key_count)
-            else:
-                logger.warning("No API keys found in agent DB settings table")
-        except Exception:
-            logger.debug("Settings table not yet available in agent DB")
 
     # Initialize agent DB
     _state.agent_db = await _init_agent_db(_state.data_dir)

@@ -365,6 +365,8 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depe
     await db.commit()
 
     # Detect sandbox-relevant changes and destroy old container if needed
+    # Any change to image, mounts, model, tools, or system prompt requires
+    # container recreation since the config is read at startup.
     needs_recreate = False
     new_image = body.sandbox_image if body.sandbox_image is not None else old_image
 
@@ -376,10 +378,15 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depe
         if new_mounts != old_mounts:
             needs_recreate = True
 
-    if needs_recreate:
+    # Config file changes: model, tools, system_prompt
+    if body.model is not None or body.tools is not None or body.system_prompt is not None or body.max_iterations is not None:
+        needs_recreate = True
+
+    if needs_recreate and new_image:
         from backend.app.sandbox.manager import get_sandbox_manager
         manager = get_sandbox_manager()
         await manager.destroy_agent_container(agent_id)
+        logger.info("Destroyed container for agent %s due to settings change", agent_id)
 
     return await _get_agent_with_relations(db, agent_id)
 
