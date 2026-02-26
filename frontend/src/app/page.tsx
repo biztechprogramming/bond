@@ -280,12 +280,15 @@ export default function Home() {
                 ...(conv.id === conversationId ? styles.convItemActive : {}),
               }}
               onClick={() => handleSwitchConversation(conv.id)}
+              title={conv.title || "New conversation"}
             >
               <div style={styles.convTitle}>
                 {conv.title || "New conversation"}
               </div>
               <div style={styles.convMeta}>
-                {formatDate(conv.updated_at)} &middot; {conv.message_count} msgs
+                {conv.agent_name && <span style={{ color: "#6c8aff" }}>{conv.agent_name}</span>}
+                {conv.agent_name && " · "}
+                {formatDate(conv.updated_at)} · {conv.message_count} msgs
               </div>
               <button
                 style={styles.convDeleteBtn}

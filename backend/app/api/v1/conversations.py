@@ -272,6 +272,21 @@ async def save_or_queue_message(
     if body.role != "user":
         raise HTTPException(status_code=400, detail="Role must be 'user' or 'assistant'")
 
+    # Auto-title from first user message if untitled
+    title_result = await db.execute(
+        text("SELECT title, message_count FROM conversations WHERE id = :id"),
+        {"id": conversation_id},
+    )
+    title_row = title_result.fetchone()
+    if title_row and not title_row[0] and title_row[1] == 0:
+        auto_title = body.content.strip()[:80]
+        if len(body.content.strip()) > 80:
+            auto_title = auto_title.rsplit(" ", 1)[0] + "..."
+        await db.execute(
+            text("UPDATE conversations SET title = :title WHERE id = :id"),
+            {"title": auto_title, "id": conversation_id},
+        )
+
     # Original user message queuing logic
     msg_id = str(ULID())
     await db.execute(
