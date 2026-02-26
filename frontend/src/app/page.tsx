@@ -40,10 +40,12 @@ export default function Home() {
   }, [conversationId]);
 
   useEffect(() => {
+    let cancelled = false;
     const ws = new GatewayWebSocket();
     wsRef.current = ws;
 
     ws.onMessage((msg: GatewayMessage) => {
+      if (cancelled) return;
       if (msg.type === "connected") {
         setConnected(true);
         ws.listConversations();
@@ -117,6 +119,7 @@ export default function Home() {
     ws.connect();
 
     return () => {
+      cancelled = true;
       ws.disconnect();
     };
   }, []);
