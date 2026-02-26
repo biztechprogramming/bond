@@ -22,7 +22,7 @@ Agent Zero solved this years ago: **put the agent inside the container**.
 
 ## 2. Proposed Architecture
 
-The agent loop runs **inside the sandbox container** as a lightweight HTTP worker. Bond's backend starts it, sends it messages, and receives tool results + responses back.
+The agent loop runs **inside the sandbox container** as a lightweight worker. The host runs only the UI layer (frontend + gateway) and manages shared state. Communication is minimal — the gateway sends turns in and receives SSE events out.
 
 ### 2.1 Current vs. Proposed
 
@@ -62,58 +62,197 @@ PROPOSED (container-side agent):
   │  ┌──────────┐    ┌──────────┐    ┌──────────────────┐   │
   │  │ Frontend │◄──►│ Gateway  │◄──►│ Backend          │   │
   │  │ :18788   │    │ :18789   │    │ :18790           │   │
-  │  └──────────┘    └──────────┘    │                  │   │
-  │                                   │  Turn Manager    │   │
-  │                                   │  (dispatch only) │   │
-  │                                   └───────┬──────────┘   │
-  │                                           │ HTTP         │
-  │  ┌────────────────────────────────────────┼──────────┐   │
-  │  │  CONTAINER                             │          │   │
-  │  │                                        ▼          │   │
+  │  └──────────┘    └──────────┘    │ Settings, config │   │
+  │                                   │ Shared memory DB │   │
+  │                       ┌───────── │ Message persist  │   │
+  │                       │ SSE      └──────────────────┘   │
+  │                       │                                  │
+  │  ┌────────────────────┼─────────────────────────────┐   │
+  │  │  CONTAINER         │                              │   │
+  │  │                    ▼                              │   │
   │  │  ┌────────────────────────────────────────────┐   │   │
   │  │  │  Agent Worker (:18791)                     │   │   │
   │  │  │                                            │   │   │
-  │  │  │  Agent Loop                                │   │   │
-  │  │  │  ├── LLM calls (direct to API)             │   │   │
+  │  │  │  Agent Loop + LLM calls (direct to API)    │   │   │
   │  │  │  ├── file_read  → open("/workspace/...")   │   │   │
   │  │  │  ├── file_write → open("/workspace/...")   │   │   │
   │  │  │  ├── code_exec  → subprocess.run(...)      │   │   │
   │  │  │  ├── shell      → subprocess.run(...)      │   │   │
-  │  │  │  └── respond    → POST back to backend     │   │   │
+  │  │  │  ├── search_memory → local agent DB        │   │   │
+  │  │  │  ├── memory_save   → local agent DB        │   │   │
+  │  │  │  └── respond    → SSE event back to host   │   │   │
   │  │  │                                            │   │   │
-  │  │  │  Bond Agent Library (mounted read-only)    │   │   │
+  │  │  │  Agent DB (/data/agent.db)                 │   │   │
+  │  │  │  Bond Agent Library (/bond, read-only)     │   │   │
+  │  │  │  Shared Memory Snapshot (/data/shared, ro) │   │   │
   │  │  └────────────────────────────────────────────┘   │   │
   │  │                                                    │   │
   │  │  /workspace/project ──bind──► /mnt/c/dev/project   │   │
-  │  │  /bond (ro)         ──bind──► ~/bond/backend       │   │
   │  └────────────────────────────────────────────────────┘   │
   └─────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 What Changes
+### 2.2 Communication Model
 
-| Aspect | Current | Proposed |
-|--------|---------|----------|
-| Agent loop runs on | Host (backend process) | Container (agent worker) |
-| File I/O | `docker exec cat/tee` or path translation | Native `open()`, `pathlib` |
-| Code execution | `docker exec python3 -c` | `subprocess.run()` |
-| Shell commands | `docker exec sh -c` | `subprocess.run()` |
-| LLM calls | Backend → LiteLLM | Agent worker → LiteLLM (direct) |
-| Path translation | Required (container ↔ host) | **None** — everything is `/workspace/...` |
-| Tool context | Needs sandbox_image, mounts, docker IDs | Just local paths |
-| Backend role | Runs agent loop + tool dispatch | Turn manager — dispatches to container, receives results |
+The host and container communicate through **one channel**: the SSE stream from worker to gateway. That's it.
 
-### 2.3 What Stays the Same
+```
+Gateway ──► Container Worker
+  │              │
+  │  POST /turn  │  (everything happens locally inside container)
+  │  POST /intr  │  (interrupt with new messages)
+  │  GET /health │
+  │              │
+  │  ◄── SSE ── │  Events:
+  │              │    status    — "thinking", "tool_use"
+  │              │    chunk     — response text
+  │              │    tool_call — tool name + result (for UI display)
+  │              │    memory    — new memories to sync to shared DB
+  │              │    done      — turn complete
+  │              │
+  └──────────────┘
+```
 
-- Frontend, Gateway, WebSocket protocol — **unchanged**
-- Database (SQLite) — stays on host, backend owns it
-- Conversation persistence — backend writes to DB
-- Settings UI, agent config — unchanged
-- Memory/knowledge store — backend manages (agent calls back to backend API)
+**No callbacks.** The agent never calls back to the host during a turn. Everything it needs is local.
+
+### 2.3 What Lives Where
+
+| Component | Location | Why |
+|-----------|----------|-----|
+| Frontend + Gateway | Host | Serves UI, manages WebSocket connections |
+| Backend (settings, config) | Host | Agent config, API key management, shared DB |
+| Agent loop | Container | Native file/code access, isolated execution |
+| Agent's own memories | Container (`/data/agent.db`) | Fast local access, no network round-trip |
+| Shared memories | Host (`bond.db`) + snapshot in container | All agents need common context |
+| LLM API calls | Container (direct) | No proxy needed, agent has API keys |
+| File I/O | Container (native) | `/workspace/...` via bind mounts |
+| Code/shell execution | Container (native) | `subprocess.run()` |
+| Conversation messages | Host (gateway persists from SSE stream) | UI needs to display them |
+| Web search / web read | Container (native) | Agent makes HTTP requests directly |
 
 ---
 
-## 3. Container Mounts
+## 3. Memory Architecture
+
+### 3.1 Two-Tier Memory
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  SHARED MEMORY (host — bond.db)                              │
+│                                                              │
+│  Who you are, preferences, people, projects, recurring       │
+│  context that ALL agents need.                               │
+│                                                              │
+│  Written by: gateway (from agent SSE memory events)          │
+│  Read by: agents (snapshot at startup / periodic sync)       │
+│                                                              │
+│  Examples:                                                   │
+│  - "User prefers dark mode and concise responses"            │
+│  - "Andrew works on Bond and EcoInspector projects"          │
+│  - Entity: Andrew → works_at → BizTech                      │
+│  - "Use uv for Python, pnpm for Node"                       │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                     snapshot at startup
+                     + periodic sync
+                               │
+┌──────────────────────────────┼──────────────────────────────┐
+│  AGENT MEMORY (container — /data/agent.db)                   │
+│                                                              │
+│  What THIS agent learned during its tasks. Working context,  │
+│  session-specific knowledge, tool results.                   │
+│                                                              │
+│  Written by: agent (locally, no network)                     │
+│  Read by: this agent only                                    │
+│                                                              │
+│  Examples:                                                   │
+│  - "ecoinspector-portal uses Next.js 15 with app router"     │
+│  - "The auth module is in src/lib/auth.ts"                   │
+│  - "Last test run had 3 failures in api.test.ts"             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 3.2 Memory Sync Flow
+
+Agents produce memories locally. Some get promoted to shared.
+
+```
+Agent Turn (inside container)
+    │
+    │  Agent saves memory locally
+    │  memory_save("User prefers TypeScript over JavaScript")
+    │     → writes to /data/agent.db (instant, local)
+    │     → if memory is "promotable" (user pref, fact, entity):
+    │         emit SSE event: { event: "memory", data: { ... } }
+    │
+    ▼
+Gateway (host)
+    │
+    │  Receives SSE memory event
+    │  Writes to shared bond.db
+    │
+    ▼
+Shared Memory (bond.db)
+    │
+    │  Available to all agents on next startup/sync
+    │
+    ▼
+Other Agent Containers
+    │
+    │  On startup: mount /data/shared/ with snapshot
+    │  Periodic: gateway pushes updates (optional)
+    │
+    ▼
+  Agent has shared context without any callback
+```
+
+### 3.3 What Gets Promoted to Shared
+
+Not everything an agent learns should be shared. Promotion criteria:
+
+| Memory Type | Promote? | Example |
+|-------------|----------|---------|
+| `preference` | ✅ Always | "User prefers concise responses" |
+| `fact` (about user) | ✅ Always | "Andrew's timezone is EST" |
+| `fact` (about project) | ✅ If general | "Bond uses SQLite + FastAPI" |
+| `fact` (about code) | ❌ Agent-local | "Line 42 of auth.ts has a race condition" |
+| `solution` | ⚠️ Maybe | "Use `--legacy-peer-deps` for npm conflicts" — useful if general |
+| `instruction` | ✅ If from user | "Always run tests before committing" |
+| `entity` | ✅ Always | People, projects, relationships |
+| Working context | ❌ Never | "Current file open: src/main.py" |
+
+The agent marks memories as `promote: true/false` when saving. The SSE stream only includes promotable memories.
+
+### 3.4 Shared Memory Snapshot
+
+On container startup, shared memories are available as a read-only SQLite file:
+
+```
+/data/
+  agent.db          ← agent's own DB (read-write, persisted volume)
+  shared/
+    shared.db       ← snapshot of shared memories (read-only mount)
+```
+
+The agent's search_memory tool queries **both** databases:
+1. Local agent.db — agent-specific context
+2. shared.db — cross-agent shared knowledge
+
+Results are merged by relevance (same RRF merge we already built).
+
+### 3.5 Sync Schedule
+
+| Trigger | Direction | What |
+|---------|-----------|------|
+| Container startup | Host → Container | Full shared memory snapshot |
+| Agent emits `memory` SSE event | Container → Host | New promotable memory |
+| Scheduled job (every 15 min) | Host → Container | Incremental shared updates |
+| Agent emits `entity` SSE event | Container → Host | New entity / relationship |
+| Offline consolidation (hourly) | Host only | Deduplicate, merge, summarize shared memories |
+
+---
+
+## 4. Container Mounts
 
 ```
 Container filesystem:
@@ -123,18 +262,23 @@ Container filesystem:
     app/
       agent/
         loop.py                 ← The agent loop code
-        tools/                  ← Tool handlers
+        tools/                  ← Tool handlers (native)
         llm.py                  ← LiteLLM wrapper
-      worker.py                 ← FastAPI worker (new)
+      worker.py                 ← FastAPI worker
 
 /workspace/                     ← User workspace mounts (read-write)
   ecoinspector-portal/          ← bind: /mnt/c/dev/ecoinspector/ecoinspector-portal
   another-project/              ← bind: ~/projects/another-project
 
+/data/                          ← Persistent agent data (Docker volume)
+  agent.db                      ← Agent's own SQLite database
+  shared/
+    shared.db                   ← Read-only snapshot of shared memories
+
 /tmp/.ssh/                      ← SSH keys (read-only mount)
 
-/config/                        ← Agent config injected at startup
-  agent.json                    ← Model, tools, system prompt, API keys
+/config/
+  agent.json                    ← Agent config (model, tools, system prompt, API keys)
 ```
 
 ### Mount Strategy
@@ -143,6 +287,8 @@ Container filesystem:
 |-------|---------------|---------------------|------|
 | Bond library | `~/bond/backend` | `/bond/backend` | `ro` |
 | Workspace(s) | Per agent config | `/workspace/{name}` | `rw` |
+| Agent data | Docker volume `bond-agent-{id}` | `/data` | `rw` |
+| Shared memory | `~/bond/data/shared/` | `/data/shared` | `ro` |
 | SSH keys | `~/.ssh` | `/tmp/.ssh` | `ro` |
 | Agent config | Generated at startup | `/config/agent.json` | `ro` |
 
@@ -150,20 +296,22 @@ The Bond library mount means we don't need to rebuild the container image when a
 
 ---
 
-## 4. Agent Worker
+## 5. Agent Worker
 
-A lightweight FastAPI app that runs inside the container. It receives turn requests from the backend and executes them.
+A lightweight FastAPI app that runs inside the container. Fully self-contained — no callbacks to the host.
 
-### 4.1 API
+### 5.1 API
 
 ```
 POST /turn
   Body: { message, history, conversation_id }
-  Response: SSE stream of events (same format as current backend SSE)
+  Response: SSE stream of events
     - { event: "status", data: "thinking" }
-    - { event: "chunk", data: "response text" }
+    - { event: "chunk",  data: "response text" }
     - { event: "tool_call", data: { name, arguments, result } }
-    - { event: "done", data: { response, tool_calls_made } }
+    - { event: "memory", data: { type, content, promote, entities } }
+    - { event: "entity", data: { name, type, relationships } }
+    - { event: "done",   data: { response, tool_calls_made } }
 
 POST /interrupt
   Body: { new_messages: [...] }
@@ -173,39 +321,40 @@ GET /health
   Response: { status: "ok", agent_id, uptime }
 ```
 
-### 4.2 Startup
+### 5.2 Startup
 
+```bash
+# Container entrypoint
+python -m bond.agent.worker \
+  --port 18791 \
+  --config /config/agent.json \
+  --data-dir /data
 ```
-Container starts with:
-  python -m bond.agent.worker \
-    --port 18791 \
-    --config /config/agent.json \
-    --backend-url http://host.docker.internal:18790
-```
 
-The `--backend-url` lets the agent call back to the host backend for:
-- Memory search (RAG) — `GET /api/v1/search?q=...`
-- Memory save — `POST /api/v1/memories`
-- Entity operations — `POST /api/v1/entities`
-- Conversation context — `GET /api/v1/conversations/{id}/messages`
+On startup the worker:
+1. Reads `/config/agent.json` for model, tools, system prompt, API keys
+2. Opens `/data/agent.db` (creates if first run, runs migrations)
+3. Attaches `/data/shared/shared.db` as read-only for cross-agent search
+4. Starts FastAPI on port 18791
+5. Ready to receive turns
 
-### 4.3 Tool Execution (Native)
+### 5.3 Tool Execution (Native)
 
 Inside the container, tools are just local operations:
 
 ```python
 # file_read — just open the file
 async def handle_file_read(arguments, context):
-    path = arguments["path"]  # e.g. /workspace/ecoinspector-portal/Makefile
+    path = arguments["path"]  # /workspace/ecoinspector-portal/Makefile
     content = Path(path).read_text()
-    return {"content": content}
+    return {"content": content, "path": path, "size": len(content)}
 
 # file_write — just write the file
 async def handle_file_write(arguments, context):
-    path = arguments["path"]
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(arguments["content"])
-    return {"status": "written"}
+    path = Path(arguments["path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(arguments["content"])
+    return {"status": "written", "path": str(path)}
 
 # code_execute — just run it
 async def handle_code_execute(arguments, context):
@@ -214,171 +363,203 @@ async def handle_code_execute(arguments, context):
         stdout=PIPE, stderr=PIPE
     )
     stdout, stderr = await proc.communicate()
-    return {"stdout": stdout.decode(), "stderr": stderr.decode()}
+    return {"stdout": stdout.decode(), "stderr": stderr.decode(), "exit_code": proc.returncode}
 
 # shell — just run it
 async def handle_shell(arguments, context):
     proc = await asyncio.create_subprocess_shell(
         arguments["command"],
-        stdout=PIPE, stderr=PIPE,
-        cwd="/workspace"
+        stdout=PIPE, stderr=PIPE, cwd="/workspace"
     )
     stdout, stderr = await proc.communicate()
-    return {"stdout": stdout.decode(), "stderr": stderr.decode()}
+    return {"stdout": stdout.decode(), "stderr": stderr.decode(), "exit_code": proc.returncode}
+
+# search_memory — query both local + shared DBs
+async def handle_search_memory(arguments, context):
+    local_results = await searcher.search(context["agent_db"], arguments["query"])
+    shared_results = await searcher.search(context["shared_db"], arguments["query"])
+    merged = rrf_merge(local_results, shared_results, k=60)
+    return {"results": merged[:arguments.get("limit", 10)]}
+
+# memory_save — write to local DB + optionally emit for promotion
+async def handle_memory_save(arguments, context):
+    memory = await memory_repo.create(context["agent_db"], arguments)
+    result = {"id": memory.id, "status": "saved"}
+
+    # Check if this should be promoted to shared memory
+    if should_promote(arguments):
+        result["_promote"] = {
+            "type": arguments["type"],
+            "content": arguments["content"],
+            "entities": arguments.get("entities", []),
+        }
+    return result
 ```
 
-No path translation. No docker exec. No shell escaping. Just native operations.
+No path translation. No docker exec. No shell escaping. No callbacks.
 
-### 4.4 Callback Tools (Memory, Search)
+### 5.4 Memory Promotion in SSE Stream
 
-Some tools need the host database. These call back to the backend:
+The agent loop checks tool results for `_promote` flags and emits SSE events:
 
 ```python
-# search_memory — call back to backend API
-async def handle_search_memory(arguments, context):
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{context['backend_url']}/api/v1/search",
-            params={"q": arguments["query"], "limit": arguments.get("limit", 10)}
-        )
-        return resp.json()
+# Inside the agent loop, after executing a tool:
+result = await registry.execute(tool_name, tool_args, tool_context)
 
-# memory_save — call back to backend API
-async def handle_memory_save(arguments, context):
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{context['backend_url']}/api/v1/memories",
-            json=arguments
-        )
-        return resp.json()
+# If the tool produced a promotable memory, emit it
+if "_promote" in result:
+    yield sse_event("memory", result["_promote"])
+    del result["_promote"]  # Don't send back to LLM
 ```
+
+The gateway receives these events alongside the normal response stream and writes them to the shared DB on the host. Zero extra communication — it's just another event type in the existing SSE stream.
 
 ---
 
-## 5. Backend Changes
+## 6. Gateway Changes
 
-### 5.1 Turn Manager (replaces Agent Loop on host)
+The gateway's role expands slightly. It already consumes SSE from the backend — now it consumes SSE from the container worker (or the backend proxies it).
 
-The backend no longer runs the agent loop. Instead it:
+### 6.1 Option A: Gateway talks directly to container
 
-1. Receives turn request from gateway
-2. Ensures container is running (start if needed)
-3. Forwards request to agent worker inside container
-4. Streams SSE events back to gateway
-5. Persists conversation messages to DB
-
-```python
-async def dispatch_turn(message: str, history: list, conversation_id: str, agent: dict):
-    """Dispatch a turn to the agent worker inside the container."""
-    container_id = await sandbox_manager.get_or_create_container(
-        agent["id"], agent["sandbox_image"], agent["workspace_mounts"]
-    )
-    
-    # Container exposes port 18791 internally
-    worker_url = await sandbox_manager.get_worker_url(container_id)
-    
-    async with httpx.AsyncClient() as client:
-        async with client.stream(
-            "POST",
-            f"{worker_url}/turn",
-            json={"message": message, "history": history, "conversation_id": conversation_id},
-            timeout=300,
-        ) as resp:
-            async for line in resp.aiter_lines():
-                if line.startswith("data: "):
-                    yield line  # Forward SSE to gateway
+```
+Frontend ◄──WebSocket──► Gateway ◄──SSE──► Container Worker (:18791)
+                            │
+                            └──► Host DB (persist messages + shared memories)
 ```
 
-### 5.2 Container Startup Changes
+Simpler. Gateway needs to know the container's port. Backend tells it during container startup.
 
-Current: `docker run ... sleep infinity`  
-Proposed: `docker run ... python -m bond.agent.worker --port 18791 --config /config/agent.json`
+### 6.2 Option B: Backend proxies SSE
 
-The container runs the agent worker process instead of sleeping. The worker is the long-running process that keeps the container alive.
+```
+Frontend ◄──WebSocket──► Gateway ◄──SSE──► Backend ◄──SSE──► Container Worker
+                                              │
+                                              └──► Host DB
+```
 
-### 5.3 Config Injection
+More indirection but keeps the gateway simple. Backend handles container lifecycle + SSE proxying.
 
-Before starting the container, the backend writes `/config/agent.json`:
+### 6.3 Recommendation: Option A for simplicity
 
-```json
-{
-  "agent_id": "01JBOND0000000000000DEFAULT",
-  "name": "bond",
-  "model": "anthropic/claude-sonnet-4-20250514",
-  "api_keys": {
-    "anthropic": "sk-ant-...",
-    "voyage": "pa-..."
-  },
-  "system_prompt": "You are Bond...",
-  "tools": ["respond", "search_memory", "memory_save", "file_read", "file_write", "code_execute", "shell", "web_search", "web_read"],
-  "max_iterations": 25,
-  "auto_rag": true,
-  "auto_rag_limit": 5,
-  "backend_url": "http://host.docker.internal:18790"
+The gateway already handles WebSocket ↔ SSE translation. Having it talk directly to the container worker removes a hop. The backend's role becomes:
+
+- Container lifecycle (start/stop/health)
+- Settings API (agents, API keys, models)
+- Shared memory writes (gateway calls a simple endpoint)
+- Shared memory snapshot generation
+
+### 6.4 Gateway SSE Event Handling
+
+```typescript
+// Gateway processes SSE events from container worker
+function handleWorkerEvent(event: SSEEvent) {
+  switch (event.type) {
+    case "status":
+    case "chunk":
+    case "tool_call":
+      // Forward to frontend via WebSocket (existing behavior)
+      ws.send(JSON.stringify(event));
+      break;
+
+    case "memory":
+      // Write to shared DB on host
+      await backend.post("/api/v1/shared-memories", event.data);
+      break;
+
+    case "entity":
+      // Write to shared entity graph on host
+      await backend.post("/api/v1/shared-entities", event.data);
+      break;
+
+    case "done":
+      // Persist conversation messages to host DB
+      await backend.post("/api/v1/conversations/{id}/messages", {
+        role: "assistant",
+        content: event.data.response,
+        tool_calls: event.data.tool_calls_made,
+      });
+      ws.send(JSON.stringify(event));
+      break;
+  }
 }
 ```
 
-API keys are decrypted from the DB and injected into the config. They exist only in the container's memory after the config file is read and deleted.
-
 ---
 
-## 6. Sequence Diagrams
+## 7. Sequence Diagrams
 
-### 6.1 Normal Turn
-
-```
-User          Frontend       Gateway        Backend         Container
- │               │              │              │               │
- │  "Fix the     │              │              │               │
- │   bug in..."  │              │              │               │
- │──────────────►│              │              │               │
- │               │──WebSocket──►│              │               │
- │               │              │──POST /turn──►│               │
- │               │              │              │──ensure container running
- │               │              │              │──POST /turn───►│
- │               │              │              │               │──LLM call
- │               │              │              │               │  (direct to API)
- │               │              │              │               │
- │               │              │              │◄──SSE: tool_call (file_read)
- │               │              │◄─SSE forward─┤               │
- │               │◄──WebSocket──│              │               │  open("/workspace/...")
- │               │              │              │               │  (native file I/O)
- │               │              │              │               │
- │               │              │              │               │──LLM call
- │               │              │              │               │
- │               │              │              │◄──SSE: tool_call (file_write)
- │               │              │◄─SSE forward─┤               │
- │               │◄──WebSocket──│              │               │  open("/workspace/...")
- │               │              │              │               │
- │               │              │              │               │──LLM call
- │               │              │              │               │
- │               │              │              │◄──SSE: chunk "I fixed..."
- │               │              │◄─SSE forward─┤               │
- │               │◄──WebSocket──│              │               │
- │               │              │              │◄──SSE: done
- │◄──────────────│              │              │──persist to DB │
- │               │              │              │               │
-```
-
-### 6.2 Memory Callback
+### 7.1 Normal Turn (Zero Callbacks)
 
 ```
-Container                          Backend (host)
-    │                                    │
-    │  Agent needs context               │
-    │  (search_memory tool)              │
-    │                                    │
-    │──GET /api/v1/search?q=...─────────►│
-    │                                    │──query SQLite
-    │                                    │──run hybrid search
-    │◄──JSON results────────────────────│
-    │                                    │
-    │  (continues agent loop with        │
-    │   memory context)                  │
-    │                                    │
+User          Frontend       Gateway        Container Worker
+ │               │              │               │
+ │  "Fix bug"    │              │               │
+ │──────────────►│              │               │
+ │               │──WebSocket──►│               │
+ │               │              │──POST /turn───►│
+ │               │              │               │
+ │               │              │               │── LLM call (direct to Anthropic)
+ │               │              │               │
+ │               │              │◄──SSE: tool_call (file_read)
+ │               │◄──WebSocket──│               │── open("/workspace/project/bug.py")
+ │               │              │               │   (native file I/O — instant)
+ │               │              │               │
+ │               │              │               │── LLM call
+ │               │              │               │
+ │               │              │◄──SSE: tool_call (file_write)
+ │               │◄──WebSocket──│               │── open("/workspace/project/bug.py", "w")
+ │               │              │               │   (bind mount syncs to host automatically)
+ │               │              │               │
+ │               │              │◄──SSE: memory (promote)
+ │               │              │──► backend.post("/shared-memories")
+ │               │              │               │
+ │               │              │               │── LLM call
+ │               │              │               │
+ │               │              │◄──SSE: chunk "I fixed the bug..."
+ │               │◄──WebSocket──│               │
+ │               │              │◄──SSE: done
+ │◄──────────────│              │──► persist messages to host DB
+ │               │              │               │
 ```
 
-### 6.3 Container Lifecycle
+Note: **zero calls from container back to host** during the entire turn.
+
+### 7.2 Memory Sync Lifecycle
+
+```
+                    STARTUP
+                       │
+Agent Container        │         Host
+     │                 │           │
+     │  Mount /data/shared/shared.db (read-only snapshot)
+     │◄────────────────┼───────────│
+     │                 │           │
+     │  Agent has full shared context
+     │  No network call needed     │
+     │                 │           │
+
+                   DURING TURN
+                       │
+     │  Agent saves memory locally │
+     │  → /data/agent.db           │
+     │                 │           │
+     │  If promotable:             │
+     │  ──SSE: memory─────────────►│
+     │                 │           │── gateway writes to bond.db
+     │                 │           │
+
+                PERIODIC SYNC (every 15 min)
+                       │
+     │                 │           │
+     │                 │           │── backend regenerates shared.db snapshot
+     │  (new snapshot mounted on   │
+     │   next container restart    │
+     │   or hot-reloaded)          │
+     │                 │           │
+```
+
+### 7.3 Container Lifecycle
 
 ```
 Backend                         Docker
@@ -386,180 +567,301 @@ Backend                         Docker
   │  First turn for agent         │
   │                               │
   │  1. Generate /config/agent.json
-  │  2. docker run                │
+  │  2. Export shared.db snapshot  │
+  │  3. docker run                │
   │     -v ~/bond/backend:/bond/backend:ro
   │     -v /mnt/c/dev/project:/workspace/project
+  │     -v bond-agent-{id}:/data
+  │     -v ~/bond/data/shared:/data/shared:ro
   │     -v ~/.ssh:/tmp/.ssh:ro
   │     -v /tmp/agent-config:/config:ro
-  │     -p 18791                  │
+  │     -p 18791
   │     bond-sandbox-image        │
   │     python -m bond.agent.worker
   │──────────────────────────────►│
   │                               │──start worker
-  │  3. Wait for health check     │
+  │  4. Wait for health check     │
   │◄──GET /health → 200──────────│
   │                               │
-  │  4. Dispatch turn             │
-  │──POST /turn──────────────────►│
+  │  5. Tell gateway the port     │
+  │──► gateway.register(agent_id, port)
   │                               │
   │  ... (container stays alive)  │
   │                               │
   │  Idle timeout (1hr)           │
   │──docker stop─────────────────►│
-  │                               │
+  │  (volume persists — agent.db  │
+  │   survives restart)           │
 ```
 
 ---
 
-## 7. Host Mode (No Sandbox)
+## 8. Host Mode (No Sandbox)
 
 When `sandbox_image` is null, the agent loop runs on the host exactly as it does today. This is the "trusted" mode for the main session.
 
 ```
-sandbox_image = null  →  Agent loop runs in backend process (current behavior)
+sandbox_image = null   →  Agent loop runs in backend process (current behavior)
 sandbox_image = "..."  →  Agent loop runs in container (new behavior)
 ```
 
-This means we keep backward compatibility. The existing host-mode code stays untouched.
+Backward compatible. Existing host-mode code stays untouched.
 
 ---
 
-## 8. Security Considerations
+## 9. Database Schema
 
-### 8.1 API Key Handling
+### 9.1 Host DB (bond.db) — Shared State
 
-API keys are decrypted on the host and injected into the container config at startup. The config file is mounted read-only and can be deleted from the host after the worker reads it (the worker loads config into memory on startup).
+```sql
+-- Existing tables stay as-is:
+-- conversations, conversation_messages, agents, agent_workspace_mounts,
+-- agent_channels, settings, audit_log
 
-Alternative: Pass keys via environment variables at container start. Avoids writing to disk entirely.
+-- New/modified tables for shared memory:
 
-### 8.2 Backend Callback Authentication
+CREATE TABLE shared_memories (
+    id TEXT PRIMARY KEY,                  -- ULID
+    type TEXT NOT NULL,                   -- fact, preference, instruction, entity
+    content TEXT NOT NULL,
+    source_agent_id TEXT,                 -- which agent produced this
+    source_memory_id TEXT,                -- original memory ID in agent's local DB
+    confidence REAL DEFAULT 1.0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    superseded_by TEXT,                   -- for versioning
+    UNIQUE(source_agent_id, source_memory_id)  -- prevent duplicate promotions
+);
 
-The agent worker calls back to the backend for memory operations. These callbacks need authentication to prevent other containers or processes from accessing the API:
+CREATE TABLE shared_entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,            -- person, project, org, tool, concept
+    attributes TEXT,                       -- JSON
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
-- Generate a one-time token per container start
-- Pass it in the agent config
-- Backend validates it on callback endpoints
-- Token is scoped to the specific agent ID
+CREATE TABLE shared_entity_edges (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES shared_entities(id),
+    target_id TEXT NOT NULL REFERENCES shared_entities(id),
+    relation TEXT NOT NULL,
+    weight REAL DEFAULT 1.0,
+    source_agent_id TEXT,
+    created_at TEXT NOT NULL
+);
 
-### 8.3 Filesystem Isolation
+-- FTS for shared memories
+CREATE VIRTUAL TABLE shared_memories_fts USING fts5(
+    content,
+    content_rowid='rowid'
+);
+```
+
+### 9.2 Agent DB (/data/agent.db) — Per-Agent State
+
+```sql
+-- Agent's own memories (same schema as current memories table)
+CREATE TABLE memories (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    confidence REAL DEFAULT 1.0,
+    promoted INTEGER DEFAULT 0,           -- 1 = sent to shared DB
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    superseded_by TEXT
+);
+
+-- Agent's own entities (lightweight, for working context)
+CREATE TABLE entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    attributes TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- Content chunks for agent-local RAG
+CREATE TABLE content_chunks (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_id TEXT,
+    content TEXT NOT NULL,
+    metadata TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- FTS + vec0 tables for local search
+CREATE VIRTUAL TABLE memories_fts USING fts5(content);
+-- vec0 tables created at runtime based on embedding config
+```
+
+### 9.3 Shared Memory Snapshot
+
+The backend periodically exports shared state to a read-only SQLite file:
+
+```python
+async def export_shared_snapshot():
+    """Export shared memories + entities to a snapshot DB for containers."""
+    snapshot_path = Path("~/bond/data/shared/shared.db")
+
+    async with aiosqlite.connect(snapshot_path) as snap:
+        # Copy shared_memories
+        await snap.execute("CREATE TABLE IF NOT EXISTS memories (...)")
+        rows = await host_db.execute("SELECT * FROM shared_memories WHERE superseded_by IS NULL")
+        await snap.executemany("INSERT INTO memories VALUES (...)", rows)
+
+        # Copy shared_entities + edges
+        await snap.execute("CREATE TABLE IF NOT EXISTS entities (...)")
+        await snap.execute("CREATE TABLE IF NOT EXISTS entity_edges (...)")
+        # ... copy data ...
+
+        # Build FTS index
+        await snap.execute("CREATE VIRTUAL TABLE memories_fts USING fts5(content)")
+        # ... populate ...
+
+        await snap.commit()
+```
+
+---
+
+## 10. Security Considerations
+
+### 10.1 API Key Handling
+
+API keys are decrypted on the host and written to `/config/agent.json`. The config is mounted read-only. The worker reads keys into memory on startup.
+
+Alternative: Pass keys via environment variables at `docker run`. Avoids writing to disk entirely.
+
+```bash
+docker run ... \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e VOYAGE_API_KEY=pa-... \
+  bond-sandbox-image python -m bond.agent.worker
+```
+
+### 10.2 No Callback Authentication Needed
+
+Since the agent never calls back to the host, there's no callback API to secure. The gateway calls into the container (POST /turn), and the container streams events back on the same connection. No inbound ports on the host needed.
+
+### 10.3 Filesystem Isolation
 
 The container only sees:
 - `/workspace/...` — explicitly mounted directories (configured per agent)
 - `/bond/backend` — agent library (read-only)
+- `/data/agent.db` — agent's own database (persisted volume)
+- `/data/shared/` — shared memory snapshot (read-only)
 - `/config/` — agent config (read-only)
 - `/tmp/.ssh` — SSH keys (read-only)
 
 No access to host filesystem outside these mounts.
 
-### 8.4 Network
+### 10.4 Network
 
 The container needs outbound access for:
 - LLM API calls (Anthropic, OpenAI, etc.)
-- `host.docker.internal:18790` — backend callbacks
 - Web search / web read tools
 - Git operations (clone, push, pull)
 
-This is the same as current behavior (network is already enabled).
+It does **not** need access to `host.docker.internal` — no callbacks.
 
 ---
 
-## 9. Implementation Plan
+## 11. Implementation Plan
 
-### Phase 1: Agent Worker (MVP)
+### Phase 1: Container Worker (MVP)
 
-1. **Create `backend/app/worker.py`** — FastAPI app with `/turn`, `/health`, `/interrupt` endpoints
-2. **Extract agent loop** — Move core loop logic into a shared module used by both host-mode and worker-mode
-3. **Native tool handlers** — Rewrite file/code/shell tools for native execution (no docker exec)
-4. **Callback client** — HTTP client for memory/search/entity operations back to host
-5. **Container startup** — Update `SandboxManager` to run worker instead of `sleep infinity`
-6. **Backend dispatch** — New `TurnManager` that forwards turns to container worker
+| ID | Story | Effort |
+|----|-------|--------|
+| C1 | Create `backend/app/worker.py` — FastAPI app with `/turn` SSE, `/health`, `/interrupt` | M |
+| C2 | Native tool handlers (file, code, shell — no docker exec, no path translation) | S |
+| C3 | Local memory store in agent DB (search + save, both DBs) | M |
+| C4 | Update `SandboxManager`: run worker, mount volumes, port mapping, health wait | M |
+| C5 | Gateway: talk directly to container worker, handle memory/entity SSE events | M |
+| C6 | Backend: shared memory write endpoints (called by gateway) | S |
 
-### Phase 2: Config & Security
+### Phase 2: Shared Memory
 
-7. **Config injection** — Generate and mount `agent.json` with decrypted API keys
-8. **Callback auth** — One-time token per container, validated on backend
-9. **Health checks** — Backend waits for worker health before dispatching
+| ID | Story | Effort |
+|----|-------|--------|
+| C7 | Migration: `shared_memories` + `shared_entities` + FTS tables on host DB | S |
+| C8 | Shared memory snapshot export (backend scheduled task) | M |
+| C9 | Agent worker: attach + query shared.db alongside agent.db | S |
+| C10 | Memory promotion logic: which memories get promoted, SSE events | S |
 
 ### Phase 3: Polish
 
-10. **Graceful shutdown** — Worker finishes current turn before container stops
-11. **Hot reload** — Worker detects agent config changes (via backend notification)
-12. **Logging** — Worker logs forwarded to host (docker logs or mounted log file)
-13. **Error recovery** — Backend detects dead worker, restarts container
-
-### Stories
-
-| ID | Story | Phase | Depends |
-|----|-------|-------|---------|
-| C1 | Create agent worker FastAPI app with `/turn` SSE, `/health`, `/interrupt` | 1 | — |
-| C2 | Extract shared agent loop module (used by host-mode and worker-mode) | 1 | C1 |
-| C3 | Native tool handlers (file, code, shell — no docker exec) | 1 | C2 |
-| C4 | Memory/search callback client (worker → backend HTTP) | 1 | C2 |
-| C5 | Update SandboxManager: run worker process, port mapping, health wait | 1 | C1 |
-| C6 | TurnManager: dispatch turns to container, stream SSE back | 1 | C5 |
-| C7 | Config injection: generate agent.json, mount into container | 2 | C5 |
-| C8 | Callback authentication (one-time token) | 2 | C4, C7 |
-| C9 | Graceful shutdown + error recovery | 3 | C6 |
-| C10 | Logging, hot reload, cleanup | 3 | C9 |
+| ID | Story | Effort |
+|----|-------|--------|
+| C11 | Graceful shutdown — worker finishes current turn before container stops | S |
+| C12 | Periodic shared memory sync (incremental updates without restart) | M |
+| C13 | Offline memory consolidation job (deduplicate, merge, summarize) | M |
+| C14 | Logging — worker logs forwarded to host (docker logs) | S |
+| C15 | Error recovery — backend detects dead worker, restarts container | S |
 
 ---
 
-## 10. Migration Path
+## 12. Migration Path
 
-The current host-side agent loop continues to work for `sandbox_image = null`. This means:
-
-1. **No breaking changes** — existing host-mode agents keep working
-2. **Incremental rollout** — switch individual agents to containerized mode by setting `sandbox_image`
+1. **No breaking changes** — `sandbox_image = null` keeps current host-mode behavior
+2. **Incremental rollout** — set `sandbox_image` on an agent to move it to containerized mode
 3. **Easy rollback** — set `sandbox_image = null` to go back to host mode
-
-The backend detects which mode to use:
+4. **Agent data persists** — Docker volumes survive container restarts
 
 ```python
+# Backend dispatch logic
 if agent["sandbox_image"]:
-    # Containerized mode — dispatch to worker
-    yield from turn_manager.dispatch(message, history, agent)
+    # Containerized: gateway talks to container worker
+    container = await sandbox_manager.ensure_running(agent)
+    return {"worker_url": container.worker_url}
 else:
-    # Host mode — run loop in-process
-    yield from agent_turn(message, history, db=db, agent_id=agent["id"])
+    # Host mode: run loop in-process (existing code)
+    return agent_turn(message, history, db=db, agent_id=agent["id"])
 ```
 
 ---
 
-## 11. Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| Agent worker is a FastAPI app | Same stack as backend, reuses existing code. SSE streaming already proven. |
-| Mount Bond library read-only | No container rebuild needed for code changes. Just restart worker. |
-| Config injected as JSON file | Simple, debuggable, no complex env var marshaling. |
-| Callback to backend for DB ops | SQLite can't be shared across processes/containers. Backend owns the DB. |
-| One-time auth token per container | Minimal security overhead, prevents rogue access to backend API. |
-| Host mode preserved | Backward compatible. Power users who trust their environment skip Docker overhead. |
-| Worker runs on port 18791 | Avoids conflict with backend (18790). Each container gets its own port via Docker port mapping. |
-| API keys passed in config, not env | Easier to manage multiple keys. Config file is read-only and can be purged after startup. |
-
----
-
-## 12. What This Eliminates
+## 13. What This Eliminates
 
 - ❌ `_translate_container_to_host()` — gone
-- ❌ `_translate_host_to_container()` — gone
+- ❌ `_translate_host_to_container()` — gone  
 - ❌ `docker exec` for file operations — gone
 - ❌ Shell escaping for content piping — gone
 - ❌ `workspace_dirs` allowlist (container-mode) — the mount IS the allowlist
 - ❌ Path confusion between host and container — gone
 - ❌ `sleep infinity` as container entrypoint — replaced by worker process
+- ❌ Host-to-container callbacks during turns — gone
+- ❌ Backend as SSE proxy — gateway talks direct to container
 
 ---
 
-## 13. Open Questions
+## 14. Design Decisions
 
-1. **Multiple agents, multiple containers** — Each agent with a `sandbox_image` gets its own container + worker. Port allocation strategy? (Docker random port mapping + inspect?)
+| Decision | Rationale |
+|----------|-----------|
+| Agent is fully self-contained in container | No callbacks = no latency, no auth complexity, no failure modes from network issues |
+| Two-tier memory (agent-local + shared) | Agents need their own working context AND common knowledge about the user |
+| SSE stream carries memory events | Reuses existing communication channel — no new protocols or endpoints |
+| Gateway talks directly to container | Removes a proxy hop. Backend stays focused on config + shared state. |
+| Shared memory via read-only snapshot | No concurrent DB writes. Agents read a point-in-time copy. Simple, safe. |
+| Promotion is agent-decided | The agent knows which memories are generalizable vs. task-specific |
+| Docker volumes for agent DB | Data persists across container restarts. No export/import needed. |
+| Bond library mounted read-only | Code changes don't require image rebuild. Just restart the worker. |
+| Host mode preserved | Backward compatible. Trusted sessions skip Docker overhead. |
+| Offline consolidation job | Dedup, merge, summarize shared memories without blocking agent turns |
 
-2. **Worker crash recovery** — If the worker crashes mid-turn, does the backend retry? Or just report the error?
+---
 
-3. **Shared container optimization** — Could multiple agents share a container if they have the same sandbox image? (Probably not worth the complexity.)
+## 15. Open Questions
 
-4. **LLM streaming** — Should the worker stream LLM tokens to the backend as they arrive? Or batch per-tool-call? (Stream for UX, batch is simpler.)
+1. **Port allocation** — Each agent container needs a unique port. Use Docker's random port mapping (`-p 18791`) and inspect to get the assigned host port? Or allocate from a range (18791, 18792, ...)?
 
-5. **Container image requirements** — The sandbox image needs Python + uvicorn + litellm + httpx. Should we build a base image (`bond-agent-base`) that all sandbox images inherit from?
+2. **Hot shared memory updates** — Can we push incremental updates to running containers without restart? (Mount a directory, write new snapshot, agent watches for changes?) Or is "restart to get latest shared memories" acceptable?
+
+3. **Embedding model in container** — If agents use local embeddings (voyage-4-nano), the model needs to be in the container. Mount it? Include in image? Download on first run?
+
+4. **Container image base** — The sandbox image needs Python + uvicorn + litellm + httpx + aiosqlite. Build a `bond-agent-base` image that all sandbox images inherit from?
+
+5. **Multiple workspaces, one container** — Current model is one container per agent. If an agent has 5 workspace mounts, they're all in one container. Is that always right?
