@@ -28,6 +28,8 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
+  const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -40,6 +42,17 @@ export default function Home() {
       localStorage.removeItem("bond-conversation-id");
     }
   }, [conversationId]);
+
+  // Close agent dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (agentDropdownRef.current && !agentDropdownRef.current.contains(e.target as Node)) {
+        setAgentDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   // Fetch agents
   useEffect(() => {
@@ -257,18 +270,44 @@ export default function Home() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             {agents.length > 1 && (
-              <select
-                value={selectedAgentId || ""}
-                onChange={(e) => setSelectedAgentId(e.target.value)}
-                style={{
-                  backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px",
-                  padding: "6px 10px", color: "#e0e0e8", fontSize: "0.85rem", outline: "none",
-                }}
-              >
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.display_name}{a.is_default ? " (default)" : ""}</option>
-                ))}
-              </select>
+              <div ref={agentDropdownRef} style={{ position: "relative" }}>
+                <button
+                  onClick={() => setAgentDropdownOpen(!agentDropdownOpen)}
+                  style={{
+                    backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px",
+                    padding: "6px 12px", color: "#e0e0e8", fontSize: "0.85rem", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: "6px",
+                  }}
+                >
+                  {agents.find(a => a.id === selectedAgentId)?.display_name || "Select Agent"}
+                  <span style={{ fontSize: "0.7rem", color: "#5a5a6e" }}>{agentDropdownOpen ? "▲" : "▼"}</span>
+                </button>
+                {agentDropdownOpen && (
+                  <div style={{
+                    position: "absolute", top: "calc(100% + 4px)", right: 0, minWidth: "180px",
+                    backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "10px",
+                    overflow: "hidden", zIndex: 100, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                  }}>
+                    {agents.map((a) => (
+                      <div
+                        key={a.id}
+                        onClick={() => { setSelectedAgentId(a.id); setAgentDropdownOpen(false); }}
+                        style={{
+                          padding: "10px 14px", cursor: "pointer", fontSize: "0.85rem",
+                          color: a.id === selectedAgentId ? "#6c8aff" : "#e0e0e8",
+                          backgroundColor: a.id === selectedAgentId ? "#12121a" : "transparent",
+                          transition: "background-color 0.15s",
+                        }}
+                        onMouseEnter={(e) => { if (a.id !== selectedAgentId) (e.target as HTMLElement).style.backgroundColor = "#2a2a3e"; }}
+                        onMouseLeave={(e) => { if (a.id !== selectedAgentId) (e.target as HTMLElement).style.backgroundColor = "transparent"; }}
+                      >
+                        {a.display_name}
+                        {a.is_default && <span style={{ color: "#5a5a6e", fontSize: "0.75rem", marginLeft: "6px" }}>default</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             <a href="/settings" style={{ color: "#6c8aff", textDecoration: "none", fontSize: "0.85rem" }}>
               Settings
