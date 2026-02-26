@@ -267,7 +267,8 @@ class SandboxManager:
         Raises RuntimeError if container fails to start or health check times out.
         """
         agent_id = agent["id"]
-        key = f"bond-sandbox-{agent_id}"
+        agent_name = agent.get("name", "agent").lower().replace(" ", "-")
+        key = f"bond-{agent_name}-{agent_id}"
         lock = self._get_agent_lock(key)
 
         async with lock:
@@ -470,12 +471,14 @@ class SandboxManager:
         agent_id: str,
         sandbox_image: str,
         workspace_mounts: list[dict[str, str]] | None = None,
+        agent_name: str = "agent",
     ) -> str:
         """Find a running container for the agent or create a new one.
 
         Returns the container ID. Uses sleep infinity entrypoint (host mode).
         """
-        key = f"bond-sandbox-{agent_id}"
+        slug = agent_name.lower().replace(" ", "-")
+        key = f"bond-{slug}-{agent_id}"
 
         # Check if already tracked and running
         if key in self._containers:
@@ -596,7 +599,30 @@ class SandboxManager:
         Docker volume persists by design (agent data survives restarts).
         Returns True if a container was destroyed.
         """
-        key = f"bond-sandbox-{agent_id}"
+        # Find the container key — could be any name, but ends with agent_id
+        key = None
+        for k in list(self._containers.keys()):
+            if k.endswith(agent_id):
+                key = k
+                break
+
+        # If not tracked, find by docker filter (pattern: bond-*-{agent_id})
+        if not key:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "ps", "-a", "--format", "{{.Names}}",
+                "--filter", f"name=bond-.*-{agent_id}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            names = stdout.decode().strip().split("\n")
+            for name in names:
+                if name.endswith(agent_id):
+                    key = name
+                    break
+
+        if not key:
+            key = f"bond-agent-{agent_id}"  # fallback for cleanup attempt
 
         # Release allocated port
         released_port = self._release_port(key)
@@ -642,7 +668,8 @@ class SandboxManager:
         for key in to_remove:
             cid = self._containers[key]["container_id"]
             # Extract agent_id from key
-            agent_id = key.removeprefix("bond-sandbox-")
+            # Key format: bond-{name}-{agent_id} — agent_id is a 26-char ULID at the end
+            agent_id = key[-26:]
 
             await asyncio.create_subprocess_exec(
                 "docker", "stop", cid,

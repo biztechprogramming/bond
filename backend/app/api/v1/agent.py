@@ -434,6 +434,7 @@ async def resolve_agent(
             # API keys are resolved inside the container via the mounted Vault
             agent_dict = {
                 "id": agent_row["id"],
+                "name": agent_row["name"],
                 "sandbox_image": sandbox_image,
                 "model": agent_row["model"],
                 "system_prompt": agent_row["system_prompt"],
