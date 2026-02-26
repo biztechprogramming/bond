@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -154,7 +155,18 @@ _state = WorkerState()
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Bond Agent Worker")
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    """Lifespan handler — startup and shutdown."""
+    config_path = os.environ.get("BOND_WORKER_CONFIG", "/config/agent.json")
+    data_dir = os.environ.get("BOND_WORKER_DATA_DIR", "/data")
+    await _startup(config_path, data_dir)
+    yield
+    await _shutdown()
+
+app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 
 
 @app.get("/health")
@@ -442,14 +454,9 @@ def main() -> None:
 
     import uvicorn
 
-    # Register startup/shutdown as lifespan events
-    @app.on_event("startup")
-    async def on_startup():
-        await _startup(args.config, args.data_dir)
-
-    @app.on_event("shutdown")
-    async def on_shutdown():
-        await _shutdown()
+    # Pass config via env vars — lifespan handler reads them
+    os.environ["BOND_WORKER_CONFIG"] = args.config
+    os.environ["BOND_WORKER_DATA_DIR"] = args.data_dir
 
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
 
