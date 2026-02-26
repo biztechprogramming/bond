@@ -305,7 +305,7 @@ const s: Record<string, React.CSSProperties> = {
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
   tabBar: { display: "flex", borderBottom: "1px solid #1e1e2e", padding: "0 24px" },
   tab: {
-    background: "none", border: "none", borderBottom: "2px solid transparent",
+    background: "none", border: "none", borderBottomWidth: "2px", borderBottomStyle: "solid" as const, borderBottomColor: "transparent",
     color: "#8888a0", padding: "12px 20px", fontSize: "0.9rem", fontWeight: 500,
     cursor: "pointer", transition: "color 0.2s, border-color 0.2s",
   },
