@@ -1,8 +1,8 @@
 """File read/write tools with workspace allowlist enforcement.
 
-When a sandbox image is configured, file operations route through
-docker exec on the sandbox container. Otherwise, they operate on
-the host filesystem with workspace allowlist enforcement.
+File operations run on the host filesystem. When the agent uses container
+paths (e.g. /workspace/project), they are translated to host paths using
+the workspace mount mappings.
 """
 
 from __future__ import annotations
@@ -13,6 +13,26 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("bond.agent.tools.files")
+
+
+def _translate_container_to_host(path_str: str, mounts: list[dict]) -> str:
+    """Translate a container path to its host path using workspace mounts.
+
+    If the path matches a container_path mount prefix, replace with host_path.
+    If no mount matches, return the original path.
+    """
+    for mount in mounts:
+        container_path = mount.get("container_path") or f"/workspace/{mount.get('mount_name', '')}"
+        host_path = os.path.expanduser(mount.get("host_path", ""))
+
+        if path_str.startswith(container_path):
+            relative = path_str[len(container_path):]
+            if not relative or relative.startswith("/"):
+                translated = host_path + relative
+                logger.info("Path translated: '%s' → '%s'", path_str, translated)
+                return translated
+
+    return path_str
 
 
 def _resolve_and_check(path_str: str, allowed_dirs: list[str]) -> Path | None:
@@ -34,80 +54,18 @@ def _resolve_and_check(path_str: str, allowed_dirs: list[str]) -> Path | None:
     return None
 
 
-async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
-    """Get or create the sandbox container if sandbox_image is configured."""
-    sandbox_image = context.get("sandbox_image")
-    logger.info("_get_sandbox_container: sandbox_image=%s, agent_id=%s", sandbox_image, context.get("agent_id"))
-    if not sandbox_image:
-        return None
-
-    from backend.app.sandbox.manager import get_sandbox_manager
-    manager = get_sandbox_manager()
-    try:
-        container_id = await manager.get_or_create_container(
-            context.get("agent_id", "default"),
-            sandbox_image,
-            context.get("workspace_mounts", []),
-        )
-        return container_id
-    except Exception as e:
-        logger.warning("Failed to get sandbox container: %s", e)
-        return None
-
-
-def _translate_to_container_path(path_str: str, mounts: list[dict]) -> str:
-    """Translate a host path to its container path using workspace mounts.
-
-    If the path matches a host_path mount, replace the prefix with container_path.
-    If it's already a container path, return as-is.
-    """
-    expanded = os.path.expanduser(path_str)
-    resolved = str(Path(expanded).resolve()) if not path_str.startswith("/workspace") else path_str
-
-    for mount in mounts:
-        host_path = str(Path(os.path.expanduser(mount.get("host_path", ""))).resolve())
-        container_path = mount.get("container_path") or f"/workspace/{mount.get('mount_name', '')}"
-
-        # Check if the path starts with the host mount path
-        if resolved.startswith(host_path):
-            relative = resolved[len(host_path):]
-            if not relative or relative.startswith("/"):
-                return container_path + relative
-
-    # Return original path (might already be a container path)
-    return path_str
-
-
 async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Read a file from an allowed workspace directory."""
     path_str = arguments.get("path", "")
-
-    # Sandbox mode: read via docker exec
-    container_id = await _get_sandbox_container(context)
-    if container_id:
-        mounts = context.get("workspace_mounts", [])
-        container_path = _translate_to_container_path(path_str, mounts)
-        logger.info("file_read: '%s' → '%s' (container=%s, mounts=%s)", path_str, container_path, container_id, mounts)
-        from backend.app.sandbox.manager import get_sandbox_manager
-        manager = get_sandbox_manager()
-        result = await manager.execute(
-            container_id, "shell",
-            f'cat {_shell_escape(container_path)}',
-            timeout=10,
-        )
-        if result.get("exit_code") == 0:
-            content = result.get("stdout", "")
-            if len(content) > 100_000:
-                content = content[:100_000] + "\n... [truncated at 100KB]"
-            return {"content": content, "path": path_str, "size": len(content)}
-        else:
-            return {"error": result.get("stderr", "File not found or not readable").strip()}
-
-    # Host mode: direct filesystem access with allowlist
+    mounts = context.get("workspace_mounts", [])
     allowed_dirs = context.get("workspace_dirs", [])
+
+    # Translate container paths to host paths
+    path_str = _translate_container_to_host(path_str, mounts)
+
     if not allowed_dirs:
         return {"error": "No workspace directories configured for this agent."}
 
@@ -121,6 +79,7 @@ async def handle_file_read(
         if not resolved.is_file():
             return {"error": f"Not a file: {path_str}"}
         content = resolved.read_text(encoding="utf-8", errors="replace")
+        # Truncate very large files
         if len(content) > 100_000:
             content = content[:100_000] + "\n... [truncated at 100KB]"
         return {"content": content, "path": str(resolved), "size": resolved.stat().st_size}
@@ -135,27 +94,12 @@ async def handle_file_write(
     """Write content to a file in an allowed workspace directory."""
     path_str = arguments.get("path", "")
     content = arguments.get("content", "")
-
-    # Sandbox mode: write via docker exec
-    container_id = await _get_sandbox_container(context)
-    if container_id:
-        mounts = context.get("workspace_mounts", [])
-        container_path = _translate_to_container_path(path_str, mounts)
-        logger.info("file_write: '%s' → '%s' (container=%s, mounts=%s)", path_str, container_path, container_id, mounts)
-        from backend.app.sandbox.manager import get_sandbox_manager
-        manager = get_sandbox_manager()
-        result = await manager.execute(
-            container_id, "shell",
-            f"mkdir -p $(dirname {_shell_escape(container_path)}) && cat > {_shell_escape(container_path)} << 'BONDEOF'\n{content}\nBONDEOF",
-            timeout=10,
-        )
-        if result.get("exit_code") == 0:
-            return {"status": "written", "path": path_str, "bytes": len(content.encode("utf-8"))}
-        else:
-            return {"error": result.get("stderr", "Failed to write file").strip()}
-
-    # Host mode: direct filesystem access with allowlist
+    mounts = context.get("workspace_mounts", [])
     allowed_dirs = context.get("workspace_dirs", [])
+
+    # Translate container paths to host paths
+    path_str = _translate_container_to_host(path_str, mounts)
+
     if not allowed_dirs:
         return {"error": "No workspace directories configured for this agent."}
 
@@ -169,8 +113,3 @@ async def handle_file_write(
         return {"status": "written", "path": str(resolved), "bytes": len(content.encode("utf-8"))}
     except Exception as e:
         return {"error": f"Failed to write file: {e}"}
-
-
-def _shell_escape(s: str) -> str:
-    """Escape a string for safe use in shell commands."""
-    return "'" + s.replace("'", "'\\''") + "'"
