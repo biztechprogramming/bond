@@ -291,12 +291,6 @@ class SandboxManager:
         # PYTHONPATH so worker can import backend.app.worker
         cmd.extend(["-e", "PYTHONPATH=/bond"])
 
-        # API keys — passed as env vars so litellm/worker can find them
-        api_keys = agent.get("api_keys", {})
-        for provider, key in api_keys.items():
-            env_name = f"{provider.upper()}_API_KEY"
-            cmd.extend(["-e", f"{env_name}={key}"])
-
         # --- Mounts (Task 2) ---
 
         # Bond library (read-only) — validate project root has the worker

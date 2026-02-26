@@ -368,6 +368,16 @@ async def _startup(config_path: str, data_dir: str) -> None:
 
     _state.agent_id = _state.config.get("agent_id", "default")
 
+    # Load API keys from config into environment (config file is 0600, read-only mount)
+    # This lets litellm find them via standard env var lookup
+    api_keys = _state.config.get("api_keys", {})
+    for provider, key in api_keys.items():
+        env_name = f"{provider.upper()}_API_KEY"
+        if key and env_name not in os.environ:
+            os.environ[env_name] = key
+    if api_keys:
+        logger.info("Loaded API keys for %d provider(s) from config", len(api_keys))
+
     # Initialize agent DB
     _state.agent_db = await _init_agent_db(_state.data_dir)
     logger.info("Agent worker initialized: agent_id=%s", _state.agent_id)
