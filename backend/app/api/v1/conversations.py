@@ -274,11 +274,11 @@ async def save_or_queue_message(
 
     # Auto-title from first user message if untitled
     title_result = await db.execute(
-        text("SELECT title, message_count FROM conversations WHERE id = :id"),
+        text("SELECT title FROM conversations WHERE id = :id"),
         {"id": conversation_id},
     )
     title_row = title_result.fetchone()
-    if title_row and not title_row[0] and title_row[1] == 0:
+    if title_row and not title_row[0]:
         auto_title = body.content.strip()[:80]
         if len(body.content.strip()) > 80:
             auto_title = auto_title.rsplit(" ", 1)[0] + "..."
