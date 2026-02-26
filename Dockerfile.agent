@@ -17,9 +17,15 @@ RUN apt-get update && \
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Python dependencies — only what the worker needs
-COPY pyproject.toml uv.lock* ./
-RUN uv sync --frozen --no-dev 2>/dev/null || uv sync --no-dev
+# Python dependencies — install into system Python (no venv)
+# These are the direct imports of worker.py + native tools
+RUN pip install --no-cache-dir \
+    aiosqlite \
+    fastapi \
+    uvicorn \
+    litellm \
+    python-ulid \
+    pydantic
 
 # Create directories the worker expects
 RUN mkdir -p /data /data/shared /config /workspace
