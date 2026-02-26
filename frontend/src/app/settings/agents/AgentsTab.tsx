@@ -224,6 +224,7 @@ export default function AgentsTab() {
   const [browsingMountIndex, setBrowsingMountIndex] = useState<number | null>(null);
   const [allFragments, setAllFragments] = useState<{ id: string; name: string; display_name: string; category: string; is_active: number }[]>([]);
   const [agentFragments, setAgentFragments] = useState<{ id: string; display_name: string; category: string; enabled: number; rank: number; fragment_id?: string }[]>([]);
+  const [pendingFragmentIds, setPendingFragmentIds] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     try {
@@ -268,6 +269,8 @@ export default function AgentsTab() {
   const startCreate = () => {
     setEditing({ ...newAgent(), tools: allToolNames });
     setIsNew(true);
+    setAgentFragments([]);
+    setPendingFragmentIds(new Set(allFragments.filter(f => f.is_active).map(f => f.id)));
     setMsg("");
   };
 
@@ -297,6 +300,7 @@ export default function AgentsTab() {
   const startEdit = (agent: Agent) => {
     setEditing({ ...agent });
     loadAgentFragments(agent.id);
+    setPendingFragmentIds(new Set());
     setIsNew(false);
     setMsg("");
   };
@@ -337,6 +341,21 @@ export default function AgentsTab() {
       });
 
       if (res.ok) {
+        const saved = await res.json();
+
+        // Attach pending fragments after creation
+        if (isNew && saved?.id && pendingFragmentIds.size > 0) {
+          const fragIds = Array.from(pendingFragmentIds);
+          await Promise.all(fragIds.map((fid, i) =>
+            fetch(`http://localhost:18790/api/v1/prompts/agents/${saved.id}/fragments`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ fragment_id: fid, rank: i }),
+            })
+          ));
+          setPendingFragmentIds(new Set());
+        }
+
         setMsg("Saved successfully.");
         setEditing(null);
         await fetchData();
@@ -652,32 +671,41 @@ export default function AgentsTab() {
               />
             )}
 
-            {!isNew && (
-              <div style={{ ...styles.field, ...styles.formFull }}>
-                <label style={styles.label}>Prompt Fragments</label>
-                <div style={styles.checkboxGrid}>
-                  {allFragments.filter(f => f.is_active).map((frag) => {
-                    const attached = agentFragments.some(af => af.id === frag.id);
-                    const catColor: Record<string, string> = { behavior: "#6cffa0", tools: "#6c8aff", safety: "#ff6c8a", context: "#ffcc44" };
-                    return (
-                      <label key={frag.id} style={styles.checkboxLabel}>
-                        <input
-                          type="checkbox"
-                          checked={attached}
-                          onChange={() => toggleAgentFragment(editing.id, frag.id, attached)}
-                          style={styles.checkbox}
-                        />
-                        <span style={{ color: catColor[frag.category] || "#888", fontSize: "0.7rem", marginRight: "4px" }}>●</span>
-                        {frag.display_name}
-                      </label>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: "0.8rem", color: "#5a5a6e", marginTop: "4px" }}>
-                  Manage fragments in the Prompts tab
-                </div>
+            <div style={{ ...styles.field, ...styles.formFull }}>
+              <label style={styles.label}>Prompt Fragments</label>
+              <div style={styles.checkboxGrid}>
+                {allFragments.filter(f => f.is_active).map((frag) => {
+                  const attached = isNew
+                    ? pendingFragmentIds.has(frag.id)
+                    : agentFragments.some(af => af.id === frag.id);
+                  const catColor: Record<string, string> = { behavior: "#6cffa0", tools: "#6c8aff", safety: "#ff6c8a", context: "#ffcc44" };
+                  return (
+                    <label key={frag.id} style={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={attached}
+                        onChange={() => {
+                          if (isNew) {
+                            const next = new Set(pendingFragmentIds);
+                            if (next.has(frag.id)) next.delete(frag.id);
+                            else next.add(frag.id);
+                            setPendingFragmentIds(next);
+                          } else {
+                            toggleAgentFragment(editing.id, frag.id, attached);
+                          }
+                        }}
+                        style={styles.checkbox}
+                      />
+                      <span style={{ color: catColor[frag.category] || "#888", fontSize: "0.7rem", marginRight: "4px" }}>●</span>
+                      {frag.display_name}
+                    </label>
+                  );
+                })}
               </div>
-            )}
+              <div style={{ fontSize: "0.8rem", color: "#5a5a6e", marginTop: "4px" }}>
+                Manage fragments in the Prompts tab
+              </div>
+            </div>
 
             {!isNew && !editing.is_default && (
               <div style={styles.buttonRow}>
