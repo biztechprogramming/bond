@@ -352,6 +352,16 @@ export class WebChatChannel {
       }
 
       const worker = this.workerPool.get(workerUrl);
+
+      // Apply turn timeout from settings
+      try {
+        const timeoutSetting = await this.backendClient.getSetting("agent.turn_timeout_minutes");
+        if (timeoutSetting) {
+          const ms = parseInt(timeoutSetting, 10) * 60_000;
+          if (ms > 0) worker.setTurnTimeout(ms);
+        }
+      } catch { /* use default */ }
+
       let responseContent = "";
       let toolCallsMade = 0;
 
@@ -493,10 +503,13 @@ export class WebChatChannel {
         agentStatus: "idle",
         conversationId,
       });
+      const isTimeout = errorMsg === "terminated" || errorMsg.includes("aborted");
       this.send(socket, {
         type: "error",
         sessionId,
-        error: errorMsg,
+        error: isTimeout
+          ? "The agent is still working but the request timed out. The agent's work is preserved — check the files it was writing. You can increase the turn timeout in Settings."
+          : errorMsg,
       });
     }
   }

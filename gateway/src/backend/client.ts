@@ -72,6 +72,17 @@ export class BackendClient {
     this.baseUrl = baseUrl;
   }
 
+  async getSetting(key: string): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/v1/settings`);
+      if (!res.ok) return null;
+      const settings = (await res.json()) as Record<string, string>;
+      return settings[key] ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async agentTurn(req: AgentTurnRequest): Promise<AgentTurnResponse> {
     const res = await fetch(`${this.baseUrl}/api/v1/agent/turn`, {
       method: "POST",

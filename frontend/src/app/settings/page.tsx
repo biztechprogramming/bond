@@ -206,6 +206,35 @@ export default function SettingsPage() {
                 ))}
               </div>
             )}
+            <div style={{ ...s.field, marginTop: "20px" }}>
+              <label style={s.label}>Turn Timeout (minutes)</label>
+              <p style={{ color: "#5a5a6e", fontSize: "0.8rem", margin: "0 0 8px 0" }}>
+                Maximum time an agent can work on a single turn before the request times out. Increase for complex tasks with many tool calls.
+              </p>
+              <div style={s.keyRow}>
+                <input
+                  type="number"
+                  style={{ ...s.input, width: "100px" }}
+                  defaultValue={allSettings["agent.turn_timeout_minutes"] || "30"}
+                  min={1}
+                  max={120}
+                  onBlur={async (e) => {
+                    const val = e.target.value.trim();
+                    if (!val || parseInt(val) < 1) return;
+                    try {
+                      const res = await fetch(`${API_BASE}/agent.turn_timeout_minutes`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ value: val }),
+                      });
+                      if (res.ok) { setSaveMsg("Turn timeout saved."); await fetchSettings(); }
+                      else setSaveMsg("Failed to save.");
+                    } catch { setSaveMsg("Failed to save."); }
+                  }}
+                />
+                <span style={{ color: "#8888a0", fontSize: "0.9rem", alignSelf: "center" }}>minutes</span>
+              </div>
+            </div>
           </section>
         )}
 

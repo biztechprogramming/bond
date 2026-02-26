@@ -15,10 +15,16 @@ export interface WorkerSSEEvent extends SSEEvent {
   event: "status" | "chunk" | "tool_call" | "memory" | "done" | "error" | string;
 }
 
-const TURN_TIMEOUT_MS = 600_000; // 10 minutes
+const DEFAULT_TURN_TIMEOUT_MS = 1_800_000; // 30 minutes
 
 export class WorkerClient {
+  private turnTimeoutMs: number = DEFAULT_TURN_TIMEOUT_MS;
+
   constructor(private workerUrl: string) {}
+
+  setTurnTimeout(ms: number): void {
+    this.turnTimeoutMs = ms;
+  }
 
   async healthCheck(): Promise<boolean> {
     try {
@@ -34,7 +40,7 @@ export class WorkerClient {
     options?: { signal?: AbortSignal },
   ): AsyncGenerator<WorkerSSEEvent> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), this.turnTimeoutMs);
 
     // Link external signal to our controller
     if (options?.signal) {
