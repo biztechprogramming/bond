@@ -383,7 +383,7 @@ async def resolve_agent(
 
     # Look up agent
     agent_result = await db.execute(
-        text("SELECT id, sandbox_image, model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
+        text("SELECT id, name, sandbox_image, model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
         {"id": resolved_agent_id},
     )
     agent_row = agent_result.mappings().first()
