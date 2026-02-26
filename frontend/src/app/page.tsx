@@ -357,7 +357,7 @@ export default function Home() {
           <div ref={messagesEndRef} />
         </div>
 
-        <div style={styles.inputArea}>
+        <div style={{ ...styles.inputArea, ...(process.env.NODE_ENV === "development" ? { paddingLeft: "60px" } : {}) }}>
           <textarea
             style={styles.textarea}
             value={input}

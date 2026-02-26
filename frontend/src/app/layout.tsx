@@ -19,7 +19,7 @@ export default function RootLayout({
         color: "#e0e0e8",
       }}>
         {children}
-        <style>{`nextjs-portal [data-nextjs-toast] { bottom: 5rem !important; }`}</style>
+        {/* removed - handled in page.tsx */}
       </body>
     </html>
   );
