@@ -391,8 +391,22 @@ async def resolve_agent(
         # Containerized agent — ensure worker is running
         try:
             sandbox_manager = get_sandbox_manager()
+            # Resolve API keys for the container
+            from backend.app.agent.llm import _resolve_api_key
+            api_keys = {}
+            for provider in ("anthropic", "openai", "google", "voyage"):
+                key = await _resolve_api_key(provider)
+                if key:
+                    api_keys[provider] = key
+
             # Build agent dict for ensure_running
-            agent_dict = {"id": agent_row["id"], "sandbox_image": sandbox_image}
+            agent_dict = {
+                "id": agent_row["id"],
+                "sandbox_image": sandbox_image,
+                "model": agent_row.get("model", "claude-sonnet-4-20250514"),
+                "system_prompt": agent_row.get("system_prompt", ""),
+                "api_keys": api_keys,
+            }
             info = await sandbox_manager.ensure_running(agent_dict)
             return {
                 "mode": "container",
