@@ -854,14 +854,32 @@ else:
 
 ---
 
-## 15. Open Questions
+## 15. Resolved Questions
 
-1. **Port allocation** — Each agent container needs a unique port. Use Docker's random port mapping (`-p 18791`) and inspect to get the assigned host port? Or allocate from a range (18791, 18792, ...)?
+1. **Port allocation** — ✅ Allocate from a fixed range (18791–18890). Backend checks port availability before assigning. Predictable and simple.
 
-2. **Hot shared memory updates** — Can we push incremental updates to running containers without restart? (Mount a directory, write new snapshot, agent watches for changes?) Or is "restart to get latest shared memories" acceptable?
+2. **Shared memory updates** — ✅ No push mechanism needed. The shared.db snapshot is a file on the host that the backend periodically re-exports. The container mounts the directory (`/data/shared/`), and the worker periodically detaches and re-attaches the shared DB (every 30 seconds). New shared memories propagate within 30 seconds of the snapshot being updated.
 
-3. **Embedding model in container** — If agents use local embeddings (voyage-4-nano), the model needs to be in the container. Mount it? Include in image? Download on first run?
+```python
+# Worker: periodic shared DB re-attach
+async def _refresh_shared_db(self):
+    """Re-attach shared.db to pick up host-side updates."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            await self._agent_db.execute("DETACH DATABASE shared")
+            await self._agent_db.execute(
+                "ATTACH DATABASE '/data/shared/shared.db' AS shared"
+            )
+            logger.debug("Re-attached shared.db")
+        except Exception as e:
+            logger.warning("Failed to re-attach shared.db: %s", e)
+```
 
-4. **Container image base** — The sandbox image needs Python + uvicorn + litellm + httpx + aiosqlite. Build a `bond-agent-base` image that all sandbox images inherit from?
+## 16. Open Questions
 
-5. **Multiple workspaces, one container** — Current model is one container per agent. If an agent has 5 workspace mounts, they're all in one container. Is that always right?
+1. **Embedding model in container** — If agents use local embeddings (voyage-4-nano), the model needs to be in the container. Mount it? Include in image? Download on first run?
+
+2. **Container image base** — The sandbox image needs Python + uvicorn + litellm + httpx + aiosqlite. Build a `bond-agent-base` image that all sandbox images inherit from?
+
+3. **Multiple workspaces, one container** — Current model is one container per agent. If an agent has 5 workspace mounts, they're all in one container. Is that always right?
