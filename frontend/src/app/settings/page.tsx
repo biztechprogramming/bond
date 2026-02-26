@@ -46,13 +46,13 @@ interface LlmCurrent {
 // ── Main Settings Page ──
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>(() => {
-    if (typeof window !== "undefined") {
-      const hash = window.location.hash.replace("#", "");
-      if (TABS.some((t) => t.id === hash)) return hash as TabId;
-    }
-    return "agents";
-  });
+  const [activeTab, setActiveTab] = useState<TabId>("agents");
+
+  // Read hash after hydration to avoid SSR mismatch
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "");
+    if (TABS.some((t) => t.id === hash)) setActiveTab(hash as TabId);
+  }, []);
 
   // Embedding state
   const [models, setModels] = useState<EmbeddingModel[]>([]);
