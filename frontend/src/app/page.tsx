@@ -10,6 +10,7 @@ interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   status?: "sending" | "queued" | "delivered";
+  agentName?: string;
 }
 
 export default function Home() {
@@ -32,6 +33,7 @@ export default function Home() {
   const initialAgentSetRef = useRef(false);
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
+  const currentAgentNameRef = useRef<string>("Agent");
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
@@ -117,6 +119,7 @@ export default function Home() {
       } else if (msg.type === "status") {
         const status = msg.agentStatus || "idle";
         setAgentStatus(status);
+        if (msg.agentName) currentAgentNameRef.current = msg.agentName;
         if (status !== "idle") {
           setLoading(true);
         }
@@ -133,7 +136,7 @@ export default function Home() {
               if (last?.role === "assistant" && last.content === prev) {
                 return msgs;
               }
-              return [...msgs, { id: msg.messageId, role: "assistant", content: prev }];
+              return [...msgs, { id: msg.messageId, role: "assistant", content: prev, agentName: msg.agentName || currentAgentNameRef.current }];
             });
           }
           return "";
@@ -420,14 +423,14 @@ export default function Home() {
                 </div>
               )}
               <div style={styles.messageRole}>
-                {msg.role === "user" ? "You" : msg.role === "assistant" ? "Bond" : "System"}
+                {msg.role === "user" ? "You" : msg.role === "assistant" ? (msg.agentName || agents.find(a => a.id === selectedAgentId)?.display_name || "Agent") : "System"}
               </div>
               <div style={styles.messageContent}>{msg.content}</div>
             </div>
           ))}
           {(loading || streamingContent) && (
             <div style={styles.message}>
-              <div style={styles.messageRole}>Bond</div>
+              <div style={styles.messageRole}>{currentAgentNameRef.current}</div>
               <div style={{ ...styles.messageContent, color: streamingContent ? "#e0e0e8" : "#8888a0" }}>
                 {streamingContent || (
                   agentStatus === "tool_calling" ? "Using tools..." :

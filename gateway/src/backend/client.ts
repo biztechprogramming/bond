@@ -32,6 +32,8 @@ export interface AgentResolution {
   mode: "container" | "host";
   worker_url?: string;
   agent_id: string;
+  agent_name?: string;
+  agent_display_name?: string;
   conversation_id: string;
 }
 

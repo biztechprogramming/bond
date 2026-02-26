@@ -364,6 +364,13 @@ async def resolve_agent(
             # Explicit agent_id from user takes priority over conversation's stored agent
             if not agent_id or agent_id == "default":
                 resolved_agent_id = row["agent_id"]
+            elif agent_id != row["agent_id"]:
+                # User switched agents — update the conversation record
+                await db.execute(
+                    text("UPDATE conversations SET agent_id = :aid WHERE id = :cid"),
+                    {"aid": agent_id, "cid": row["id"]},
+                )
+                await db.commit()
             resolved_conversation_id = row["id"]
     elif not agent_id:
         raise HTTPException(status_code=400, detail="Either conversation_id or agent_id is required")
@@ -385,7 +392,7 @@ async def resolve_agent(
 
     # Look up agent
     agent_result = await db.execute(
-        text("SELECT id, name, sandbox_image, model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
+        text("SELECT id, name, display_name, sandbox_image, model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
         {"id": resolved_agent_id},
     )
     agent_row = agent_result.mappings().first()
@@ -450,6 +457,8 @@ async def resolve_agent(
                 "mode": "container",
                 "worker_url": info["worker_url"],
                 "agent_id": agent_row["id"],
+                "agent_name": agent_row["name"],
+                "agent_display_name": agent_row.get("display_name", agent_row["name"]),
                 "conversation_id": resolved_conversation_id,
             }
         except RuntimeError as e:
@@ -458,6 +467,8 @@ async def resolve_agent(
         return {
             "mode": "host",
             "agent_id": agent_row["id"],
+            "agent_name": agent_row["name"],
+            "agent_display_name": agent_row.get("display_name", agent_row["name"]),
             "conversation_id": resolved_conversation_id,
         }
 

@@ -22,6 +22,7 @@ export interface GatewayMessage {
   conversationId?: string;
   messageId?: string;
   agentStatus?: "idle" | "thinking" | "tool_calling" | "responding";
+  agentName?: string;
   queuePosition?: number;
   queuedCount?: number;
   messages?: Array<{ role: string; content: string; id?: string; created_at?: string }>;

@@ -312,6 +312,7 @@ export class WebChatChannel {
 
     const conversationId = resolution.conversation_id;
     const workerUrl = resolution.worker_url!;
+    const agentName = resolution.agent_display_name || resolution.agent_name || "Agent";
     const startTime = Date.now();
 
     session.agentBusy = true;
@@ -319,10 +320,11 @@ export class WebChatChannel {
       type: "status",
       sessionId,
       agentStatus: "thinking",
+      agentName,
       conversationId,
     });
 
-    console.log(`[gateway] Starting container turn: conversation=${conversationId} worker=${workerUrl}`);
+    console.log(`[gateway] Starting container turn: conversation=${conversationId} worker=${workerUrl} agent=${agentName}`);
 
     try {
       // Load conversation history from backend
@@ -368,6 +370,7 @@ export class WebChatChannel {
               type: "chunk",
               sessionId,
               content: event.data.content as string,
+              agentName,
               conversationId,
             });
             break;
@@ -450,6 +453,7 @@ export class WebChatChannel {
         sessionId,
         conversationId,
         messageId: responseMessageId,
+        agentName,
         queuedCount: 0,
         agentStatus: "idle",
       });
