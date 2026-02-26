@@ -225,12 +225,12 @@ async def test_set_default_agent(agents_client):
 
 @pytest.mark.asyncio
 async def test_list_tools(agents_client):
-    """Should list all 14 available tools."""
+    """Should list all 15 available tools."""
     res = await agents_client.get("/api/v1/agents/tools")
     assert res.status_code == 200
     data = res.json()
     assert isinstance(data, list)
-    assert len(data) == 14
+    assert len(data) == 15
     names = {t["name"] for t in data}
     assert "respond" in names
     assert "search_memory" in names

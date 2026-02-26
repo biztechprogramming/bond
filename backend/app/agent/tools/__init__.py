@@ -63,7 +63,7 @@ def build_registry() -> ToolRegistry:
     from .memory import handle_memory_save, handle_memory_update
     from .code import handle_code_execute
     from .files import handle_file_read, handle_file_write
-    from .web import handle_web_search
+    from .web import handle_web_search, handle_web_read
     from .browser import handle_browser
     from .email_tool import handle_email
     from .cron import handle_cron
@@ -81,6 +81,7 @@ def build_registry() -> ToolRegistry:
     registry.register("file_write", handle_file_write)
     registry.register("call_subordinate", handle_call_subordinate)
     registry.register("web_search", handle_web_search)
+    registry.register("web_read", handle_web_read)
     registry.register("browser", handle_browser)
     registry.register("email", handle_email)
     registry.register("cron", handle_cron)

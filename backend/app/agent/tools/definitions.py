@@ -183,21 +183,43 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web for information.",
+            "description": "Search the web for information. Returns titles, URLs, and snippets. Use web_read to get full page content for specific results.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "The search query.",
+                        "description": "Search query",
                     },
                     "num_results": {
                         "type": "integer",
-                        "description": "Number of results to return.",
-                        "default": 5,
+                        "description": "Number of results (default 10, max 20)",
+                        "default": 10,
                     },
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_read",
+            "description": "Fetch and read the content of a web page. Returns extracted text. Use after web_search to read specific results, or to read any URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL to read",
+                    },
+                    "max_length": {
+                        "type": "integer",
+                        "description": "Maximum content length in characters (default 5000)",
+                        "default": 5000,
+                    },
+                },
+                "required": ["url"],
             },
         },
     },
