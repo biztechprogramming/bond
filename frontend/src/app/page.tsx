@@ -70,6 +70,13 @@ export default function Home() {
     setMessages((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const resendMessage = (content: string) => {
+    if (!wsRef.current?.connected || !content.trim()) return;
+    setMessages((prev) => [...prev, { role: "user", content, status: "sending" }]);
+    setLoading(true);
+    wsRef.current.send(content, conversationId || undefined, selectedAgentId || undefined);
+  };
+
   // Close agent dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -378,20 +385,36 @@ export default function Home() {
               }}
             >
               {deleteMode && (
-                <button
-                  onClick={() => deleteMessage(msg.id || "", i)}
-                  style={{
-                    position: "absolute", top: "6px", right: "6px",
-                    background: "rgba(255,60,80,0.15)", border: "1px solid rgba(255,60,80,0.4)",
-                    borderRadius: "50%", width: "22px", height: "22px",
-                    color: "#ff3c50", fontSize: "0.75rem", cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    lineHeight: 1, padding: 0,
-                  }}
-                  title="Delete message"
-                >
-                  ✕
-                </button>
+                <div style={{ position: "absolute", top: "6px", right: "6px", display: "flex", gap: "4px" }}>
+                  {msg.role === "user" && (
+                    <button
+                      onClick={() => resendMessage(msg.content)}
+                      style={{
+                        background: "rgba(108,138,255,0.15)", border: "1px solid rgba(108,138,255,0.4)",
+                        borderRadius: "50%", width: "22px", height: "22px",
+                        color: "#6c8aff", fontSize: "0.75rem", cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        lineHeight: 1, padding: 0,
+                      }}
+                      title="Resend message"
+                    >
+                      ↻
+                    </button>
+                  )}
+                  <button
+                    onClick={() => deleteMessage(msg.id || "", i)}
+                    style={{
+                      background: "rgba(255,60,80,0.15)", border: "1px solid rgba(255,60,80,0.4)",
+                      borderRadius: "50%", width: "22px", height: "22px",
+                      color: "#ff3c50", fontSize: "0.75rem", cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      lineHeight: 1, padding: 0,
+                    }}
+                    title="Delete message"
+                  >
+                    ✕
+                  </button>
+                </div>
               )}
               <div style={styles.messageRole}>
                 {msg.role === "user" ? "You" : msg.role === "assistant" ? "Bond" : "System"}
