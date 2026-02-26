@@ -8,9 +8,13 @@
 import type { WebSocket } from "ws";
 import type { IncomingMessage, OutgoingMessage } from "../protocol/types.js";
 import type { SessionManager } from "../sessions/manager.js";
-import type { BackendClient } from "../backend/client.js";
+import type { BackendClient, AgentResolution } from "../backend/client.js";
+import { WorkerPool } from "../backend/worker-pool.js";
+import type { WorkerSSEEvent } from "../backend/worker-client.js";
 
 export class WebChatChannel {
+  private workerPool = new WorkerPool();
+
   constructor(
     private sessionManager: SessionManager,
     private backendClient: BackendClient
@@ -131,7 +135,15 @@ export class WebChatChannel {
     if (!conversationId) return;
 
     try {
-      await this.backendClient.interrupt(conversationId);
+      const resolution = await this.backendClient.resolveAgent(conversationId);
+
+      if (resolution.mode === "container" && resolution.worker_url) {
+        const worker = this.workerPool.get(resolution.worker_url);
+        await worker.interrupt([]);
+      } else {
+        await this.backendClient.interrupt(conversationId);
+      }
+
       this.send(socket, {
         type: "status",
         sessionId,
@@ -148,6 +160,37 @@ export class WebChatChannel {
   }
 
   private async startStreamingTurn(
+    socket: WebSocket,
+    sessionId: string,
+    message: string | undefined,
+    conversationId: string | undefined,
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    try {
+      // Resolve agent mode
+      const resolution = await this.backendClient.resolveAgent(conversationId);
+      console.log(
+        `[gateway] Resolving agent for conversation ${resolution.conversation_id} → ${resolution.mode}` +
+        (resolution.worker_url ? ` (worker ${resolution.worker_url})` : ""),
+      );
+
+      if (resolution.mode === "container" && resolution.worker_url) {
+        await this.startContainerTurn(socket, sessionId, message, resolution);
+      } else {
+        await this.startHostTurn(socket, sessionId, message, resolution.conversation_id);
+      }
+    } catch (err) {
+      this.send(socket, {
+        type: "error",
+        sessionId,
+        error: err instanceof Error ? err.message : "Failed to resolve agent",
+      });
+    }
+  }
+
+  private async startHostTurn(
     socket: WebSocket,
     sessionId: string,
     message: string | undefined,
@@ -250,6 +293,171 @@ export class WebChatChannel {
         type: "error",
         sessionId,
         error: err instanceof Error ? err.message : "Agent error",
+      });
+    }
+  }
+
+  private async startContainerTurn(
+    socket: WebSocket,
+    sessionId: string,
+    message: string | undefined,
+    resolution: AgentResolution,
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const conversationId = resolution.conversation_id;
+    const workerUrl = resolution.worker_url!;
+    const startTime = Date.now();
+
+    session.agentBusy = true;
+    this.send(socket, {
+      type: "status",
+      sessionId,
+      agentStatus: "thinking",
+      conversationId,
+    });
+
+    console.log(`[gateway] Starting container turn: conversation=${conversationId} worker=${workerUrl}`);
+
+    try {
+      // Load conversation history from backend
+      const conv = await this.backendClient.getConversation(conversationId);
+      const messages = conv.messages.map((m) => ({ role: m.role, content: m.content }));
+      if (message) {
+        messages.push({ role: "user", content: message });
+      }
+
+      const worker = this.workerPool.get(workerUrl);
+      let responseContent = "";
+      let toolCallsMade = 0;
+
+      for await (const event of worker.turnStream({
+        messages,
+        conversation_id: conversationId,
+      })) {
+        switch (event.event) {
+          case "status":
+            console.log(`[gateway] Container turn SSE event: status ${event.data.state}`);
+            this.send(socket, {
+              type: "status",
+              sessionId,
+              agentStatus: event.data.state as "thinking" | "tool_calling" | "responding",
+              conversationId,
+            });
+            break;
+
+          case "chunk":
+            responseContent += (event.data.content as string) || "";
+            this.send(socket, {
+              type: "chunk",
+              sessionId,
+              content: event.data.content as string,
+              conversationId,
+            });
+            break;
+
+          case "tool_call":
+            this.send(socket, {
+              type: "tool_call",
+              sessionId,
+              content: JSON.stringify(event.data),
+              conversationId,
+            });
+            break;
+
+          case "memory":
+            console.log(`[gateway] Container turn SSE event: memory promote type=${event.data.type}`);
+            // Intercept: forward to backend, do NOT forward to frontend
+            this.backendClient.promoteMemory({
+              agent_id: resolution.agent_id,
+              memory_id: event.data.memory_id as string,
+              type: event.data.type as string,
+              content: event.data.content as string,
+              summary: (event.data.summary as string) || "",
+              source_type: "agent",
+              entities: (event.data.entities as string[]) || [],
+            }).then(() => {
+              console.log(`[gateway] Memory promotion sent to backend: agent=${resolution.agent_id} type=${event.data.type}`);
+            }).catch((err) => {
+              console.warn(
+                `[gateway] WARN Memory promotion failed (non-fatal): agent=${resolution.agent_id} error=${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
+            break;
+
+          case "done":
+            responseContent = (event.data.response as string) || responseContent;
+            toolCallsMade = (event.data.tool_calls_made as number) || 0;
+            break;
+
+          case "error":
+            this.send(socket, {
+              type: "error",
+              sessionId,
+              error: event.data.message as string,
+              conversationId,
+            });
+            break;
+        }
+      }
+
+      // Save assistant message to backend
+      let responseMessageId = "";
+      try {
+        const saveResult = await this.backendClient.saveAssistantMessage(
+          conversationId,
+          responseContent,
+          toolCallsMade,
+        );
+        responseMessageId = saveResult.message_id;
+        console.log(`[gateway] Assistant message saved: conversation=${conversationId} message_id=${responseMessageId}`);
+      } catch (err) {
+        console.error(
+          `[gateway] ERROR Failed to save assistant message: conversation=${conversationId} error=${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // Update session state
+      if (conversationId) {
+        this.sessionManager.setConversationId(sessionId, conversationId);
+        session.conversationId = conversationId;
+      }
+
+      session.agentBusy = false;
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(
+        `[gateway] Container turn complete: conversation=${conversationId} tool_calls=${toolCallsMade} response_length=${responseContent.length} elapsed=${elapsed}s`,
+      );
+
+      this.send(socket, {
+        type: "done",
+        sessionId,
+        conversationId,
+        messageId: responseMessageId,
+        queuedCount: 0,
+        agentStatus: "idle",
+      });
+
+      // Refresh conversation list
+      this.handleListConversations(socket).catch(() => {});
+    } catch (err) {
+      session.agentBusy = false;
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.error(
+        `[gateway] ERROR Container turn failed: conversation=${conversationId} error=${err instanceof Error ? err.message : String(err)} elapsed=${elapsed}s`,
+      );
+
+      this.send(socket, {
+        type: "status",
+        sessionId,
+        agentStatus: "idle",
+        conversationId,
+      });
+      this.send(socket, {
+        type: "error",
+        sessionId,
+        error: err instanceof Error ? err.message : "Container turn error",
       });
     }
   }

@@ -5,6 +5,7 @@
  */
 
 import type { ConversationSummary } from "../protocol/types.js";
+import { parseSSEStream, type SSEEvent } from "./sse-parser.js";
 
 export interface AgentTurnRequest {
   message?: string | null;
@@ -25,9 +26,23 @@ export interface QueueMessageResponse {
   queue_position: number;
 }
 
-export interface SSEEvent {
-  event: string;
-  data: Record<string, unknown>;
+export type { SSEEvent } from "./sse-parser.js";
+
+export interface AgentResolution {
+  mode: "container" | "host";
+  worker_url?: string;
+  agent_id: string;
+  conversation_id: string;
+}
+
+export interface MemoryPromotionEvent {
+  agent_id: string;
+  memory_id: string;
+  type: string;
+  content: string;
+  summary?: string;
+  source_type?: string;
+  entities?: string[];
 }
 
 export interface ConversationMessage {
@@ -134,35 +149,48 @@ export class BackendClient {
       throw new Error(`Backend error ${res.status}: ${text}`);
     }
 
-    const reader = res.body?.getReader();
-    if (!reader) throw new Error("No response body");
+    yield* parseSSEStream(res);
+  }
 
-    const decoder = new TextDecoder();
-    let buffer = "";
+  async resolveAgent(conversationId?: string, agentId?: string): Promise<AgentResolution> {
+    const params = new URLSearchParams();
+    if (conversationId) params.set("conversation_id", conversationId);
+    if (agentId) params.set("agent_id", agentId);
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    const res = await fetch(`${this.baseUrl}/api/v1/agent/resolve?${params}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+    return (await res.json()) as AgentResolution;
+  }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+  async saveAssistantMessage(
+    conversationId: string,
+    content: string,
+    toolCallsMade: number,
+  ): Promise<{ message_id: string }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "assistant", content, tool_calls_made: toolCallsMade }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+    return (await res.json()) as { message_id: string };
+  }
 
-      let currentEvent = "";
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          currentEvent = line.slice(7).trim();
-        } else if (line.startsWith("data: ")) {
-          const dataStr = line.slice(6);
-          try {
-            const data = JSON.parse(dataStr);
-            yield { event: currentEvent || "message", data };
-          } catch {
-            // Skip malformed data
-          }
-          currentEvent = "";
-        }
-      }
+  async promoteMemory(data: MemoryPromotionEvent): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/v1/shared-memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Backend error ${res.status}: ${text}`);
     }
   }
 

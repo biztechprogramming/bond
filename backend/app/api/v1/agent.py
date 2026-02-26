@@ -9,7 +9,7 @@ import json
 import logging
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from backend.app.agent.interrupts import (
     check_interrupt,
 )
 from backend.app.db.session import get_db
+from backend.app.sandbox.manager import get_sandbox_manager
 
 logger = logging.getLogger("bond.agent.api")
 
@@ -331,3 +332,88 @@ async def _stream_agent_turn(
         })
     finally:
         unregister_turn(conversation_id)
+
+
+# -- Agent resolution --
+
+
+@router.get("/resolve")
+async def resolve_agent(
+    conversation_id: str | None = Query(default=None),
+    agent_id: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve how to route a turn: container worker or host-mode backend.
+
+    The gateway calls this before every turn to determine routing.
+    """
+    resolved_agent_id: str | None = agent_id
+    resolved_conversation_id: str | None = conversation_id
+
+    if conversation_id:
+        # Look up existing conversation
+        result = await db.execute(
+            text("SELECT id, agent_id FROM conversations WHERE id = :id"),
+            {"id": conversation_id},
+        )
+        row = result.mappings().first()
+        if row is None:
+            if not agent_id:
+                raise HTTPException(status_code=400, detail="Conversation not found and no agent_id provided")
+        else:
+            resolved_agent_id = row["agent_id"]
+            resolved_conversation_id = row["id"]
+    elif not agent_id:
+        raise HTTPException(status_code=400, detail="Either conversation_id or agent_id is required")
+
+    if not resolved_agent_id:
+        # No conversation found, use provided agent_id — create conversation
+        resolved_agent_id = agent_id
+
+    # Look up agent
+    agent_result = await db.execute(
+        text("SELECT id, sandbox_image FROM agents WHERE id = :id"),
+        {"id": resolved_agent_id},
+    )
+    agent_row = agent_result.mappings().first()
+    if agent_row is None:
+        # Try default agent
+        if not agent_id and not conversation_id:
+            raise HTTPException(status_code=400, detail="Either conversation_id or agent_id is required")
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Create conversation if needed
+    if not resolved_conversation_id or (conversation_id and not await _conversation_exists(db, conversation_id)):
+        resolved_conversation_id = await _get_or_create_conversation(db, resolved_conversation_id)
+
+    sandbox_image = agent_row["sandbox_image"]
+    if sandbox_image:
+        # Containerized agent — ensure worker is running
+        try:
+            sandbox_manager = get_sandbox_manager()
+            # Build agent dict for ensure_running
+            agent_dict = {"id": agent_row["id"], "sandbox_image": sandbox_image}
+            info = await sandbox_manager.ensure_running(agent_dict)
+            return {
+                "mode": "container",
+                "worker_url": info["worker_url"],
+                "agent_id": agent_row["id"],
+                "conversation_id": resolved_conversation_id,
+            }
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    else:
+        return {
+            "mode": "host",
+            "agent_id": agent_row["id"],
+            "conversation_id": resolved_conversation_id,
+        }
+
+
+async def _conversation_exists(db: AsyncSession, conversation_id: str) -> bool:
+    """Check if a conversation exists."""
+    result = await db.execute(
+        text("SELECT id FROM conversations WHERE id = :id"),
+        {"id": conversation_id},
+    )
+    return result.fetchone() is not None

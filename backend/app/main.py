@@ -15,6 +15,7 @@ from backend.app.api.v1.agent import router as agent_router
 from backend.app.api.v1.agents import router as agents_router
 from backend.app.api.v1.settings import router as settings_router
 from backend.app.api.v1.conversations import router as conversations_router
+from backend.app.api.v1.memory import router as memory_router
 
 
 @asynccontextmanager
@@ -62,3 +63,4 @@ app.include_router(agent_router, prefix="/api/v1")
 app.include_router(agents_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
+app.include_router(memory_router, prefix="/api/v1")

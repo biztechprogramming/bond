@@ -37,6 +37,8 @@ async def conv_client(_clear_settings_cache):
         await _apply_sql(db, MIGRATIONS_DIR / "000004_audit_log.up.sql")
         await _apply_sql(db, MIGRATIONS_DIR / "000005_agents.up.sql")
         await _apply_sql(db, MIGRATIONS_DIR / "000006_conversations.up.sql")
+        await _apply_sql(db, MIGRATIONS_DIR / "000007_mount_container_path.up.sql")
+        await _apply_sql(db, MIGRATIONS_DIR / "000008_message_queue.up.sql")
 
     from backend.app.config import get_settings
     get_settings.cache_clear()
@@ -202,3 +204,61 @@ async def test_delete_conversation(conv_client):
 async def test_delete_conversation_not_found(conv_client):
     res = await conv_client.delete("/api/v1/conversations/nonexistent")
     assert res.status_code == 404
+
+
+# -- Save assistant message --
+
+
+@pytest.mark.asyncio
+async def test_save_assistant_message(conv_client):
+    """Should save an assistant message as delivered."""
+    create_res = await conv_client.post("/api/v1/conversations", json={})
+    conv_id = create_res.json()["id"]
+
+    res = await conv_client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"role": "assistant", "content": "Hello from the agent!"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert "message_id" in data
+    assert data["conversation_id"] == conv_id
+
+
+@pytest.mark.asyncio
+async def test_save_assistant_message_increments_count(conv_client):
+    """Saving assistant message should increment conversation message_count."""
+    create_res = await conv_client.post("/api/v1/conversations", json={})
+    conv_id = create_res.json()["id"]
+    assert create_res.json()["message_count"] == 0
+
+    await conv_client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"role": "assistant", "content": "response 1"},
+    )
+
+    conv_res = await conv_client.get(f"/api/v1/conversations/{conv_id}")
+    assert conv_res.json()["message_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_save_assistant_message_nonexistent_conversation_404(conv_client):
+    """Should 404 for nonexistent conversation."""
+    res = await conv_client.post(
+        "/api/v1/conversations/nonexistent/messages",
+        json={"role": "assistant", "content": "test"},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_save_non_assistant_or_user_role_rejected(conv_client):
+    """Should reject roles other than user or assistant."""
+    create_res = await conv_client.post("/api/v1/conversations", json={})
+    conv_id = create_res.json()["id"]
+
+    res = await conv_client.post(
+        f"/api/v1/conversations/{conv_id}/messages",
+        json={"role": "system", "content": "test"},
+    )
+    assert res.status_code == 400

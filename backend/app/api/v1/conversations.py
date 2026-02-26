@@ -36,6 +36,12 @@ class QueueMessageRequest(BaseModel):
     role: str = "user"
 
 
+class SaveAssistantMessageRequest(BaseModel):
+    role: str
+    content: str
+    tool_calls_made: int = 0
+
+
 # -- Helpers --
 
 
@@ -196,12 +202,16 @@ async def delete_conversation(
 
 
 @router.post("/{conversation_id}/messages")
-async def queue_message(
+async def save_or_queue_message(
     conversation_id: str,
     body: QueueMessageRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Save a user message immediately with status='queued'."""
+    """Save a message to a conversation.
+
+    - role='user': queued for the next agent turn (original behavior)
+    - role='assistant': saved as delivered (used by gateway after container turns)
+    """
     result = await db.execute(
         text("SELECT id FROM conversations WHERE id = :id"),
         {"id": conversation_id},
@@ -209,6 +219,37 @@ async def queue_message(
     if result.fetchone() is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
+    if body.role == "assistant":
+        # Gateway saving assistant response after container turn
+        msg_id = str(ULID())
+        await db.execute(
+            text(
+                "INSERT INTO conversation_messages (id, conversation_id, role, content, status) "
+                "VALUES (:id, :conv_id, 'assistant', :content, 'delivered')"
+            ),
+            {
+                "id": msg_id,
+                "conv_id": conversation_id,
+                "content": body.content,
+            },
+        )
+        await db.execute(
+            text(
+                "UPDATE conversations SET message_count = message_count + 1, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = :id"
+            ),
+            {"id": conversation_id},
+        )
+        await db.commit()
+        return {
+            "message_id": msg_id,
+            "conversation_id": conversation_id,
+        }
+
+    if body.role != "user":
+        raise HTTPException(status_code=400, detail="Role must be 'user' or 'assistant'")
+
+    # Original user message queuing logic
     msg_id = str(ULID())
     await db.execute(
         text(
