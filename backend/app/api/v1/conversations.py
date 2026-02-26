@@ -198,6 +198,30 @@ async def delete_conversation(
     return {"status": "deleted", "conversation_id": conversation_id}
 
 
+@router.delete("/{conversation_id}/messages/{message_id}")
+async def delete_message(
+    conversation_id: str, message_id: str, db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        text("SELECT id FROM conversation_messages WHERE id = :id AND conversation_id = :cid"),
+        {"id": message_id, "cid": conversation_id},
+    )
+    if result.fetchone() is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    await db.execute(
+        text("DELETE FROM conversation_messages WHERE id = :id"),
+        {"id": message_id},
+    )
+    # Update message count
+    await db.execute(
+        text("UPDATE conversations SET message_count = message_count - 1 WHERE id = :id"),
+        {"id": conversation_id},
+    )
+    await db.commit()
+    return {"status": "deleted", "message_id": message_id}
+
+
 # -- Message queue --
 
 

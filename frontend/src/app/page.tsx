@@ -6,6 +6,7 @@ import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from 
 type AgentStatus = "idle" | "thinking" | "tool_calling" | "responding";
 
 interface ChatMessage {
+  id?: string;
   role: "user" | "assistant" | "system";
   content: string;
   status?: "sending" | "queued" | "delivered";
@@ -30,6 +31,7 @@ export default function Home() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const initialAgentSetRef = useRef(false);
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
+  const [deleteMode, setDeleteMode] = useState(false);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
@@ -43,6 +45,30 @@ export default function Home() {
       localStorage.removeItem("bond-conversation-id");
     }
   }, [conversationId]);
+
+  // Ctrl+Shift enables delete mode on messages
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => setDeleteMode(e.ctrlKey && e.shiftKey);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", () => setDeleteMode(false));
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", () => setDeleteMode(false));
+    };
+  }, []);
+
+  const deleteMessage = async (msgId: string, index: number) => {
+    if (msgId && conversationId) {
+      try {
+        await fetch(`http://localhost:18790/api/v1/conversations/${conversationId}/messages/${msgId}`, {
+          method: "DELETE",
+        });
+      } catch { /* best effort */ }
+    }
+    setMessages((prev) => prev.filter((_, i) => i !== index));
+  };
 
   // Close agent dropdown on outside click
   useEffect(() => {
@@ -100,7 +126,7 @@ export default function Home() {
               if (last?.role === "assistant" && last.content === prev) {
                 return msgs;
               }
-              return [...msgs, { role: "assistant", content: prev }];
+              return [...msgs, { id: msg.messageId, role: "assistant", content: prev }];
             });
           }
           return "";
@@ -125,6 +151,7 @@ export default function Home() {
           msg.messages
             .filter((m) => m.role === "user" || m.role === "assistant")
             .map((m) => ({
+              id: m.id,
               role: m.role as "user" | "assistant",
               content: m.content,
             }))
@@ -342,13 +369,30 @@ export default function Home() {
           )}
           {messages.map((msg, i) => (
             <div
-              key={i}
+              key={msg.id || i}
               style={{
                 ...styles.message,
                 ...(msg.role === "user" ? styles.userMessage : {}),
                 ...(msg.role === "system" ? styles.systemMessage : {}),
+                position: "relative" as const,
               }}
             >
+              {deleteMode && (
+                <button
+                  onClick={() => deleteMessage(msg.id || "", i)}
+                  style={{
+                    position: "absolute", top: "6px", right: "6px",
+                    background: "rgba(255,60,80,0.15)", border: "1px solid rgba(255,60,80,0.4)",
+                    borderRadius: "50%", width: "22px", height: "22px",
+                    color: "#ff3c50", fontSize: "0.75rem", cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1, padding: 0,
+                  }}
+                  title="Delete message"
+                >
+                  ✕
+                </button>
+              )}
               <div style={styles.messageRole}>
                 {msg.role === "user" ? "You" : msg.role === "assistant" ? "Bond" : "System"}
               </div>
