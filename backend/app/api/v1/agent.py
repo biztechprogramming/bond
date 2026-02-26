@@ -361,7 +361,9 @@ async def resolve_agent(
             if not agent_id:
                 raise HTTPException(status_code=400, detail="Conversation not found and no agent_id provided")
         else:
-            resolved_agent_id = row["agent_id"]
+            # Explicit agent_id from user takes priority over conversation's stored agent
+            if not agent_id or agent_id == "default":
+                resolved_agent_id = row["agent_id"]
             resolved_conversation_id = row["id"]
     elif not agent_id:
         raise HTTPException(status_code=400, detail="Either conversation_id or agent_id is required")

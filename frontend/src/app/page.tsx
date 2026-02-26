@@ -28,6 +28,7 @@ export default function Home() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const initialAgentSetRef = useRef(false);
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -133,11 +134,14 @@ export default function Home() {
         }
       } else if (msg.type === "conversations_list" && msg.conversations) {
         setConversations(msg.conversations);
-        // Set agent selector to match current conversation
-        const storedConvId = localStorage.getItem("bond-conversation-id");
-        if (storedConvId) {
-          const conv = msg.conversations.find((c: ConversationSummary) => c.id === storedConvId);
-          if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
+        // Only set agent on initial page load, never override user's active selection
+        if (!initialAgentSetRef.current) {
+          initialAgentSetRef.current = true;
+          const storedConvId = localStorage.getItem("bond-conversation-id");
+          if (storedConvId) {
+            const conv = msg.conversations.find((c: ConversationSummary) => c.id === storedConvId);
+            if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
+          }
         }
       } else if (msg.type === "error") {
         setMessages((prev) => [
