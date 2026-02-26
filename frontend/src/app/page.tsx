@@ -133,6 +133,12 @@ export default function Home() {
         }
       } else if (msg.type === "conversations_list" && msg.conversations) {
         setConversations(msg.conversations);
+        // Set agent selector to match current conversation
+        const storedConvId = localStorage.getItem("bond-conversation-id");
+        if (storedConvId) {
+          const conv = msg.conversations.find((c: ConversationSummary) => c.id === storedConvId);
+          if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
+        }
       } else if (msg.type === "error") {
         setMessages((prev) => [
           ...prev,
@@ -190,6 +196,9 @@ export default function Home() {
     if (id === conversationId) return;
     setMessages([]);
     setLoading(false);
+    // Set agent selector to the conversation's agent
+    const conv = conversations.find(c => c.id === id);
+    if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
     wsRef.current?.switchConversation(id);
   };
 

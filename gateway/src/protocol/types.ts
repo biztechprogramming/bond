@@ -30,6 +30,7 @@ export interface ConversationSummary {
   title: string | null;
   message_count: number;
   updated_at: string;
+  agent_id: string | null;
   agent_name: string | null;
 }
 
