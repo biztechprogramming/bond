@@ -61,27 +61,19 @@ export default function Home() {
         setStreamingContent((prev) => prev + msg.content!);
         setAgentStatus("responding");
       } else if (msg.type === "done") {
-        // Finalize streaming content into a message
+        // Finalize streaming content into a message (with dedup)
         setStreamingContent((prev) => {
           if (prev) {
-            setMessages((msgs) => [...msgs, { role: "assistant", content: prev }]);
+            setMessages((msgs) => {
+              // Avoid duplicate if message was already loaded via history
+              const last = msgs[msgs.length - 1];
+              if (last?.role === "assistant" && last.content === prev) {
+                return msgs;
+              }
+              return [...msgs, { role: "assistant", content: prev }];
+            });
           }
           return "";
-        });
-        setLoading(false);
-        setAgentStatus("idle");
-        if (msg.conversationId) {
-          setConversationId(msg.conversationId);
-        }
-        ws.listConversations();
-      } else if (msg.type === "response" && msg.content) {
-        // Backward-compatible full response (skip if we already got it via chunks)
-        setMessages((prev) => {
-          const lastMsg = prev[prev.length - 1];
-          if (lastMsg?.role === "assistant" && lastMsg.content === msg.content) {
-            return prev; // Already added via streaming
-          }
-          return [...prev, { role: "assistant", content: msg.content! }];
         });
         setLoading(false);
         setAgentStatus("idle");
