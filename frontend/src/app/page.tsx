@@ -266,7 +266,7 @@ export default function Home() {
             >
               {sidebarOpen ? "\u2190" : "\u2261"}
             </button>
-            <h1 style={styles.title}>Bond</h1>
+            <h1 style={styles.title}>{agents.find(a => a.id === selectedAgentId)?.display_name || "Bond"}</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             {agents.length > 1 && (
@@ -324,7 +324,7 @@ export default function Home() {
         <div style={styles.messages}>
           {messages.length === 0 && (
             <div style={styles.empty}>
-              Send a message to start chatting with Bond.
+              Send a message to start chatting with {agents.find(a => a.id === selectedAgentId)?.display_name || "Bond"}.
             </div>
           )}
           {messages.map((msg, i) => (
