@@ -230,7 +230,7 @@ async def test_list_tools(agents_client):
     assert res.status_code == 200
     data = res.json()
     assert isinstance(data, list)
-    assert len(data) == 15
+    assert len(data) == 16
     names = {t["name"] for t in data}
     assert "respond" in names
     assert "search_memory" in names

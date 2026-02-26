@@ -60,7 +60,7 @@ def build_registry() -> ToolRegistry:
     """Build a ToolRegistry with all implemented tool handlers."""
     from .respond import handle_respond
     from .search import handle_search_memory
-    from .memory import handle_memory_save, handle_memory_update
+    from .memory import handle_memory_save, handle_memory_update, handle_memory_delete
     from .code import handle_code_execute
     from .files import handle_file_read, handle_file_write
     from .web import handle_web_search, handle_web_read
@@ -76,6 +76,7 @@ def build_registry() -> ToolRegistry:
     registry.register("search_memory", handle_search_memory)
     registry.register("memory_save", handle_memory_save)
     registry.register("memory_update", handle_memory_update)
+    registry.register("memory_delete", handle_memory_delete)
     registry.register("code_execute", handle_code_execute)
     registry.register("file_read", handle_file_read)
     registry.register("file_write", handle_file_write)

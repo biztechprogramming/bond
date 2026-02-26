@@ -73,3 +73,27 @@ async def handle_memory_update(
     except Exception as e:
         logger.warning("Memory update failed: %s", e)
         return {"error": str(e)}
+
+
+async def handle_memory_delete(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Soft-delete a memory."""
+    memory_id = arguments.get("memory_id", "")
+
+    db = context.get("db")
+    if db is None:
+        return {"error": "No database session available."}
+
+    try:
+        caps = KnowledgeStoreCapabilities(has_vec=False)
+        searcher = HybridSearcher(db, caps)
+        repo = MemoryRepository(db, searcher)
+
+        await repo.soft_delete(memory_id, "agent")
+        await db.commit()
+        return {"status": "deleted", "memory_id": memory_id}
+    except Exception as e:
+        logger.warning("Memory delete failed: %s", e)
+        return {"error": str(e)}
