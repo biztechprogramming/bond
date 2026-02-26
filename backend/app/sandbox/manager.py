@@ -333,6 +333,12 @@ class SandboxManager:
         # Agent config file (read-only, mount specific file)
         cmd.extend(["-v", f"{config_path}:/config/agent.json:ro"])
 
+        # Vault key for decrypting API keys (read-only)
+        from backend.app.config import get_settings
+        vault_key_path = Path(get_settings().bond_home) / "data" / ".vault_key"
+        if vault_key_path.exists():
+            cmd.extend(["-v", f"{vault_key_path}:/bond-home/data/.vault_key:ro"])
+
         # --- Entrypoint (Task 1) ---
         cmd.extend([
             sandbox_image,

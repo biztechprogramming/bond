@@ -116,6 +116,13 @@ CREATE TABLE IF NOT EXISTS content_chunks (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS content_chunks_fts USING fts5(
     content,
     content='content_chunks',
@@ -230,11 +237,26 @@ async def _run_agent_loop(
     agent_tools = config.get("tools", ["respond", "search_memory", "memory_save"])
     max_iterations = config.get("max_iterations", 25)
 
-    # Resolve API key from config or environment
-    api_key = config.get("api_key")
+    # Resolve API key: agent DB (encrypted) → env var fallback
+    provider = model.split("/")[0] if "/" in model else "anthropic"
+    api_key = None
+
+    # 1. Agent DB settings (encrypted at rest, decrypt on demand)
+    if _state.agent_db:
+        try:
+            cursor = await _state.agent_db.execute(
+                "SELECT value FROM settings WHERE key = ?",
+                (f"llm.api_key.{provider}",),
+            )
+            row = await cursor.fetchone()
+            if row and row[0]:
+                from backend.app.core.crypto import decrypt_value
+                api_key = decrypt_value(row[0])
+        except Exception as e:
+            logger.debug("Could not read API key from agent DB for %s: %s", provider, e)
+
+    # 2. Environment variable fallback
     if not api_key:
-        provider = model.split("/")[0] if "/" in model else "anthropic"
-        import os
         api_key = os.environ.get(f"{provider.upper()}_API_KEY")
 
     extra_kwargs: dict = {}
@@ -368,15 +390,22 @@ async def _startup(config_path: str, data_dir: str) -> None:
 
     _state.agent_id = _state.config.get("agent_id", "default")
 
-    # Load API keys from config into environment (config file is 0600, read-only mount)
-    # This lets litellm find them via standard env var lookup
+    # Point BOND_HOME to the mounted vault key location for decryption
+    if not os.environ.get("BOND_HOME"):
+        os.environ["BOND_HOME"] = "/bond-home"
+
+    # Write encrypted API keys from config into agent DB settings table
+    # Keys stay encrypted at rest — only decrypted in memory when needed
     api_keys = _state.config.get("api_keys", {})
-    for provider, key in api_keys.items():
-        env_name = f"{provider.upper()}_API_KEY"
-        if key and env_name not in os.environ:
-            os.environ[env_name] = key
-    if api_keys:
-        logger.info("Loaded API keys for %d provider(s) from config", len(api_keys))
+    if api_keys and _state.agent_db:
+        for provider, encrypted_value in api_keys.items():
+            setting_key = f"llm.api_key.{provider}"
+            await _state.agent_db.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (setting_key, encrypted_value),
+            )
+        await _state.agent_db.commit()
+        logger.info("Stored encrypted API keys for %d provider(s) in agent DB", len(api_keys))
 
     # Initialize agent DB
     _state.agent_db = await _init_agent_db(_state.data_dir)

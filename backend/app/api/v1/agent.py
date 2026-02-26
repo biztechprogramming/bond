@@ -391,13 +391,17 @@ async def resolve_agent(
         # Containerized agent — ensure worker is running
         try:
             sandbox_manager = get_sandbox_manager()
-            # Resolve API keys for the container
-            from backend.app.agent.llm import _resolve_api_key
-            api_keys = {}
+            # Read encrypted API keys from settings DB (no decryption here)
+            encrypted_keys = {}
             for provider in ("anthropic", "openai", "google", "voyage"):
-                key = await _resolve_api_key(provider)
-                if key:
-                    api_keys[provider] = key
+                setting_key = f"llm.api_key.{provider}"
+                result = await db.execute(
+                    text("SELECT value FROM settings WHERE key = :key"),
+                    {"key": setting_key},
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    encrypted_keys[provider] = row[0]  # still encrypted
 
             # Build agent dict for ensure_running
             agent_dict = {
@@ -405,7 +409,7 @@ async def resolve_agent(
                 "sandbox_image": sandbox_image,
                 "model": agent_row.get("model", "claude-sonnet-4-20250514"),
                 "system_prompt": agent_row.get("system_prompt", ""),
-                "api_keys": api_keys,
+                "api_keys": encrypted_keys,  # encrypted — agent decrypts
             }
             info = await sandbox_manager.ensure_running(agent_dict)
             return {
