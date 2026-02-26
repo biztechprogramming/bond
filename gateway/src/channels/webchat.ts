@@ -290,10 +290,13 @@ export class WebChatChannel {
         agentStatus: "idle",
         conversationId,
       });
+      const isAbort = err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"));
       this.send(socket, {
         type: "error",
         sessionId,
-        error: err instanceof Error ? err.message : "Agent error",
+        error: isAbort
+          ? "The agent took too long to respond and the request timed out. Try a simpler request or check the agent logs."
+          : err instanceof Error ? err.message : "Agent error",
       });
     }
   }

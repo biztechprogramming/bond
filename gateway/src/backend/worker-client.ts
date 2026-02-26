@@ -15,7 +15,7 @@ export interface WorkerSSEEvent extends SSEEvent {
   event: "status" | "chunk" | "tool_call" | "memory" | "done" | "error" | string;
 }
 
-const TURN_TIMEOUT_MS = 300_000; // 5 minutes
+const TURN_TIMEOUT_MS = 600_000; // 10 minutes
 
 export class WorkerClient {
   constructor(private workerUrl: string) {}

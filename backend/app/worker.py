@@ -328,6 +328,21 @@ async def _run_agent_loop(
             len(llm_message.content or ""),
         )
 
+        # Detect finish_reason=length — LLM hit max_tokens, tool calls are truncated
+        if choice.finish_reason == "length":
+            consecutive_length_hits = getattr(_state, "_consecutive_length_hits", 0) + 1
+            _state._consecutive_length_hits = consecutive_length_hits
+            logger.warning("finish_reason=length (hit %d consecutive)", consecutive_length_hits)
+            if consecutive_length_hits >= 2:
+                logger.error("Aborting: %d consecutive truncated responses — likely stuck in a loop", consecutive_length_hits)
+                return (
+                    "I hit the token limit multiple times in a row, which means my response was being "
+                    "truncated. This usually happens with very large file writes. Let me try a different "
+                    "approach — could you tell me what you'd like me to focus on?"
+                ), tool_calls_made
+        else:
+            _state._consecutive_length_hits = 0
+
         if llm_message.tool_calls:
             messages.append(llm_message.model_dump())
 
