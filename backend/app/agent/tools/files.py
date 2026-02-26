@@ -19,8 +19,16 @@ def _translate_container_to_host(path_str: str, mounts: list[dict]) -> str:
     """Translate a container path to its host path using workspace mounts.
 
     If the path matches a container_path mount prefix, replace with host_path.
+    If the path is relative (no leading /), prepend the first mount's host_path.
     If no mount matches, return the original path.
     """
+    # Handle relative paths — assume they're relative to the first workspace
+    if not path_str.startswith("/") and mounts:
+        host_path = os.path.expanduser(mounts[0].get("host_path", ""))
+        translated = os.path.join(host_path, path_str)
+        logger.info("Relative path resolved: '%s' → '%s'", path_str, translated)
+        return translated
+
     for mount in mounts:
         container_path = mount.get("container_path") or f"/workspace/{mount.get('mount_name', '')}"
         host_path = os.path.expanduser(mount.get("host_path", ""))
