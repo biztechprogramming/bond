@@ -54,6 +54,29 @@ async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
         return None
 
 
+def _translate_to_container_path(path_str: str, mounts: list[dict]) -> str:
+    """Translate a host path to its container path using workspace mounts.
+
+    If the path matches a host_path mount, replace the prefix with container_path.
+    If it's already a container path, return as-is.
+    """
+    expanded = os.path.expanduser(path_str)
+    resolved = str(Path(expanded).resolve()) if not path_str.startswith("/workspace") else path_str
+
+    for mount in mounts:
+        host_path = str(Path(os.path.expanduser(mount.get("host_path", ""))).resolve())
+        container_path = mount.get("container_path") or f"/workspace/{mount.get('mount_name', '')}"
+
+        # Check if the path starts with the host mount path
+        if resolved.startswith(host_path):
+            relative = resolved[len(host_path):]
+            if not relative or relative.startswith("/"):
+                return container_path + relative
+
+    # Return original path (might already be a container path)
+    return path_str
+
+
 async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
@@ -64,11 +87,14 @@ async def handle_file_read(
     # Sandbox mode: read via docker exec
     container_id = await _get_sandbox_container(context)
     if container_id:
+        mounts = context.get("workspace_mounts", [])
+        container_path = _translate_to_container_path(path_str, mounts)
+        logger.debug("file_read: %s → %s (container)", path_str, container_path)
         from backend.app.sandbox.manager import get_sandbox_manager
         manager = get_sandbox_manager()
         result = await manager.execute(
             container_id, "shell",
-            f'cat {_shell_escape(path_str)}',
+            f'cat {_shell_escape(container_path)}',
             timeout=10,
         )
         if result.get("exit_code") == 0:
@@ -112,13 +138,14 @@ async def handle_file_write(
     # Sandbox mode: write via docker exec
     container_id = await _get_sandbox_container(context)
     if container_id:
+        mounts = context.get("workspace_mounts", [])
+        container_path = _translate_to_container_path(path_str, mounts)
+        logger.debug("file_write: %s → %s (container)", path_str, container_path)
         from backend.app.sandbox.manager import get_sandbox_manager
         manager = get_sandbox_manager()
-        # Use heredoc to handle special characters in content
-        escaped_content = content.replace("'", "'\\''")
         result = await manager.execute(
             container_id, "shell",
-            f"mkdir -p $(dirname {_shell_escape(path_str)}) && cat > {_shell_escape(path_str)} << 'BONDEOF'\n{content}\nBONDEOF",
+            f"mkdir -p $(dirname {_shell_escape(container_path)}) && cat > {_shell_escape(container_path)} << 'BONDEOF'\n{content}\nBONDEOF",
             timeout=10,
         )
         if result.get("exit_code") == 0:
