@@ -215,7 +215,7 @@ async def agent_turn(
             messages=messages,
             tools=tool_defs if tool_defs else None,
             temperature=0.7,
-            max_tokens=4096,
+            max_tokens=16384,
             **extra_kwargs,
         )
 
