@@ -108,8 +108,13 @@ export default function Home() {
       .then(r => r.json())
       .then((data: { id: string; display_name: string; is_default: boolean }[]) => {
         setAgents(data);
-        const def = data.find(a => a.is_default);
-        if (def && !selectedAgentId) setSelectedAgentId(def.id);
+        // Don't set default here — let conversations_list set agent from stored conversation
+        // Only set default if no conversation is stored
+        const storedConvId = localStorage.getItem("bond-conversation-id");
+        if (!storedConvId) {
+          const def = data.find(a => a.is_default);
+          if (def) setSelectedAgentId(def.id);
+        }
       })
       .catch(() => {});
   }, []);
