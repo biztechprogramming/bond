@@ -95,7 +95,7 @@ class SandboxManager:
             "model": agent.get("model", "claude-sonnet-4-20250514"),
             "system_prompt": agent.get("system_prompt", "You are a helpful assistant."),
             "tools": agent.get("tools", ["respond", "search_memory", "memory_save"]),
-            "api_keys": agent.get("api_keys", {}),
+            # No API keys here — they go directly to agent DB (encrypted)
         }
 
         # Use os.open with explicit mode to avoid race window between open() and chmod()
@@ -232,6 +232,11 @@ class SandboxManager:
                 port = self._allocate_port(key)
                 config_path = self._write_agent_config(agent)
 
+                # Seed encrypted API keys into agent DB before worker starts
+                encrypted_keys = agent.get("encrypted_api_keys", {})
+                if encrypted_keys:
+                    await self._seed_agent_db(agent_id, encrypted_keys)
+
                 container_id = await self._create_worker_container(
                     agent, key, port, config_path,
                 )
@@ -367,6 +372,72 @@ class SandboxManager:
         )
 
         return container_id
+
+    async def _seed_agent_db(
+        self,
+        agent_id: str,
+        encrypted_keys: dict[str, str],
+    ) -> None:
+        """Seed encrypted API keys into the agent DB via a one-shot init container.
+
+        Runs a short-lived container that mounts the same Docker volume,
+        creates the settings table if needed, and writes encrypted key blobs.
+        Keys are never decrypted here — they stay encrypted at rest.
+        """
+        volume_name = f"bond-agent-{agent_id}"
+
+        # Build SQL statements to seed keys
+        sql_parts = [
+            "CREATE TABLE IF NOT EXISTS settings "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL, "
+            "created_at TEXT NOT NULL DEFAULT (datetime('now')), "
+            "updated_at TEXT NOT NULL DEFAULT (datetime('now')))"
+        ]
+        params = []
+        for provider, encrypted_value in encrypted_keys.items():
+            setting_key = f"llm.api_key.{provider}"
+            # Use parameter binding via Python script to avoid shell escaping issues
+            params.append((setting_key, encrypted_value))
+
+        # Build a small Python script that does the DB writes
+        # This avoids shell escaping issues with encrypted values containing special chars
+        import base64
+        params_b64 = base64.b64encode(json.dumps(params).encode()).decode()
+
+        script = (
+            "import sqlite3, json, base64, os; "
+            "db = sqlite3.connect('/data/agent.db'); "
+            f"db.execute('{sql_parts[0]}'); "
+            f"params = json.loads(base64.b64decode('{params_b64}')); "
+            "[db.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', p) for p in params]; "
+            "db.commit(); db.close(); "
+            f"print(f'Seeded {{len(params)}} encrypted key(s) into agent DB')"
+        )
+
+        cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{volume_name}:/data",
+            "bond-agent-worker",
+            "python", "-c", script,
+        ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            logger.warning(
+                "Failed to seed agent DB for %s: %s",
+                agent_id, stderr.decode(),
+            )
+        else:
+            logger.info(
+                "Seeded agent DB for %s: %s",
+                agent_id, stdout.decode().strip(),
+            )
 
     # ------------------------------------------------------------------
     # Host-mode container (backward compat — Task 7)

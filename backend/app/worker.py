@@ -394,18 +394,20 @@ async def _startup(config_path: str, data_dir: str) -> None:
     if not os.environ.get("BOND_HOME"):
         os.environ["BOND_HOME"] = "/bond-home"
 
-    # Write encrypted API keys from config into agent DB settings table
-    # Keys stay encrypted at rest — only decrypted in memory when needed
-    api_keys = _state.config.get("api_keys", {})
-    if api_keys and _state.agent_db:
-        for provider, encrypted_value in api_keys.items():
-            setting_key = f"llm.api_key.{provider}"
-            await _state.agent_db.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-                (setting_key, encrypted_value),
+    # Verify encrypted keys are available in agent DB (seeded by host init container)
+    if _state.agent_db:
+        try:
+            cursor = await _state.agent_db.execute(
+                "SELECT COUNT(*) FROM settings WHERE key LIKE 'llm.api_key.%'"
             )
-        await _state.agent_db.commit()
-        logger.info("Stored encrypted API keys for %d provider(s) in agent DB", len(api_keys))
+            row = await cursor.fetchone()
+            key_count = row[0] if row else 0
+            if key_count > 0:
+                logger.info("Found %d encrypted API key(s) in agent DB", key_count)
+            else:
+                logger.warning("No API keys found in agent DB settings table")
+        except Exception:
+            logger.debug("Settings table not yet available in agent DB")
 
     # Initialize agent DB
     _state.agent_db = await _init_agent_db(_state.data_dir)
