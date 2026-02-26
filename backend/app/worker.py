@@ -203,21 +203,32 @@ async def turn(request: Request) -> StreamingResponse:
     history = body.get("history", [])
     conversation_id = body.get("conversation_id", "")
 
+    import asyncio
+    event_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def run_loop():
+        try:
+            response_text, tool_calls_made = await _run_agent_loop(
+                message, history, conversation_id, event_queue=event_queue,
+            )
+            await event_queue.put(_sse_event("chunk", {"content": response_text}))
+            await event_queue.put(_sse_event("done", {"response": response_text, "tool_calls_made": tool_calls_made}))
+        except Exception as e:
+            logger.exception("Agent loop failed")
+            await event_queue.put(_sse_event("error", {"message": str(e)}))
+            await event_queue.put(_sse_event("done", {"response": "", "tool_calls_made": 0, "error": str(e)}))
+        await event_queue.put(None)  # sentinel
+
     async def event_stream():
         yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
 
-        try:
-            response_text, tool_calls_made = await _run_agent_loop(
-                message, history, conversation_id, event_stream_callback=None,
-            )
-        except Exception as e:
-            logger.exception("Agent loop failed")
-            yield _sse_event("error", {"message": str(e)})
-            yield _sse_event("done", {"response": "", "tool_calls_made": 0, "error": str(e)})
-            return
-
-        yield _sse_event("chunk", {"content": response_text})
-        yield _sse_event("done", {"response": response_text, "tool_calls_made": tool_calls_made})
+        task = asyncio.create_task(run_loop())
+        while True:
+            event = await event_queue.get()
+            if event is None:
+                break
+            yield event
+        await task
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -232,7 +243,7 @@ async def _run_agent_loop(
     history: list[dict],
     conversation_id: str,
     *,
-    event_stream_callback: Any = None,
+    event_queue: Any = None,
 ) -> tuple[str, int]:
     """Run the agent tool-use loop locally.
 
@@ -356,6 +367,15 @@ async def _run_agent_loop(
                 tool_calls_made += 1
                 logger.info("Tool call [%d]: %s args=%s", tool_calls_made, tool_name,
                             {k: (v[:80] + '...' if isinstance(v, str) and len(v) > 80 else v) for k, v in tool_args.items()})
+
+                # Emit tool_call event for live progress
+                if event_queue is not None:
+                    await event_queue.put(_sse_event("status", {"state": "tool_calling"}))
+                    await event_queue.put(_sse_event("tool_call", {
+                        "tool_name": tool_name,
+                        "args": {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in tool_args.items()},
+                        "tool_calls_made": tool_calls_made,
+                    }))
 
                 if tool_name not in agent_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled."}

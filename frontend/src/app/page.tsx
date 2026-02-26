@@ -13,6 +13,16 @@ interface ChatMessage {
   agentName?: string;
 }
 
+function _toolIcon(name: string): string {
+  const icons: Record<string, string> = {
+    file_read: "📄", file_write: "📝", code_execute: "⚡", web_search: "🔍",
+    web_read: "🌐", memory_save: "💾", search_memory: "🧠", memory_update: "💾",
+    memory_delete: "🗑️", respond: "💬", browser: "🖥️", email: "✉️",
+    cron: "⏰", notify: "🔔", call_subordinate: "🤖", skills: "🧩",
+  };
+  return icons[name] || "🔧";
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -34,6 +44,8 @@ export default function Home() {
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const currentAgentNameRef = useRef<string>("Agent");
+  const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
+  const [showToolLog, setShowToolLog] = useState(false);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
@@ -123,6 +135,30 @@ export default function Home() {
         if (status !== "idle") {
           setLoading(true);
         }
+      } else if (msg.type === "tool_call" && msg.content) {
+        try {
+          const data = JSON.parse(msg.content);
+          const name = data.tool_name || data.name || "tool";
+          const args = data.args ? (typeof data.args === "string" ? data.args : JSON.stringify(data.args)) : "";
+          // Summarize args for display
+          let summary = "";
+          if (name === "file_write" || name === "file_read") {
+            const parsed = typeof data.args === "string" ? JSON.parse(data.args) : data.args;
+            summary = parsed?.path || args.substring(0, 60);
+          } else if (name === "code_execute") {
+            summary = "running code...";
+          } else if (name === "web_search" || name === "web_read") {
+            const parsed = typeof data.args === "string" ? JSON.parse(data.args) : data.args;
+            summary = parsed?.query || parsed?.url || args.substring(0, 60);
+          } else if (name === "memory_save" || name === "search_memory") {
+            summary = "memory";
+          } else if (name === "respond") {
+            summary = "";
+          } else {
+            summary = args.substring(0, 60);
+          }
+          setToolActivity((prev) => [...prev, { name, args: summary, time: Date.now() }]);
+        } catch { /* ignore parse errors */ }
       } else if (msg.type === "chunk" && msg.content) {
         setStreamingContent((prev) => prev + msg.content!);
         setAgentStatus("responding");
@@ -143,6 +179,8 @@ export default function Home() {
         });
         setLoading(false);
         setAgentStatus("idle");
+        setToolActivity([]);
+        setShowToolLog(false);
         if (msg.conversationId) {
           setConversationId(msg.conversationId);
         }
@@ -438,6 +476,45 @@ export default function Home() {
                   "Thinking..."
                 )}
               </div>
+              {/* Live tool activity */}
+              {toolActivity.length > 0 && !streamingContent && (
+                <div style={{ marginTop: "8px" }}>
+                  {/* Current activity line */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.8rem", color: "#6c8aff" }}>
+                    <span style={{ animation: "pulse 1.5s ease-in-out infinite", display: "inline-block" }}>●</span>
+                    <span>{_toolIcon(toolActivity[toolActivity.length - 1].name)} {toolActivity[toolActivity.length - 1].name}</span>
+                    {toolActivity[toolActivity.length - 1].args && (
+                      <span style={{ color: "#5a5a6e", fontFamily: "monospace", fontSize: "0.75rem" }}>
+                        {toolActivity[toolActivity.length - 1].args}
+                      </span>
+                    )}
+                    <span style={{ color: "#5a5a6e", marginLeft: "auto" }}>
+                      {toolActivity.length} tool call{toolActivity.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  {/* Expandable log */}
+                  <button
+                    onClick={() => setShowToolLog(!showToolLog)}
+                    style={{ background: "none", border: "none", color: "#5a5a6e", fontSize: "0.75rem", cursor: "pointer", padding: "4px 0", marginTop: "4px" }}
+                  >
+                    {showToolLog ? "▼ Hide activity" : "▶ Show activity log"}
+                  </button>
+                  {showToolLog && (
+                    <div style={{
+                      maxHeight: "200px", overflowY: "auto", fontSize: "0.75rem", fontFamily: "monospace",
+                      backgroundColor: "#0a0a14", borderRadius: "6px", padding: "8px", marginTop: "4px",
+                    }}>
+                      {toolActivity.map((t, i) => (
+                        <div key={i} style={{ padding: "2px 0", color: i === toolActivity.length - 1 ? "#6c8aff" : "#5a5a6e" }}>
+                          <span style={{ color: "#3a3a4e", marginRight: "6px" }}>{i + 1}.</span>
+                          {_toolIcon(t.name)} {t.name}
+                          {t.args && <span style={{ color: "#3a3a4e", marginLeft: "6px" }}>{t.args}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <div ref={messagesEndRef} />

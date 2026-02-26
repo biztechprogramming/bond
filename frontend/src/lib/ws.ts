@@ -15,7 +15,7 @@ export interface ConversationSummary {
 
 export interface GatewayMessage {
   type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list"
-    | "queued" | "status" | "done" | "new_input";
+    | "queued" | "status" | "tool_call" | "done" | "new_input";
   sessionId?: string;
   content?: string;
   error?: string;

@@ -19,7 +19,7 @@ export default function RootLayout({
         color: "#e0e0e8",
       }}>
         {children}
-        {/* removed - handled in page.tsx */}
+        <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       </body>
     </html>
   );
