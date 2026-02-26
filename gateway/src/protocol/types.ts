@@ -7,6 +7,7 @@ export interface IncomingMessage {
   sessionId?: string;
   content?: string;
   conversationId?: string;
+  agentId?: string;
 }
 
 export interface OutgoingMessage {

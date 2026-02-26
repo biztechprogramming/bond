@@ -120,7 +120,7 @@ export class WebChatChannel {
     }
 
     // Agent is idle — start a new turn with SSE streaming
-    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId);
+    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId, msg.agentId);
   }
 
   private async handleInterrupt(
@@ -164,13 +164,14 @@ export class WebChatChannel {
     sessionId: string,
     message: string | undefined,
     conversationId: string | undefined,
+    agentId?: string,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
 
     try {
-      // Resolve agent mode — pass default agent ID if no conversation yet
-      const resolution = await this.backendClient.resolveAgent(conversationId, conversationId ? undefined : "default");
+      // Resolve agent mode — use explicit agentId if provided, otherwise default
+      const resolution = await this.backendClient.resolveAgent(conversationId, agentId || (conversationId ? undefined : "default"));
       console.log(
         `[gateway] Resolving agent for conversation ${resolution.conversation_id} → ${resolution.mode}` +
         (resolution.worker_url ? ` (worker ${resolution.worker_url})` : ""),

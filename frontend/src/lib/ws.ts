@@ -95,7 +95,7 @@ export class GatewayWebSocket {
     };
   }
 
-  send(content: string, conversationId?: string): void {
+  send(content: string, conversationId?: string, agentId?: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.error("[ws] Not connected");
       return;
@@ -107,6 +107,7 @@ export class GatewayWebSocket {
         sessionId: this.sessionId || "",
         content,
         conversationId,
+        agentId,
       })
     );
   }

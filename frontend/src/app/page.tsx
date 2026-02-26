@@ -26,6 +26,8 @@ export default function Home() {
   });
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -38,6 +40,18 @@ export default function Home() {
       localStorage.removeItem("bond-conversation-id");
     }
   }, [conversationId]);
+
+  // Fetch agents
+  useEffect(() => {
+    fetch("http://localhost:18790/api/v1/agents")
+      .then(r => r.json())
+      .then((data: { id: string; display_name: string; is_default: boolean }[]) => {
+        setAgents(data);
+        const def = data.find(a => a.is_default);
+        if (def && !selectedAgentId) setSelectedAgentId(def.id);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,8 +152,8 @@ export default function Home() {
     if (!loading) {
       setLoading(true);
     }
-    wsRef.current.send(content, conversationId || undefined);
-  }, [input, loading, conversationId]);
+    wsRef.current.send(content, conversationId || undefined, selectedAgentId || undefined);
+  }, [input, loading, conversationId, selectedAgentId]);
 
   const handleStop = useCallback(() => {
     if (!wsRef.current?.connected || !conversationId) return;
@@ -242,6 +256,20 @@ export default function Home() {
             <h1 style={styles.title}>Bond</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            {agents.length > 1 && (
+              <select
+                value={selectedAgentId || ""}
+                onChange={(e) => setSelectedAgentId(e.target.value)}
+                style={{
+                  backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px",
+                  padding: "6px 10px", color: "#e0e0e8", fontSize: "0.85rem", outline: "none",
+                }}
+              >
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>{a.display_name}{a.is_default ? " (default)" : ""}</option>
+                ))}
+              </select>
+            )}
             <a href="/settings" style={{ color: "#6c8aff", textDecoration: "none", fontSize: "0.85rem" }}>
               Settings
             </a>
