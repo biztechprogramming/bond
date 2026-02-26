@@ -96,6 +96,27 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "memory_delete",
+            "description": "Soft-delete a memory. The memory will no longer appear in search results but is retained for audit purposes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {
+                        "type": "string",
+                        "description": "The ID of the memory to delete.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Reason for deletion.",
+                    },
+                },
+                "required": ["memory_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "code_execute",
             "description": "Execute code in a sandboxed environment. Supports Python and shell scripts.",
             "parameters": {

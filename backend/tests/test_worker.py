@@ -395,6 +395,7 @@ def test_native_registry_has_expected_tools():
     registry = build_native_registry()
     expected = {
         "respond", "search_memory", "memory_save",
+        "memory_update", "memory_delete",
         "code_execute", "file_read", "file_write",
         "web_search", "web_read",
     }

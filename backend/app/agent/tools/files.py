@@ -1,46 +1,19 @@
 """File read/write tools with workspace allowlist enforcement.
 
-File operations run on the host filesystem. When the agent uses container
-paths (e.g. /workspace/project), they are translated to host paths using
-the workspace mount mappings.
+When a sandbox image is configured, file operations route through
+docker exec on the sandbox container. Otherwise, they operate on
+the host filesystem with workspace allowlist enforcement.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("bond.agent.tools.files")
-
-
-def _translate_container_to_host(path_str: str, mounts: list[dict]) -> str:
-    """Translate a container path to its host path using workspace mounts.
-
-    If the path matches a container_path mount prefix, replace with host_path.
-    If the path is relative (no leading /), prepend the first mount's host_path.
-    If no mount matches, return the original path.
-    """
-    # Handle relative paths — assume they're relative to the first workspace
-    if not path_str.startswith("/") and mounts:
-        host_path = os.path.expanduser(mounts[0].get("host_path", ""))
-        translated = os.path.join(host_path, path_str)
-        logger.info("Relative path resolved: '%s' → '%s'", path_str, translated)
-        return translated
-
-    for mount in mounts:
-        container_path = mount.get("container_path") or f"/workspace/{mount.get('mount_name', '')}"
-        host_path = os.path.expanduser(mount.get("host_path", ""))
-
-        if path_str.startswith(container_path):
-            relative = path_str[len(container_path):]
-            if not relative or relative.startswith("/"):
-                translated = host_path + relative
-                logger.info("Path translated: '%s' → '%s'", path_str, translated)
-                return translated
-
-    return path_str
 
 
 def _resolve_and_check(path_str: str, allowed_dirs: list[str]) -> Path | None:
@@ -62,18 +35,61 @@ def _resolve_and_check(path_str: str, allowed_dirs: list[str]) -> Path | None:
     return None
 
 
+def _shell_escape(s: str) -> str:
+    """Escape a string for safe use in shell commands."""
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
+    """Get or create the sandbox container if sandbox_image is configured."""
+    sandbox_image = context.get("sandbox_image")
+    if not sandbox_image:
+        return None
+
+    from backend.app.sandbox.manager import get_sandbox_manager
+    manager = get_sandbox_manager()
+    try:
+        container_id = await manager.get_or_create_container(
+            context.get("agent_id", "default"),
+            sandbox_image,
+            context.get("workspace_mounts", []),
+        )
+        return container_id
+    except Exception as e:
+        logger.warning("Failed to get sandbox container: %s", e)
+        return None
+
+
 async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Read a file from an allowed workspace directory."""
     path_str = arguments.get("path", "")
-    mounts = context.get("workspace_mounts", [])
+
+    # Sandbox mode: read via docker exec cat
+    container_id = await _get_sandbox_container(context)
+    if container_id:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", container_id, "cat", path_str,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except asyncio.TimeoutError:
+            return {"error": "Timed out reading file"}
+
+        if proc.returncode == 0:
+            content = stdout.decode("utf-8", errors="replace")
+            if len(content) > 100_000:
+                content = content[:100_000] + "\n... [truncated at 100KB]"
+            return {"content": content, "path": path_str, "size": len(stdout)}
+        else:
+            return {"error": stderr.decode("utf-8", errors="replace").strip() or "File not found or not readable"}
+
+    # Host mode: direct filesystem access with allowlist
     allowed_dirs = context.get("workspace_dirs", [])
-
-    # Translate container paths to host paths
-    path_str = _translate_container_to_host(path_str, mounts)
-
     if not allowed_dirs:
         return {"error": "No workspace directories configured for this agent."}
 
@@ -87,7 +103,6 @@ async def handle_file_read(
         if not resolved.is_file():
             return {"error": f"Not a file: {path_str}"}
         content = resolved.read_text(encoding="utf-8", errors="replace")
-        # Truncate very large files
         if len(content) > 100_000:
             content = content[:100_000] + "\n... [truncated at 100KB]"
         return {"content": content, "path": str(resolved), "size": resolved.stat().st_size}
@@ -102,12 +117,44 @@ async def handle_file_write(
     """Write content to a file in an allowed workspace directory."""
     path_str = arguments.get("path", "")
     content = arguments.get("content", "")
-    mounts = context.get("workspace_mounts", [])
+
+    # Sandbox mode: write via docker exec tee with stdin piping
+    container_id = await _get_sandbox_container(context)
+    if container_id:
+        # Ensure parent directory exists
+        parent_dir = str(Path(path_str).parent)
+        try:
+            mkdir_proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", container_id, "mkdir", "-p", parent_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(mkdir_proc.communicate(), timeout=10)
+        except asyncio.TimeoutError:
+            return {"error": "Timed out creating parent directory"}
+
+        # Write content via stdin piping to tee (no heredoc, no escaping needed)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", "-i", container_id, "tee", path_str,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=content.encode("utf-8")),
+                timeout=10,
+            )
+        except asyncio.TimeoutError:
+            return {"error": "Timed out writing file"}
+
+        if proc.returncode == 0:
+            return {"status": "written", "path": path_str, "bytes": len(content.encode("utf-8"))}
+        else:
+            return {"error": stderr.decode("utf-8", errors="replace").strip() or "Failed to write file"}
+
+    # Host mode: direct filesystem access with allowlist
     allowed_dirs = context.get("workspace_dirs", [])
-
-    # Translate container paths to host paths
-    path_str = _translate_container_to_host(path_str, mounts)
-
     if not allowed_dirs:
         return {"error": "No workspace directories configured for this agent."}
 

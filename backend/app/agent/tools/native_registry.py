@@ -16,7 +16,9 @@ def build_native_registry() -> ToolRegistry:
         handle_code_execute,
         handle_file_read,
         handle_file_write,
+        handle_memory_delete,
         handle_memory_save,
+        handle_memory_update,
         handle_respond,
         handle_search_memory,
     )
@@ -26,6 +28,8 @@ def build_native_registry() -> ToolRegistry:
     registry.register("respond", handle_respond)
     registry.register("search_memory", handle_search_memory)
     registry.register("memory_save", handle_memory_save)
+    registry.register("memory_update", handle_memory_update)
+    registry.register("memory_delete", handle_memory_delete)
     registry.register("code_execute", handle_code_execute)
     registry.register("file_read", handle_file_read)
     registry.register("file_write", handle_file_write)

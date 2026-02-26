@@ -34,17 +34,77 @@ CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
     content TEXT NOT NULL,
+    summary TEXT,
+    source_type TEXT,
+    source_id TEXT,
+    sensitivity TEXT NOT NULL DEFAULT 'normal'
+        CHECK(sensitivity IN ('normal', 'personal', 'secret')),
+    metadata JSON DEFAULT '{}' CHECK(json_valid(metadata)),
+    importance REAL NOT NULL DEFAULT 0.5
+        CHECK(importance BETWEEN 0.0 AND 1.0),
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_accessed_at TIMESTAMP,
+    embedding_model TEXT,
+    processed_at TIMESTAMP,
+    deleted_at TIMESTAMP,
     confidence REAL DEFAULT 1.0,
     promoted INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    superseded_by TEXT
+    updated_at TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_mem_type ON memories(type);
+CREATE INDEX IF NOT EXISTS idx_mem_active ON memories(deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_mem_importance ON memories(importance DESC);
+
+CREATE TRIGGER IF NOT EXISTS memories_updated_at
+    AFTER UPDATE ON memories FOR EACH ROW
+BEGIN
+    UPDATE memories SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    id UNINDEXED,
     content,
-    content='memories',
-    content_rowid='rowid'
+    summary
+);
+
+CREATE TRIGGER IF NOT EXISTS mem_fts_insert AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(id, content, summary)
+    VALUES (NEW.id, NEW.content, NEW.summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS mem_fts_update AFTER UPDATE OF content, summary ON memories BEGIN
+    DELETE FROM memories_fts WHERE id = OLD.id;
+    INSERT INTO memories_fts(id, content, summary)
+    VALUES (NEW.id, NEW.content, NEW.summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS mem_fts_delete AFTER DELETE ON memories BEGIN
+    DELETE FROM memories_fts WHERE id = OLD.id;
+END;
+
+CREATE TABLE IF NOT EXISTS memory_versions (
+    id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    previous_content TEXT,
+    new_content TEXT NOT NULL,
+    previous_type TEXT,
+    new_type TEXT NOT NULL,
+    changed_by TEXT NOT NULL,
+    change_reason TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mv_memory ON memory_versions(memory_id, version);
+
+CREATE TABLE IF NOT EXISTS entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    attributes TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS content_chunks (
