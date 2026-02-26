@@ -876,10 +876,12 @@ async def _refresh_shared_db(self):
             logger.warning("Failed to re-attach shared.db: %s", e)
 ```
 
-## 16. Open Questions
+3. **Embedding models** — ✅ Most embeddings will use API providers (Voyage, Gemini, OpenAI). For local models (voyage-4-nano, ~340M), mount the model directory from the host rather than baking it into the image. Keeps images small, avoids re-downloading.
 
-1. **Embedding model in container** — If agents use local embeddings (voyage-4-nano), the model needs to be in the container. Mount it? Include in image? Download on first run?
+```
+-v ~/bond/models/voyage-4-nano:/models/voyage-4-nano:ro
+```
 
-2. **Container image base** — The sandbox image needs Python + uvicorn + litellm + httpx + aiosqlite. Build a `bond-agent-base` image that all sandbox images inherit from?
+4. **Container image base** — ✅ Build a `bond-agent-base` image with Python, uvicorn, litellm, httpx, aiosqlite, trafilatura, and other agent dependencies. All sandbox images inherit from it (`FROM bond-agent-base`). User-facing sandbox images add their own packages on top.
 
-3. **Multiple workspaces, one container** — Current model is one container per agent. If an agent has 5 workspace mounts, they're all in one container. Is that always right?
+5. **Multiple workspaces, one container** — ✅ All workspace mounts for an agent go into one container. The agent sees everything it's configured to access under `/workspace/`.
