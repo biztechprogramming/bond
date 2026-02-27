@@ -252,6 +252,28 @@ async def interrupt(request: Request) -> dict:
     return {"acknowledged": True}
 
 
+
+
+def _discover_workspace() -> str | None:
+    """List contents of /workspace to orient the agent on what's mounted."""
+    workspace = Path("/workspace")
+    if not workspace.exists():
+        return None
+    try:
+        entries = sorted(p.name for p in workspace.iterdir() if not p.name.startswith("."))
+        if not entries:
+            return None
+        listing = ", ".join(entries)
+        return (
+            "## Workspace\n"
+            "The /workspace directory contains: " + listing + "\n"
+            "Use these paths for file operations. Do not guess paths "
+            "-- if a path does not exist, check /workspace/ contents."
+        )
+    except OSError:
+        return None
+
+
 def _sse_event(event: str, data: Any) -> str:
     """Format a Server-Sent Event."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
