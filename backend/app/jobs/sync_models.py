@@ -22,8 +22,19 @@ def _bearer_auth(key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"}
 
 
+_PROVIDER_LABELS: dict[str, str] = {
+    "openai": "OpenAI",
+    "deepseek": "DeepSeek",
+    "groq": "Groq",
+    "mistral": "Mistral",
+    "xai": "xAI",
+    "openrouter": "OpenRouter",
+}
+
+
 def _parse_openai_compat(data: dict, prefix: str) -> list[tuple[str, str]]:
     """Parse OpenAI-compatible /v1/models response. Filter to chat models."""
+    label = _PROVIDER_LABELS.get(prefix, prefix.title())
     models = []
     for m in data.get("data", []):
         mid = m.get("id", "")
@@ -38,25 +49,89 @@ def _parse_openai_compat(data: dict, prefix: str) -> list[tuple[str, str]]:
         # Use model id as name if no display name
         if name == mid:
             name = mid.replace("-", " ").title()
-        models.append((litellm_id, name))
+        models.append((litellm_id, _prefixed_name(label, name)))
     return models
 
 
 # ── Provider-specific fetchers ────────────────────────────────
 
 
-# Well-known Anthropic models — used when OAuth token can't hit /v1/models
-_ANTHROPIC_FALLBACK_MODELS: list[tuple[str, str]] = [
-    ("claude-sonnet-4-20250514", "Claude Sonnet 4"),
-    ("claude-opus-4-20250514", "Claude Opus 4"),
-    ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku"),
-    ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet"),
-    ("claude-3-haiku-20240307", "Claude 3 Haiku"),
-]
+_ANTHROPIC_DOCS_URL = "https://docs.anthropic.com/en/docs/about-claude/models"
+
+
+def _prefixed_name(provider_label: str, name: str) -> str:
+    """Add provider prefix to display name: 'Anthropic — Claude Sonnet 4'."""
+    return f"{provider_label} — {name}"
+
+
+def _model_id_to_display(mid: str) -> str:
+    """Convert a model ID like 'claude-opus-4-6' to 'Claude Opus 4.6'.
+
+    Handles patterns:
+      claude-opus-4-6       → Claude Opus 4.6
+      claude-opus-4-20250514 → Claude Opus 4 (2025-05-14)
+      claude-haiku-4-5-20251001 → Claude Haiku 4.5 (2025-10-01)
+      claude-3-haiku-20240307 → Claude 3 Haiku (2024-03-07)
+    """
+    import re
+    # Extract date suffix (8 digits)
+    date_match = re.search(r'-(\d{4})(\d{2})(\d{2})$', mid)
+    date_str = ""
+    base = mid
+    if date_match:
+        date_str = f" ({date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)})"
+        base = mid[:date_match.start()]
+
+    parts = base.split("-")
+    # Rebuild: words get title-cased, consecutive digit groups get joined with dots
+    result = []
+    i = 0
+    while i < len(parts):
+        p = parts[i]
+        if p.isdigit():
+            # Collect consecutive digit parts → join with dots (e.g. 4-5 → 4.5)
+            nums = [p]
+            while i + 1 < len(parts) and parts[i + 1].isdigit() and len(parts[i + 1]) <= 2:
+                i += 1
+                nums.append(parts[i])
+            result.append(".".join(nums))
+        else:
+            result.append(p.title())
+        i += 1
+
+    return " ".join(result) + date_str
+
+
+async def _scrape_anthropic_models(client: httpx.AsyncClient) -> list[tuple[str, str]]:
+    """Scrape model IDs from Anthropic's docs page."""
+    import re
+    resp = await client.get(_ANTHROPIC_DOCS_URL, follow_redirects=True)
+    resp.raise_for_status()
+    html = resp.text
+
+    ids: set[str] = set()
+    # Match model IDs like claude-opus-4-6, claude-sonnet-4-20250514, claude-3-haiku-20240307
+    for m in re.finditer(r'claude-(?:opus|sonnet|haiku)-[\w.-]+', html):
+        mid = m.group()
+        if any(x in mid for x in ('prompting', 'analytics', 'code', 'microsoft', 'amazon', 'vertex', 'foundry')):
+            continue
+        ids.add(mid)
+    for m in re.finditer(r'claude-[\d.]+-(?:opus|sonnet|haiku)(?:-[\d]+)?', html):
+        ids.add(m.group())
+
+    # Filter: keep short aliases and dated versions, skip -v1 Bedrock variants
+    models = []
+    for mid in sorted(ids):
+        if mid.endswith("-v1"):
+            continue
+        display = _model_id_to_display(mid)
+        models.append((f"anthropic/{mid}", _prefixed_name("Anthropic", display)))
+
+    return models
 
 
 async def _fetch_anthropic(client: httpx.AsyncClient, api_key: str, key_type: str = "api_key") -> list[tuple[str, str]]:
-    """Fetch Anthropic models. Uses fallback list for OAuth tokens."""
+    """Fetch Anthropic models via API (api_key) or docs scrape (OAuth)."""
     if key_type == "api_key":
         resp = await client.get(
             "https://api.anthropic.com/v1/models?limit=100",
@@ -71,17 +146,12 @@ async def _fetch_anthropic(client: httpx.AsyncClient, api_key: str, key_type: st
         for m in data.get("data", []):
             mid = m.get("id", "")
             display = m.get("display_name", mid)
-            models.append((mid, display))
-            models.append((f"anthropic/{mid}", f"{display} (anthropic/)"))
+            models.append((f"anthropic/{mid}", _prefixed_name("Anthropic", display)))
         return models
 
-    # OAuth token — use curated fallback list (no API call)
-    logger.info("sync_models: Anthropic using OAuth token, using known model list")
-    models = []
-    for mid, display in _ANTHROPIC_FALLBACK_MODELS:
-        models.append((mid, display))
-        models.append((f"anthropic/{mid}", f"{display} (anthropic/)"))
-    return models
+    # OAuth token — scrape from docs
+    logger.info("sync_models: Anthropic using OAuth token, scraping model list from docs")
+    return await _scrape_anthropic_models(client)
 
 
 async def _fetch_google(client: httpx.AsyncClient, api_key: str) -> list[tuple[str, str]]:
@@ -103,7 +173,7 @@ async def _fetch_google(client: httpx.AsyncClient, api_key: str) -> list[tuple[s
         if "generateContent" not in methods:
             continue
         litellm_id = f"gemini/{mid}"
-        models.append((litellm_id, display))
+        models.append((litellm_id, _prefixed_name("Google", display)))
     return models
 
 
