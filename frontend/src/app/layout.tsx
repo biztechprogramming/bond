@@ -19,7 +19,16 @@ export default function RootLayout({
         color: "#e0e0e8",
       }}>
         {children}
-        <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
+        <style>{`
+          @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+          @media (max-width: 768px) {
+            .board-main-content { flex-direction: column !important; }
+            .board-kanban-area { border-right: none !important; border-bottom: 1px solid #1e1e2e !important; max-height: 60vh !important; }
+            .board-chat-panel { max-width: none !important; min-width: 0 !important; }
+            .board-columns-container { flex-direction: column !important; }
+            .board-column { max-width: none !important; min-width: 0 !important; }
+          }
+        `}</style>
       </body>
     </html>
   );

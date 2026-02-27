@@ -15,7 +15,8 @@ export interface ConversationSummary {
 
 export interface GatewayMessage {
   type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list"
-    | "queued" | "status" | "tool_call" | "done" | "new_input";
+    | "queued" | "status" | "tool_call" | "done" | "new_input"
+    | "plan_created" | "plan_updated" | "item_updated" | "plan_completed";
   sessionId?: string;
   content?: string;
   error?: string;
@@ -27,6 +28,13 @@ export interface GatewayMessage {
   queuedCount?: number;
   messages?: Array<{ role: string; content: string; id?: string; created_at?: string }>;
   conversations?: ConversationSummary[];
+  // Plan event data
+  planId?: string;
+  planTitle?: string;
+  planStatus?: string;
+  itemId?: string;
+  itemTitle?: string;
+  itemStatus?: string;
 }
 
 export class GatewayWebSocket {

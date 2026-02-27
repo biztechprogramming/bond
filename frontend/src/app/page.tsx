@@ -13,14 +13,23 @@ interface ChatMessage {
   agentName?: string;
 }
 
+interface PlanCardData {
+  id: string;
+  title: string;
+  status: string;
+  items: { id: string; title: string; status: string }[];
+}
+
 function _toolIcon(name: string): string {
   const icons: Record<string, string> = {
-    file_read: "📄", file_write: "📝", code_execute: "⚡", web_search: "🔍",
-    web_read: "🌐", memory_save: "💾", search_memory: "🧠", memory_update: "💾",
-    memory_delete: "🗑️", respond: "💬", browser: "🖥️", email: "✉️",
-    cron: "⏰", notify: "🔔", call_subordinate: "🤖", skills: "🧩",
+    file_read: "\uD83D\uDCC4", file_write: "\uD83D\uDCDD", file_edit: "\u270F\uFE0F",
+    code_execute: "\u26A1", web_search: "\uD83D\uDD0D",
+    web_read: "\uD83C\uDF10", memory_save: "\uD83D\uDCBE", search_memory: "\uD83E\uDDE0",
+    memory_update: "\uD83D\uDCBE", memory_delete: "\uD83D\uDDD1\uFE0F", respond: "\uD83D\uDCAC",
+    browser: "\uD83D\uDDA5\uFE0F", email: "\u2709\uFE0F", cron: "\u23F0", notify: "\uD83D\uDD14",
+    call_subordinate: "\uD83E\uDD16", skills: "\uD83E\uDDE9", work_plan: "\uD83D\uDCCB",
   };
-  return icons[name] || "🔧";
+  return icons[name] || "\uD83D\uDD27";
 }
 
 export default function Home() {
@@ -46,6 +55,7 @@ export default function Home() {
   const currentAgentNameRef = useRef<string>("Agent");
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
   const [showToolLog, setShowToolLog] = useState(false);
+  const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
@@ -231,6 +241,24 @@ export default function Home() {
         setLoading(false);
         setAgentStatus("idle");
       }
+      // Plan events — update inline plan card
+      if (msg.type === "plan_created" && msg.planId && msg.planTitle) {
+        setActivePlan({ id: msg.planId, title: msg.planTitle, status: "active", items: [] });
+      } else if (msg.type === "item_updated" && msg.itemId && activePlan) {
+        setActivePlan(prev => {
+          if (!prev) return prev;
+          const items = prev.items.map(it =>
+            it.id === msg.itemId ? { ...it, status: msg.itemStatus || it.status } : it
+          );
+          // Add item if not found (new item added)
+          if (msg.itemId && !items.find(it => it.id === msg.itemId)) {
+            items.push({ id: msg.itemId, title: msg.itemTitle || "Item", status: msg.itemStatus || "new" });
+          }
+          return { ...prev, items };
+        });
+      } else if (msg.type === "plan_completed" && msg.planId) {
+        setActivePlan(prev => prev && prev.id === msg.planId ? { ...prev, status: msg.planStatus || "completed" } : prev);
+      }
     });
 
     ws.connect();
@@ -405,6 +433,12 @@ export default function Home() {
                 )}
               </div>
             )}
+            <a href="/board" style={{
+              color: "#8888a0", textDecoration: "none", fontSize: "0.85rem",
+              padding: "6px 12px", borderRadius: "8px", border: "1px solid #2a2a3e",
+            }}>
+              &#x1F4CB; Board
+            </a>
             <a href="/settings" style={{ color: "#6c8aff", textDecoration: "none", fontSize: "0.85rem" }}>
               Settings
             </a>
@@ -471,6 +505,28 @@ export default function Home() {
               <div style={styles.messageContent}>{msg.content}</div>
             </div>
           ))}
+          {/* Inline Plan Card */}
+          {activePlan && (
+            <div style={styles.planCard}>
+              <div style={styles.planCardHeader}>
+                <span>
+                  {activePlan.status === "active" ? "\uD83D\uDD04" : activePlan.status === "completed" ? "\u2705" : activePlan.status === "failed" ? "\u274C" : "\uD83D\uDCCB"}{" "}
+                  Plan: {activePlan.title}
+                </span>
+                <a href="/board" style={styles.planCardViewBtn}>View</a>
+              </div>
+              {activePlan.items.length > 0 && (
+                <div style={styles.planCardItems}>
+                  {activePlan.items.map(item => (
+                    <div key={item.id} style={styles.planCardItem}>
+                      <span>{item.status === "complete" || item.status === "done" ? "\u2705" : item.status === "in_progress" ? "\uD83D\uDD04" : item.status === "failed" ? "\u274C" : "\u2B1C"}</span>
+                      <span style={{ color: item.status === "in_progress" ? "#6c8aff" : "#e0e0e8" }}>{item.title}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {(loading || streamingContent) && (
             <div style={styles.message}>
               <div style={styles.messageRole}>{currentAgentNameRef.current}</div>
@@ -748,5 +804,42 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "1rem",
     fontWeight: 600,
     cursor: "pointer",
+  },
+  planCard: {
+    padding: "12px 16px",
+    borderRadius: "12px",
+    backgroundColor: "#12121a",
+    border: "1px solid #2a2a3e",
+    maxWidth: "85%",
+    alignSelf: "center" as const,
+  },
+  planCardHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    color: "#e0e0e8",
+    marginBottom: "8px",
+  },
+  planCardViewBtn: {
+    color: "#6c8aff",
+    textDecoration: "none",
+    fontSize: "0.78rem",
+    padding: "4px 10px",
+    borderRadius: "6px",
+    border: "1px solid #2a2a3e",
+  },
+  planCardItems: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "4px",
+  },
+  planCardItem: {
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+    fontSize: "0.82rem",
+    padding: "2px 0",
   },
 };
