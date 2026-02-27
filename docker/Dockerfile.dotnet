@@ -1,0 +1,106 @@
+# Bond Agent Worker — .NET Development Environment
+# Extends bond-agent-worker:latest with .NET SDKs, SQL Server tools,
+# and additional development tooling.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.dotnet -t bond-agent-dotnet:latest .
+#
+# Based on: claude-code-sandbox dotnet config
+
+FROM bond-agent-worker:latest
+
+USER root
+
+# Install prerequisites
+RUN apt-get update && apt-get install -y \
+    wget \
+    apt-transport-https \
+    gnupg \
+    less \
+    fzf \
+    tmux \
+    zsh \
+    jq \
+    unzip \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Microsoft package repository
+RUN wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \
+    && dpkg -i packages-microsoft-prod.deb \
+    && rm packages-microsoft-prod.deb
+
+# Install .NET 8 SDK and Runtime
+RUN apt-get update && apt-get install -y \
+    dotnet-sdk-8.0 \
+    aspnetcore-runtime-8.0 \
+    dotnet-runtime-8.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install .NET 9 SDK and Runtime
+RUN apt-get update && apt-get install -y \
+    dotnet-sdk-9.0 \
+    aspnetcore-runtime-9.0 \
+    dotnet-runtime-9.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install SQL Server command-line tools (sqlcmd and bcp)
+RUN curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22 (for frontend tooling, bun, etc.)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install bun for web projects
+RUN curl -fsSL https://bun.sh/install | bash \
+    && mv /root/.bun/bin/bun /usr/local/bin/ \
+    && chmod +x /usr/local/bin/bun \
+    && ln -sf /usr/local/bin/bun /usr/bin/bun
+
+# Install popular .NET global tools
+RUN dotnet tool install -g dotnet-ef \
+    && dotnet tool install -g dotnet-format \
+    && dotnet tool install -g dotnet-outdated-tool \
+    && dotnet tool install -g dotnet-reportgenerator-globaltool
+
+# Install delta for better git diffs
+RUN ARCH=$(dpkg --print-architecture) \
+    && wget "https://github.com/dandavison/delta/releases/download/0.18.2/git-delta_0.18.2_${ARCH}.deb" \
+    && dpkg -i "git-delta_0.18.2_${ARCH}.deb" \
+    && rm "git-delta_0.18.2_${ARCH}.deb"
+
+# Configure git with better defaults
+RUN git config --global core.pager "delta" \
+    && git config --global interactive.diffFilter "delta --color-only" \
+    && git config --global delta.navigate true \
+    && git config --global delta.light false \
+    && git config --global merge.conflictstyle diff3 \
+    && git config --global diff.colorMoved default
+
+# Environment
+ENV PATH="${PATH}:/root/.dotnet/tools:/opt/mssql-tools18/bin:/usr/local/share/npm-global/bin" \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+    DOTNET_NOLOGO=1 \
+    NPM_CONFIG_PREFIX=/usr/local/share/npm-global
+
+# Setup tmux
+RUN echo 'set -g mouse on' > /root/.tmux.conf \
+    && echo 'set -g history-limit 50000' >> /root/.tmux.conf \
+    && echo 'set -g display-time 4000' >> /root/.tmux.conf \
+    && echo 'set -g default-terminal "screen-256color"' >> /root/.tmux.conf
+
+# Verify installations
+RUN dotnet --list-sdks && dotnet --list-runtimes && node --version && bun --version
+
+# Keep root user (non-root deferred to container profiles — design doc 009)
+WORKDIR /bond
+
+EXPOSE 18791
+
+CMD ["python", "-m", "backend.app.worker", "--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]

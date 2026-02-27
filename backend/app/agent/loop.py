@@ -208,19 +208,42 @@ async def agent_turn(
         agent["name"], model_string, len(tool_defs), len(messages),
     )
 
+    # Adaptive max_tokens: start low, escalate on truncation
+    TOKEN_TIERS = [8192, 32768, 65536]
+    current_tier = 0
+    continuation_attempts = 0
+
     # Tool-use loop
     for iteration in range(max_iterations):
+        current_max_tokens = TOKEN_TIERS[current_tier]
         response = await litellm.acompletion(
             model=model_string,
             messages=messages,
             tools=tool_defs if tool_defs else None,
             temperature=0.7,
-            max_tokens=65536,
+            max_tokens=current_max_tokens,
             **extra_kwargs,
         )
 
         choice = response.choices[0]
         message = choice.message
+
+        # Handle truncation with continuation
+        if choice.finish_reason == "length":
+            continuation_attempts += 1
+            if continuation_attempts > 3:
+                return "Output token limit exceeded repeatedly. Try breaking the task into smaller pieces."
+            if current_tier < len(TOKEN_TIERS) - 1:
+                current_tier += 1
+                logger.info("Escalating max_tokens to %d after truncation", TOKEN_TIERS[current_tier])
+            partial = message.content or ""
+            if partial:
+                messages.append({"role": "assistant", "content": partial})
+                messages.append({"role": "user", "content": "Your response was cut off. Please continue exactly where you left off."})
+            continue
+
+        current_tier = 0
+        continuation_attempts = 0
 
         # Check for tool calls
         if message.tool_calls:

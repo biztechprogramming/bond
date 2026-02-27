@@ -306,6 +306,13 @@ async def _run_agent_loop(
     tool_calls_made = 0
     sse_events: list[str] = []  # collected for the SSE stream
 
+    # Adaptive max_tokens: start low (fast + cheap), escalate on truncation
+    # Tiers: 8192 → 32768 → 65536. Reset after each successful completion.
+    TOKEN_TIERS = [8192, 32768, 65536]
+    current_tier = 0  # index into TOKEN_TIERS
+    continuation_attempts = 0  # consecutive continuations for a single response
+    MAX_CONTINUATIONS = 3  # max times we'll try to continue a truncated response
+
     for _iteration in range(max_iterations):
         # Check interrupt
         if _state.interrupt_event.is_set():
@@ -315,9 +322,11 @@ async def _run_agent_loop(
                 messages.append(msg)
             _state.pending_messages.clear()
 
+        current_max_tokens = TOKEN_TIERS[current_tier]
         logger.info(
-            "LLM request: model=%s tools=%d tool_names=%s",
-            model, len(tool_defs), [t["function"]["name"] for t in tool_defs],
+            "LLM request: model=%s tools=%d max_tokens=%d tier=%d tool_names=%s",
+            model, len(tool_defs), current_max_tokens, current_tier,
+            [t["function"]["name"] for t in tool_defs],
         )
 
         response = await litellm.acompletion(
@@ -325,7 +334,7 @@ async def _run_agent_loop(
             messages=messages,
             tools=tool_defs if tool_defs else None,
             temperature=0.7,
-            max_tokens=65536,
+            max_tokens=current_max_tokens,
             **extra_kwargs,
         )
 
@@ -333,26 +342,54 @@ async def _run_agent_loop(
         llm_message = choice.message
 
         logger.info(
-            "LLM response: has_tool_calls=%s finish_reason=%s content_len=%d",
+            "LLM response: has_tool_calls=%s finish_reason=%s content_len=%d max_tokens=%d",
             bool(llm_message.tool_calls),
             choice.finish_reason,
             len(llm_message.content or ""),
+            current_max_tokens,
         )
 
-        # Detect finish_reason=length — LLM hit max_tokens, tool calls are truncated
+        # Handle finish_reason=length — output was truncated
         if choice.finish_reason == "length":
-            consecutive_length_hits = getattr(_state, "_consecutive_length_hits", 0) + 1
-            _state._consecutive_length_hits = consecutive_length_hits
-            logger.warning("finish_reason=length (hit %d consecutive)", consecutive_length_hits)
-            if consecutive_length_hits >= 2:
-                logger.error("Aborting: %d consecutive truncated responses — likely stuck in a loop", consecutive_length_hits)
+            continuation_attempts += 1
+            partial_content = llm_message.content or ""
+
+            if continuation_attempts > MAX_CONTINUATIONS:
+                logger.error(
+                    "Aborting after %d continuation attempts — response keeps exceeding token limit",
+                    continuation_attempts,
+                )
                 return (
-                    "I hit the token limit multiple times in a row, which means my response was being "
-                    "truncated. This usually happens with very large file writes. Let me try a different "
-                    "approach — could you tell me what you'd like me to focus on?"
+                    "I hit the output token limit multiple times even at the highest setting. "
+                    "This usually happens with very large file writes. Try asking me to write "
+                    "the file in smaller sections, or break the task into smaller pieces."
                 ), tool_calls_made
-        else:
-            _state._consecutive_length_hits = 0
+
+            # Escalate to next tier
+            if current_tier < len(TOKEN_TIERS) - 1:
+                current_tier += 1
+                logger.info(
+                    "Truncated response — escalating max_tokens to %d (tier %d), attempting continuation %d/%d",
+                    TOKEN_TIERS[current_tier], current_tier, continuation_attempts, MAX_CONTINUATIONS,
+                )
+
+            # Assistant prefill continuation (like Aider/Claude Code):
+            # Append partial response as assistant, ask model to continue
+            if partial_content:
+                messages.append({"role": "assistant", "content": partial_content})
+                messages.append({
+                    "role": "user",
+                    "content": "Your response was cut off due to the output length limit. Please continue exactly where you left off.",
+                })
+            else:
+                # Truncated with no content (truncated tool call) — retry at higher tier
+                logger.warning("Truncated with no content — retrying at higher tier")
+
+            continue  # retry this iteration
+
+        # Successful completion — reset adaptive tokens
+        current_tier = 0
+        continuation_attempts = 0
 
         if llm_message.tool_calls:
             messages.append(llm_message.model_dump())
