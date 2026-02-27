@@ -303,7 +303,7 @@ Respond with just the JSON array, nothing else."""
             model=utility_model,
             messages=[{"role": "user", "content": selection_prompt}],
             temperature=0.0,
-            max_tokens=500,
+            max_tokens=1024,
             **extra_kwargs,
         )
 
