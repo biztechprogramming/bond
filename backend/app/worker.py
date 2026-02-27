@@ -303,8 +303,7 @@ async def _select_relevant_fragments(
 
     utility_model = config.get("utility_model", "claude-sonnet-4-6")
     if not utility_model:
-        # No utility model configured — include all fragments
-        return fragments
+        raise RuntimeError("No utility_model configured — refusing to send all fragments to primary model")
 
     # Build the fragment catalog for the utility model
     catalog_lines = []
@@ -362,8 +361,7 @@ Respond with just the JSON array, nothing else."""
 
         selected_ids = json.loads(result_text)
         if not isinstance(selected_ids, list):
-            logger.warning("Utility model returned non-list: %s, using all fragments", result_text)
-            return fragments
+            raise RuntimeError(f"Utility model returned non-list for fragment selection: {result_text}")
 
         # Filter fragments by selected IDs
         selected = [f for f in fragments if f.get("id") in selected_ids]
@@ -374,17 +372,14 @@ Respond with just the JSON array, nothing else."""
             [f.get("name") for f in selected],
         )
 
-        # If utility model selected nothing, fall back to all (safety net)
-        if not selected and fragments:
-            logger.warning("Utility model selected 0 fragments — falling back to all %d", len(fragments))
-            return fragments
+        # If utility model selected nothing, return empty — do NOT fall back to all
+        if not selected:
+            logger.warning("Utility model selected 0 fragments — proceeding with none")
 
         return selected
 
     except Exception as e:
-        logger.warning("Utility model fragment selection failed (%s), using all %d fragments: %s",
-                       utility_model, len(fragments), e)
-        return fragments
+        raise RuntimeError(f"Fragment selection failed — refusing to send all {len(fragments)} fragments to primary model: {e}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -686,12 +681,7 @@ Write a concise summary in {SUMMARY_MAX_WORDS}-{SUMMARY_MAX_WORDS * 2} words. Us
         return compressed, stats
 
     except Exception as e:
-        logger.warning("History compression failed, using pruned but uncompressed: %s", e)
-        # Fall back to tool-pruned but unsummarized history
-        result = pruned_compressible + verbatim
-        stats["compressed_tokens"] = _estimate_messages_tokens(result)
-        stats["processing_time_ms"] = int((_time.time() - start_time) * 1000)
-        return result, stats
+        raise RuntimeError(f"History compression failed — refusing to send uncompressed history to primary model: {e}") from e
 
 
 async def _log_compression_stats(
@@ -852,9 +842,7 @@ async def _apply_sliding_window(
             return [summary_msg] + window
 
         except Exception as e:
-            logger.warning("Rolling summary failed, falling back to truncated history: %s", e)
-            # Fallback: just use the window without summary
-            return window
+            raise RuntimeError(f"Rolling summary failed — refusing to drop context silently: {e}") from e
 
     return window
 
