@@ -392,7 +392,7 @@ async def resolve_agent(
 
     # Look up agent
     agent_result = await db.execute(
-        text("SELECT id, name, display_name, sandbox_image, model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
+        text("SELECT id, name, display_name, sandbox_image, model, utility_model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
         {"id": resolved_agent_id},
     )
     agent_row = agent_result.mappings().first()
@@ -418,10 +418,11 @@ async def resolve_agent(
     if not resolved_conversation_id or (conversation_id and not await _conversation_exists(db, conversation_id)):
         resolved_conversation_id = await _get_or_create_conversation(db, resolved_conversation_id)
 
-    # Fetch prompt fragments for this agent
+    # Fetch prompt fragments for this agent (include metadata for utility model selection)
     frag_result = await db.execute(
         text(
-            "SELECT pf.content, apf.enabled FROM agent_prompt_fragments apf "
+            "SELECT pf.id, pf.name, pf.display_name, pf.description, pf.content, apf.enabled "
+            "FROM agent_prompt_fragments apf "
             "JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
             "WHERE apf.agent_id = :id AND pf.is_active = 1 "
             "ORDER BY apf.rank"
@@ -429,7 +430,14 @@ async def resolve_agent(
         {"id": resolved_agent_id},
     )
     prompt_fragments = [
-        {"content": r["content"], "enabled": bool(r["enabled"])}
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "display_name": r["display_name"],
+            "description": r["description"],
+            "content": r["content"],
+            "enabled": bool(r["enabled"]),
+        }
         for r in frag_result.mappings().all()
     ]
 
@@ -446,6 +454,7 @@ async def resolve_agent(
                 "name": agent_row["name"],
                 "sandbox_image": sandbox_image,
                 "model": agent_row["model"],
+                "utility_model": agent_row["utility_model"],
                 "system_prompt": agent_row["system_prompt"],
                 "tools": json.loads(agent_row["tools"]),
                 "max_iterations": agent_row["max_iterations"],

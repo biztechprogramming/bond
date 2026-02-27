@@ -96,6 +96,7 @@ class SandboxManager:
             "system_prompt": agent["system_prompt"],
             "tools": agent["tools"],
             "max_iterations": agent["max_iterations"],
+            "utility_model": agent.get("utility_model", "claude-sonnet-4-6"),
             "prompt_fragments": agent.get("prompt_fragments", []),
         }
 

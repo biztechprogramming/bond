@@ -238,6 +238,108 @@ async def turn(request: Request) -> StreamingResponse:
 # ---------------------------------------------------------------------------
 
 
+async def _select_relevant_fragments(
+    fragments: list[dict],
+    user_message: str,
+    history: list[dict],
+    config: dict,
+    extra_kwargs: dict,
+) -> list[dict]:
+    """Use the utility model to select which prompt fragments are relevant.
+
+    Sends fragment names + descriptions to a fast model (e.g. claude-sonnet-4-6)
+    which returns the IDs of fragments that are relevant to the current turn.
+    Falls back to all fragments if the utility call fails.
+    """
+    if not fragments:
+        return []
+
+    utility_model = config.get("utility_model", "claude-sonnet-4-6")
+    if not utility_model:
+        # No utility model configured — include all fragments
+        return fragments
+
+    # Build the fragment catalog for the utility model
+    catalog_lines = []
+    for i, frag in enumerate(fragments):
+        name = frag.get("display_name") or frag.get("name", f"fragment-{i}")
+        desc = frag.get("description", "")
+        frag_id = frag.get("id", str(i))
+        catalog_lines.append(f"- ID: {frag_id} | {name}: {desc}")
+
+    catalog = "\n".join(catalog_lines)
+
+    # Get recent history context (last 3 messages for efficiency)
+    recent_history = ""
+    if history:
+        recent = history[-3:]
+        recent_lines = []
+        for msg in recent:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                recent_lines.append(f"{role}: {content[:200]}")
+        recent_history = "\n".join(recent_lines)
+
+    selection_prompt = f"""You are a prompt fragment selector. Given a user's message and recent conversation history, determine which prompt fragments are relevant and should be included in the agent's system prompt.
+
+Available fragments:
+{catalog}
+
+Recent conversation:
+{recent_history}
+
+Current user message:
+{user_message}
+
+Return ONLY a JSON array of fragment IDs that are relevant to this turn. Include fragments that provide useful context or guidelines for handling this request. When in doubt, include the fragment.
+
+Example response: ["01PFRAG_MEMORY_GUID", "01PFRAG_ERROR_HANDL"]
+
+Respond with just the JSON array, nothing else."""
+
+    try:
+        response = await litellm.acompletion(
+            model=utility_model,
+            messages=[{"role": "user", "content": selection_prompt}],
+            temperature=0.0,
+            max_tokens=500,
+            **extra_kwargs,
+        )
+
+        result_text = response.choices[0].message.content or "[]"
+        # Parse the JSON array — strip markdown fences if present
+        result_text = result_text.strip()
+        if result_text.startswith("```"):
+            result_text = result_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        selected_ids = json.loads(result_text)
+        if not isinstance(selected_ids, list):
+            logger.warning("Utility model returned non-list: %s, using all fragments", result_text)
+            return fragments
+
+        # Filter fragments by selected IDs
+        selected = [f for f in fragments if f.get("id") in selected_ids]
+
+        logger.info(
+            "Fragment selection: %d/%d fragments selected by utility model (%s). Selected: %s",
+            len(selected), len(fragments), utility_model,
+            [f.get("name") for f in selected],
+        )
+
+        # If utility model selected nothing, fall back to all (safety net)
+        if not selected and fragments:
+            logger.warning("Utility model selected 0 fragments — falling back to all %d", len(fragments))
+            return fragments
+
+        return selected
+
+    except Exception as e:
+        logger.warning("Utility model fragment selection failed (%s), using all %d fragments: %s",
+                       utility_model, len(fragments), e)
+        return fragments
+
+
 async def _run_agent_loop(
     user_message: str,
     history: list[dict],
@@ -280,11 +382,13 @@ async def _run_agent_loop(
     if api_key:
         extra_kwargs["api_key"] = api_key
 
-    # Assemble full prompt from system prompt + fragments (from config)
-    prompt_parts = [system_prompt]
-    for fragment in config.get("prompt_fragments", []):
-        if fragment.get("enabled", True):
-            prompt_parts.append(fragment["content"])
+    # Select relevant fragments via utility model, then assemble system prompt
+    fragments = config.get("prompt_fragments", [])
+    enabled_fragments = [f for f in fragments if f.get("enabled", True)]
+    selected_fragments = await _select_relevant_fragments(
+        enabled_fragments, user_message, history, config, extra_kwargs,
+    )
+    prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
     full_system_prompt = "\n\n".join(prompt_parts)
 
     # Build messages

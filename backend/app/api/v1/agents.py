@@ -42,6 +42,7 @@ class AgentCreate(BaseModel):
     display_name: str
     system_prompt: str
     model: str
+    utility_model: str = "claude-sonnet-4-6"
     sandbox_image: str | None = None
     tools: list[str] = []
     max_iterations: int = 25
@@ -56,6 +57,7 @@ class AgentUpdate(BaseModel):
     display_name: str | None = None
     system_prompt: str | None = None
     model: str | None = None
+    utility_model: str | None = None
     sandbox_image: str | None = None
     tools: list[str] | None = None
     max_iterations: int | None = None
@@ -208,10 +210,10 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
 
     await db.execute(
         text(
-            "INSERT INTO agents (id, name, display_name, system_prompt, model, "
+            "INSERT INTO agents (id, name, display_name, system_prompt, model, utility_model, "
             "sandbox_image, tools, max_iterations, auto_rag, auto_rag_limit, "
             "is_default, is_active) "
-            "VALUES (:id, :name, :display_name, :system_prompt, :model, "
+            "VALUES (:id, :name, :display_name, :system_prompt, :model, :utility_model, "
             ":sandbox_image, :tools, :max_iterations, :auto_rag, :auto_rag_limit, "
             "0, 1)"
         ),
@@ -221,6 +223,7 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
             "display_name": body.display_name,
             "system_prompt": body.system_prompt,
             "model": body.model,
+            "utility_model": body.utility_model,
             "sandbox_image": body.sandbox_image,
             "tools": json.dumps(body.tools),
             "max_iterations": body.max_iterations,
@@ -298,6 +301,8 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depe
         updates["system_prompt"] = body.system_prompt
     if body.model is not None:
         updates["model"] = body.model
+    if body.utility_model is not None:
+        updates["utility_model"] = body.utility_model
     if body.sandbox_image is not None:
         updates["sandbox_image"] = body.sandbox_image
     if body.tools is not None:

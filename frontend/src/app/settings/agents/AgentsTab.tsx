@@ -28,6 +28,7 @@ interface Agent {
   display_name: string;
   system_prompt: string;
   model: string;
+  utility_model: string;
   sandbox_image: string | null;
   tools: string[];
   max_iterations: number;
@@ -44,6 +45,14 @@ const MODELS = [
   "anthropic/claude-opus-4-6",
   "openai/gpt-4o",
   "google/gemini-2.0-flash",
+];
+
+const UTILITY_MODELS = [
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5",
+  "claude-3-5-haiku-20241022",
+  "claude-sonnet-4-20250514",
+  "claude-sonnet-4-5",
 ];
 
 const ALL_CHANNELS = ["webchat", "signal", "telegram", "discord", "whatsapp", "email", "slack"];
@@ -255,6 +264,7 @@ export default function AgentsTab() {
     display_name: "",
     system_prompt: "",
     model: MODELS[0],
+    utility_model: UTILITY_MODELS[0],
     sandbox_image: null,
     tools: [],
     max_iterations: 25,
@@ -314,6 +324,7 @@ export default function AgentsTab() {
         display_name: editing.display_name,
         system_prompt: editing.system_prompt,
         model: editing.model,
+        utility_model: editing.utility_model,
         sandbox_image: editing.sandbox_image,
         tools: editing.tools,
         max_iterations: editing.max_iterations,
@@ -524,6 +535,21 @@ export default function AgentsTab() {
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
+            </div>
+            <div style={styles.field}>
+              <label style={styles.label}>Utility Model</label>
+              <select
+                style={styles.select}
+                value={editing.utility_model}
+                onChange={(e) => setEditing({ ...editing, utility_model: e.target.value })}
+              >
+                {UTILITY_MODELS.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+              <div style={{ fontSize: "0.75rem", color: "#5a5a6e", marginTop: "2px" }}>
+                Selects which prompt fragments to include each turn
+              </div>
             </div>
             <div style={styles.field}>
               <label style={styles.label}>Sandbox Image</label>
