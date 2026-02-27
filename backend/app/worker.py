@@ -869,25 +869,33 @@ async def _run_agent_loop(
     agent_tools = config["tools"]
     max_iterations = config["max_iterations"]
 
-    # Resolve API key: Vault (encrypted file) → env var fallback
-    provider = model.split("/")[0] if "/" in model else "anthropic"
-    api_key = None
+    # Resolve API keys per provider
+    def _resolve_api_key(model_id: str) -> str | None:
+        """Resolve API key for a model's provider via Vault → env var."""
+        prov = model_id.split("/")[0] if "/" in model_id else "anthropic"
+        key = None
+        try:
+            from backend.app.core.vault import Vault
+            vault = Vault()
+            key = vault.get_api_key(prov)
+        except Exception as e:
+            logger.debug("Could not read API key from vault for %s: %s", prov, e)
+        if not key:
+            key = os.environ.get(f"{prov.upper()}_API_KEY")
+        return key
 
-    # 1. Vault (mounted read-only from host)
-    try:
-        from backend.app.core.vault import Vault
-        vault = Vault()
-        api_key = vault.get_api_key(provider)
-    except Exception as e:
-        logger.debug("Could not read API key from vault for %s: %s", provider, e)
-
-    # 2. Environment variable fallback
-    if not api_key:
-        api_key = os.environ.get(f"{provider.upper()}_API_KEY")
-
+    # Primary model kwargs
     extra_kwargs: dict = {}
-    if api_key:
-        extra_kwargs["api_key"] = api_key
+    primary_key = _resolve_api_key(model)
+    if primary_key:
+        extra_kwargs["api_key"] = primary_key
+
+    # Utility model kwargs (may be a different provider)
+    utility_model = config.get("utility_model", "claude-sonnet-4-6")
+    utility_kwargs: dict = {}
+    utility_key = _resolve_api_key(utility_model)
+    if utility_key:
+        utility_kwargs["api_key"] = utility_key
 
     # --- Context Distillation Pipeline ---
 
@@ -895,7 +903,7 @@ async def _run_agent_loop(
     fragments = config.get("prompt_fragments", [])
     enabled_fragments = [f for f in fragments if f.get("enabled", True)]
     selected_fragments = await _select_relevant_fragments(
-        enabled_fragments, user_message, history, config, extra_kwargs,
+        enabled_fragments, user_message, history, config, utility_kwargs,
     )
     fragment_stats = {"selected": len(selected_fragments), "total": len(enabled_fragments)}
     prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
@@ -905,7 +913,7 @@ async def _run_agent_loop(
     windowed_history = history
     if history:
         windowed_history = await _apply_sliding_window(
-            history, conversation_id, config, extra_kwargs,
+            history, conversation_id, config, utility_kwargs,
         )
 
     # Stage 3: Progressive decay on tool results
@@ -917,7 +925,7 @@ async def _run_agent_loop(
     compression_stats = {"original_tokens": 0, "compressed_tokens": 0}
     if windowed_history:
         compressed_history, compression_stats = await _compress_history(
-            windowed_history, conversation_id, config, extra_kwargs,
+            windowed_history, conversation_id, config, utility_kwargs,
         )
 
     # Emit compression stats via SSE
