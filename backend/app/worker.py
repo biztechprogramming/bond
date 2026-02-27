@@ -525,8 +525,8 @@ async def _run_agent_loop(
     _file_read_cache: dict[str, dict] = {}  # path -> {"content_hash": str, "tool_call_num": int, "total_lines": int, "size": int}
 
     # Adaptive max_tokens: start low (fast + cheap), escalate on truncation
-    # Tiers: 8192 → 32768 → 65536. Reset after each successful completion.
-    TOKEN_TIERS = [8192, 32768, 65536]
+    # Tiers: 32768 → 65536. Reset after each successful completion.
+    TOKEN_TIERS = [32768, 65536]
     current_tier = 0  # index into TOKEN_TIERS
     continuation_attempts = 0  # consecutive continuations for a single response
     MAX_CONTINUATIONS = 3  # max times we'll try to continue a truncated response
