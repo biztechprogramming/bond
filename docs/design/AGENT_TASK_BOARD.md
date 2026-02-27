@@ -563,3 +563,190 @@ On narrow screens:
 - Plan templates
 - Completion metrics, time tracking
 - Historical plan browser
+
+---
+
+## View Modes & Plan Navigation
+
+### Toggle: Chat ↔ Board View
+
+The UI has two modes accessible via a toggle button in the header:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Bond          [💬 Chat] [📋 Board]          [Agent ▾]  │
+├──────────────────────────────────────────────────────────┤
+```
+
+**Chat Mode (💬)** — The current full-width chat interface. This is the default. The user has a normal conversation with the agent. When the agent starts a multi-step task, it creates a work plan in the background. A subtle indicator appears:
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Bond          [💬 Chat] [📋 Board]          [Agent ▾]  │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  User: Implement the 3 context efficiency changes        │
+│                                                          │
+│  Agent: I'll create a plan for this.                     │
+│                                                          │
+│  ┌─ 📋 Plan: Context Efficiency Changes ──── [View] ─┐  │
+│  │  ✅ 1. Cache fragment selection                    │  │
+│  │  🔄 2. Dedup sliding window + compression          │  │
+│  │  ⬜ 3. Skip decay on summarized messages           │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  Agent: Starting with Change 1...                        │
+│                                                          │
+│  [Type a message...]                                     │
+└──────────────────────────────────────────────────────────┘
+```
+
+Clicking **[View]** or the **[📋 Board]** toggle switches to Board Mode showing this plan.
+
+**Board Mode (📋)** — The split-pane Kanban + chat layout described in the previous section. Shows the currently active plan by default, with a plan selector dropdown.
+
+### Plan Selector
+
+In Board Mode, a dropdown in the board header lets the user browse any plan ever created:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  📋 Plan: [Context Efficiency Changes    ▾]  ⏸ PAUSE  ⏹ CANCEL │
+│           ┌──────────────────────────────┐                       │
+│           │ 🔄 Context Efficiency Changes│  ← active (current)   │
+│           │ ✅ Fix web search timeouts   │  ← completed          │
+│           │ ✅ Add file_edit tool        │  ← completed          │
+│           │ ❌ Migrate to PostgreSQL     │  ← failed             │
+│           │ ──────────────────────────── │                       │
+│           │ 📋 All Plans...             │                       │
+│           └──────────────────────────────┘                       │
+├──────────────────────────────────────┬───────────────────────────┤
+│           Kanban Board               │       Agent Chat          │
+```
+
+- Plans are sorted: active first, then recent completed/failed
+- Status emoji gives instant visual: 🔄 active, ⏸ paused, ✅ completed, ❌ failed, 🚫 cancelled
+- **"All Plans..."** opens a full plan browser with search, filters, date range
+
+### Resuming From Any Plan
+
+When the user selects a non-active plan (completed, failed, paused) and types in the chat panel, the agent starts a **new conversation turn** with that plan's context injected:
+
+1. User selects "Fix web search timeouts" (completed) from the dropdown
+2. User types: "The timeout fix broke DuckDuckGo rate limiting, revert the sleep change"
+3. System loads the plan's context snapshot from the last work item
+4. A new agent turn starts with recovery context:
+
+```
+[Resuming from work plan: "Fix web search timeouts" (completed 2026-02-26)]
+
+Context from previous work:
+- Modified /bond/backend/app/agent/tools/web.py
+- Added 30s timeout to httpx.AsyncClient
+- Added sleep(1) between DuckDuckGo calls for rate limiting
+- Tests passed: test_web_search.py (4/4)
+- Branch: feature/sprint-1-skeleton, commit: def456
+
+User request: The timeout fix broke DuckDuckGo rate limiting, revert the sleep change
+```
+
+5. The agent sees the full context of what was done, what files were changed, and what the user wants — without re-reading anything.
+
+**Key distinction:**
+- Chat from an **active/paused** plan → resumes that plan, continues existing items
+- Chat from a **completed/failed** plan → creates a **new** plan that references the old one, with old context injected as starting knowledge
+- Chat from **Chat Mode** (no plan selected) → normal conversation. If the agent decides the task is multi-step, it creates a fresh plan and fills in context as it goes.
+
+### Plan Lineage
+
+When a new plan is created from an old plan's context, track the relationship:
+
+```sql
+ALTER TABLE work_plans ADD COLUMN parent_plan_id TEXT REFERENCES work_plans(id);
+```
+
+This enables:
+- "Show me all plans related to web search" → follows the lineage chain
+- Context accumulates across related plans — each plan's context builds on the parent's
+
+### Chat Mode Plan Indicator
+
+When the agent creates a plan during a normal chat conversation, the plan card appears inline in the chat (as shown above). The card is live-updating:
+
+- Items change status in real-time (emoji updates, progress bar fills)
+- Clicking an item expands its notes inline
+- The **[View]** button switches to Board Mode focused on this plan
+- If the user scrolls up past the plan card (e.g., to re-read earlier messages), the plan status appears as a floating mini-indicator:
+
+```
+┌──────────────────────────────────────────┐
+│  📋 Context Efficiency: 1/3 done  [View] │  ← floating, top-right
+└──────────────────────────────────────────┘
+```
+
+### New Plan Creation Flow
+
+When the agent is in a normal chat conversation and creates a plan:
+
+1. Agent calls `work_plan(action="create_plan", title="...")`
+2. Agent calls `work_plan(action="add_item", ...)` for each step — items start as `new`
+3. The plan card renders inline in the chat
+4. Agent begins working — updates items to `in_progress` as it goes
+5. Context snapshots are saved incrementally as the agent makes progress
+6. The agent is building the context checkpoint organically as it works — not front-loading a massive context dump
+
+**The agent never needs to be told to save context.** The `work_plan` tool's `update_item` action always accepts an optional `context_snapshot`. The auto-planning prompt fragment instructs the agent to include findings and decisions with every status update. The checkpoint is a natural byproduct of good status tracking.
+
+---
+
+## Updated Schema
+
+Add to migration 000021:
+
+```sql
+-- Plan lineage: track when a plan is spawned from a previous plan's context
+ALTER TABLE work_plans ADD COLUMN parent_plan_id TEXT REFERENCES work_plans(id);
+
+CREATE INDEX idx_wp_parent ON work_plans(parent_plan_id);
+```
+
+---
+
+## Updated API
+
+### `GET /api/v1/plans`
+Returns all plans. Query params: `agent_id`, `status`, `limit`, `offset`, `search`.
+Default sort: active first, then by updated_at DESC.
+
+### `POST /api/v1/plans/{plan_id}/resume`
+Resume a plan from context. Creates a new turn with the plan's checkpoint injected.
+If the plan is completed/failed, creates a new child plan with `parent_plan_id` set.
+
+### `GET /api/v1/plans/{plan_id}/lineage`
+Returns the chain of plans: parent → this plan → children.
+
+---
+
+## Updated Phase Plan
+
+### Phase 1: Schema + Tools + Recovery (MVP) — No UI
+_Unchanged_
+
+### Phase 2: Board UI + Chat Integration
+- Toggle button: Chat ↔ Board view
+- Board Mode: Kanban + chat split pane
+- Chat Mode: inline plan cards with live updates
+- Plan selector dropdown with status indicators
+- Pause/Resume/Cancel controls
+- Chat panel → `/interrupt` for user interjection
+- Resume from any historical plan
+
+### Phase 3: Rich Interaction
+- Plan lineage tracking and browser
+- Floating plan indicator in Chat Mode
+- Drag-and-drop status changes
+- Inline diff viewer for files_changed
+- Full status lifecycle with review/test gates
+
+### Phase 4: Multi-Agent + Analytics
+_Unchanged_
