@@ -26,6 +26,7 @@ import litellm
 
 from backend.app.agent.context_decay import apply_progressive_decay
 from backend.app.agent.tool_selection import select_tools, compact_tool_schema
+from backend.app.agent.tool_result_filter import filter_tool_result
 litellm.suppress_debug_info = True
 import logging as _logging
 _logging.getLogger("LiteLLM").setLevel(_logging.WARNING)
@@ -1238,6 +1239,9 @@ async def _run_agent_loop(
         continuation_attempts = 0
 
         if llm_message.tool_calls:
+            # Update last_assistant for tool result filter context
+            if llm_message.content:
+                last_assistant = llm_message.content
             messages.append(llm_message.model_dump())
 
             for tool_call in llm_message.tool_calls:
@@ -1321,10 +1325,21 @@ async def _run_agent_loop(
                 if result.get("_terminal"):
                     return result.get("message", ""), tool_calls_made
 
+                # Filter large tool results through utility model
+                result_json = await filter_tool_result(
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    raw_result=result,
+                    user_message=user_message,
+                    last_assistant_content=last_assistant,
+                    utility_model=utility_model,
+                    utility_kwargs=utility_kwargs,
+                )
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": json.dumps(result),
+                    "content": result_json,
                 })
         else:
             return llm_message.content or "", tool_calls_made
