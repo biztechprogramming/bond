@@ -871,9 +871,11 @@ def _advance_cache_breakpoint(messages: list[dict], old_bp_index: int) -> int:
         return old_bp_index
 
     # Only advance if enough messages have accumulated past the breakpoint.
-    # Each tool call adds ~2 messages (assistant + tool result). Advancing
-    # every 4+ messages means the cache stays stable for ~2 consecutive calls.
-    _CACHE_BP_ADVANCE_THRESHOLD = 4
+    # Each tool call adds ~2 messages (assistant + tool result). With a
+    # threshold of 12, the breakpoint stays stable for ~6 consecutive calls,
+    # maximizing cache hits. The uncached tail (messages past the breakpoint)
+    # is small relative to the cached prefix, so this is a net win.
+    _CACHE_BP_ADVANCE_THRESHOLD = 12
     gap = new_bp_index - old_bp_index
     if gap < _CACHE_BP_ADVANCE_THRESHOLD:
         logger.debug("Cache BP2: holding at index %d (gap=%d < threshold=%d, msgs=%d)",
