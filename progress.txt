@@ -106,3 +106,19 @@ Started: 2026-02-26
 - Files: `worker.py`, `build_output_parser.py`, `test_build_output_parser.py`
 - **Learnings:** Anthropic cache is prefix-based and very sensitive to byte changes. Advancing breakpoint every call = 50% miss rate. Threshold-based = ~85% hit rate.
 ---
+
+## 2026-02-27 15:05 - Context Efficiency Batch 2 + Prompt Fragments + Task Board Design
+- Fixed file dedup: now handles partial reads of fully-cached files, outline re-reads
+- Updated 4 prompt fragments: file-operations (large reads, outline first), progress-tracking (scope control), error-handling (read-only FS), sandbox-environment (read-only warning)
+- Added new tool-efficiency fragment (batch calls, stop exploring)
+- Created migration 000020 to push fragment updates to live knowledge.db
+- Fixed agent.db: now runs migration scripts on worker startup (no more hardcoded-only schema)
+- Designed Agent Task Board: work_plans/work_items with Kanban UI, crash recovery via context checkpointing, chat panel for user interjection, pause/resume, plan lineage
+- **Design approved** — ready for Phase 1 implementation
+- Files: worker.py, tool_result_filter.py, migration 000020, docs/design/AGENT_TASK_BOARD.md
+
+### Learnings
+- Migrations run against knowledge.db (host), NOT agent.db (container). agent.db had hardcoded schema only.
+- Fragment content changes need new migrations (can't re-run old ones). Now worker startup runs all migrations against agent.db too.
+- Anthropic cache minimum is 2048 tokens for Opus — skip cache_control on small conversations.
+---
