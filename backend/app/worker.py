@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import hashlib
+
 import aiosqlite
 import litellm
 litellm.suppress_debug_info = True
@@ -825,6 +827,11 @@ async def _run_agent_loop(
     continuation_attempts = 0  # consecutive continuations for a single response
     MAX_CONTINUATIONS = 3  # max times we'll try to continue a truncated response
 
+    # Repetition detection — break out of loops where agent keeps calling
+    # the same tool with similar args
+    REPETITION_THRESHOLD = 3  # consecutive similar calls before intervention
+    recent_tool_calls: list[tuple[str, str]] = []  # (tool_name, args_hash)
+
     for _iteration in range(max_iterations):
         # Check interrupt
         if _state.interrupt_event.is_set():
@@ -914,6 +921,42 @@ async def _run_agent_loop(
                     tool_args = {}
 
                 tool_calls_made += 1
+
+                # Repetition detection: hash tool name + first 200 chars of args
+                args_sig = hashlib.md5(f"{tool_name}:{json.dumps(tool_args)[:200]}".encode()).hexdigest()[:8]
+                recent_tool_calls.append((tool_name, args_sig))
+
+                # Check for consecutive repetition
+                if len(recent_tool_calls) >= REPETITION_THRESHOLD:
+                    last_n = recent_tool_calls[-REPETITION_THRESHOLD:]
+                    if all(tc == last_n[0] for tc in last_n):
+                        logger.warning(
+                            "Repetition detected: %s called %d times with same args — injecting intervention",
+                            tool_name, REPETITION_THRESHOLD,
+                        )
+                        # Execute this tool call, then inject a nudge
+                        if tool_name not in agent_tools:
+                            result = {"error": f"Tool '{tool_name}' is not enabled."}
+                        else:
+                            result = await registry.execute(tool_name, tool_args, tool_context)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(result),
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                f"SYSTEM: You have called '{tool_name}' with the same arguments "
+                                f"{REPETITION_THRESHOLD} times in a row. You appear to be in a loop. "
+                                "Stop repeating this action. Either try a different approach, "
+                                "report what you've found so far, or use the respond tool to "
+                                "explain what's blocking you."
+                            ),
+                        })
+                        recent_tool_calls.clear()
+                        break  # break inner tool_call loop, continue outer iteration
+
                 logger.info("Tool call [%d]: %s args=%s", tool_calls_made, tool_name,
                             {k: (v[:80] + '...' if isinstance(v, str) and len(v) > 80 else v) for k, v in tool_args.items()})
 
