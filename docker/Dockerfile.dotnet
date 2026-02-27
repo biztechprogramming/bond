@@ -36,7 +36,8 @@ RUN wget https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh \
 
 # Install SQL Server command-line tools via direct download
 # (apt repo has same SHA1 GPG issue)
-RUN apt-get update && apt-get install -y libodbc2 unixodbc-dev \
+# libicu is required by .NET for globalization support
+RUN apt-get update && apt-get install -y libicu-dev libodbc2 unixodbc-dev \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "https://aka.ms/sqlpackage-linux" -o /tmp/sqlpackage.zip \
     && mkdir -p /opt/sqlpackage && unzip -q /tmp/sqlpackage.zip -d /opt/sqlpackage \
