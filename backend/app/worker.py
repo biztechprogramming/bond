@@ -21,6 +21,11 @@ from typing import Any
 
 import aiosqlite
 import litellm
+litellm.suppress_debug_info = True
+import logging as _logging
+_logging.getLogger("LiteLLM").setLevel(_logging.WARNING)
+_logging.getLogger("litellm").setLevel(_logging.WARNING)
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
