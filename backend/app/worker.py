@@ -23,6 +23,9 @@ import hashlib
 
 import aiosqlite
 import litellm
+
+from backend.app.agent.context_decay import apply_progressive_decay
+from backend.app.agent.tool_selection import select_tools, compact_tool_schema
 litellm.suppress_debug_info = True
 import logging as _logging
 _logging.getLogger("LiteLLM").setLevel(_logging.WARNING)
@@ -389,10 +392,15 @@ Respond with just the JSON array, nothing else."""
 # ---------------------------------------------------------------------------
 
 # Configuration constants (will be DB-configurable later)
-VERBATIM_MESSAGE_COUNT = 6  # Recent messages kept as-is
-COMPRESSION_THRESHOLD = 15000  # Don't compress if under this token count
+VERBATIM_MESSAGE_COUNT = 4  # Recent messages kept as-is (reduced from 6)
+COMPRESSION_THRESHOLD = 8000  # Don't compress if under this token count (reduced from 15000)
 SUMMARY_MAX_WORDS = 100
 TOPIC_MAX_MESSAGES = 8  # Force topic boundary after this many messages
+
+# Sliding window: max messages loaded from DB per turn
+HISTORY_WINDOW_SIZE = 20
+# Update rolling summary when this many new messages accumulate
+SUMMARY_UPDATE_THRESHOLD = 10
 
 
 def _estimate_tokens(text: str) -> int:
@@ -724,6 +732,133 @@ async def _log_compression_stats(
         logger.debug("Failed to log compression stats: %s", e)
 
 
+async def _apply_sliding_window(
+    history: list[dict],
+    conversation_id: str,
+    config: dict,
+    extra_kwargs: dict,
+) -> list[dict]:
+    """Apply sliding window: keep last HISTORY_WINDOW_SIZE messages, prepend rolling summary.
+
+    If history exceeds the window, summarize the overflow and store as a rolling summary
+    in the agent DB for reuse on next turn.
+
+    Returns the windowed history with optional summary prefix.
+    """
+    if len(history) <= HISTORY_WINDOW_SIZE:
+        return history
+
+    utility_model = config.get("utility_model", "claude-sonnet-4-6")
+
+    # Split: overflow (to summarize) + window (to keep)
+    overflow = history[:-HISTORY_WINDOW_SIZE]
+    window = history[-HISTORY_WINDOW_SIZE:]
+
+    # Check for existing rolling summary in agent DB
+    existing_summary = ""
+    summary_covers_to = 0
+    if _state.agent_db:
+        try:
+            cursor = await _state.agent_db.execute(
+                "SELECT summary, covers_to FROM context_summaries "
+                "WHERE conversation_id = ? ORDER BY covers_to DESC LIMIT 1",
+                (conversation_id,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                existing_summary = row[0]
+                summary_covers_to = row[1]
+        except Exception as e:
+            logger.debug("Failed to load rolling summary: %s", e)
+
+    # Determine how many overflow messages are already covered by existing summary
+    new_overflow_start = min(summary_covers_to, len(overflow))
+    new_overflow = overflow[new_overflow_start:]
+
+    if not new_overflow and existing_summary:
+        # Existing summary covers everything — just prepend it
+        summary_msg = {"role": "user", "content": f"[Previous conversation summary]\n{existing_summary}"}
+        return [summary_msg] + window
+
+    # Need to summarize new overflow messages
+    if new_overflow:
+        summary_lines = []
+        if existing_summary:
+            summary_lines.append(f"Previous summary: {existing_summary}")
+            summary_lines.append("")
+
+        for msg in new_overflow:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                if len(content) > 500:
+                    content = content[:250] + f"\n[...{len(content) - 500} chars omitted...]\n" + content[-250:]
+                summary_lines.append(f"{role}: {content}")
+            elif msg.get("tool_calls"):
+                calls = msg["tool_calls"]
+                if isinstance(calls, list):
+                    for tc in calls:
+                        fn = tc.get("function", {})
+                        summary_lines.append(f"assistant: [called {fn.get('name', '?')}]")
+
+        summary_input = "\n".join(summary_lines)
+
+        try:
+            response = await litellm.acompletion(
+                model=utility_model,
+                messages=[{"role": "user", "content": (
+                    f"Summarize this conversation history in {SUMMARY_MAX_WORDS}-{SUMMARY_MAX_WORDS * 2} words. "
+                    "Preserve key decisions, file paths, technical details, what was attempted and results. "
+                    "Use bullet points. Start directly with content.\n\n"
+                    f"{summary_input}"
+                )}],
+                temperature=0.0,
+                max_tokens=1024,
+                **extra_kwargs,
+            )
+            new_summary = response.choices[0].message.content or ""
+
+            # Combine with existing
+            if existing_summary:
+                full_summary = f"{existing_summary}\n\n{new_summary}"
+            else:
+                full_summary = new_summary
+
+            # Cache the updated summary
+            if _state.agent_db:
+                try:
+                    from ulid import ULID
+                    summary_tokens = _estimate_tokens(full_summary)
+                    await _state.agent_db.execute(
+                        "INSERT OR REPLACE INTO context_summaries "
+                        "(id, conversation_id, tier, covers_from, covers_to, "
+                        "original_token_count, summary, summary_token_count, utility_model) "
+                        "VALUES (?, ?, 'rolling', 0, ?, ?, ?, ?, ?)",
+                        (
+                            str(ULID()),
+                            conversation_id,
+                            len(overflow),
+                            _estimate_messages_tokens(overflow),
+                            full_summary,
+                            summary_tokens,
+                            utility_model,
+                        ),
+                    )
+                    await _state.agent_db.commit()
+                except Exception as e:
+                    logger.debug("Failed to cache rolling summary: %s", e)
+
+            summary_msg = {"role": "user", "content": f"[Previous conversation summary]\n{full_summary}"}
+            return [summary_msg] + window
+
+        except Exception as e:
+            logger.warning("Rolling summary failed, falling back to truncated history: %s", e)
+            # Fallback: just use the window without summary
+            return window
+
+    return window
+
+
 async def _run_agent_loop(
     user_message: str,
     history: list[dict],
@@ -778,12 +913,23 @@ async def _run_agent_loop(
     prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
     full_system_prompt = "\n\n".join(prompt_parts)
 
-    # Stages 2 & 3: Compress history + prune tool outputs
-    compressed_history = history
-    compression_stats = {"original_tokens": 0, "compressed_tokens": 0}
+    # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
+    windowed_history = history
     if history:
-        compressed_history, compression_stats = await _compress_history(
+        windowed_history = await _apply_sliding_window(
             history, conversation_id, config, extra_kwargs,
+        )
+
+    # Stage 3: Progressive decay on tool results
+    if windowed_history:
+        windowed_history = apply_progressive_decay(windowed_history)
+
+    # Stage 4: Compress remaining history if still over threshold
+    compressed_history = windowed_history
+    compression_stats = {"original_tokens": 0, "compressed_tokens": 0}
+    if windowed_history:
+        compressed_history, compression_stats = await _compress_history(
+            windowed_history, conversation_id, config, extra_kwargs,
         )
 
     # Emit compression stats via SSE
@@ -807,9 +953,36 @@ async def _run_agent_loop(
         messages.extend(compressed_history)
     messages.append({"role": "user", "content": user_message})
 
-    # Build tool definitions + registry
+    # Build tool definitions + registry with heuristic selection
     registry = build_native_registry()
-    tool_defs = [TOOL_MAP[name] for name in agent_tools if name in TOOL_MAP]
+
+    # Extract last assistant message for tool selection context
+    last_assistant = ""
+    for msg in reversed(compressed_history or []):
+        if msg.get("role") == "assistant" and msg.get("content"):
+            last_assistant = msg["content"]
+            break
+
+    # Extract recent tools used from history
+    recent_tools: list[str] = []
+    for msg in (compressed_history or []):
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            calls = msg["tool_calls"]
+            if isinstance(calls, list):
+                for tc in calls:
+                    fn = tc.get("function", {})
+                    if fn.get("name"):
+                        recent_tools.append(fn["name"])
+
+    selected_tool_names = select_tools(
+        user_message=user_message,
+        enabled_tools=agent_tools,
+        recent_tools_used=recent_tools[-10:] if recent_tools else None,
+        last_assistant_content=last_assistant,
+    )
+
+    # Use compact schemas to further reduce token usage
+    tool_defs = [compact_tool_schema(TOOL_MAP[name]) for name in selected_tool_names if name in TOOL_MAP]
 
     # Tool context: local agent_db instead of host SQLAlchemy session
     tool_context: dict[str, Any] = {
@@ -972,6 +1145,13 @@ async def _run_agent_loop(
                 if tool_name not in agent_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled."}
                 else:
+                    # If model called a tool not in the selected set but still enabled,
+                    # execute it and add to selected set for future iterations
+                    if tool_name not in selected_tool_names:
+                        logger.info("Tool %s not in selected set but enabled — adding dynamically", tool_name)
+                        selected_tool_names.append(tool_name)
+                        if tool_name in TOOL_MAP:
+                            tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
                     result = await registry.execute(tool_name, tool_args, tool_context)
 
                 logger.info("Tool result [%d]: %s",  tool_calls_made,
