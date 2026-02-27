@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from "@/lib/ws";
 
 // -- Types --
@@ -74,9 +75,20 @@ const ITEM_STATUS_COLORS: Record<string, string> = {
 
 // -- Board Page --
 
-export default function BoardPage() {
+export default function BoardPageWrapper() {
+  return (
+    <Suspense>
+      <BoardPage />
+    </Suspense>
+  );
+}
+
+function BoardPage() {
+  const searchParams = useSearchParams();
   const [plans, setPlans] = useState<WorkPlan[]>([]);
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(
+    () => (typeof window !== "undefined" ? searchParams.get("plan") : null)
+  );
   const [selectedPlan, setSelectedPlan] = useState<WorkPlan | null>(null);
   const [planDropdownOpen, setPlanDropdownOpen] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
@@ -379,10 +391,14 @@ export default function BoardPage() {
 
   // -- Render --
 
+  // Determine if FAB should show (pause when active, resume when paused)
+  const showPauseFab = planIsActive && agentStatus !== "idle";
+  const showResumeFab = selectedPlan?.status === "paused" && !showPauseFab;
+
   return (
     <div style={s.outerContainer}>
       {/* Header */}
-      <header style={s.header}>
+      <header className="board-header" style={s.header}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <a href="/" style={s.chatToggle} title="Switch to Chat view">
             &#x1F4AC; Chat
@@ -390,10 +406,13 @@ export default function BoardPage() {
           <span style={s.boardToggleActive}>
             &#x1F4CB; Board
           </span>
+          <a href="/board/plans" style={s.allPlansLink} title="Browse all plans">
+            All Plans
+          </a>
         </div>
 
         {/* Plan selector */}
-        <div ref={planDropdownRef} style={{ position: "relative", flex: 1, maxWidth: "500px", margin: "0 16px" }}>
+        <div className="board-plan-selector" ref={planDropdownRef} style={{ position: "relative", flex: 1, maxWidth: "500px", margin: "0 16px" }}>
           <button
             onClick={() => setPlanDropdownOpen(!planDropdownOpen)}
             style={s.planSelectorBtn}
@@ -436,9 +455,9 @@ export default function BoardPage() {
         </div>
 
         {/* Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div className="board-header-controls" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           {planIsActive && agentStatus !== "idle" && (
-            <button onClick={handlePause} style={s.pauseBtn} title="Pause agent">
+            <button className="board-pause-btn-inline" onClick={handlePause} style={s.pauseBtn} title="Pause agent">
               &#x23F8; Pause
             </button>
           )}
@@ -457,6 +476,18 @@ export default function BoardPage() {
           </span>
         </div>
       </header>
+
+      {/* Mobile FAB for pause/resume */}
+      {(showPauseFab || showResumeFab) && (
+        <button
+          className="board-fab"
+          onClick={showPauseFab ? handlePause : handleResume}
+          style={s.fab}
+          title={showPauseFab ? "Pause agent" : "Resume plan"}
+        >
+          {showPauseFab ? "\u23F8" : "\u25B6"}
+        </button>
+      )}
 
       {/* Main content: Kanban + Chat */}
       <div className="board-main-content" style={s.mainContent}>
@@ -772,6 +803,32 @@ const s: Record<string, React.CSSProperties> = {
   statusDot: {
     fontSize: "0.9rem",
     marginLeft: "4px",
+  },
+  allPlansLink: {
+    color: "#5a5a6e",
+    textDecoration: "none",
+    fontSize: "0.8rem",
+    padding: "4px 8px",
+    borderRadius: "6px",
+    border: "1px solid #2a2a3e",
+  },
+  fab: {
+    display: "none",
+    position: "fixed" as const,
+    bottom: "24px",
+    right: "24px",
+    width: "56px",
+    height: "56px",
+    borderRadius: "50%",
+    backgroundColor: "#ffcc44",
+    color: "#000",
+    border: "none",
+    fontSize: "1.4rem",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+    zIndex: 200,
+    boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
   },
   mainContent: {
     display: "flex",
