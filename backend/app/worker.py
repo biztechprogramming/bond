@@ -848,62 +848,75 @@ async def _apply_sliding_window(
     return window
 
 
-def _set_cache_breakpoint(messages: list[dict]) -> None:
-    """Set Anthropic cache_control breakpoint on the second-to-last message.
+def _advance_cache_breakpoint(messages: list[dict], old_bp_index: int) -> int:
+    """Advance Anthropic cache_control breakpoint 2 to second-to-last message.
 
-    This ensures all accumulated messages up to this point are cached
-    on the next LLM call. Only the last message (newest tool result)
-    pays full input price.
+    Unlike the old _set_cache_breakpoint, this only touches two messages:
+    1. Clears cache_control from the old breakpoint position
+    2. Sets cache_control on messages[-2]
 
-    Modifies messages in place. Moves the breakpoint forward each call
-    by clearing the previous one.
+    This preserves prefix stability — messages before the breakpoint are
+    never reformatted, so the Anthropic cache stays valid.
+
+    Returns the new breakpoint index.
     """
-    # Clear any existing breakpoint 2 markers (not the system prompt one)
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "system":
-            continue  # don't touch breakpoint 1
-        if isinstance(msg.get("content"), list):
-            for block in msg["content"]:
+    if len(messages) < 3:
+        return old_bp_index
+
+    new_bp_index = len(messages) - 2
+
+    # Nothing to do if breakpoint hasn't moved
+    if new_bp_index == old_bp_index:
+        return old_bp_index
+
+    # Clear cache_control from old breakpoint (skip system prompt)
+    if old_bp_index > 0 and old_bp_index < len(messages):
+        old_msg = messages[old_bp_index]
+        if isinstance(old_msg.get("content"), list):
+            for block in old_msg["content"]:
                 if isinstance(block, dict) and "cache_control" in block:
                     del block["cache_control"]
-        elif msg.get("_cache_control"):
-            del msg["_cache_control"]
 
-    # Set breakpoint on second-to-last message
-    if len(messages) < 3:
-        return
-
-    target = messages[-2]
+    # Set cache_control on new breakpoint target
+    target = messages[new_bp_index]
     if isinstance(target.get("content"), str):
-        # Convert string content to block format for cache_control
+        # Convert string content to block format (one-time, stable after)
         target["content"] = [{
             "type": "text",
             "text": target["content"],
             "cache_control": {"type": "ephemeral"},
         }]
     elif isinstance(target.get("content"), list):
-        # Add cache_control to last block
         last_block = target["content"][-1] if target["content"] else None
         if last_block and isinstance(last_block, dict):
             last_block["cache_control"] = {"type": "ephemeral"}
 
+    return new_bp_index
 
-def _decay_in_loop_tool_results(messages: list[dict], preturn_count: int) -> list[dict]:
+
+def _decay_in_loop_tool_results(messages: list[dict], preturn_count: int, *, frozen_up_to: int = 0) -> list[dict]:
     """Compress tool results accumulated during the current turn's tool loop.
 
     Keeps messages before the turn untouched. For in-turn messages:
     - Last 4 messages (2 tool call/result pairs): verbatim
     - Older tool results: aggressively compressed
+
+    The frozen_up_to parameter protects all messages at indices < frozen_up_to
+    from modification (preserves Anthropic prompt cache prefix stability).
     """
-    if len(messages) <= preturn_count + 4:
+    # The compressible zone starts after whichever is later:
+    # the pre-turn boundary or the cache-frozen zone
+    compress_start = max(preturn_count, frozen_up_to)
+
+    if len(messages) <= compress_start + 4:
         return messages
 
-    pre_turn = messages[:preturn_count]
-    in_turn = messages[preturn_count:]
+    frozen = messages[:compress_start]
+    compressible = messages[compress_start:]
 
-    # Split: older in-turn messages vs recent (last 4)
-    older = in_turn[:-4]
-    recent = in_turn[-4:]
+    # Split: older compressible messages vs recent (last 4)
+    older = compressible[:-4]
+    recent = compressible[-4:]
 
     compressed_older = []
     tokens_saved = 0
@@ -947,7 +960,7 @@ def _decay_in_loop_tool_results(messages: list[dict], preturn_count: int) -> lis
     if tokens_saved > 0:
         logger.info("In-loop decay: compressed %d tokens from older tool results", tokens_saved)
 
-    return pre_turn + compressed_older + recent
+    return frozen + compressed_older + recent
 
 
 async def _run_agent_loop(
@@ -1138,6 +1151,10 @@ async def _run_agent_loop(
     # Track where the pre-turn messages end so we know which are in-loop
     _preturn_msg_count = len(messages)
 
+    # Track cache breakpoint 2 position for Anthropic prompt caching stability.
+    # Initialize to after history + user message (the last pre-turn message).
+    _cache_bp2_index = len(messages) - 1
+
     for _iteration in range(max_iterations):
         # Check interrupt
         if _state.interrupt_event.is_set():
@@ -1149,15 +1166,16 @@ async def _run_agent_loop(
 
         # In-loop decay: compress tool results accumulated during this turn.
         # Keep the last 2 tool results verbatim; older ones get progressively decayed.
+        # frozen_up_to prevents modifying messages before the cache breakpoint.
         if _iteration > 0 and _iteration % 3 == 0:
-            messages = _decay_in_loop_tool_results(messages, _preturn_msg_count)
+            messages = _decay_in_loop_tool_results(messages, _preturn_msg_count, frozen_up_to=_cache_bp2_index)
 
         current_max_tokens = TOKEN_TIERS[current_tier]
         context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
 
-        # Set prompt cache breakpoint 2 before each call (Anthropic only)
+        # Advance prompt cache breakpoint 2 before each call (Anthropic only)
         if _is_anthropic_model and _iteration > 0:
-            _set_cache_breakpoint(messages)
+            _cache_bp2_index = _advance_cache_breakpoint(messages, _cache_bp2_index)
 
         logger.info(
             "LLM request: model=%s tools=%d max_tokens=%d tier=%d context_tokens=~%d msgs=%d cache=%s tool_names=%s",
@@ -1311,6 +1329,17 @@ async def _run_agent_loop(
                         if tool_name in TOOL_MAP:
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
                     result = await registry.execute(tool_name, tool_args, tool_context)
+
+                # Smart build output parsing: compress verbose build/test output
+                if tool_name == "code_execute" and isinstance(result, dict):
+                    from backend.app.agent.build_output_parser import parse_build_output
+                    _bstdout = result.get("stdout", "")
+                    _bstderr = result.get("stderr", "")
+                    _bexit = result.get("exit_code", 0)
+                    if len(_bstdout) + len(_bstderr) > 500:
+                        _parsed = parse_build_output(_bstdout, _bstderr, _bexit)
+                        if _parsed is not None:
+                            result = {**result, "stdout": _parsed, "_build_parsed": True}
 
                 logger.info("Tool result [%d]: %s",  tool_calls_made,
                             {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in result.items()} if isinstance(result, dict) else result)
