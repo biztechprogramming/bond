@@ -1,8 +1,14 @@
-"""Sync available LLM models from configured providers into the llm_models table."""
+"""Sync available LLM models from configured providers into the llm_models table.
+
+Reads provider config from the `providers` table and API keys from
+`provider_api_keys`. No hardcoded provider lists.
+"""
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -10,86 +16,29 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from backend.app.core.crypto import decrypt_value, is_encrypted
-from backend.app.core.vault import Vault
 
 logger = logging.getLogger(__name__)
 
-# Provider definitions: settings key → (API URL builder, auth builder, response parser, litellm prefix)
-# Each parser returns list of (model_id_raw, display_name) tuples.
+# ---------------------------------------------------------------------------
+# Display name helpers
+# ---------------------------------------------------------------------------
 
 
-def _bearer_auth(key: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {key}"}
-
-
-_PROVIDER_LABELS: dict[str, str] = {
-    "openai": "OpenAI",
-    "deepseek": "DeepSeek",
-    "groq": "Groq",
-    "mistral": "Mistral",
-    "xai": "xAI",
-    "openrouter": "OpenRouter",
-}
-
-
-def _parse_openai_compat(data: dict, prefix: str) -> list[tuple[str, str]]:
-    """Parse OpenAI-compatible /v1/models response. Filter to chat models."""
-    label = _PROVIDER_LABELS.get(prefix, prefix.title())
-    models = []
-    for m in data.get("data", []):
-        mid = m.get("id", "")
-        # Skip embedding, tts, whisper, image, moderation models
-        skip_patterns = ("embed", "tts", "whisper", "dall-e", "davinci", "babbage",
-                         "moderation", "search", "similarity", "code-", "text-",
-                         "curie", "ada")
-        if any(p in mid.lower() for p in skip_patterns):
-            continue
-        litellm_id = f"{prefix}/{mid}" if prefix else mid
-        name = m.get("name", mid)
-        # Use model id as name if no display name
-        if name == mid:
-            name = mid.replace("-", " ").title()
-        models.append((litellm_id, _prefixed_name(label, name)))
-    return models
-
-
-# ── Provider-specific fetchers ────────────────────────────────
-
-
-_ANTHROPIC_DOCS_URL = "https://docs.anthropic.com/en/docs/about-claude/models"
-
-
-def _prefixed_name(provider_label: str, name: str) -> str:
-    """Add provider prefix to display name: 'Anthropic — Claude Sonnet 4'."""
-    return f"{provider_label} — {name}"
-
-
-def _model_id_to_display(mid: str) -> str:
-    """Convert a model ID like 'claude-opus-4-6' to 'Claude Opus 4.6'.
-
-    Handles patterns:
-      claude-opus-4-6       → Claude Opus 4.6
-      claude-opus-4-20250514 → Claude Opus 4 (2025-05-14)
-      claude-haiku-4-5-20251001 → Claude Haiku 4.5 (2025-10-01)
-      claude-3-haiku-20240307 → Claude 3 Haiku (2024-03-07)
-    """
-    import re
-    # Extract date suffix (8 digits)
-    date_match = re.search(r'-(\d{4})(\d{2})(\d{2})$', mid)
+def _model_slug_to_display(slug: str) -> str:
+    """Convert 'claude-opus-4-6' → 'Claude Opus 4.6', 'claude-opus-4-20250514' → 'Claude Opus 4 (2025-05-14)'."""
+    date_match = re.search(r'-(\d{4})(\d{2})(\d{2})$', slug)
     date_str = ""
-    base = mid
+    base = slug
     if date_match:
         date_str = f" ({date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)})"
-        base = mid[:date_match.start()]
+        base = slug[:date_match.start()]
 
     parts = base.split("-")
-    # Rebuild: words get title-cased, consecutive digit groups get joined with dots
     result = []
     i = 0
     while i < len(parts):
         p = parts[i]
         if p.isdigit():
-            # Collect consecutive digit parts → join with dots (e.g. 4-5 → 4.5)
             nums = [p]
             while i + 1 < len(parts) and parts[i + 1].isdigit() and len(parts[i + 1]) <= 2:
                 i += 1
@@ -102,15 +51,52 @@ def _model_id_to_display(mid: str) -> str:
     return " ".join(result) + date_str
 
 
-async def _scrape_anthropic_models(client: httpx.AsyncClient) -> list[tuple[str, str]]:
+# ---------------------------------------------------------------------------
+# Fetch methods — keyed by providers.models_fetch_method
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_anthropic_api(
+    client: httpx.AsyncClient,
+    provider: dict,
+    api_key: str,
+    key_type: str,
+) -> list[dict]:
+    """Fetch via Anthropic /v1/models (api_key only) or scrape docs (oauth_token)."""
+    if key_type == "oauth_token":
+        return await _fetch_anthropic_scrape(client, provider, api_key, key_type)
+
+    config = json.loads(provider["config"] or "{}")
+    url = provider["api_base_url"] + provider["models_endpoint"]
+    resp = await client.get(url, headers={
+        "x-api-key": api_key,
+        "anthropic-version": config.get("anthropic_version", "2023-06-01"),
+    })
+    resp.raise_for_status()
+
+    models = []
+    for m in resp.json().get("data", []):
+        mid = m.get("id", "")
+        display = m.get("display_name", _model_slug_to_display(mid))
+        models.append({"slug": mid, "display_name": display})
+    return models
+
+
+async def _fetch_anthropic_scrape(
+    client: httpx.AsyncClient,
+    provider: dict,
+    api_key: str,
+    key_type: str,
+) -> list[dict]:
     """Scrape model IDs from Anthropic's docs page."""
-    import re
-    resp = await client.get(_ANTHROPIC_DOCS_URL, follow_redirects=True)
+    resp = await client.get(
+        "https://docs.anthropic.com/en/docs/about-claude/models",
+        follow_redirects=True,
+    )
     resp.raise_for_status()
     html = resp.text
 
     ids: set[str] = set()
-    # Match model IDs like claude-opus-4-6, claude-sonnet-4-20250514, claude-3-haiku-20240307
     for m in re.finditer(r'claude-(?:opus|sonnet|haiku)-[\w.-]+', html):
         mid = m.group()
         if any(x in mid for x in ('prompting', 'analytics', 'code', 'microsoft', 'amazon', 'vertex', 'foundry')):
@@ -119,218 +105,176 @@ async def _scrape_anthropic_models(client: httpx.AsyncClient) -> list[tuple[str,
     for m in re.finditer(r'claude-[\d.]+-(?:opus|sonnet|haiku)(?:-[\d]+)?', html):
         ids.add(m.group())
 
-    # Filter: keep short aliases and dated versions, skip -v1 Bedrock variants
     models = []
     for mid in sorted(ids):
         if mid.endswith("-v1"):
             continue
-        display = _model_id_to_display(mid)
-        models.append((f"anthropic/{mid}", _prefixed_name("Anthropic", display)))
+        models.append({"slug": mid, "display_name": _model_slug_to_display(mid)})
 
+    logger.info("sync_models: Anthropic scraped %d models from docs", len(models))
     return models
 
 
-async def _fetch_anthropic(client: httpx.AsyncClient, api_key: str, key_type: str = "api_key") -> list[tuple[str, str]]:
-    """Fetch Anthropic models via API (api_key) or docs scrape (OAuth)."""
-    if key_type == "api_key":
-        resp = await client.get(
-            "https://api.anthropic.com/v1/models?limit=100",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        models = []
-        for m in data.get("data", []):
-            mid = m.get("id", "")
-            display = m.get("display_name", mid)
-            models.append((f"anthropic/{mid}", _prefixed_name("Anthropic", display)))
-        return models
-
-    # OAuth token — scrape from docs
-    logger.info("sync_models: Anthropic using OAuth token, scraping model list from docs")
-    return await _scrape_anthropic_models(client)
-
-
-async def _fetch_google(client: httpx.AsyncClient, api_key: str) -> list[tuple[str, str]]:
-    """Fetch Google/Gemini models."""
-    resp = await client.get(
-        "https://generativelanguage.googleapis.com/v1beta/models",
-        params={"key": api_key},
-    )
+async def _fetch_google_api(
+    client: httpx.AsyncClient,
+    provider: dict,
+    api_key: str,
+    key_type: str,
+) -> list[dict]:
+    """Fetch Google/Gemini models via generativelanguage API."""
+    url = provider["api_base_url"] + provider["models_endpoint"]
+    resp = await client.get(url, params={"key": api_key})
     resp.raise_for_status()
-    data = resp.json()
+
     models = []
-    for m in data.get("models", []):
-        # name format: "models/gemini-2.5-flash"
+    for m in resp.json().get("models", []):
         raw_name = m.get("name", "")
-        mid = raw_name.replace("models/", "")
-        display = m.get("displayName", mid)
-        # Only include generateContent-capable models
+        slug = raw_name.replace("models/", "")
+        display = m.get("displayName", slug)
         methods = m.get("supportedGenerationMethods", [])
         if "generateContent" not in methods:
             continue
-        litellm_id = f"gemini/{mid}"
-        models.append((litellm_id, _prefixed_name("Google", display)))
+        models.append({"slug": slug, "display_name": display})
     return models
 
 
 async def _fetch_openai_compat(
     client: httpx.AsyncClient,
+    provider: dict,
     api_key: str,
-    url: str,
-    prefix: str,
-) -> list[tuple[str, str]]:
+    key_type: str,
+) -> list[dict]:
     """Fetch from any OpenAI-compatible /v1/models endpoint."""
-    resp = await client.get(url, headers=_bearer_auth(api_key))
+    url = provider["api_base_url"] + provider["models_endpoint"]
+    resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
     resp.raise_for_status()
-    return _parse_openai_compat(resp.json(), prefix)
+
+    skip_patterns = (
+        "embed", "tts", "whisper", "dall-e", "davinci", "babbage",
+        "moderation", "search", "similarity", "code-", "text-",
+        "curie", "ada",
+    )
+
+    models = []
+    for m in resp.json().get("data", []):
+        mid = m.get("id", "")
+        if any(p in mid.lower() for p in skip_patterns):
+            continue
+        name = m.get("name", mid)
+        if name == mid:
+            name = mid.replace("-", " ").title()
+        models.append({"slug": mid, "display_name": name})
+    return models
 
 
-# ── Provider registry ─────────────────────────────────────────
-
-_PROVIDERS: dict[str, dict[str, Any]] = {
-    "anthropic": {
-        "setting_key": "llm.api_key.anthropic",
-        "fetch": _fetch_anthropic,
-    },
-    "google": {
-        "setting_key": "llm.api_key.google",
-        "fetch": _fetch_google,
-    },
-    "openai": {
-        "setting_key": "llm.api_key.openai",
-        "fetch": lambda c, k: _fetch_openai_compat(c, k, "https://api.openai.com/v1/models", "openai"),
-    },
-    "deepseek": {
-        "setting_key": "llm.api_key.deepseek",
-        "fetch": lambda c, k: _fetch_openai_compat(c, k, "https://api.deepseek.com/models", "deepseek"),
-    },
-    "groq": {
-        "setting_key": "llm.api_key.groq",
-        "fetch": lambda c, k: _fetch_openai_compat(c, k, "https://api.groq.com/openai/v1/models", "groq"),
-    },
-    "mistral": {
-        "setting_key": "llm.api_key.mistral",
-        "fetch": lambda c, k: _fetch_openai_compat(c, k, "https://api.mistral.ai/v1/models", "mistral"),
-    },
-    "xai": {
-        "setting_key": "llm.api_key.xai",
-        "fetch": lambda c, k: _fetch_openai_compat(c, k, "https://api.x.ai/v1/models", "xai"),
-    },
-    "openrouter": {
-        "setting_key": "llm.api_key.openrouter",
-        "fetch": lambda c, k: _fetch_openai_compat(c, k, "https://openrouter.ai/api/v1/models", "openrouter"),
-    },
+# Method name → function
+_FETCH_METHODS = {
+    "anthropic_api": _fetch_anthropic_api,
+    "anthropic_scrape": _fetch_anthropic_scrape,
+    "google_api": _fetch_google_api,
+    "openai_compat": _fetch_openai_compat,
 }
 
+# ---------------------------------------------------------------------------
+# Key resolution
+# ---------------------------------------------------------------------------
 
-async def _get_api_key(db: AsyncSession, setting_key: str, provider: str) -> tuple[str, str] | None:
-    """Read an API key from settings DB, then vault, then environment.
 
-    Returns (key_value, key_type) or None. key_type is 'api_key' or 'oauth_token'.
-    """
-    # 1. Check settings DB (encrypted) — includes key_type column
+async def _get_api_key(db: AsyncSession, provider_id: str) -> tuple[str, str] | None:
+    """Read the active API key for a provider. Returns (decrypted_value, key_type) or None."""
     result = await db.execute(
-        text("SELECT value, key_type FROM settings WHERE key = :key"), {"key": setting_key}
+        text("SELECT encrypted_value, key_type FROM provider_api_keys WHERE provider_id = :pid"),
+        {"pid": provider_id},
     )
     row = result.fetchone()
-    if row and row[0]:
-        raw = row[0]
-        key_type = row[1] if row[1] else "api_key"
-        try:
-            decrypted = decrypt_value(raw)
-            if decrypted:
-                return (decrypted, key_type)
-        except Exception:
-            if not is_encrypted(raw):
-                return (raw, key_type)
+    if not row or not row[0]:
+        return None
 
-    # 2. Check vault + environment via Vault
+    raw = row[0]
+    key_type = row[1] or "api_key"
     try:
-        vault = Vault()
-        result = vault.get_api_key_with_type(provider)
-        if result:
-            return result
+        decrypted = decrypt_value(raw)
+        if decrypted:
+            return (decrypted, key_type)
     except Exception:
-        pass
+        if not is_encrypted(raw):
+            return (raw, key_type)
 
     return None
 
 
+# ---------------------------------------------------------------------------
+# Main sync
+# ---------------------------------------------------------------------------
+
+
 async def sync_models(session_factory: async_sessionmaker[AsyncSession]) -> None:
-    """Sync LLM model catalog from all configured providers."""
+    """Sync LLM model catalog from all enabled providers."""
     total_synced = 0
     total_errors = 0
 
     async with session_factory() as db:
-        # Ensure table exists (in case migration hasn't run yet)
-        await db.execute(text(
-            "CREATE TABLE IF NOT EXISTS llm_models ("
-            "id TEXT PRIMARY KEY, provider TEXT NOT NULL, model_id TEXT NOT NULL, "
-            "name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'chat', "
-            "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL, "
-            "updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL, "
-            "UNIQUE(provider, model_id))"
+        # Load all enabled providers from DB
+        result = await db.execute(text(
+            "SELECT id, display_name, litellm_prefix, api_base_url, models_endpoint, "
+            "models_fetch_method, auth_type, config FROM providers WHERE is_enabled = 1"
         ))
-        await db.commit()
+        providers = [dict(row._mapping) for row in result.fetchall()]
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            for provider_name, provider_conf in _PROVIDERS.items():
-                result = await _get_api_key(db, provider_conf["setting_key"], provider_name)
-                if not result:
+            for provider in providers:
+                provider_id = provider["id"]
+                display_name = provider["display_name"]
+
+                key_result = await _get_api_key(db, provider_id)
+                if not key_result:
                     continue
-                api_key, key_type = result
+
+                api_key, key_type = key_result
+                fetch_method = provider["models_fetch_method"]
+                fetch_fn = _FETCH_METHODS.get(fetch_method)
+
+                if not fetch_fn:
+                    logger.warning("sync_models: Unknown fetch method '%s' for %s", fetch_method, provider_id)
+                    total_errors += 1
+                    continue
 
                 try:
-                    fetch_fn = provider_conf["fetch"]
-                    # Anthropic needs key_type to skip API call for OAuth tokens
-                    if provider_name == "anthropic":
-                        models = await fetch_fn(client, api_key, key_type)
-                    else:
-                        models = await fetch_fn(client, api_key)
+                    models = await fetch_fn(client, provider, api_key, key_type)
 
                     if not models:
-                        logger.info("sync_models: %s returned 0 models", provider_name)
+                        logger.info("sync_models: %s returned 0 models", provider_id)
                         continue
 
                     # Upsert models
-                    for model_id, name in models:
-                        composite_id = f"{provider_name}:{model_id}"
+                    from ulid import ULID
+                    for m in models:
+                        slug = m["slug"]
+                        name = f"{display_name} — {m['display_name']}"
+                        model_id = str(ULID())
+
                         await db.execute(
                             text(
-                                "INSERT INTO llm_models (id, provider, model_id, name) "
-                                "VALUES (:id, :provider, :model_id, :name) "
-                                "ON CONFLICT(provider, model_id) DO UPDATE SET "
-                                "name = :name, updated_at = CURRENT_TIMESTAMP"
+                                "INSERT INTO llm_models (id, provider_id, model_slug, display_name) "
+                                "VALUES (:id, :provider_id, :slug, :name) "
+                                "ON CONFLICT(provider_id, model_slug) DO UPDATE SET "
+                                "display_name = :name, updated_at = CURRENT_TIMESTAMP"
                             ),
-                            {
-                                "id": composite_id,
-                                "provider": provider_name,
-                                "model_id": model_id,
-                                "name": name,
-                            },
+                            {"id": model_id, "provider_id": provider_id, "slug": slug, "name": name},
                         )
 
                     await db.commit()
                     total_synced += len(models)
-                    logger.info(
-                        "sync_models: %s — %d models synced", provider_name, len(models)
-                    )
+                    logger.info("sync_models: %s — %d models synced", provider_id, len(models))
 
                 except httpx.HTTPStatusError as e:
                     total_errors += 1
                     logger.warning(
                         "sync_models: %s HTTP %d: %s",
-                        provider_name, e.response.status_code, e.response.text[:200],
+                        provider_id, e.response.status_code, e.response.text[:200],
                     )
                 except Exception:
                     total_errors += 1
-                    logger.exception("sync_models: %s failed", provider_name)
+                    logger.exception("sync_models: %s failed", provider_id)
 
-    logger.info(
-        "sync_models complete: %d models synced, %d provider errors",
-        total_synced, total_errors,
-    )
+    logger.info("sync_models complete: %d models synced, %d provider errors", total_synced, total_errors)

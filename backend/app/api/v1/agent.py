@@ -22,6 +22,7 @@ from backend.app.agent.interrupts import (
     check_interrupt,
 )
 from backend.app.db.session import get_db
+from backend.app.core.crypto import decrypt_value, is_encrypted
 from backend.app.sandbox.manager import get_sandbox_manager
 
 logger = logging.getLogger("bond.agent.api")
@@ -447,8 +448,26 @@ async def resolve_agent(
         try:
             sandbox_manager = get_sandbox_manager()
 
-            # Build agent dict for ensure_running
-            # API keys are resolved inside the container via the mounted Vault
+            # Inject decrypted API keys from provider_api_keys table
+            api_keys: dict[str, str] = {}
+            key_rows = (await db.execute(text(
+                "SELECT provider_id, encrypted_value FROM provider_api_keys"
+            ))).fetchall()
+            for kr in key_rows:
+                try:
+                    val = decrypt_value(kr[1])
+                    if val:
+                        api_keys[kr[0]] = val
+                except Exception:
+                    if not is_encrypted(kr[1]):
+                        api_keys[kr[0]] = kr[1]
+
+            # Inject provider aliases so the worker can resolve model prefixes
+            alias_rows = (await db.execute(text(
+                "SELECT alias, provider_id FROM provider_aliases"
+            ))).fetchall()
+            provider_aliases = {r[0]: r[1] for r in alias_rows}
+
             agent_dict = {
                 "id": agent_row["id"],
                 "name": agent_row["name"],
@@ -460,6 +479,8 @@ async def resolve_agent(
                 "max_iterations": agent_row["max_iterations"],
                 "prompt_fragments": prompt_fragments,
                 "workspace_mounts": workspace_mounts,
+                "api_keys": api_keys,
+                "provider_aliases": provider_aliases,
             }
             info = await sandbox_manager.ensure_running(agent_dict)
             return {

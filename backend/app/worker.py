@@ -869,20 +869,36 @@ async def _run_agent_loop(
     agent_tools = config["tools"]
     max_iterations = config["max_iterations"]
 
-    # Resolve API keys per provider
+    # API keys + provider aliases injected from host DB at container launch
+    injected_keys: dict[str, str] = config.get("api_keys", {})
+    provider_aliases: dict[str, str] = config.get("provider_aliases", {})
+
+    def _resolve_provider(model_id: str) -> str:
+        """Resolve model prefix to canonical provider ID using DB aliases."""
+        prefix = model_id.split("/")[0] if "/" in model_id else "anthropic"
+        return provider_aliases.get(prefix, prefix)
+
     def _resolve_api_key(model_id: str) -> str | None:
-        """Resolve API key for a model's provider via Vault → env var."""
-        prov = model_id.split("/")[0] if "/" in model_id else "anthropic"
-        key = None
+        """Resolve API key: injected from host DB → Vault → env var."""
+        prov = _resolve_provider(model_id)
+
+        # 1. Keys from provider_api_keys (injected at container launch)
+        key = injected_keys.get(prov)
+        if key:
+            return key
+
+        # 2. Vault (mounted from host)
         try:
             from backend.app.core.vault import Vault
             vault = Vault()
             key = vault.get_api_key(prov)
+            if key:
+                return key
         except Exception as e:
             logger.debug("Could not read API key from vault for %s: %s", prov, e)
-        if not key:
-            key = os.environ.get(f"{prov.upper()}_API_KEY")
-        return key
+
+        # 3. Environment variable
+        return os.environ.get(f"{prov.upper()}_API_KEY")
 
     # Primary model kwargs
     extra_kwargs: dict = {}

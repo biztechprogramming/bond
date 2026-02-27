@@ -98,6 +98,8 @@ class SandboxManager:
             "max_iterations": agent["max_iterations"],
             "utility_model": agent.get("utility_model", "claude-sonnet-4-6"),
             "prompt_fragments": agent.get("prompt_fragments", []),
+            "api_keys": agent.get("api_keys", {}),
+            "provider_aliases": agent.get("provider_aliases", {}),
         }
 
         # Use os.open with explicit mode to avoid race window between open() and chmod()

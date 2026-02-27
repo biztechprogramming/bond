@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-
-import yaml
-import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -23,18 +21,9 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 _ENCRYPTED_KEYS = {
     "embedding.api_key.voyage",
     "embedding.api_key.gemini",
-    "llm.api_key.anthropic",
-    "llm.api_key.openai",
-    "llm.api_key.google",
-    "llm.api_key.deepseek",
-    "llm.api_key.groq",
-    "llm.api_key.mistral",
-    "llm.api_key.openrouter",
-    "llm.api_key.xai",
 }
 
-# providers.yaml lives next to the agent code
-_PROVIDERS_PATH = Path(__file__).resolve().parent.parent.parent / "app" / "agent" / "providers.yaml"
+# (providers are now in the DB, not a YAML file)
 
 
 def _mask_value(value: str) -> str:
@@ -256,51 +245,52 @@ async def update_embedding(body: EmbeddingUpdate, db: AsyncSession = Depends(get
 
 
 @router.get("/llm/providers")
-async def get_llm_providers():
-    """Return the list of chat providers from providers.yaml."""
-    providers_path = Path(__file__).resolve().parent.parent.parent / "agent" / "providers.yaml"
-    with open(providers_path) as f:
-        data = yaml.safe_load(f)
-    chat = data.get("chat", {})
+async def get_llm_providers(db: AsyncSession = Depends(get_db)):
+    """Return the list of LLM providers from the providers table."""
+    result = await db.execute(text(
+        "SELECT id, display_name, is_enabled FROM providers ORDER BY display_name"
+    ))
     return [
-        {"id": pid, "name": pconf.get("name", pid)}
-        for pid, pconf in chat.items()
+        {"id": row[0], "name": row[1], "is_enabled": bool(row[2])}
+        for row in result.fetchall()
     ]
 
 
 @router.get("/llm/models")
 async def get_llm_models(db: AsyncSession = Depends(get_db)):
-    """Return available LLM models from the synced catalog."""
-    result = await db.execute(
-        text(
-            "SELECT model_id, name, provider, category "
-            "FROM llm_models ORDER BY provider, name"
-        )
-    )
+    """Return available LLM models from the synced catalog.
+
+    Returns litellm-compatible model IDs (prefix/slug) for use in agent config.
+    """
+    result = await db.execute(text(
+        "SELECT p.litellm_prefix, m.model_slug, m.display_name, m.provider_id, m.category "
+        "FROM llm_models m JOIN providers p ON m.provider_id = p.id "
+        "WHERE m.is_available = 1 "
+        "ORDER BY p.display_name, m.display_name"
+    ))
     return [
-        {"id": row[0], "name": row[1], "provider": row[2], "category": row[3]}
+        {
+            "id": f"{row[0]}/{row[1]}",  # litellm model ID
+            "name": row[2],
+            "provider": row[3],
+            "category": row[4],
+        }
         for row in result.fetchall()
     ]
 
 
 @router.get("/llm/current")
 async def get_llm_current(db: AsyncSession = Depends(get_db)):
-    """Return current LLM provider, model, and which API keys are configured."""
+    """Return current LLM provider, model, and which providers have API keys configured."""
     settings = get_settings()
 
-    # Check which LLM keys are set (bool per provider)
-    providers_with_keys = [
-        "anthropic", "openai", "google", "deepseek", "groq", "mistral", "openrouter", "xai",
-    ]
-    keys_set: dict[str, bool] = {}
-    for provider in providers_with_keys:
-        setting_key = f"llm.api_key.{provider}"
-        result = await db.execute(
-            text("SELECT value FROM settings WHERE key = :key"), {"key": setting_key}
-        )
-        row = result.fetchone()
-        has_key = bool(row and row[0] and decrypt_value(row[0]))
-        keys_set[provider] = has_key
+    result = await db.execute(text(
+        "SELECT p.id, (pak.provider_id IS NOT NULL) as has_key "
+        "FROM providers p "
+        "LEFT JOIN provider_api_keys pak ON p.id = pak.provider_id "
+        "WHERE p.is_enabled = 1"
+    ))
+    keys_set = {row[0]: bool(row[1]) for row in result.fetchall()}
 
     return {
         "provider": settings.llm_provider,
@@ -333,26 +323,46 @@ async def update_setting(
     key: str, body: SettingUpdate, request: Request, db: AsyncSession = Depends(get_db),
 ):
     """Create or update a single setting."""
-    stored = _write_value(key, body.value)
-    # Auto-detect key_type for API key settings
-    key_type = "api_key"
+    # LLM API keys go to provider_api_keys, not settings
     if key.startswith("llm.api_key."):
+        provider_id = key.replace("llm.api_key.", "")
+        # Verify provider exists
+        prov_row = (await db.execute(
+            text("SELECT id FROM providers WHERE id = :pid"), {"pid": provider_id}
+        )).fetchone()
+        if not prov_row:
+            raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
+
+        encrypted = encrypt_value(body.value)
         key_type = _detect_key_type(key, body.value)
 
-    await db.execute(
-        text(
-            "INSERT INTO settings (key, value, key_type) VALUES (:key, :value, :key_type) "
-            "ON CONFLICT(key) DO UPDATE SET value = :value, key_type = :key_type, "
-            "updated_at = CURRENT_TIMESTAMP"
-        ),
-        {"key": key, "value": stored, "key_type": key_type},
-    )
-    await db.commit()
+        await db.execute(
+            text(
+                "INSERT INTO provider_api_keys (provider_id, encrypted_value, key_type) "
+                "VALUES (:pid, :val, :kt) "
+                "ON CONFLICT(provider_id) DO UPDATE SET "
+                "encrypted_value = :val, key_type = :kt, updated_at = CURRENT_TIMESTAMP"
+            ),
+            {"pid": provider_id, "val": encrypted, "kt": key_type},
+        )
+        await db.commit()
 
-    # Trigger model catalog sync when an LLM API key changes
-    if key.startswith("llm.api_key."):
+        # Trigger model catalog sync
         scheduler = getattr(request.app.state, "scheduler", None)
         if scheduler:
             asyncio.create_task(scheduler.trigger("sync_models"))
+
+        return {"key": key, "value": _mask_value(body.value)}
+
+    stored = _write_value(key, body.value)
+    await db.execute(
+        text(
+            "INSERT INTO settings (key, value) VALUES (:key, :value) "
+            "ON CONFLICT(key) DO UPDATE SET value = :value, "
+            "updated_at = CURRENT_TIMESTAMP"
+        ),
+        {"key": key, "value": stored},
+    )
+    await db.commit()
 
     return {"key": key, "value": _read_value(key, stored)}
