@@ -7,8 +7,10 @@ orchestration while this module handles context window management.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import time
 from typing import Any
 
 import litellm
@@ -23,6 +25,37 @@ VERBATIM_MESSAGE_COUNT = 4   # Recent messages kept as-is
 COMPRESSION_THRESHOLD = 8000  # Don't compress if under this token count
 SUMMARY_MAX_WORDS = 100
 TOPIC_MAX_MESSAGES = 8        # Force topic boundary after this many messages
+
+# ---------------------------------------------------------------------------
+# Fragment selection cache
+# ---------------------------------------------------------------------------
+
+_fragment_cache: dict[str, tuple[float, list[dict]]] = {}
+_FRAGMENT_CACHE_TTL = 300  # 5 minutes
+_fragment_cache_conversation_id: str | None = None
+
+
+def _fragment_cache_key(user_message: str, history: list[dict]) -> str:
+    """Hash of user message + last 2 history messages for cache keying."""
+    parts = [user_message]
+    for msg in history[-2:]:
+        c = msg.get("content", "")
+        if isinstance(c, str):
+            parts.append(c[:500])
+    return hashlib.sha256("||".join(parts).encode()).hexdigest()
+
+
+def _invalidate_fragment_cache(conversation_id: str | None = None) -> None:
+    """Clear expired entries or all entries if conversation changed."""
+    global _fragment_cache, _fragment_cache_conversation_id
+    if conversation_id and conversation_id != _fragment_cache_conversation_id:
+        _fragment_cache.clear()
+        _fragment_cache_conversation_id = conversation_id
+        return
+    now = time.monotonic()
+    expired = [k for k, (ts, _) in _fragment_cache.items() if now - ts > _FRAGMENT_CACHE_TTL]
+    for k in expired:
+        del _fragment_cache[k]
 
 # Sliding window: max messages loaded from DB per turn
 HISTORY_WINDOW_SIZE = 20
@@ -143,6 +176,18 @@ async def _select_relevant_fragments(
     if not fragments:
         return []
 
+    # Check fragment cache
+    conversation_id = config.get("conversation_id")
+    _invalidate_fragment_cache(conversation_id)
+    cache_key = _fragment_cache_key(user_message, history)
+    if cache_key in _fragment_cache:
+        ts, cached_result = _fragment_cache[cache_key]
+        if time.monotonic() - ts < _FRAGMENT_CACHE_TTL:
+            logger.info("Fragment selection cache HIT (%d fragments)", len(cached_result))
+            return cached_result
+        else:
+            del _fragment_cache[cache_key]
+
     utility_model = config.get("utility_model", "claude-sonnet-4-6")
     if not utility_model:
         raise RuntimeError("No utility_model configured — refusing to send all fragments to primary model")
@@ -218,6 +263,8 @@ Respond with just the JSON array, nothing else."""
         if not selected:
             logger.warning("Utility model selected 0 fragments — proceeding with none")
 
+        # Cache the result
+        _fragment_cache[cache_key] = (time.monotonic(), selected)
         return selected
 
     except Exception as e:

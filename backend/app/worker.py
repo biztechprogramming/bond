@@ -29,6 +29,7 @@ from backend.app.agent.tool_selection import select_tools, compact_tool_schema
 from backend.app.agent.tool_result_filter import filter_tool_result, rule_based_prune
 from backend.app.agent.context_pipeline import (
     COMPRESSION_THRESHOLD,
+    VERBATIM_MESSAGE_COUNT,
     _estimate_tokens,
     _estimate_messages_tokens,
     _select_relevant_fragments,
@@ -397,8 +398,19 @@ async def _run_agent_loop(
         )
 
     # Stage 3: Progressive decay on tool results
+    # Only decay messages that will remain verbatim — messages above the
+    # compression threshold will be summarized anyway, so decaying them
+    # is wasted work (and the decay output gets discarded).
     if windowed_history:
-        windowed_history = apply_progressive_decay(windowed_history)
+        total_tokens = sum(_estimate_tokens(m.get("content", "")) for m in windowed_history)
+        if total_tokens >= COMPRESSION_THRESHOLD and len(windowed_history) > VERBATIM_MESSAGE_COUNT:
+            # Only decay the verbatim tail — the rest will be compressed
+            head = windowed_history[:-VERBATIM_MESSAGE_COUNT]
+            tail = windowed_history[-VERBATIM_MESSAGE_COUNT:]
+            tail = apply_progressive_decay(tail)
+            windowed_history = head + tail
+        else:
+            windowed_history = apply_progressive_decay(windowed_history)
 
     # Stage 4: Compress remaining history if still over threshold
     compressed_history = windowed_history

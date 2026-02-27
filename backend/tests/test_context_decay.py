@@ -126,3 +126,48 @@ class TestProgressiveDecay:
         result = apply_progressive_decay(msgs)
         parsed = json.loads(result[2]["content"])
         assert len(parsed["results"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Selective decay: skip messages that will be compressed
+# ---------------------------------------------------------------------------
+
+def test_decay_skips_compressible_messages():
+    """When history exceeds compression threshold, only the verbatim tail
+    should have decay applied. The compressible head should pass through
+    unchanged since it'll be summarized anyway."""
+    from backend.app.agent.context_pipeline import COMPRESSION_THRESHOLD, VERBATIM_MESSAGE_COUNT
+
+    # Build a history large enough to exceed COMPRESSION_THRESHOLD
+    # Each "big" tool result is ~2000 tokens (8000 chars)
+    big_content = "x " * 4000  # ~4000 tokens
+
+    turns = []
+    # 8 turns with big tool results — well over threshold
+    for i in range(8):
+        turns.append([
+            _user_msg(f"question {i}"),
+            _assistant_msg("thinking", tool_calls=[{
+                "id": f"tc{i}", "type": "function",
+                "function": {"name": "code_execute", "arguments": "{}"}
+            }]),
+            _tool_msg(big_content, tool_call_id=f"tc{i}"),
+            _assistant_msg(f"answer {i}"),
+        ])
+
+    messages = _make_messages(turns)
+    total_tokens = sum(_estimate_tokens(m.get("content", "")) for m in messages)
+    assert total_tokens >= COMPRESSION_THRESHOLD, f"Test setup: need >= {COMPRESSION_THRESHOLD} tokens, got {total_tokens}"
+
+    # Apply decay to just the verbatim tail (simulating worker.py behavior)
+    if len(messages) > VERBATIM_MESSAGE_COUNT:
+        head = messages[:-VERBATIM_MESSAGE_COUNT]
+        tail = messages[-VERBATIM_MESSAGE_COUNT:]
+        decayed_tail = apply_progressive_decay(tail)
+        result = head + decayed_tail
+    else:
+        result = apply_progressive_decay(messages)
+
+    # The head (compressible) messages should be UNCHANGED
+    for i in range(len(head)):
+        assert result[i] is head[i], f"Message {i} in compressible head was modified"

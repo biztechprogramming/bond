@@ -227,3 +227,47 @@ def test_decay_preserves_recent_assistant_messages():
     # These are the last 4, should be unchanged
     assert result[2]["content"] == messages[2]["content"]
     assert result[4]["content"] == messages[4]["content"]
+
+
+# ---------------------------------------------------------------------------
+# Fragment selection cache
+# ---------------------------------------------------------------------------
+
+from backend.app.agent.context_pipeline import (
+    _fragment_cache,
+    _fragment_cache_key,
+    _invalidate_fragment_cache,
+    _FRAGMENT_CACHE_TTL,
+)
+import time
+
+
+def test_fragment_cache_key_same_input():
+    """Same user message + history produces same key."""
+    history = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+    k1 = _fragment_cache_key("test msg", history)
+    k2 = _fragment_cache_key("test msg", history)
+    assert k1 == k2
+
+
+def test_fragment_cache_key_different_input():
+    """Different user messages produce different keys."""
+    history = [{"role": "user", "content": "hello"}]
+    k1 = _fragment_cache_key("msg A", history)
+    k2 = _fragment_cache_key("msg B", history)
+    assert k1 != k2
+
+
+def test_fragment_cache_invalidation_on_conversation_change():
+    """Cache clears when conversation_id changes."""
+    _fragment_cache.clear()
+    _fragment_cache["test_key"] = (time.monotonic(), [{"id": "frag1"}])
+    _invalidate_fragment_cache("conv-1")
+    # First call sets the conversation_id, should clear since it's different from None
+    assert len(_fragment_cache) == 0
+    # Add an entry under conv-1
+    _fragment_cache["test_key2"] = (time.monotonic(), [{"id": "frag2"}])
+    _invalidate_fragment_cache("conv-1")  # Same conversation — should keep
+    assert "test_key2" in _fragment_cache
+    _invalidate_fragment_cache("conv-2")  # Different conversation — should clear
+    assert len(_fragment_cache) == 0
