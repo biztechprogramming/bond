@@ -131,3 +131,12 @@ Started: 2026-02-26
 - **Done**
 
 ---
+
+## 2026-02-27 - Agent Decisiveness: System Prompt + Tool Description
+- Added "Work style — ACT FAST" section to system prompt with concrete rules
+- Updated work_plan tool description to REQUIRED for multi-step tasks
+- Root cause: agent had no guidance on exploration vs. action balance
+- **Learnings:** LLM agents need explicit numeric targets ("under 5 tool calls") not vague guidance
+- **Done**
+
+---
