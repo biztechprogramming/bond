@@ -1067,6 +1067,22 @@ async def _run_agent_loop(
     if utility_key:
         utility_kwargs["api_key"] = utility_key
 
+    # --- Crash Recovery: check for active work plans ---
+    _has_active_plan = False
+    _active_plan_id: str | None = None
+    try:
+        from backend.app.agent.tools.work_plan import load_active_plan, format_recovery_context
+        active_plan = await load_active_plan(_state.agent_db, _state.agent_id)
+        if active_plan:
+            _has_active_plan = True
+            _active_plan_id = active_plan["id"]
+            recovery_ctx = format_recovery_context(active_plan)
+            # Prepend recovery context as a user message before the actual message
+            history = [{"role": "user", "content": recovery_ctx}] + history
+            logger.info("Crash recovery: injected context for plan %s", _active_plan_id)
+    except Exception as e:
+        logger.debug("Work plan recovery check skipped: %s", e)
+
     # --- Context Distillation Pipeline ---
 
     # Stage 1: Select relevant fragments via utility model
@@ -1160,6 +1176,7 @@ async def _run_agent_loop(
         enabled_tools=agent_tools,
         recent_tools_used=recent_tools[-10:] if recent_tools else None,
         last_assistant_content=last_assistant,
+        has_active_plan=_has_active_plan,
     )
 
     # Use compact schemas to further reduce token usage
@@ -1470,6 +1487,21 @@ async def _run_agent_loop(
                     _state._last_sse_events.append(("memory", result["_promote"]))
                     del result["_promote"]
 
+                # Work plan SSE events -> emit to event queue
+                if "_sse_event" in result:
+                    sse_evt = result.pop("_sse_event")
+                    if event_queue is not None:
+                        await event_queue.put(_sse_event(sse_evt["event"], sse_evt["data"]))
+                    # Track active plan for tool selection
+                    if sse_evt["event"] == "plan_created":
+                        _has_active_plan = True
+                        _active_plan_id = sse_evt["data"].get("plan_id")
+                        # Ensure work_plan stays in tool set
+                        if "work_plan" not in selected_tool_names and "work_plan" in agent_tools:
+                            selected_tool_names.append("work_plan")
+                            if "work_plan" in TOOL_MAP:
+                                tool_defs.append(compact_tool_schema(TOOL_MAP["work_plan"]))
+
                 # Check terminal tool
                 if result.get("_terminal"):
                     return result.get("message", ""), tool_calls_made
@@ -1497,6 +1529,20 @@ async def _run_agent_loop(
                 })
         else:
             return llm_message.content or "", tool_calls_made
+
+    # Hit max iterations — save work plan checkpoint if active
+    if _has_active_plan and _state.agent_db:
+        try:
+            from backend.app.agent.tools.work_plan import checkpoint_active_plan
+            saved = await checkpoint_active_plan(
+                _state.agent_db, _state.agent_id,
+                f"Max iterations ({max_iterations}) reached — saving checkpoint. "
+                f"Tool calls made: {tool_calls_made}.",
+            )
+            if saved:
+                logger.info("Work plan checkpoint saved at max iterations")
+        except Exception as e:
+            logger.warning("Failed to save work plan checkpoint: %s", e)
 
     # Hit max iterations — save a memory of what was attempted
     try:

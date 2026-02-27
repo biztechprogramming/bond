@@ -10,12 +10,12 @@ from backend.app.agent.tools.definitions import TOOL_DEFINITIONS, TOOL_SUMMARIES
 
 def test_all_14_tools_defined():
     """Should have exactly 14 tool definitions."""
-    assert len(TOOL_DEFINITIONS) == 16
+    assert len(TOOL_DEFINITIONS) == 18
 
 
 def test_tool_summaries_match():
     """Each definition should have a matching summary."""
-    assert len(TOOL_SUMMARIES) == 16
+    assert len(TOOL_SUMMARIES) == 18
     for name in TOOL_SUMMARIES:
         assert name in TOOL_MAP
 
@@ -86,10 +86,11 @@ def test_get_definitions_for_empty():
 def test_build_registry_has_all_tools():
     """Built registry should have handlers for all 14 tools."""
     registry = build_registry()
-    assert len(registry.registered_names) == 16
+    assert len(registry.registered_names) == 18
     expected = {
         "respond", "search_memory", "memory_save", "memory_update", "memory_delete",
-        "code_execute", "file_read", "file_write", "call_subordinate",
+        "code_execute", "file_read", "file_write", "file_edit", "call_subordinate",
         "web_search", "web_read", "browser", "email", "cron", "notify", "skills",
+        "work_plan",
     }
     assert set(registry.registered_names) == expected

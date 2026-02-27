@@ -1,0 +1,511 @@
+"""Work plan tool — create and manage structured task plans.
+
+Agents use this to track multi-step tasks with context checkpointing
+for crash recovery and user visibility via the Task Board UI.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+import aiosqlite
+from ulid import ULID
+
+logger = logging.getLogger("bond.agent.tools.work_plan")
+
+# Terminal statuses for work items
+_TERMINAL_ITEM_STATUSES = frozenset({"done", "complete", "failed"})
+
+# Terminal statuses for plans
+_TERMINAL_PLAN_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+# Valid status transitions for work items
+_VALID_ITEM_STATUSES = frozenset({
+    "new", "in_progress", "done", "in_review", "approved",
+    "in_test", "tested", "complete", "blocked", "failed",
+})
+
+# Valid plan statuses
+_VALID_PLAN_STATUSES = frozenset({"active", "paused", "completed", "failed", "cancelled"})
+
+
+async def handle_work_plan(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Manage work plans and items.
+
+    Actions: create_plan, add_item, update_item, complete_plan, get_plan.
+    """
+    action = arguments.get("action", "")
+    agent_db: aiosqlite.Connection | None = context.get("agent_db")
+    agent_id: str = context.get("agent_id", "unknown")
+
+    if not action:
+        return {"error": "action is required"}
+    if agent_db is None:
+        return {"error": "No agent database available."}
+
+    try:
+        if action == "create_plan":
+            return await _create_plan(arguments, agent_db, agent_id, context)
+        elif action == "add_item":
+            return await _add_item(arguments, agent_db, context)
+        elif action == "update_item":
+            return await _update_item(arguments, agent_db, context)
+        elif action == "complete_plan":
+            return await _complete_plan(arguments, agent_db, context)
+        elif action == "get_plan":
+            return await _get_plan(arguments, agent_db)
+        else:
+            return {"error": f"Unknown action: {action}. Valid: create_plan, add_item, update_item, complete_plan, get_plan"}
+    except Exception as e:
+        logger.warning("work_plan action=%s failed: %s", action, e, exc_info=True)
+        return {"error": str(e)}
+
+
+async def _create_plan(
+    arguments: dict[str, Any],
+    db: aiosqlite.Connection,
+    agent_id: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Create a new work plan."""
+    title = arguments.get("title", "")
+    if not title:
+        return {"error": "title is required for create_plan"}
+
+    plan_id = str(ULID())
+    conversation_id = context.get("conversation_id", "")
+    parent_plan_id = arguments.get("parent_plan_id")
+    now = datetime.now(timezone.utc).isoformat()
+
+    await db.execute(
+        "INSERT INTO work_plans (id, agent_id, conversation_id, parent_plan_id, title, status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
+        (plan_id, agent_id, conversation_id, parent_plan_id, title, now, now),
+    )
+    await db.commit()
+
+    logger.info("work_plan create_plan id=%s title=%s", plan_id, title[:80])
+
+    result: dict[str, Any] = {
+        "status": "created",
+        "plan_id": plan_id,
+        "title": title,
+    }
+
+    # Attach SSE event data for the worker to emit
+    result["_sse_event"] = {
+        "event": "plan_created",
+        "data": {"plan_id": plan_id, "title": title, "agent_id": agent_id},
+    }
+
+    return result
+
+
+async def _add_item(
+    arguments: dict[str, Any],
+    db: aiosqlite.Connection,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Add a work item to a plan."""
+    plan_id = arguments.get("plan_id", "")
+    title = arguments.get("title", "")
+
+    if not plan_id:
+        return {"error": "plan_id is required for add_item"}
+    if not title:
+        return {"error": "title is required for add_item"}
+
+    # Verify plan exists and is active
+    cursor = await db.execute(
+        "SELECT status FROM work_plans WHERE id = ?", (plan_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return {"error": f"Plan not found: {plan_id}"}
+    if row[0] in _TERMINAL_PLAN_STATUSES:
+        return {"error": f"Plan is {row[0]} — cannot add items"}
+
+    # Auto-increment ordinal if not provided
+    ordinal = arguments.get("ordinal")
+    if ordinal is None:
+        cursor = await db.execute(
+            "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM work_items WHERE plan_id = ?",
+            (plan_id,),
+        )
+        ordinal_row = await cursor.fetchone()
+        ordinal = ordinal_row[0] if ordinal_row else 0
+
+    item_id = str(ULID())
+    now = datetime.now(timezone.utc).isoformat()
+
+    await db.execute(
+        "INSERT INTO work_items (id, plan_id, title, status, ordinal, notes, files_changed, created_at, updated_at) "
+        "VALUES (?, ?, ?, 'new', ?, '[]', '[]', ?, ?)",
+        (item_id, plan_id, title, ordinal, now, now),
+    )
+    await db.commit()
+
+    logger.info("work_plan add_item id=%s plan=%s title=%s ordinal=%d", item_id, plan_id, title[:60], ordinal)
+
+    result: dict[str, Any] = {
+        "status": "added",
+        "item_id": item_id,
+        "plan_id": plan_id,
+        "title": title,
+        "ordinal": ordinal,
+    }
+
+    result["_sse_event"] = {
+        "event": "item_created",
+        "data": {"plan_id": plan_id, "item_id": item_id, "title": title, "ordinal": ordinal},
+    }
+
+    return result
+
+
+async def _update_item(
+    arguments: dict[str, Any],
+    db: aiosqlite.Connection,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Update a work item's status, notes, context_snapshot, or files_changed."""
+    item_id = arguments.get("item_id", "")
+    if not item_id:
+        return {"error": "item_id is required for update_item"}
+
+    # Load current item
+    cursor = await db.execute(
+        "SELECT id, plan_id, status, notes, files_changed FROM work_items WHERE id = ?",
+        (item_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return {"error": f"Item not found: {item_id}"}
+
+    plan_id = row[1]
+    current_status = row[2]
+    current_notes_raw = row[3] or "[]"
+    current_files_raw = row[4] or "[]"
+
+    # Parse existing notes and files
+    try:
+        current_notes = json.loads(current_notes_raw) if isinstance(current_notes_raw, str) else current_notes_raw
+    except json.JSONDecodeError:
+        current_notes = []
+    try:
+        current_files = json.loads(current_files_raw) if isinstance(current_files_raw, str) else current_files_raw
+    except json.JSONDecodeError:
+        current_files = []
+
+    updates: list[str] = []
+    params: list[Any] = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Status update
+    new_status = arguments.get("status")
+    if new_status:
+        if new_status not in _VALID_ITEM_STATUSES:
+            return {"error": f"Invalid status: {new_status}. Valid: {sorted(_VALID_ITEM_STATUSES)}"}
+        updates.append("status = ?")
+        params.append(new_status)
+
+        if new_status == "in_progress" and current_status != "in_progress":
+            updates.append("started_at = ?")
+            params.append(now)
+        if new_status in _TERMINAL_ITEM_STATUSES:
+            updates.append("completed_at = ?")
+            params.append(now)
+
+    # Notes: append (never overwrite)
+    note_text = arguments.get("notes")
+    if note_text and isinstance(note_text, str):
+        current_notes.append({"at": now, "text": note_text})
+        updates.append("notes = ?")
+        params.append(json.dumps(current_notes))
+
+    # Context snapshot
+    context_snapshot = arguments.get("context_snapshot")
+    if context_snapshot is not None:
+        snapshot_str = json.dumps(context_snapshot) if isinstance(context_snapshot, dict) else str(context_snapshot)
+        updates.append("context_snapshot = ?")
+        params.append(snapshot_str)
+
+    # Files changed: merge (deduplicate)
+    files_changed = arguments.get("files_changed")
+    if files_changed and isinstance(files_changed, list):
+        merged_files = list(dict.fromkeys(current_files + files_changed))
+        updates.append("files_changed = ?")
+        params.append(json.dumps(merged_files))
+
+    if not updates:
+        return {"error": "No updates provided. Provide at least one of: status, notes, context_snapshot, files_changed"}
+
+    updates.append("updated_at = ?")
+    params.append(now)
+    params.append(item_id)
+
+    sql = f"UPDATE work_items SET {', '.join(updates)} WHERE id = ?"
+    await db.execute(sql, params)
+    await db.commit()
+
+    effective_status = new_status or current_status
+    logger.info("work_plan update_item id=%s status=%s notes_count=%d", item_id, effective_status, len(current_notes))
+
+    result: dict[str, Any] = {
+        "status": "updated",
+        "item_id": item_id,
+        "plan_id": plan_id,
+        "item_status": effective_status,
+        "notes_count": len(current_notes),
+    }
+
+    sse_data: dict[str, Any] = {"plan_id": plan_id, "item_id": item_id, "status": effective_status}
+    if note_text:
+        sse_data["notes"] = note_text
+    if files_changed:
+        sse_data["files_changed"] = files_changed
+    result["_sse_event"] = {"event": "item_updated", "data": sse_data}
+
+    return result
+
+
+async def _complete_plan(
+    arguments: dict[str, Any],
+    db: aiosqlite.Connection,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Set a plan to a terminal status."""
+    plan_id = arguments.get("plan_id", "")
+    status = arguments.get("status", "completed")
+
+    if not plan_id:
+        return {"error": "plan_id is required for complete_plan"}
+    if status not in _TERMINAL_PLAN_STATUSES:
+        return {"error": f"Invalid terminal status: {status}. Valid: {sorted(_TERMINAL_PLAN_STATUSES)}"}
+
+    cursor = await db.execute(
+        "SELECT status FROM work_plans WHERE id = ?", (plan_id,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return {"error": f"Plan not found: {plan_id}"}
+    if row[0] in _TERMINAL_PLAN_STATUSES:
+        return {"error": f"Plan already in terminal status: {row[0]}"}
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.execute(
+        "UPDATE work_plans SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+        (status, now, now, plan_id),
+    )
+    await db.commit()
+
+    logger.info("work_plan complete_plan id=%s status=%s", plan_id, status)
+
+    result: dict[str, Any] = {
+        "status": "completed",
+        "plan_id": plan_id,
+        "plan_status": status,
+    }
+
+    result["_sse_event"] = {
+        "event": "plan_completed",
+        "data": {"plan_id": plan_id, "status": status},
+    }
+
+    return result
+
+
+async def _get_plan(
+    arguments: dict[str, Any],
+    db: aiosqlite.Connection,
+) -> dict[str, Any]:
+    """Get a plan with all its items."""
+    plan_id = arguments.get("plan_id", "")
+    if not plan_id:
+        return {"error": "plan_id is required for get_plan"}
+
+    cursor = await db.execute(
+        "SELECT id, agent_id, conversation_id, parent_plan_id, title, status, "
+        "created_at, updated_at, completed_at FROM work_plans WHERE id = ?",
+        (plan_id,),
+    )
+    plan_row = await cursor.fetchone()
+    if not plan_row:
+        return {"error": f"Plan not found: {plan_id}"}
+
+    plan = {
+        "id": plan_row[0],
+        "agent_id": plan_row[1],
+        "conversation_id": plan_row[2],
+        "parent_plan_id": plan_row[3],
+        "title": plan_row[4],
+        "status": plan_row[5],
+        "created_at": plan_row[6],
+        "updated_at": plan_row[7],
+        "completed_at": plan_row[8],
+    }
+
+    cursor = await db.execute(
+        "SELECT id, title, status, ordinal, context_snapshot, notes, files_changed, "
+        "started_at, completed_at, created_at, updated_at "
+        "FROM work_items WHERE plan_id = ? ORDER BY ordinal",
+        (plan_id,),
+    )
+    items = []
+    for item_row in await cursor.fetchall():
+        notes_raw = item_row[5] or "[]"
+        files_raw = item_row[6] or "[]"
+        try:
+            notes = json.loads(notes_raw) if isinstance(notes_raw, str) else notes_raw
+        except json.JSONDecodeError:
+            notes = []
+        try:
+            files = json.loads(files_raw) if isinstance(files_raw, str) else files_raw
+        except json.JSONDecodeError:
+            files = []
+        try:
+            snapshot = json.loads(item_row[4]) if item_row[4] else None
+        except (json.JSONDecodeError, TypeError):
+            snapshot = None
+
+        items.append({
+            "id": item_row[0],
+            "title": item_row[1],
+            "status": item_row[2],
+            "ordinal": item_row[3],
+            "context_snapshot": snapshot,
+            "notes": notes,
+            "files_changed": files,
+            "started_at": item_row[7],
+            "completed_at": item_row[8],
+            "created_at": item_row[9],
+            "updated_at": item_row[10],
+        })
+
+    plan["items"] = items
+    return plan
+
+
+# ---------------------------------------------------------------------------
+# Recovery helpers (used by worker.py)
+# ---------------------------------------------------------------------------
+
+
+async def load_active_plan(db: aiosqlite.Connection, agent_id: str) -> dict[str, Any] | None:
+    """Load the most recent active work plan for an agent, with all items."""
+    cursor = await db.execute(
+        "SELECT id FROM work_plans WHERE agent_id = ? AND status = 'active' "
+        "ORDER BY updated_at DESC LIMIT 1",
+        (agent_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return None
+
+    plan_id = row[0]
+    plan = await _get_plan({"plan_id": plan_id}, db)
+    if "error" in plan:
+        return None
+    return plan
+
+
+def format_recovery_context(plan: dict[str, Any]) -> str:
+    """Build a human-readable recovery context message from a plan."""
+    lines = [f"[Resuming work plan: \"{plan['title']}\"]", ""]
+
+    items = plan.get("items", [])
+    completed = [i for i in items if i["status"] in ("done", "complete", "tested", "approved")]
+    in_progress = [i for i in items if i["status"] == "in_progress"]
+    remaining = [i for i in items if i["status"] in ("new", "blocked")]
+
+    if completed:
+        lines.append("Completed:")
+        for item in completed:
+            lines.append(f"  - \u2705 {item['title']}")
+            # Show last note if available
+            if item.get("notes"):
+                last_note = item["notes"][-1] if isinstance(item["notes"], list) else None
+                if last_note and isinstance(last_note, dict):
+                    lines.append(f"    Last note: {last_note.get('text', '')[:200]}")
+        lines.append("")
+
+    if in_progress:
+        lines.append("In Progress:")
+        for item in in_progress:
+            lines.append(f"  - \U0001f504 {item['title']}")
+            # Show context snapshot if available
+            if item.get("context_snapshot"):
+                snapshot = item["context_snapshot"]
+                if isinstance(snapshot, dict):
+                    if snapshot.get("decisions_made"):
+                        lines.append(f"    Decisions: {', '.join(str(d) for d in snapshot['decisions_made'][:3])}")
+                    if snapshot.get("remaining_work"):
+                        lines.append(f"    Remaining: {', '.join(str(r) for r in snapshot['remaining_work'][:3])}")
+                    if snapshot.get("files_read"):
+                        files = list(snapshot["files_read"].keys())[:5]
+                        lines.append(f"    Files read: {', '.join(files)}")
+                elif isinstance(snapshot, str):
+                    lines.append(f"    Context: {snapshot[:300]}")
+            # Show recent notes
+            if item.get("notes") and isinstance(item["notes"], list):
+                recent = item["notes"][-3:]
+                for note in recent:
+                    if isinstance(note, dict):
+                        lines.append(f"    Note: {note.get('text', '')[:200]}")
+            # Show files changed
+            if item.get("files_changed"):
+                lines.append(f"    Files changed: {', '.join(item['files_changed'][:10])}")
+        lines.append("")
+
+    if remaining:
+        lines.append("Remaining:")
+        for item in remaining:
+            prefix = "\u2b1c" if item["status"] == "new" else "\U0001f6d1"
+            lines.append(f"  - {prefix} {item['title']}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+async def checkpoint_active_plan(
+    db: aiosqlite.Connection,
+    agent_id: str,
+    context_note: str = "Max iterations reached — saving checkpoint",
+) -> bool:
+    """Save a checkpoint on the active plan's in-progress item.
+
+    Called when max iterations is hit or on crash recovery.
+    Returns True if a checkpoint was saved.
+    """
+    plan = await load_active_plan(db, agent_id)
+    if not plan:
+        return False
+
+    items = plan.get("items", [])
+    in_progress = [i for i in items if i["status"] == "in_progress"]
+    if not in_progress:
+        return False
+
+    current_item = in_progress[0]
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Append a note about the checkpoint
+    notes = current_item.get("notes", [])
+    if not isinstance(notes, list):
+        notes = []
+    notes.append({"at": now, "text": context_note})
+
+    await db.execute(
+        "UPDATE work_items SET notes = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(notes), now, current_item["id"]),
+    )
+    await db.commit()
+
+    logger.info("Checkpoint saved for item %s in plan %s", current_item["id"], plan["id"])
+    return True

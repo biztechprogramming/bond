@@ -396,7 +396,7 @@ def test_native_registry_has_expected_tools():
     expected = {
         "respond", "search_memory", "memory_save",
         "memory_update", "memory_delete",
-        "code_execute", "file_read", "file_write",
-        "web_search", "web_read",
+        "code_execute", "file_read", "file_write", "file_edit",
+        "web_search", "web_read", "work_plan",
     }
     assert set(registry.registered_names) == expected

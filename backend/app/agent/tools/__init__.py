@@ -62,7 +62,7 @@ def build_registry() -> ToolRegistry:
     from .search import handle_search_memory
     from .memory import handle_memory_save, handle_memory_update, handle_memory_delete
     from .code import handle_code_execute
-    from .files import handle_file_read, handle_file_write
+    from .files import handle_file_read, handle_file_write, handle_file_edit
     from .web import handle_web_search, handle_web_read
     from .browser import handle_browser
     from .email_tool import handle_email
@@ -70,6 +70,7 @@ def build_registry() -> ToolRegistry:
     from .notify import handle_notify
     from .subordinate import handle_call_subordinate
     from .skills import handle_skills
+    from .work_plan import handle_work_plan
 
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
@@ -80,6 +81,7 @@ def build_registry() -> ToolRegistry:
     registry.register("code_execute", handle_code_execute)
     registry.register("file_read", handle_file_read)
     registry.register("file_write", handle_file_write)
+    registry.register("file_edit", handle_file_edit)
     registry.register("call_subordinate", handle_call_subordinate)
     registry.register("web_search", handle_web_search)
     registry.register("web_read", handle_web_read)
@@ -88,4 +90,5 @@ def build_registry() -> ToolRegistry:
     registry.register("cron", handle_cron)
     registry.register("notify", handle_notify)
     registry.register("skills", handle_skills)
+    registry.register("work_plan", handle_work_plan)
     return registry

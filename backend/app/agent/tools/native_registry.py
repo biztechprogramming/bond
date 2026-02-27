@@ -24,6 +24,7 @@ def build_native_registry() -> ToolRegistry:
         handle_search_memory,
     )
     from .web import handle_web_read, handle_web_search
+    from .work_plan import handle_work_plan
 
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
@@ -37,4 +38,5 @@ def build_native_registry() -> ToolRegistry:
     registry.register("file_edit", handle_file_edit)
     registry.register("web_search", handle_web_search)
     registry.register("web_read", handle_web_read)
+    registry.register("work_plan", handle_work_plan)
     return registry

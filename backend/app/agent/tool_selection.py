@@ -84,6 +84,10 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "call_subordinate": [
         "delegate", "subordinate", "sub-agent", "hand off", "ask another",
     ],
+    "work_plan": [
+        "implement", "build", "create", "fix", "refactor", "change",
+        "update", "migrate", "plan", "task", "work plan", "multi-step",
+    ],
 }
 
 # Pre-compile patterns for efficiency
@@ -99,6 +103,7 @@ def select_tools(
     enabled_tools: list[str],
     recent_tools_used: list[str] | None = None,
     last_assistant_content: str | None = None,
+    has_active_plan: bool = False,
 ) -> list[str]:
     """Select relevant tools for this turn.
 
@@ -112,6 +117,10 @@ def select_tools(
         List of tool names to include in this turn's API call.
     """
     selected: set[str] = set(ALWAYS_INCLUDE & set(enabled_tools))
+
+    # Always include work_plan if agent has an active plan
+    if has_active_plan and "work_plan" in enabled_tools:
+        selected.add("work_plan")
 
     # Text to match against
     match_text = user_message

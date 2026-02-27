@@ -418,6 +418,57 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "work_plan",
+            "description": "Create and manage work plans with trackable items. Use at the start of multi-step tasks.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Action to perform.",
+                        "enum": ["create_plan", "add_item", "update_item", "complete_plan", "get_plan"],
+                    },
+                    "plan_id": {
+                        "type": "string",
+                        "description": "ID of existing plan (for add_item, update_item, complete_plan, get_plan).",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Title for plan or item (for create_plan, add_item).",
+                    },
+                    "item_id": {
+                        "type": "string",
+                        "description": "ID of item to update (for update_item).",
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "New status (for update_item, complete_plan).",
+                    },
+                    "ordinal": {
+                        "type": "integer",
+                        "description": "Sort order within the plan (for add_item, auto-increments if omitted).",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Note to append (for update_item). Timestamped automatically.",
+                    },
+                    "context_snapshot": {
+                        "type": "object",
+                        "description": "JSON context to save (for update_item).",
+                    },
+                    "files_changed": {
+                        "type": "array",
+                        "description": "Array of file paths modified (for update_item).",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
