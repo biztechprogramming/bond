@@ -26,7 +26,7 @@ import litellm
 
 from backend.app.agent.context_decay import apply_progressive_decay
 from backend.app.agent.tool_selection import select_tools, compact_tool_schema
-from backend.app.agent.tool_result_filter import filter_tool_result
+from backend.app.agent.tool_result_filter import filter_tool_result, rule_based_prune
 litellm.suppress_debug_info = True
 import logging as _logging
 _logging.getLogger("LiteLLM").setLevel(_logging.WARNING)
@@ -864,6 +864,10 @@ def _advance_cache_breakpoint(messages: list[dict], old_bp_index: int) -> int:
     if len(messages) < 3:
         return old_bp_index
 
+    # Small conversations won't meet Anthropic's minimum cache block size (2048 tokens for Opus).
+    if len(messages) < 12:
+        return old_bp_index
+
     new_bp_index = len(messages) - 2
 
     # Nothing to do if breakpoint hasn't moved
@@ -970,6 +974,24 @@ def _decay_in_loop_tool_results(messages: list[dict], preturn_count: int, *, fro
                     tokens_saved += (_estimate_tokens(content) - _estimate_tokens(compressed))
                     compressed_older.append({**msg, "content": compressed})
                     continue
+
+        elif msg.get("role") == "assistant":
+            content = msg.get("content")
+            if isinstance(content, str) and content:
+                if msg.get("tool_calls"):
+                    # Has tool_calls: strip reasoning text to first sentence or 100 chars
+                    truncated = content[:100].split(". ")[0] + "..." if len(content) > 100 else content
+                    if truncated != content:
+                        tokens_saved += (_estimate_tokens(content) - _estimate_tokens(truncated))
+                        compressed_older.append({**msg, "content": truncated})
+                        continue
+                else:
+                    # Content-only assistant message: keep first 200 chars
+                    if len(content) > 200:
+                        truncated = content[:200] + "..."
+                        tokens_saved += (_estimate_tokens(content) - _estimate_tokens(truncated))
+                        compressed_older.append({**msg, "content": truncated})
+                        continue
 
         compressed_older.append(msg)
 
@@ -1152,6 +1174,9 @@ async def _run_agent_loop(
     tool_calls_made = 0
     sse_events: list[str] = []  # collected for the SSE stream
 
+    # File re-read dedup: avoid wasting tokens on identical file content
+    _file_read_cache: dict[str, dict] = {}  # path -> {"content_hash": str, "tool_call_num": int, "total_lines": int, "size": int}
+
     # Adaptive max_tokens: start low (fast + cheap), escalate on truncation
     # Tiers: 8192 → 32768 → 65536. Reset after each successful completion.
     TOKEN_TIERS = [8192, 32768, 65536]
@@ -1203,6 +1228,18 @@ async def _run_agent_loop(
             [t["function"]["name"] for t in tool_defs],
         )
 
+        # Token budget injection: append brief context to the last tool result
+        # so the agent can self-regulate. Only appended to the latest (non-cached)
+        # message, so it doesn't affect cache stability. ~15 tokens overhead.
+        _budget_note = ""
+        _budget_target_idx = -1
+        if _iteration > 0 and messages and messages[-1].get("role") == "tool":
+            _budget_note = f"\n[Turn {_iteration + 1}/{max_iterations} | ~{context_tokens} tokens | {tool_calls_made} tool calls]"
+            _budget_target_idx = len(messages) - 1
+            content = messages[_budget_target_idx].get("content", "")
+            if isinstance(content, str):
+                messages[_budget_target_idx]["content"] = content + _budget_note
+
         response = await litellm.acompletion(
             model=model,
             messages=messages,
@@ -1211,6 +1248,12 @@ async def _run_agent_loop(
             max_tokens=current_max_tokens,
             **extra_kwargs,
         )
+
+        # Strip budget note from the tool result after the LLM call
+        if _budget_note and _budget_target_idx >= 0:
+            content = messages[_budget_target_idx].get("content", "")
+            if isinstance(content, str) and content.endswith(_budget_note):
+                messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
 
         choice = response.choices[0]
         llm_message = choice.message
@@ -1359,6 +1402,36 @@ async def _run_agent_loop(
                         if _parsed is not None:
                             result = {**result, "stdout": _parsed, "_build_parsed": True}
 
+                # File re-read dedup: replace duplicate unchanged reads with a short reference
+                if tool_name == "file_read" and isinstance(result, dict) and "error" not in result:
+                    _fpath = result.get("path", result.get("file_path", ""))
+                    _fcontent = result.get("content", "")
+                    _fhash = hashlib.md5(_fcontent.encode(errors="replace")).hexdigest() if isinstance(_fcontent, str) else ""
+                    _flines = _fcontent.count("\n") + 1 if isinstance(_fcontent, str) and _fcontent else 0
+                    _fsize = result.get("size", len(_fcontent) if isinstance(_fcontent, str) else 0)
+
+                    if _fpath and _fpath in _file_read_cache:
+                        cached = _file_read_cache[_fpath]
+                        if cached["content_hash"] == _fhash:
+                            # Same content — replace with short reference
+                            result = {
+                                "note": f"File already read at tool call #{cached['tool_call_num']} (unchanged, {cached['total_lines']} lines, {cached['size']} bytes). Use line_start/line_end to re-read specific sections if needed.",
+                                "path": _fpath,
+                                "total_lines": cached["total_lines"],
+                            }
+                            logger.info("File re-read dedup: %s (unchanged, saved ~%d tokens)", _fpath, _fsize // 4)
+                        else:
+                            # File changed — update cache, return full content
+                            _file_read_cache[_fpath] = {"content_hash": _fhash, "tool_call_num": tool_calls_made, "total_lines": _flines, "size": _fsize}
+                    elif _fpath:
+                        _file_read_cache[_fpath] = {"content_hash": _fhash, "tool_call_num": tool_calls_made, "total_lines": _flines, "size": _fsize}
+
+                # Invalidate file read cache on successful file_edit/file_write
+                if tool_name in ("file_edit", "file_write") and isinstance(result, dict) and "error" not in result:
+                    _epath = result.get("path", result.get("file_path", tool_args.get("path", "")))
+                    if _epath and _epath in _file_read_cache:
+                        del _file_read_cache[_epath]
+
                 logger.info("Tool result [%d]: %s",  tool_calls_made,
                             {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in result.items()} if isinstance(result, dict) else result)
 
@@ -1372,16 +1445,21 @@ async def _run_agent_loop(
                 if result.get("_terminal"):
                     return result.get("message", ""), tool_calls_made
 
-                # Filter large tool results through utility model
-                result_json = await filter_tool_result(
-                    tool_name=tool_name,
-                    tool_args=tool_args,
-                    raw_result=result,
-                    user_message=user_message,
-                    last_assistant_content=last_assistant,
-                    utility_model=utility_model,
-                    utility_kwargs=utility_kwargs,
-                )
+                # Rule-based pruning (no LLM call) before utility model filter
+                pruned = rule_based_prune(tool_name, tool_args, result)
+                if pruned is not None:
+                    result_json = json.dumps(pruned)
+                else:
+                    # Fall through to utility model filter
+                    result_json = await filter_tool_result(
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        raw_result=result,
+                        user_message=user_message,
+                        last_assistant_content=last_assistant,
+                        utility_model=utility_model,
+                        utility_kwargs=utility_kwargs,
+                    )
 
                 messages.append({
                     "role": "tool",

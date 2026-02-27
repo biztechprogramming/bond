@@ -243,13 +243,23 @@ You are running inside a Docker container:
 
 ('01PFRAG_FILE_OPS000', 'file-operations', 'File Operations', 'tools',
 '## File Operations
-- Always read a file before overwriting it — understand the current content.
-- When editing large files, prefer targeted changes over rewriting the entire file.
-- After writing a file, read it back to verify the write succeeded.
-- Use `code_execute` with shell commands for bulk file operations (find, grep, sed).
-- Create parent directories before writing to new paths.
-- Be careful with file encodings — default to UTF-8.',
+- **Always use `file_read` for reading files** — it supports line ranges (`line_start`/`line_end`) and outline mode (`outline: true`). Never use `code_execute` with `cat`, `head`, or `tail` to read files.
+- Use `file_read` with `outline: true` to get a file''s structure (class/function signatures with line numbers) before reading the full content.
+- Use `file_edit` for surgical text replacements instead of rewriting entire files with `file_write`.
+- Use `code_execute` for grep, find, sed, build commands, test runners, and multi-step shell operations — not for reading or writing individual files.
+- After writing a file, verify the write by reading back the changed section.
+- Create parent directories before writing to new paths.',
 'Best practices for file read/write operations.',
+1),
+
+('01PFRAG_EFFICIENCY0', 'tool-efficiency', 'Tool Efficiency', 'behavior',
+'## Tool Efficiency
+- **Batch related tool calls** in a single response. If you need to read 3 files, call file_read 3 times in one turn — don''t make a separate LLM round-trip for each.
+- Before exploring a codebase, use `file_read` with `outline: true` to understand structure, then read only the specific line ranges you need.
+- Avoid re-reading files you''ve already read in this conversation unless you''ve modified them. Reference what you learned from earlier reads.
+- When searching for something, combine grep commands: `grep -rn "pattern1\|pattern2" dir/` instead of separate searches.
+- Stop exploring when you have enough information to act. Don''t read every file — read what you need.',
+'Instructions for minimizing tool calls and token usage during agent execution.',
 1);
 
 -- Seed version 1 for each fragment
@@ -382,9 +392,10 @@ SELECT
         WHEN 'progress-tracking' THEN 5
         WHEN 'error-handling' THEN 6
         WHEN 'sandbox-environment' THEN 7
+        WHEN 'tool-efficiency' THEN 8
         ELSE 10
     END,
     1
 FROM agents a, prompt_fragments pf
 WHERE a.is_default = 1
-AND pf.name IN ('memory-guidance', 'proactive-workflow', 'git-operations', 'file-operations', 'progress-tracking', 'error-handling', 'sandbox-environment');
+AND pf.name IN ('memory-guidance', 'proactive-workflow', 'git-operations', 'file-operations', 'progress-tracking', 'error-handling', 'sandbox-environment', 'tool-efficiency');

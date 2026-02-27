@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import litellm
 
@@ -133,3 +134,92 @@ Return ONLY the filtered JSON result, nothing else."""
     except Exception as e:
         logger.warning("Tool filter failed for %s, using raw result: %s", tool_name, e)
         return raw_json
+
+
+# ---------------------------------------------------------------------------
+# Rule-based pruning (no LLM call)
+# ---------------------------------------------------------------------------
+
+# ANSI escape code pattern (terminal color codes)
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+# 3+ consecutive blank lines
+_EXCESS_BLANKS_RE = re.compile(r'\n{3,}')
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from a string."""
+    return _ANSI_RE.sub('', text)
+
+
+def _collapse_blank_lines(text: str) -> str:
+    """Collapse 3+ consecutive blank lines to 1 blank line."""
+    return _EXCESS_BLANKS_RE.sub('\n\n', text)
+
+
+def _clean_string_value(value: str) -> str:
+    """Apply safe string cleaning: strip ANSI codes and collapse blank lines."""
+    value = _strip_ansi(value)
+    value = _collapse_blank_lines(value)
+    return value
+
+
+def rule_based_prune(tool_name: str, tool_args: dict, result: dict) -> dict | None:
+    """Apply 100%-safe rule-based pruning to tool results before the utility model filter.
+
+    Returns a modified result dict if a rule applies, or None to fall through
+    to the utility model filter.
+
+    ONLY contains rules that are guaranteed safe — no assumptions about
+    what content is important.
+    """
+    if not isinstance(result, dict):
+        return None
+
+    modified = False
+
+    # Rule 1: Strip ANSI escape codes from code_execute stdout/stderr
+    if tool_name == "code_execute":
+        new_result = dict(result)
+        for key in ("stdout", "stderr"):
+            val = new_result.get(key, "")
+            if isinstance(val, str) and val:
+                cleaned = _clean_string_value(val)
+                if cleaned != val:
+                    new_result[key] = cleaned
+                    modified = True
+        if modified:
+            return new_result
+
+    # Rule 2: Collapse excessive blank lines and strip ANSI in any string content
+    # Applied to all tools — blank lines and ANSI codes have zero informational value
+    _has_cleanable = any(
+        isinstance(v, str) and ('\n\n\n' in v or '\x1b' in v)
+        for v in result.values()
+    )
+    if _has_cleanable:
+        new_result = {}
+        for key, val in result.items():
+            if isinstance(val, str) and val:
+                cleaned = _clean_string_value(val)
+                if cleaned != val:
+                    modified = True
+                    new_result[key] = cleaned
+                else:
+                    new_result[key] = val
+            else:
+                new_result[key] = val
+        if modified:
+            return new_result
+
+    # Rule 3: search_memory with 0 results — skip utility model (already tiny)
+    if tool_name == "search_memory":
+        count = result.get("count", len(result.get("results", [])))
+        if count == 0:
+            return result  # return as-is, skip the filter
+
+    # Rule 4: file_read / file_write — skip utility model if result is small
+    if tool_name in ("file_read", "file_write"):
+        if len(json.dumps(result)) < 2000:
+            return result  # already structured, filter can't improve
+
+    return None
