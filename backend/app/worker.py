@@ -1543,8 +1543,31 @@ async def _init_agent_db(data_dir: Path) -> aiosqlite.Connection:
     db = await aiosqlite.connect(str(db_path))
     await db.execute("PRAGMA journal_mode=WAL")
     await db.execute("PRAGMA foreign_keys=ON")
+
+    # Run the hardcoded schema first (CREATE IF NOT EXISTS — safe to re-run)
     await db.executescript(_AGENT_DB_SCHEMA)
     await db.commit()
+
+    # Run migration scripts from /bond/migrations/ (same scripts as host DB).
+    # Each migration is wrapped in a try/except so already-applied migrations
+    # (tables that exist from _AGENT_DB_SCHEMA or prior runs) are skipped.
+    migrations_dir = Path("/bond/migrations")
+    if not migrations_dir.exists():
+        # Fallback: check relative to this file (for non-container environments)
+        migrations_dir = Path(__file__).resolve().parent.parent.parent / "migrations"
+    if migrations_dir.exists():
+        migration_files = sorted(f for f in migrations_dir.iterdir() if f.name.endswith(".up.sql"))
+        for mf in migration_files:
+            try:
+                sql = mf.read_text()
+                await db.executescript(sql)
+                logger.debug("Migration applied to agent.db: %s", mf.name)
+            except Exception as e:
+                logger.debug("Migration skipped (already applied): %s — %s", mf.name, e)
+        await db.commit()
+        logger.info("Agent DB migrations complete: %d scripts processed", len(migration_files))
+    else:
+        logger.warning("Migrations directory not found, skipping agent DB migrations")
 
     # Attach shared.db if it exists
     shared_path = data_dir / "shared" / "shared.db"
