@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from backend.app.core.crypto import decrypt_value, is_encrypted
+from backend.app.core.vault import Vault
 
 logger = logging.getLogger(__name__)
 
@@ -139,22 +140,33 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 
-async def _get_api_key(db: AsyncSession, setting_key: str) -> str | None:
-    """Read and decrypt an API key from the settings table."""
+async def _get_api_key(db: AsyncSession, setting_key: str, provider: str) -> str | None:
+    """Read an API key from settings DB, then vault, then environment."""
+    # 1. Check settings DB (encrypted)
     result = await db.execute(
         text("SELECT value FROM settings WHERE key = :key"), {"key": setting_key}
     )
     row = result.fetchone()
-    if not row or not row[0]:
-        return None
-    raw = row[0]
+    if row and row[0]:
+        raw = row[0]
+        try:
+            decrypted = decrypt_value(raw)
+            if decrypted:
+                return decrypted
+        except Exception:
+            if not is_encrypted(raw):
+                return raw
+
+    # 2. Check vault + environment via Vault.get_api_key()
     try:
-        return decrypt_value(raw)
+        vault = Vault()
+        key = vault.get_api_key(provider)
+        if key:
+            return key
     except Exception:
-        # May be plaintext (legacy)
-        if not is_encrypted(raw):
-            return raw
-        return None
+        pass
+
+    return None
 
 
 async def sync_models(session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -176,7 +188,7 @@ async def sync_models(session_factory: async_sessionmaker[AsyncSession]) -> None
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             for provider_name, provider_conf in _PROVIDERS.items():
-                api_key = await _get_api_key(db, provider_conf["setting_key"])
+                api_key = await _get_api_key(db, provider_conf["setting_key"], provider_name)
                 if not api_key:
                     continue
 
