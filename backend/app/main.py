@@ -8,7 +8,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import get_settings
-from backend.app.db.session import get_db, init_db
+from backend.app.db.session import get_db, get_session_factory, init_db
+from backend.app.jobs import JobScheduler
+from backend.app.jobs.sync_models import sync_models
 from backend.app.mediator import configure_logging
 from backend.app.api.v1.health import router as health_router
 from backend.app.api.v1.agent import router as agent_router
@@ -24,7 +26,16 @@ async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     configure_logging()
     await init_db()
+
+    # Background job scheduler
+    scheduler = JobScheduler(get_session_factory())
+    scheduler.register("sync_models", sync_models, interval_seconds=6 * 3600)
+    await scheduler.start()
+    app.state.scheduler = scheduler
+
     yield
+
+    await scheduler.stop()
 
 
 app = FastAPI(

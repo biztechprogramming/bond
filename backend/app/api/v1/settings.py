@@ -6,7 +6,9 @@ import json
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -249,66 +251,19 @@ async def get_llm_providers():
     ]
 
 
-# Well-known models per provider (litellm format)
-_PROVIDER_MODELS: dict[str, list[dict[str, str]]] = {
-    "anthropic": [
-        {"id": "anthropic/claude-opus-4-6", "name": "Claude Opus 4.6"},
-        {"id": "anthropic/claude-sonnet-4-20250514", "name": "Claude Sonnet 4"},
-        {"id": "anthropic/claude-sonnet-4-5-20250514", "name": "Claude Sonnet 4.5"},
-        {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6"},
-        {"id": "claude-sonnet-4-5", "name": "Claude Sonnet 4.5"},
-        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4"},
-        {"id": "claude-haiku-4-5", "name": "Claude Haiku 4.5"},
-        {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku"},
-    ],
-    "openai": [
-        {"id": "openai/gpt-4o", "name": "GPT-4o"},
-        {"id": "openai/gpt-4o-mini", "name": "GPT-4o Mini"},
-        {"id": "openai/o3-mini", "name": "o3-mini"},
-    ],
-    "google": [
-        {"id": "gemini/gemini-2.5-pro", "name": "Gemini 2.5 Pro"},
-        {"id": "gemini/gemini-2.5-flash", "name": "Gemini 2.5 Flash"},
-        {"id": "gemini/gemini-2.5-flash-lite", "name": "Gemini 2.5 Flash Lite"},
-        {"id": "gemini/gemini-2.0-flash", "name": "Gemini 2.0 Flash"},
-        {"id": "gemini/gemini-2.0-flash-lite", "name": "Gemini 2.0 Flash Lite"},
-    ],
-    "deepseek": [
-        {"id": "deepseek/deepseek-chat", "name": "DeepSeek Chat"},
-        {"id": "deepseek/deepseek-reasoner", "name": "DeepSeek Reasoner"},
-    ],
-    "groq": [
-        {"id": "groq/llama-3.3-70b-versatile", "name": "Llama 3.3 70B"},
-        {"id": "groq/llama-3.1-8b-instant", "name": "Llama 3.1 8B"},
-    ],
-    "mistral": [
-        {"id": "mistral/mistral-large-latest", "name": "Mistral Large"},
-        {"id": "mistral/mistral-small-latest", "name": "Mistral Small"},
-    ],
-    "xai": [
-        {"id": "xai/grok-2", "name": "Grok 2"},
-        {"id": "xai/grok-3-mini", "name": "Grok 3 Mini"},
-    ],
-}
-
-
 @router.get("/llm/models")
 async def get_llm_models(db: AsyncSession = Depends(get_db)):
-    """Return available chat/utility models based on which API keys are configured."""
-    providers_with_keys = [
-        "anthropic", "openai", "google", "deepseek", "groq", "mistral", "xai",
-    ]
-    models: list[dict[str, str]] = []
-    for provider in providers_with_keys:
-        setting_key = f"llm.api_key.{provider}"
-        result = await db.execute(
-            text("SELECT value FROM settings WHERE key = :key"), {"key": setting_key}
+    """Return available LLM models from the synced catalog."""
+    result = await db.execute(
+        text(
+            "SELECT model_id, name, provider, category "
+            "FROM llm_models ORDER BY provider, name"
         )
-        row = result.fetchone()
-        has_key = bool(row and row[0] and decrypt_value(row[0]))
-        if has_key and provider in _PROVIDER_MODELS:
-            models.extend(_PROVIDER_MODELS[provider])
-    return models
+    )
+    return [
+        {"id": row[0], "name": row[1], "provider": row[2], "category": row[3]}
+        for row in result.fetchall()
+    ]
 
 
 @router.get("/llm/current")
@@ -357,7 +312,9 @@ class SettingUpdate(BaseModel):
 
 
 @router.put("/{key:path}")
-async def update_setting(key: str, body: SettingUpdate, db: AsyncSession = Depends(get_db)):
+async def update_setting(
+    key: str, body: SettingUpdate, request: Request, db: AsyncSession = Depends(get_db),
+):
     """Create or update a single setting."""
     stored = _write_value(key, body.value)
     await db.execute(
@@ -369,4 +326,11 @@ async def update_setting(key: str, body: SettingUpdate, db: AsyncSession = Depen
         {"key": key, "value": stored},
     )
     await db.commit()
+
+    # Trigger model catalog sync when an LLM API key changes
+    if key.startswith("llm.api_key."):
+        scheduler = getattr(request.app.state, "scheduler", None)
+        if scheduler:
+            asyncio.create_task(scheduler.trigger("sync_models"))
+
     return {"key": key, "value": _read_value(key, stored)}
