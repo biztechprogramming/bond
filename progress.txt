@@ -95,3 +95,14 @@ Started: 2026-02-26
 - **Status: in progress — implementation not started**
 
 ---
+
+## 2026-02-27 13:05 - Cache stabilization + build output parser
+- Fixed Anthropic prompt caching: replaced `_set_cache_breakpoint()` with `_advance_cache_breakpoint()` that tracks breakpoint index explicitly, only touches old/new breakpoint messages
+- Added `frozen_up_to` param to `_decay_in_loop_tool_results()` to prevent mutating cached prefix
+- Threshold-based advancement (12 messages) keeps prefix stable for ~6 consecutive calls
+- Enabled breakpoint 2 on iteration 0 (was skipped before)
+- Created `build_output_parser.py` — detects dotnet/npm/pytest/jest/cargo patterns, compresses verbose build output to 1-3 lines
+- Removed generic fallback from parser (was too aggressive on cat/head output)
+- Files: `worker.py`, `build_output_parser.py`, `test_build_output_parser.py`
+- **Learnings:** Anthropic cache is prefix-based and very sensitive to byte changes. Advancing breakpoint every call = 50% miss rate. Threshold-based = ~85% hit rate.
+---
