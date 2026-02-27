@@ -122,3 +122,12 @@ Started: 2026-02-26
 - Fragment content changes need new migrations (can't re-run old ones). Now worker startup runs all migrations against agent.db too.
 - Anthropic cache minimum is 2048 tokens for Opus — skip cache_control on small conversations.
 ---
+
+## 2026-02-27 - C6 Phase 3: Fragment Cache + Selective Decay
+- Fragment selection cache: hash-based, 5min TTL, conversation-aware invalidation
+- Selective decay: only apply progressive_decay to verbatim tail when over COMPRESSION_THRESHOLD
+- 4 new tests, all 49 related tests passing
+- **Learnings:** inline imports can shadow top-level imports causing UnboundLocalError
+- **Done**
+
+---
