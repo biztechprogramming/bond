@@ -20,8 +20,8 @@ from ulid import ULID
 
 logger = logging.getLogger("bond.agent.tools.native")
 
-# Max bytes returned by file_read (100 KB)
-_MAX_READ_BYTES = 100_000
+# Max bytes returned by file_read (10 KB — keeps tool results lean for context window)
+_MAX_READ_BYTES = 10_000
 
 # Default working directory for code execution (overridable for tests)
 _CODE_EXEC_CWD = "/workspace"
@@ -64,7 +64,7 @@ async def handle_file_read(
     try:
         content = path.read_text(errors="replace")
         if len(content) > _MAX_READ_BYTES:
-            content = content[:_MAX_READ_BYTES] + "\n\n[Content truncated at 100 KB]"
+            content = content[:_MAX_READ_BYTES] + f"\n\n[Content truncated at {_MAX_READ_BYTES // 1000} KB — use line_start/line_end to read specific sections]"
         return {"content": content, "path": str(path), "size": len(content)}
     except Exception as e:
         return {"error": f"Failed to read {path_str}: {e}"}
@@ -119,9 +119,16 @@ async def handle_code_execute(
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=timeout,
         )
+        stdout_str = stdout.decode(errors="replace")
+        stderr_str = stderr.decode(errors="replace")
+        # Truncate large outputs to keep context lean
+        if len(stdout_str) > _MAX_READ_BYTES:
+            stdout_str = stdout_str[:_MAX_READ_BYTES] + f"\n[stdout truncated at {_MAX_READ_BYTES // 1000} KB]"
+        if len(stderr_str) > _MAX_READ_BYTES:
+            stderr_str = stderr_str[:_MAX_READ_BYTES] + f"\n[stderr truncated at {_MAX_READ_BYTES // 1000} KB]"
         return {
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "exit_code": proc.returncode,
         }
     except asyncio.TimeoutError:

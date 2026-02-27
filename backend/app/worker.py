@@ -847,6 +847,108 @@ async def _apply_sliding_window(
     return window
 
 
+def _set_cache_breakpoint(messages: list[dict]) -> None:
+    """Set Anthropic cache_control breakpoint on the second-to-last message.
+
+    This ensures all accumulated messages up to this point are cached
+    on the next LLM call. Only the last message (newest tool result)
+    pays full input price.
+
+    Modifies messages in place. Moves the breakpoint forward each call
+    by clearing the previous one.
+    """
+    # Clear any existing breakpoint 2 markers (not the system prompt one)
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "system":
+            continue  # don't touch breakpoint 1
+        if isinstance(msg.get("content"), list):
+            for block in msg["content"]:
+                if isinstance(block, dict) and "cache_control" in block:
+                    del block["cache_control"]
+        elif msg.get("_cache_control"):
+            del msg["_cache_control"]
+
+    # Set breakpoint on second-to-last message
+    if len(messages) < 3:
+        return
+
+    target = messages[-2]
+    if isinstance(target.get("content"), str):
+        # Convert string content to block format for cache_control
+        target["content"] = [{
+            "type": "text",
+            "text": target["content"],
+            "cache_control": {"type": "ephemeral"},
+        }]
+    elif isinstance(target.get("content"), list):
+        # Add cache_control to last block
+        last_block = target["content"][-1] if target["content"] else None
+        if last_block and isinstance(last_block, dict):
+            last_block["cache_control"] = {"type": "ephemeral"}
+
+
+def _decay_in_loop_tool_results(messages: list[dict], preturn_count: int) -> list[dict]:
+    """Compress tool results accumulated during the current turn's tool loop.
+
+    Keeps messages before the turn untouched. For in-turn messages:
+    - Last 4 messages (2 tool call/result pairs): verbatim
+    - Older tool results: aggressively compressed
+    """
+    if len(messages) <= preturn_count + 4:
+        return messages
+
+    pre_turn = messages[:preturn_count]
+    in_turn = messages[preturn_count:]
+
+    # Split: older in-turn messages vs recent (last 4)
+    older = in_turn[:-4]
+    recent = in_turn[-4:]
+
+    compressed_older = []
+    tokens_saved = 0
+    for msg in older:
+        if msg.get("role") == "tool":
+            content = msg.get("content", "")
+            if isinstance(content, str) and len(content) > 500:
+                # Try to extract key info from JSON results
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict):
+                        summary_parts = []
+                        for key in ("path", "file_path", "status", "exit_code", "error", "stdout", "stderr"):
+                            if key in parsed and parsed[key]:
+                                val = str(parsed[key])
+                                if len(val) > 150:
+                                    val = val[:75] + "..." + val[-75:]
+                                summary_parts.append(f"{key}: {val}")
+                        if "content" in parsed:
+                            size = len(parsed["content"])
+                            summary_parts.append(f"content: [{size} chars]")
+                        if "size" in parsed:
+                            summary_parts.append(f"size: {parsed['size']}")
+                        compressed = "[Compressed] " + "; ".join(summary_parts)
+                        tokens_saved += (_estimate_tokens(content) - _estimate_tokens(compressed))
+                        compressed_older.append({**msg, "content": compressed})
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+                # Non-JSON: keep first/last lines
+                lines = content.splitlines()
+                if len(lines) > 10:
+                    compressed = "\n".join(lines[:3]) + f"\n[...{len(lines)-6} lines omitted...]\n" + "\n".join(lines[-3:])
+                    tokens_saved += (_estimate_tokens(content) - _estimate_tokens(compressed))
+                    compressed_older.append({**msg, "content": compressed})
+                    continue
+
+        compressed_older.append(msg)
+
+    if tokens_saved > 0:
+        logger.info("In-loop decay: compressed %d tokens from older tool results", tokens_saved)
+
+    return pre_turn + compressed_older + recent
+
+
 async def _run_agent_loop(
     user_message: str,
     history: list[dict],
@@ -959,8 +1061,23 @@ async def _run_agent_loop(
         config.get("utility_model", "claude-sonnet-4-6"),
     )
 
+    # Determine if the primary model supports Anthropic prompt caching
+    _is_anthropic_model = _resolve_provider(model) == "anthropic"
+
     # Build messages with distilled context
-    messages: list[dict] = [{"role": "system", "content": full_system_prompt}]
+    # Breakpoint 1: system prompt — cached across turns and tool loops
+    if _is_anthropic_model:
+        messages: list[dict] = [{
+            "role": "system",
+            "content": [{
+                "type": "text",
+                "text": full_system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }],
+        }]
+    else:
+        messages: list[dict] = [{"role": "system", "content": full_system_prompt}]
+
     if compressed_history:
         messages.extend(compressed_history)
     messages.append({"role": "user", "content": user_message})
@@ -1017,6 +1134,9 @@ async def _run_agent_loop(
     REPETITION_THRESHOLD = 3  # consecutive similar calls before intervention
     recent_tool_calls: list[tuple[str, str]] = []  # (tool_name, args_hash)
 
+    # Track where the pre-turn messages end so we know which are in-loop
+    _preturn_msg_count = len(messages)
+
     for _iteration in range(max_iterations):
         # Check interrupt
         if _state.interrupt_event.is_set():
@@ -1026,10 +1146,23 @@ async def _run_agent_loop(
                 messages.append(msg)
             _state.pending_messages.clear()
 
+        # In-loop decay: compress tool results accumulated during this turn.
+        # Keep the last 2 tool results verbatim; older ones get progressively decayed.
+        if _iteration > 0 and _iteration % 3 == 0:
+            messages = _decay_in_loop_tool_results(messages, _preturn_msg_count)
+
         current_max_tokens = TOKEN_TIERS[current_tier]
+        context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
+
+        # Set prompt cache breakpoint 2 before each call (Anthropic only)
+        if _is_anthropic_model and _iteration > 0:
+            _set_cache_breakpoint(messages)
+
         logger.info(
-            "LLM request: model=%s tools=%d max_tokens=%d tier=%d tool_names=%s",
+            "LLM request: model=%s tools=%d max_tokens=%d tier=%d context_tokens=~%d msgs=%d cache=%s tool_names=%s",
             model, len(tool_defs), current_max_tokens, current_tier,
+            context_tokens, len(messages),
+            "anthropic" if _is_anthropic_model else "none",
             [t["function"]["name"] for t in tool_defs],
         )
 
@@ -1045,12 +1178,21 @@ async def _run_agent_loop(
         choice = response.choices[0]
         llm_message = choice.message
 
+        # Log cache usage if available (Anthropic returns cache_creation_input_tokens / cache_read_input_tokens)
+        usage = getattr(response, "usage", None)
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+
         logger.info(
-            "LLM response: has_tool_calls=%s finish_reason=%s content_len=%d max_tokens=%d",
+            "LLM response: has_tool_calls=%s finish_reason=%s content_len=%d max_tokens=%d "
+            "input=%d output=%d cache_read=%d cache_write=%d",
             bool(llm_message.tool_calls),
             choice.finish_reason,
             len(llm_message.content or ""),
             current_max_tokens,
+            input_tokens, output_tokens, cache_read, cache_write,
         )
 
         # Handle finish_reason=length — output was truncated
