@@ -1,0 +1,97 @@
+# Progress Log
+Run: sprint-1
+Task: C5 gateway, C6 context optimization, enterprise provider model, prompt caching
+Started: 2026-02-26
+
+## Codebase Patterns
+- **Migrations**: golang-migrate, files in `~/bond/migrations/`, MUST split complex DDL into separate files (FTS5 triggers choke SQLite driver)
+- **DB**: SQLite via `aiosqlite`, schema in migrations 000001-000019
+- **Backend tests**: `uv run python -m pytest backend/tests/` (pytest-asyncio not installed, async tests ERROR)
+- **Frontend**: Next.js + TypeScript, `npm run build` / `tsc --noEmit` for checks
+- **API routes**: `backend/app/api/v1/` — settings.py, agent.py, etc.
+- **Worker**: `backend/app/worker.py` — main agent loop, context pipeline, LLM calls via litellm
+- **Tool selection**: `backend/app/agent/tool_selection.py` — heuristic keyword + momentum, no LLM calls
+- **Native tools**: `backend/app/agent/tools/native.py` — file_read (10KB cap), code_execute (stdout truncation)
+- **Provider schema**: `providers` → `provider_aliases` + `provider_api_keys` + `llm_models`
+- **Vault**: `backend/app/core/vault.py` — get_api_key_with_type(), key_type detection (oauth_token vs api_key)
+- **Jobs**: `backend/app/jobs/scheduler.py` + `sync_models.py` — DB-driven, no hardcoded provider registry
+- **litellm model IDs**: `{litellm_prefix}/{model_slug}` e.g. `anthropic/claude-opus-4-6`
+- **Branch**: `feature/sprint-1-skeleton`
+
+---
+
+## 2026-02-26 - C5: Gateway Talks to Container Worker
+- All 13 tasks complete, 25 gateway tests pass, tsc clean
+- **Done**
+
+---
+
+## 2026-02-26 - Dynamic Model Dropdowns
+- Frontend fetches from `GET /api/v1/settings/llm/models`
+- No hardcoded model lists anywhere
+- **Done**
+
+---
+
+## 2026-02-26 - Background Job Scheduler
+- `backend/app/jobs/scheduler.py` — extensible for future jobs
+- `backend/app/jobs/sync_models.py` — fully DB-driven model sync
+- Anthropic: scrapes docs (OAuth tokens get 401 from /v1/models)
+- Google: uses generativelanguage API
+- **Done**
+
+---
+
+## 2026-02-26 - Enterprise Provider Data Model (Migrations 14-19)
+- 14: `providers` table
+- 15: `providers_updated_at` trigger + `provider_aliases`
+- 16: `provider_api_keys` (provider_id PK, one key per provider)
+- 17: `llm_models` v2 (ULID PK, provider_id FK, model_slug, display_name)
+- 18: Seed 8 providers + 6 aliases
+- 19: Migrate API keys from old settings → provider_api_keys
+- `scripts/migrate_vault_keys.py` for vault→DB migration
+- **Done**
+
+---
+
+## 2026-02-26 - C6 Phase 1: Context Optimization
+- Sliding window (20 messages), progressive decay, heuristic tool selection
+- COMPRESSION_THRESHOLD=8000, VERBATIM_MESSAGE_COUNT=4
+- Decay tiers: Turn 0 (1500 cap) → Turn 1-2 (head/tail) → Turn 3-5 (one-line) → Turn 6+ (name+args only)
+- 23 tests passing
+- **Done**
+
+---
+
+## 2026-02-26 - C6 Phase 2: Tool Schema + In-Loop Decay
+- Compact tool schemas, tool momentum, dynamic tool addition
+- In-loop decay every 3 iterations (compress older tool results)
+- `_MAX_READ_BYTES` 100KB→10KB, stdout/stderr truncation
+- `context_tokens` logging per LLM request
+- Removed ALL silent fallbacks (3 places) — RuntimeError instead
+- **Done**
+
+---
+
+## 2026-02-26 - Per-Provider Key Resolution
+- Fixed: utility model now gets its own provider's key (was sending Anthropic OAuth to Google)
+- API keys + provider aliases injected into container config from DB
+- **Done**
+
+---
+
+## 2026-02-27 - Tool Result Filter Tests
+- 4 tests failing in `test_tool_result_filter.py` — need investigation
+- 28 other tests passing
+- **Status: needs fix**
+
+---
+
+## 2026-02-27 - Anthropic Prompt Caching
+- Researched: `cache_control: {"type": "ephemeral"}` on content blocks
+- litellm passes through to Anthropic API
+- Cache read = 0.1x base price, 5-min TTL
+- Existing DB summary cache in worker.py (~lines 541-561) is separate
+- **Status: in progress — implementation not started**
+
+---

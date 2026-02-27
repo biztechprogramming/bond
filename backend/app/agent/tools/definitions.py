@@ -145,13 +145,26 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "file_read",
-            "description": "Read the contents of a file from the workspace.",
+            "description": "Read the contents of a file from the workspace. Supports line-range reads and outline mode for context-efficient exploration.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Path to the file to read (relative to workspace root).",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "description": "First line to read (1-indexed). If omitted, reads from the beginning.",
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "description": "Last line to read (1-indexed, inclusive). If omitted, reads to the end.",
+                    },
+                    "outline": {
+                        "type": "boolean",
+                        "description": "If true, return a structural outline (function/class signatures with line numbers) instead of full content. Ignores line_start/line_end.",
+                        "default": False,
                     },
                 },
                 "required": ["path"],
@@ -176,6 +189,41 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": ["path", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_edit",
+            "description": "Apply surgical text replacements to a file. Each edit replaces an exact match of old_text with new_text. More efficient than file_write for small changes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit (relative to workspace root).",
+                    },
+                    "edits": {
+                        "type": "array",
+                        "description": "List of text replacements to apply sequentially.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_text": {
+                                    "type": "string",
+                                    "description": "Exact text to find in the file.",
+                                },
+                                "new_text": {
+                                    "type": "string",
+                                    "description": "Text to replace old_text with.",
+                                },
+                            },
+                            "required": ["old_text", "new_text"],
+                        },
+                    },
+                },
+                "required": ["path", "edits"],
             },
         },
     },

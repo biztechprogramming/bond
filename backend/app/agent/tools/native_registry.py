@@ -14,6 +14,7 @@ def build_native_registry() -> ToolRegistry:
     """Build a ToolRegistry with native (container-side) tool handlers."""
     from .native import (
         handle_code_execute,
+        handle_file_edit,
         handle_file_read,
         handle_file_write,
         handle_memory_delete,
@@ -33,6 +34,7 @@ def build_native_registry() -> ToolRegistry:
     registry.register("code_execute", handle_code_execute)
     registry.register("file_read", handle_file_read)
     registry.register("file_write", handle_file_write)
+    registry.register("file_edit", handle_file_edit)
     registry.register("web_search", handle_web_search)
     registry.register("web_read", handle_web_read)
     return registry

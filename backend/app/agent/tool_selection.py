@@ -29,9 +29,12 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         ".yml", ".toml", ".cfg", ".txt", ".sh", ".sql",
     ],
     "file_write": [
-        "write", "create file", "save to", "update file", "edit", "modify",
-        "add to file", "change the", "replace", "patch", "refactor",
-        "implement", "build", "generate",
+        "write", "create file", "save to", "update file",
+        "add to file", "implement", "build", "generate",
+    ],
+    "file_edit": [
+        "edit", "change", "replace", "fix", "modify", "update",
+        "patch", "refactor",
     ],
     "code_execute": [
         "run", "execute", "test", "install", "build", "compile", "script",
@@ -147,7 +150,7 @@ def select_tools(
         return [t for t in selected if t in enabled_tools]
 
     # Coding tasks often need both read + write + execute
-    coding_tools = {"file_read", "file_write", "code_execute"}
+    coding_tools = {"file_read", "file_write", "file_edit", "code_execute"}
     if coding_tools & selected:
         # If any coding tool matched, include all enabled coding tools
         selected.update(coding_tools & set(enabled_tools))

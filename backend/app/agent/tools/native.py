@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,38 @@ _RECENCY_HALF_LIFE_DAYS = 30
 # File tools
 # ---------------------------------------------------------------------------
 
+_OUTLINE_PATTERNS: dict[str, re.Pattern] = {
+    ".py": re.compile(r"^(class |def |async def )", re.MULTILINE),
+    ".ts": re.compile(r"^(export )?(async )?(function |class |interface |type |const \w+ =)", re.MULTILINE),
+    ".tsx": re.compile(r"^(export )?(async )?(function |class |interface |type |const \w+ =)", re.MULTILINE),
+    ".js": re.compile(r"^(export )?(async )?(function |class |const \w+ =)", re.MULTILINE),
+    ".jsx": re.compile(r"^(export )?(async )?(function |class |const \w+ =)", re.MULTILINE),
+    ".go": re.compile(r"^(func |type )", re.MULTILINE),
+    ".rs": re.compile(r"^(pub )?(fn |struct |enum |impl |trait |mod )", re.MULTILINE),
+    ".java": re.compile(r"^(public |private |protected )?(static )?(class |interface |void |int |String |boolean |long |double |float |\w+ )", re.MULTILINE),
+    ".rb": re.compile(r"^(class |module |def )", re.MULTILINE),
+}
+
+
+def _extract_outline(content: str, suffix: str) -> list[str]:
+    """Extract structural outline from file content."""
+    pattern = _OUTLINE_PATTERNS.get(suffix)
+    lines = content.splitlines()
+    if pattern:
+        result = []
+        for i, line in enumerate(lines, 1):
+            if pattern.match(line.lstrip()):
+                result.append(f"{i}: {line.strip()}")
+        return result
+    else:
+        # Non-code files: first 5 + last 5 lines
+        if len(lines) <= 10:
+            return [f"{i}: {line}" for i, line in enumerate(lines, 1)]
+        head = [f"{i}: {line}" for i, line in enumerate(lines[:5], 1)]
+        tail = [f"{len(lines) - 4 + i}: {line}" for i, line in enumerate(lines[-5:])]
+        return head + [f"... ({len(lines) - 10} lines omitted) ..."] + tail
+
+
 async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
@@ -62,10 +95,50 @@ async def handle_file_read(
         return {"error": f"Not a file: {path_str}"}
 
     try:
-        content = path.read_text(errors="replace")
+        raw_content = path.read_text(errors="replace")
+        all_lines = raw_content.splitlines()
+        total_lines = len(all_lines)
+
+        # Outline mode
+        if arguments.get("outline"):
+            outline = _extract_outline(raw_content, path.suffix.lower())
+            return {
+                "path": str(path),
+                "total_lines": total_lines,
+                "size": len(raw_content),
+                "outline": outline,
+            }
+
+        # Line-range mode
+        line_start = arguments.get("line_start")
+        line_end = arguments.get("line_end")
+
+        if line_start is not None or line_end is not None:
+            start = (line_start or 1) - 1  # convert to 0-indexed
+            end = line_end if line_end is not None else total_lines
+
+            if start >= total_lines:
+                return {"error": f"line_start ({line_start}) exceeds total lines ({total_lines})"}
+            if start < 0:
+                start = 0
+            if end > total_lines:
+                end = total_lines
+
+            selected = all_lines[start:end]
+            content = "\n".join(selected)
+            return {
+                "content": content,
+                "path": str(path),
+                "line_start": start + 1,
+                "line_end": end,
+                "total_lines": total_lines,
+            }
+
+        # Full file mode
+        content = raw_content
         if len(content) > _MAX_READ_BYTES:
             content = content[:_MAX_READ_BYTES] + f"\n\n[Content truncated at {_MAX_READ_BYTES // 1000} KB — use line_start/line_end to read specific sections]"
-        return {"content": content, "path": str(path), "size": len(content)}
+        return {"content": content, "path": str(path), "size": len(content), "total_lines": total_lines}
     except Exception as e:
         return {"error": f"Failed to read {path_str}: {e}"}
 
@@ -87,6 +160,47 @@ async def handle_file_write(
         return {"status": "written", "path": str(path), "bytes": len(file_content)}
     except Exception as e:
         return {"error": f"Failed to write {path_str}: {e}"}
+
+
+async def handle_file_edit(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply surgical text replacements to a file."""
+    path_str = arguments.get("path", "")
+    edits = arguments.get("edits", [])
+    if not path_str:
+        return {"error": "path is required"}
+    if not edits or not isinstance(edits, list):
+        return {"error": "edits is required and must be a non-empty array"}
+
+    path = Path(path_str)
+    if not path.exists():
+        return {"error": f"File not found: {path_str}"}
+    if not path.is_file():
+        return {"error": f"Not a file: {path_str}"}
+
+    try:
+        content = path.read_text(errors="replace")
+
+        for i, edit in enumerate(edits):
+            old_text = edit.get("old_text", "")
+            new_text = edit.get("new_text", "")
+            if not old_text:
+                return {"error": f"Edit {i}: old_text is required and must be non-empty"}
+
+            count = content.count(old_text)
+            if count == 0:
+                return {"error": f"Edit {i}: old_text not found in file"}
+            if count > 1:
+                return {"error": f"Edit {i}: old_text matches {count} times (ambiguous, must match exactly once)"}
+
+            content = content.replace(old_text, new_text, 1)
+
+        path.write_text(content)
+        return {"status": "edited", "path": str(path), "edits_applied": len(edits)}
+    except Exception as e:
+        return {"error": f"Failed to edit {path_str}: {e}"}
 
 
 # ---------------------------------------------------------------------------
