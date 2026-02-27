@@ -25,31 +25,23 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Microsoft package repository
-RUN wget https://packages.microsoft.com/config/debian/12/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \
-    && dpkg -i packages-microsoft-prod.deb \
-    && rm packages-microsoft-prod.deb
+# Install .NET 8 and 9 SDKs via install script (Microsoft apt repo GPG key
+# uses SHA1 which Debian Trixie rejects since 2026-02-01)
+RUN wget https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh \
+    && chmod +x /tmp/dotnet-install.sh \
+    && /tmp/dotnet-install.sh --channel 8.0 --install-dir /usr/share/dotnet \
+    && /tmp/dotnet-install.sh --channel 9.0 --install-dir /usr/share/dotnet \
+    && ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
+    && rm /tmp/dotnet-install.sh
 
-# Install .NET 8 SDK and Runtime
-RUN apt-get update && apt-get install -y \
-    dotnet-sdk-8.0 \
-    aspnetcore-runtime-8.0 \
-    dotnet-runtime-8.0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install .NET 9 SDK and Runtime
-RUN apt-get update && apt-get install -y \
-    dotnet-sdk-9.0 \
-    aspnetcore-runtime-9.0 \
-    dotnet-runtime-9.0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install SQL Server command-line tools (sqlcmd and bcp)
-RUN curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Install SQL Server command-line tools via direct download
+# (apt repo has same SHA1 GPG issue)
+RUN apt-get update && apt-get install -y libodbc2 unixodbc-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL "https://aka.ms/sqlpackage-linux" -o /tmp/sqlpackage.zip \
+    && mkdir -p /opt/sqlpackage && unzip -q /tmp/sqlpackage.zip -d /opt/sqlpackage \
+    && chmod +x /opt/sqlpackage/sqlpackage \
+    && rm /tmp/sqlpackage.zip
 
 # Install Node.js 22 (for frontend tooling, bun, etc.)
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -83,7 +75,8 @@ RUN git config --global core.pager "delta" \
     && git config --global diff.colorMoved default
 
 # Environment
-ENV PATH="${PATH}:/root/.dotnet/tools:/opt/mssql-tools18/bin:/usr/local/share/npm-global/bin" \
+ENV DOTNET_ROOT=/usr/share/dotnet \
+    PATH="${PATH}:/usr/share/dotnet:/root/.dotnet/tools:/opt/sqlpackage:/usr/local/share/npm-global/bin" \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
     DOTNET_NOLOGO=1 \
