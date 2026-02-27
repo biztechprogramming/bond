@@ -59,6 +59,23 @@ def _write_value(key: str, value: str) -> str:
     return value
 
 
+# Key-type prefixes for auto-detection
+def _detect_key_type(key: str, value: str) -> str:
+    """Detect whether a key value is an API key or OAuth token.
+
+    Anthropic:
+      - API keys: sk-ant-api03-...
+      - OAuth tokens: sk-ant-oat01-... (or similar sk-ant-oat* patterns)
+    """
+    if key == "llm.api_key.anthropic":
+        if value.startswith("sk-ant-oat"):
+            return "oauth_token"
+        if value.startswith("sk-ant-"):
+            return "api_key"
+        return "oauth_token"  # Unknown format, assume OAuth to avoid failed calls
+    return "api_key"
+
+
 async def _get_decrypted(db: AsyncSession, key: str) -> str | None:
     """Internal helper: read and decrypt a setting value (no masking)."""
     result = await db.execute(
@@ -317,13 +334,18 @@ async def update_setting(
 ):
     """Create or update a single setting."""
     stored = _write_value(key, body.value)
+    # Auto-detect key_type for API key settings
+    key_type = "api_key"
+    if key.startswith("llm.api_key."):
+        key_type = _detect_key_type(key, body.value)
+
     await db.execute(
         text(
-            "INSERT INTO settings (key, value) VALUES (:key, :value) "
-            "ON CONFLICT(key) DO UPDATE SET value = :value, "
+            "INSERT INTO settings (key, value, key_type) VALUES (:key, :value, :key_type) "
+            "ON CONFLICT(key) DO UPDATE SET value = :value, key_type = :key_type, "
             "updated_at = CURRENT_TIMESTAMP"
         ),
-        {"key": key, "value": stored},
+        {"key": key, "value": stored, "key_type": key_type},
     )
     await db.commit()
 

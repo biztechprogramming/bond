@@ -55,36 +55,28 @@ _ANTHROPIC_FALLBACK_MODELS: list[tuple[str, str]] = [
 ]
 
 
-def _is_anthropic_api_key(key: str) -> bool:
-    """Anthropic API keys start with sk-ant-. Anything else is likely an OAuth token."""
-    return key.startswith("sk-ant-")
+async def _fetch_anthropic(client: httpx.AsyncClient, api_key: str, key_type: str = "api_key") -> list[tuple[str, str]]:
+    """Fetch Anthropic models. Uses fallback list for OAuth tokens."""
+    if key_type == "api_key":
+        resp = await client.get(
+            "https://api.anthropic.com/v1/models?limit=100",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        models = []
+        for m in data.get("data", []):
+            mid = m.get("id", "")
+            display = m.get("display_name", mid)
+            models.append((mid, display))
+            models.append((f"anthropic/{mid}", f"{display} (anthropic/)"))
+        return models
 
-
-async def _fetch_anthropic(client: httpx.AsyncClient, api_key: str) -> list[tuple[str, str]]:
-    """Fetch Anthropic models. Falls back to known list for OAuth tokens."""
-    if _is_anthropic_api_key(api_key):
-        try:
-            resp = await client.get(
-                "https://api.anthropic.com/v1/models?limit=100",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            models = []
-            for m in data.get("data", []):
-                mid = m.get("id", "")
-                display = m.get("display_name", mid)
-                models.append((mid, display))
-                models.append((f"anthropic/{mid}", f"{display} (anthropic/)"))
-            return models
-        except httpx.HTTPStatusError:
-            logger.warning("sync_models: Anthropic API failed, using fallback model list")
-
-    # OAuth token or API call failed — use fallback list
-    logger.info("sync_models: Using fallback Anthropic model list (OAuth token or API error)")
+    # OAuth token — use curated fallback list (no API call)
+    logger.info("sync_models: Anthropic using OAuth token, using known model list")
     models = []
     for mid, display in _ANTHROPIC_FALLBACK_MODELS:
         models.append((mid, display))
@@ -165,29 +157,33 @@ _PROVIDERS: dict[str, dict[str, Any]] = {
 }
 
 
-async def _get_api_key(db: AsyncSession, setting_key: str, provider: str) -> str | None:
-    """Read an API key from settings DB, then vault, then environment."""
-    # 1. Check settings DB (encrypted)
+async def _get_api_key(db: AsyncSession, setting_key: str, provider: str) -> tuple[str, str] | None:
+    """Read an API key from settings DB, then vault, then environment.
+
+    Returns (key_value, key_type) or None. key_type is 'api_key' or 'oauth_token'.
+    """
+    # 1. Check settings DB (encrypted) — includes key_type column
     result = await db.execute(
-        text("SELECT value FROM settings WHERE key = :key"), {"key": setting_key}
+        text("SELECT value, key_type FROM settings WHERE key = :key"), {"key": setting_key}
     )
     row = result.fetchone()
     if row and row[0]:
         raw = row[0]
+        key_type = row[1] if row[1] else "api_key"
         try:
             decrypted = decrypt_value(raw)
             if decrypted:
-                return decrypted
+                return (decrypted, key_type)
         except Exception:
             if not is_encrypted(raw):
-                return raw
+                return (raw, key_type)
 
-    # 2. Check vault + environment via Vault.get_api_key()
+    # 2. Check vault + environment via Vault
     try:
         vault = Vault()
-        key = vault.get_api_key(provider)
-        if key:
-            return key
+        result = vault.get_api_key_with_type(provider)
+        if result:
+            return result
     except Exception:
         pass
 
@@ -213,13 +209,18 @@ async def sync_models(session_factory: async_sessionmaker[AsyncSession]) -> None
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             for provider_name, provider_conf in _PROVIDERS.items():
-                api_key = await _get_api_key(db, provider_conf["setting_key"], provider_name)
-                if not api_key:
+                result = await _get_api_key(db, provider_conf["setting_key"], provider_name)
+                if not result:
                     continue
+                api_key, key_type = result
 
                 try:
                     fetch_fn = provider_conf["fetch"]
-                    models = await fetch_fn(client, api_key)
+                    # Anthropic needs key_type to skip API call for OAuth tokens
+                    if provider_name == "anthropic":
+                        models = await fetch_fn(client, api_key, key_type)
+                    else:
+                        models = await fetch_fn(client, api_key)
 
                     if not models:
                         logger.info("sync_models: %s returned 0 models", provider_name)

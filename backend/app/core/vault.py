@@ -78,6 +78,16 @@ class Vault:
         """List all stored secret keys."""
         return list(self._load().keys())
 
+    def get_key_type(self, key: str) -> str:
+        """Get the type metadata for a stored key. Defaults to 'api_key'."""
+        return self._load().get(f"{key}__type", "api_key")
+
+    def set_key_type(self, key: str, key_type: str) -> None:
+        """Store type metadata for a key (e.g. 'api_key' or 'oauth_token')."""
+        data = self._load()
+        data[f"{key}__type"] = key_type
+        self._save(data)
+
     def get_api_key(self, provider: str) -> str | None:
         """Get an API key for a specific LLM provider.
 
@@ -89,3 +99,18 @@ class Vault:
         if vault_value:
             return vault_value
         return os.environ.get(key_name)
+
+    def get_api_key_with_type(self, provider: str) -> tuple[str, str] | None:
+        """Get an API key and its type for a provider.
+
+        Returns (key_value, key_type) or None.
+        """
+        key_name = f"{provider.upper()}_API_KEY"
+        vault_value = self.get(key_name)
+        if vault_value:
+            key_type = self.get_key_type(key_name)
+            return (vault_value, key_type)
+        env_value = os.environ.get(key_name)
+        if env_value:
+            return (env_value, "api_key")
+        return None
