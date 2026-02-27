@@ -422,7 +422,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "work_plan",
-            "description": "Create and manage work plans with trackable items. Use at the start of multi-step tasks.",
+            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work — do not wait until you have read everything. The user sees plan updates in real-time.",
             "parameters": {
                 "type": "object",
                 "properties": {

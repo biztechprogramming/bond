@@ -400,6 +400,42 @@ export class WebChatChannel {
             });
             break;
 
+          case "plan_created":
+            console.log(`[gateway] Container turn SSE event: plan_created id=${event.data.plan_id}`);
+            this.send(socket, {
+              type: "plan_created",
+              sessionId,
+              planId: event.data.plan_id as string,
+              planTitle: event.data.title as string,
+              planStatus: "active",
+              conversationId,
+            });
+            break;
+
+          case "item_updated":
+            console.log(`[gateway] Container turn SSE event: item_updated plan=${event.data.plan_id} item=${event.data.item_id} status=${event.data.status}`);
+            this.send(socket, {
+              type: "item_updated",
+              sessionId,
+              planId: event.data.plan_id as string,
+              itemId: event.data.item_id as string,
+              itemStatus: event.data.status as string,
+              itemTitle: (event.data.title as string) || "",
+              conversationId,
+            });
+            break;
+
+          case "plan_completed":
+            console.log(`[gateway] Container turn SSE event: plan_completed id=${event.data.plan_id} status=${event.data.status}`);
+            this.send(socket, {
+              type: "plan_completed",
+              sessionId,
+              planId: event.data.plan_id as string,
+              planStatus: event.data.status as string,
+              conversationId,
+            });
+            break;
+
           case "memory":
             console.log(`[gateway] Container turn SSE event: memory promote type=${event.data.type}`);
             // Intercept: forward to backend, do NOT forward to frontend
