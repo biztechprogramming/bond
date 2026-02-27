@@ -414,3 +414,152 @@ if _active_plan_id:
 2. **Plan granularity threshold** — Should the agent create a plan for every task, or only when it estimates > N steps? Recommend: create for anything estimated > 3 steps.
 3. **Context snapshot size limit** — How large can `context_snapshot` get before it hurts more than it helps? Recommend: cap at 4000 tokens, summarize if larger.
 4. **Multi-agent plans** — Phase 3 scope. Needs a claim/lock mechanism so two agents don't work the same item.
+
+---
+
+## Board Layout & Live Interaction
+
+### Page Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Bond Task Board                                    [Agent: Bond-1] │
+├──────────────────────────────────────────────┬──────────────────────┤
+│                                              │                      │
+│  ┌─────┐ ┌───────────┐ ┌──────┐ ┌────────┐  │  Agent Chat          │
+│  │ New │ │In Progress│ │ Done │ │Complete│  │                      │
+│  │     │ │           │ │      │ │        │  │  ┌──────────────────┐│
+│  │┌───┐│ │┌─────────┐│ │┌────┐│ │┌──────┐│  │  │Agent: Reading    ││
+│  ││ 3 ││ ││ 2. Dedup││ ││ 1. ││ ││      ││  │  │worker.py outline ││
+│  │└───┘│ ││ sliding  ││ ││Cach││ ││      ││  │  │for _compress_    ││
+│  │┌───┐│ ││ window + ││ ││e   ││ ││      ││  │  │history...        ││
+│  ││ 4 ││ ││ compress ││ ││frag││ ││      ││  │  ├──────────────────┤│
+│  │└───┘│ ││         ││ ││ment││ ││      ││  │  │Agent: Found the  ││
+│  │     │ ││  ●●●    ││ ││sel ││ ││      ││  │  │summary message at││
+│  │     │ │└─────────┘│ │└────┘│ │└──────┘│  │  │line 535. Applying ││
+│  │     │ │           │ │      │ │        │  │  │edit...            ││
+│  │     │ │           │ │      │ │        │  │  ├──────────────────┤│
+│  │     │ │           │ │      │ │        │  │  │                  ││
+│  │     │ │           │ │      │ │        │  │  │ [Type to agent]  ││
+│  │     │ │           │ │      │ │        │  │  │                  ││
+│  └─────┘ └───────────┘ └──────┘ └────────┘  │  └──────────────────┘│
+│                                              │                      │
+│  ┌────────────────────────────────────────┐  │  ┌──────────────────┐│
+│  │ ⏸ PAUSE   ▶ RESUME   ⏹ CANCEL        │  │  │  ⏸ PAUSE AGENT  ││
+│  └────────────────────────────────────────┘  │  └──────────────────┘│
+└──────────────────────────────────────────────┴──────────────────────┘
+```
+
+### Left Panel: Kanban Board
+- Columns for each status (configurable — collapse unused statuses)
+- Cards show item title, progress dots (●○○ = 1 of 3 notes), time in status
+- Click a card → expand to see notes timeline, files changed, context snapshot
+- Drag-and-drop to manually change status (e.g., drag from Done to In Review)
+
+### Right Panel: Agent Chat
+A compact chat interface showing the agent's live activity stream and allowing user interjection.
+
+**What the user sees:**
+- Agent's thinking/status messages as it works (streamed via SSE)
+- Tool call summaries (not raw JSON — e.g., "Reading worker.py lines 533-570" instead of `{"tool": "file_read", "args": {...}}`)
+- Agent's notes as they're added to work items
+- Error messages when something fails
+
+**What the user can do:**
+- **Type a message** — Sends an interrupt to the agent via the existing `/interrupt` endpoint. The message is injected into the agent's message list and it sees it on the next loop iteration. Examples:
+  - "Stop — the function moved to line 600 after the last merge"
+  - "Skip the tests for now, just implement"
+  - "Use /tmp/worker_patched.py instead, /bond is read-only"
+- **Pause button** — Sends a pause signal. The agent finishes its current tool call, saves a context checkpoint on the active work item, then stops. Sets the work plan status to `paused`.
+- **Resume button** — Resumes from the checkpoint. Same as crash recovery — loads context snapshot, injects into prompt, continues.
+- **Cancel button** — Stops the agent and sets the plan to `cancelled`. Agent saves final context before stopping.
+
+### Pause/Resume Implementation
+
+**Pause** uses the existing interrupt mechanism with a special message:
+
+```python
+# POST /interrupt
+{
+  "new_messages": [],
+  "action": "pause"
+}
+```
+
+In the worker loop:
+```python
+if _state.interrupt_event.is_set():
+    _state.interrupt_event.clear()
+    
+    if _state.pause_requested:
+        # Save context checkpoint before pausing
+        if _active_plan_id and _current_item_id:
+            snapshot = _build_context_snapshot(messages, tool_calls_made, _file_read_cache)
+            await _save_item_checkpoint(_current_item_id, snapshot)
+        logger.info("Agent paused by user — context saved")
+        return "Agent paused. Work plan saved — resume when ready.", tool_calls_made
+    
+    # Normal interrupt — inject user messages
+    for msg in _state.pending_messages:
+        messages.append(msg)
+    _state.pending_messages.clear()
+```
+
+**Resume** is a new endpoint:
+
+```python
+@app.post("/resume")
+async def resume(request: Request) -> StreamingResponse:
+    """Resume a paused work plan from its last checkpoint."""
+    # Load active plan → find in_progress item → load context_snapshot
+    # Build recovery prompt → start agent loop with injected context
+```
+
+### Chat Message Types (SSE Events)
+
+| Event | Content | Direction |
+|-------|---------|-----------|
+| `agent_status` | "Reading worker.py outline..." | Agent → User |
+| `agent_note` | "Found _compress_history at line 533" | Agent → User |
+| `agent_error` | "file_edit failed: read-only filesystem" | Agent → User |
+| `tool_summary` | "Read 40 lines from worker.py (lines 533-570)" | Agent → User |
+| `item_status` | "Item 2 → in_progress" | Agent → User |
+| `user_message` | "Stop, the function moved" | User → Agent |
+| `user_action` | "pause" / "resume" / "cancel" | User → Agent |
+
+### Mobile / Responsive
+
+On narrow screens:
+- Kanban board becomes a vertical list (grouped by status)
+- Chat panel slides in as a bottom sheet
+- Pause button floats as a FAB (floating action button)
+
+---
+
+## Updated Phase Plan
+
+### Phase 1: Schema + Tools + Recovery (MVP) — No UI
+- Migration 000021: work_plans and work_items tables
+- `work_plan` tool + prompt fragment
+- Crash recovery via context checkpoint
+- API endpoints: GET/PATCH plans and items
+
+### Phase 2: Kanban UI + Chat Panel
+- Board page with drag-and-drop columns
+- Right-panel chat showing agent activity stream
+- Real-time SSE updates (plan/item events)
+- Pause/Resume/Cancel buttons
+- User message input → `/interrupt` integration
+
+### Phase 3: Rich Interaction
+- User can reorder items, add items, change status from UI
+- Inline diff viewer for files_changed
+- Context snapshot viewer (collapsible JSON tree)
+- Full status lifecycle with review/test gates
+- Notification when agent is blocked or needs input
+
+### Phase 4: Multi-Agent + Analytics
+- Cross-agent plans with item claiming
+- Plan templates
+- Completion metrics, time tracking
+- Historical plan browser
