@@ -217,26 +217,21 @@ test result: FAILED. 9 passed; 1 failed; 0 ignored
 # ---------------------------------------------------------------------------
 
 def test_generic_fallback_success_large():
-    """Large successful output from unknown tool gets compressed."""
+    """Large output from unknown tool returns None (handled by tool_result_filter instead)."""
     lines = [f"line {i}: some output" for i in range(200)]
     stdout = "\n".join(lines)
     result = parse_build_output(stdout, "", 0)
-    assert result is not None
-    assert "lines omitted" in result
-    assert "line 0" in result  # first lines kept
-    assert "line 199" in result  # last lines kept
+    assert result is None  # no build pattern detected, let normal filter handle it
 
 
 def test_generic_fallback_failure_large():
-    """Large failed output from unknown tool extracts errors."""
+    """Large failed output from unknown tool returns None (no build pattern detected)."""
     lines = [f"line {i}: some output" for i in range(100)]
     lines[50] = "ERROR: something went wrong"
     lines[51] = "Error: another issue"
     stdout = "\n".join(lines)
     result = parse_build_output(stdout, "", 1)
-    assert result is not None
-    assert "ERROR: something went wrong" in result
-    assert "Error: another issue" in result
+    assert result is None  # no build pattern detected
 
 
 def test_short_output_passthrough():

@@ -259,5 +259,7 @@ def parse_build_output(stdout: str, stderr: str, exit_code: int) -> str | None:
         if result is not None:
             return result
 
-    # Generic fallback for large output
-    return _generic_fallback(stdout, stderr, exit_code)
+    # No known build tool detected — return None so the normal tool result
+    # filter handles it. The generic fallback was too aggressive, truncating
+    # file contents from cat/head/grep that happen to be > 1000 chars.
+    return None
