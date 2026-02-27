@@ -849,14 +849,15 @@ async def _apply_sliding_window(
 
 
 def _advance_cache_breakpoint(messages: list[dict], old_bp_index: int) -> int:
-    """Advance Anthropic cache_control breakpoint 2 to second-to-last message.
+    """Advance Anthropic cache_control breakpoint 2 toward the end of messages.
 
-    Unlike the old _set_cache_breakpoint, this only touches two messages:
-    1. Clears cache_control from the old breakpoint position
-    2. Sets cache_control on messages[-2]
+    Strategy: Only advance the breakpoint when enough new messages
+    (>= _CACHE_BP_ADVANCE_THRESHOLD) have accumulated after the current
+    breakpoint. This keeps the prefix stable for multiple consecutive LLM
+    calls, maximizing cache hits.
 
-    This preserves prefix stability — messages before the breakpoint are
-    never reformatted, so the Anthropic cache stays valid.
+    When we DO advance, we move to messages[-2] (second-to-last), so only
+    the very latest message pair pays full input price.
 
     Returns the new breakpoint index.
     """
@@ -868,6 +869,19 @@ def _advance_cache_breakpoint(messages: list[dict], old_bp_index: int) -> int:
     # Nothing to do if breakpoint hasn't moved
     if new_bp_index == old_bp_index:
         return old_bp_index
+
+    # Only advance if enough messages have accumulated past the breakpoint.
+    # Each tool call adds ~2 messages (assistant + tool result). Advancing
+    # every 4+ messages means the cache stays stable for ~2 consecutive calls.
+    _CACHE_BP_ADVANCE_THRESHOLD = 4
+    gap = new_bp_index - old_bp_index
+    if gap < _CACHE_BP_ADVANCE_THRESHOLD:
+        logger.debug("Cache BP2: holding at index %d (gap=%d < threshold=%d, msgs=%d)",
+                      old_bp_index, gap, _CACHE_BP_ADVANCE_THRESHOLD, len(messages))
+        return old_bp_index
+
+    logger.info("Cache BP2: advancing %d → %d (gap=%d, msgs=%d)",
+                old_bp_index, new_bp_index, gap, len(messages))
 
     # Clear cache_control from old breakpoint (skip system prompt)
     if old_bp_index > 0 and old_bp_index < len(messages):
@@ -1173,8 +1187,10 @@ async def _run_agent_loop(
         current_max_tokens = TOKEN_TIERS[current_tier]
         context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
 
-        # Advance prompt cache breakpoint 2 before each call (Anthropic only)
-        if _is_anthropic_model and _iteration > 0:
+        # Advance prompt cache breakpoint 2 before each call (Anthropic only).
+        # Runs on every iteration (including 0) so the first call benefits from
+        # caching the system prompt + history + user message prefix.
+        if _is_anthropic_model:
             _cache_bp2_index = _advance_cache_breakpoint(messages, _cache_bp2_index)
 
         logger.info(
