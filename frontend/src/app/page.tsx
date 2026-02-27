@@ -2,34 +2,26 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from "@/lib/ws";
+import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
+import ChatPanel from "@/components/shared/ChatPanel";
+import PlanCard from "@/components/shared/PlanCard";
 
-type AgentStatus = "idle" | "thinking" | "tool_calling" | "responding";
-
-interface ChatMessage {
-  id?: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  status?: "sending" | "queued" | "delivered";
-  agentName?: string;
-}
-
-interface PlanCardData {
-  id: string;
-  title: string;
-  status: string;
-  items: { id: string; title: string; status: string }[];
-}
-
-function _toolIcon(name: string): string {
-  const icons: Record<string, string> = {
-    file_read: "\uD83D\uDCC4", file_write: "\uD83D\uDCDD", file_edit: "\u270F\uFE0F",
-    code_execute: "\u26A1", web_search: "\uD83D\uDD0D",
-    web_read: "\uD83C\uDF10", memory_save: "\uD83D\uDCBE", search_memory: "\uD83E\uDDE0",
-    memory_update: "\uD83D\uDCBE", memory_delete: "\uD83D\uDDD1\uFE0F", respond: "\uD83D\uDCAC",
-    browser: "\uD83D\uDDA5\uFE0F", email: "\u2709\uFE0F", cron: "\u23F0", notify: "\uD83D\uDD14",
-    call_subordinate: "\uD83E\uDD16", skills: "\uD83E\uDDE9", work_plan: "\uD83D\uDCCB",
-  };
-  return icons[name] || "\uD83D\uDD27";
+function _toolSummary(name: string, data: Record<string, unknown>): string {
+  if (name === "file_write" || name === "file_read") {
+    const parsed = typeof data.args === "string" ? JSON.parse(data.args as string) : data.args;
+    return (parsed as Record<string, string>)?.path || JSON.stringify(data.args).substring(0, 60);
+  } else if (name === "code_execute") {
+    return "running code...";
+  } else if (name === "web_search" || name === "web_read") {
+    const parsed = typeof data.args === "string" ? JSON.parse(data.args as string) : data.args;
+    return (parsed as Record<string, string>)?.query || (parsed as Record<string, string>)?.url || JSON.stringify(data.args).substring(0, 60);
+  } else if (name === "memory_save" || name === "search_memory") {
+    return "memory";
+  } else if (name === "respond") {
+    return "";
+  }
+  const args = data.args ? (typeof data.args === "string" ? data.args : JSON.stringify(data.args)) : "";
+  return (args as string).substring(0, 60);
 }
 
 export default function Home() {
@@ -54,12 +46,10 @@ export default function Home() {
   const [deleteMode, setDeleteMode] = useState(false);
   const currentAgentNameRef = useRef<string>("Agent");
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
-  const [showToolLog, setShowToolLog] = useState(false);
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // Persist conversation ID
   useEffect(() => {
@@ -118,8 +108,6 @@ export default function Home() {
       .then(r => r.json())
       .then((data: { id: string; display_name: string; is_default: boolean }[]) => {
         setAgents(data);
-        // Don't set default here — let conversations_list set agent from stored conversation
-        // Only set default if no conversation is stored
         const storedConvId = localStorage.getItem("bond-conversation-id");
         if (!storedConvId) {
           const def = data.find(a => a.is_default);
@@ -154,35 +142,16 @@ export default function Home() {
         try {
           const data = JSON.parse(msg.content);
           const name = data.tool_name || data.name || "tool";
-          const args = data.args ? (typeof data.args === "string" ? data.args : JSON.stringify(data.args)) : "";
-          // Summarize args for display
-          let summary = "";
-          if (name === "file_write" || name === "file_read") {
-            const parsed = typeof data.args === "string" ? JSON.parse(data.args) : data.args;
-            summary = parsed?.path || args.substring(0, 60);
-          } else if (name === "code_execute") {
-            summary = "running code...";
-          } else if (name === "web_search" || name === "web_read") {
-            const parsed = typeof data.args === "string" ? JSON.parse(data.args) : data.args;
-            summary = parsed?.query || parsed?.url || args.substring(0, 60);
-          } else if (name === "memory_save" || name === "search_memory") {
-            summary = "memory";
-          } else if (name === "respond") {
-            summary = "";
-          } else {
-            summary = args.substring(0, 60);
-          }
+          const summary = _toolSummary(name, data);
           setToolActivity((prev) => [...prev, { name, args: summary, time: Date.now() }]);
         } catch { /* ignore parse errors */ }
       } else if (msg.type === "chunk" && msg.content) {
         setStreamingContent((prev) => prev + msg.content!);
         setAgentStatus("responding");
       } else if (msg.type === "done") {
-        // Finalize streaming content into a message (with dedup)
         setStreamingContent((prev) => {
           if (prev) {
             setMessages((msgs) => {
-              // Avoid duplicate if message was already loaded via history
               const last = msgs[msgs.length - 1];
               if (last?.role === "assistant" && last.content === prev) {
                 return msgs;
@@ -195,13 +164,11 @@ export default function Home() {
         setLoading(false);
         setAgentStatus("idle");
         setToolActivity([]);
-        setShowToolLog(false);
         if (msg.conversationId) {
           setConversationId(msg.conversationId);
         }
         ws.listConversations();
       } else if (msg.type === "queued") {
-        // Message was queued while agent is busy
         setMessages((prev) =>
           prev.map((m, i) =>
             i === prev.length - 1 && m.role === "user" && m.status === "sending"
@@ -224,7 +191,6 @@ export default function Home() {
         }
       } else if (msg.type === "conversations_list" && msg.conversations) {
         setConversations(msg.conversations);
-        // Only set agent on initial page load, never override user's active selection
         if (!initialAgentSetRef.current) {
           initialAgentSetRef.current = true;
           const storedConvId = localStorage.getItem("bond-conversation-id");
@@ -241,7 +207,7 @@ export default function Home() {
         setLoading(false);
         setAgentStatus("idle");
       }
-      // Plan events — update inline plan card
+      // Plan events
       if (msg.type === "plan_created" && msg.planId && msg.planTitle) {
         setActivePlan({ id: msg.planId, title: msg.planTitle, status: "active", items: [] });
       } else if (msg.type === "item_updated" && msg.itemId && activePlan) {
@@ -250,7 +216,6 @@ export default function Home() {
           const items = prev.items.map(it =>
             it.id === msg.itemId ? { ...it, status: msg.itemStatus || it.status } : it
           );
-          // Add item if not found (new item added)
           if (msg.itemId && !items.find(it => it.id === msg.itemId)) {
             items.push({ id: msg.itemId, title: msg.itemTitle || "Item", status: msg.itemStatus || "new" });
           }
@@ -269,16 +234,11 @@ export default function Home() {
     };
   }, []);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
   const sendMessage = useCallback(() => {
     if (!input.trim() || !wsRef.current?.connected) return;
 
     const content = input.trim();
     setInput("");
-    // Show message immediately (optimistic) with "sending" status
     setMessages((prev) => [...prev, { role: "user", content, status: "sending" }]);
     if (!loading) {
       setLoading(true);
@@ -291,13 +251,6 @@ export default function Home() {
     wsRef.current.interrupt(conversationId);
   }, [conversationId]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
   const handleNewConversation = () => {
     setMessages([]);
     setConversationId(null);
@@ -308,7 +261,6 @@ export default function Home() {
     if (id === conversationId) return;
     setMessages([]);
     setLoading(false);
-    // Set agent selector to the conversation's agent
     const conv = conversations.find(c => c.id === id);
     if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
     wsRef.current?.switchConversation(id);
@@ -332,6 +284,8 @@ export default function Home() {
     if (diff < 172800000) return "Yesterday";
     return d.toLocaleDateString();
   };
+
+  const selectedAgentName = agents.find(a => a.id === selectedAgentId)?.display_name || "Bond";
 
   return (
     <div style={styles.outerContainer}>
@@ -390,7 +344,7 @@ export default function Home() {
             >
               {sidebarOpen ? "\u2190" : "\u2261"}
             </button>
-            <h1 style={styles.title}>{agents.find(a => a.id === selectedAgentId)?.display_name || "Bond"}</h1>
+            <h1 style={styles.title}>{selectedAgentName}</h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             {agents.length > 1 && (
@@ -404,7 +358,7 @@ export default function Home() {
                   }}
                 >
                   {agents.find(a => a.id === selectedAgentId)?.display_name || "Select Agent"}
-                  <span style={{ fontSize: "0.7rem", color: "#5a5a6e" }}>{agentDropdownOpen ? "▲" : "▼"}</span>
+                  <span style={{ fontSize: "0.7rem", color: "#5a5a6e" }}>{agentDropdownOpen ? "\u25B2" : "\u25BC"}</span>
                 </button>
                 {agentDropdownOpen && (
                   <div style={{
@@ -451,166 +405,33 @@ export default function Home() {
           </div>
         </header>
 
-        <div style={styles.messages}>
-          {messages.length === 0 && (
-            <div style={styles.empty}>
-              Send a message to start chatting with {agents.find(a => a.id === selectedAgentId)?.display_name || "Bond"}.
-            </div>
-          )}
-          {messages.map((msg, i) => (
-            <div
-              key={msg.id || i}
-              style={{
-                ...styles.message,
-                ...(msg.role === "user" ? styles.userMessage : {}),
-                ...(msg.role === "system" ? styles.systemMessage : {}),
-                position: "relative" as const,
-              }}
-            >
-              {deleteMode && (
-                <div style={{ position: "absolute", top: "6px", right: "6px", display: "flex", gap: "4px" }}>
-                  {msg.role === "user" && (
-                    <button
-                      onClick={() => resendMessage(msg.content)}
-                      style={{
-                        background: "rgba(108,138,255,0.15)", border: "1px solid rgba(108,138,255,0.4)",
-                        borderRadius: "50%", width: "22px", height: "22px",
-                        color: "#6c8aff", fontSize: "0.75rem", cursor: "pointer",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        lineHeight: 1, padding: 0,
-                      }}
-                      title="Resend message"
-                    >
-                      ↻
-                    </button>
-                  )}
-                  <button
-                    onClick={() => deleteMessage(msg.id || "", i)}
-                    style={{
-                      background: "rgba(255,60,80,0.15)", border: "1px solid rgba(255,60,80,0.4)",
-                      borderRadius: "50%", width: "22px", height: "22px",
-                      color: "#ff3c50", fontSize: "0.75rem", cursor: "pointer",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      lineHeight: 1, padding: 0,
-                    }}
-                    title="Delete message"
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-              <div style={styles.messageRole}>
-                {msg.role === "user" ? "You" : msg.role === "assistant" ? (msg.agentName || agents.find(a => a.id === selectedAgentId)?.display_name || "Agent") : "System"}
-              </div>
-              <div style={styles.messageContent}>{msg.content}</div>
-            </div>
-          ))}
-          {/* Inline Plan Card */}
-          {activePlan && (
-            <div style={styles.planCard}>
-              <div style={styles.planCardHeader}>
-                <span>
-                  {activePlan.status === "active" ? "\uD83D\uDD04" : activePlan.status === "completed" ? "\u2705" : activePlan.status === "failed" ? "\u274C" : "\uD83D\uDCCB"}{" "}
-                  Plan: {activePlan.title}
-                </span>
-                <a href="/board" style={styles.planCardViewBtn}>View</a>
-              </div>
-              {activePlan.items.length > 0 && (
-                <div style={styles.planCardItems}>
-                  {activePlan.items.map(item => (
-                    <div key={item.id} style={styles.planCardItem}>
-                      <span>{item.status === "complete" || item.status === "done" ? "\u2705" : item.status === "in_progress" ? "\uD83D\uDD04" : item.status === "failed" ? "\u274C" : "\u2B1C"}</span>
-                      <span style={{ color: item.status === "in_progress" ? "#6c8aff" : "#e0e0e8" }}>{item.title}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {(loading || streamingContent) && (
-            <div style={styles.message}>
-              <div style={styles.messageRole}>{currentAgentNameRef.current}</div>
-              <div style={{ ...styles.messageContent, color: streamingContent ? "#e0e0e8" : "#8888a0" }}>
-                {streamingContent || (
-                  agentStatus === "tool_calling" ? "Using tools..." :
-                  agentStatus === "responding" ? "Responding..." :
-                  "Thinking..."
-                )}
-              </div>
-              {/* Live tool activity */}
-              {toolActivity.length > 0 && !streamingContent && (
-                <div style={{ marginTop: "8px" }}>
-                  {/* Current activity line */}
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.8rem", color: "#6c8aff" }}>
-                    <span style={{ animation: "pulse 1.5s ease-in-out infinite", display: "inline-block" }}>●</span>
-                    <span>{_toolIcon(toolActivity[toolActivity.length - 1].name)} {toolActivity[toolActivity.length - 1].name}</span>
-                    {toolActivity[toolActivity.length - 1].args && (
-                      <span style={{ color: "#5a5a6e", fontFamily: "monospace", fontSize: "0.75rem" }}>
-                        {toolActivity[toolActivity.length - 1].args}
-                      </span>
-                    )}
-                    <span style={{ color: "#5a5a6e", marginLeft: "auto" }}>
-                      {toolActivity.length} tool call{toolActivity.length !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  {/* Expandable log */}
-                  <button
-                    onClick={() => setShowToolLog(!showToolLog)}
-                    style={{ background: "none", border: "none", color: "#5a5a6e", fontSize: "0.75rem", cursor: "pointer", padding: "4px 0", marginTop: "4px" }}
-                  >
-                    {showToolLog ? "▼ Hide activity" : "▶ Show activity log"}
-                  </button>
-                  {showToolLog && (
-                    <div style={{
-                      maxHeight: "200px", overflowY: "auto", fontSize: "0.75rem", fontFamily: "monospace",
-                      backgroundColor: "#0a0a14", borderRadius: "6px", padding: "8px", marginTop: "4px",
-                    }}>
-                      {toolActivity.map((t, i) => (
-                        <div key={i} style={{ padding: "2px 0", color: i === toolActivity.length - 1 ? "#6c8aff" : "#5a5a6e" }}>
-                          <span style={{ color: "#3a3a4e", marginRight: "6px" }}>{i + 1}.</span>
-                          {_toolIcon(t.name)} {t.name}
-                          {t.args && <span style={{ color: "#3a3a4e", marginLeft: "6px" }}>{t.args}</span>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
+        {/* Inline Plan Card */}
+        {activePlan && (
+          <div style={{ padding: "12px 24px 0", display: "flex", justifyContent: "center" }}>
+            <PlanCard plan={activePlan} />
+          </div>
+        )}
 
-        <div style={{ ...styles.inputArea, ...(process.env.NODE_ENV === "development" ? { paddingLeft: "60px" } : {}) }}>
-          <textarea
-            style={styles.textarea}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={loading ? "Type to queue a message..." : "Type a message..."}
-            rows={1}
-            disabled={!connected}
-          />
-          {loading && (
-            <button
-              style={styles.stopButton}
-              onClick={handleStop}
-              title="Stop agent"
-            >
-              Stop
-            </button>
-          )}
-          <button
-            style={{
-              ...styles.sendButton,
-              opacity: !input.trim() || !connected ? 0.5 : 1,
-            }}
-            onClick={sendMessage}
-            disabled={!input.trim() || !connected}
-          >
-            Send
-          </button>
-        </div>
+        <ChatPanel
+          messages={messages}
+          input={input}
+          onInputChange={setInput}
+          onSend={sendMessage}
+          onStop={handleStop}
+          connected={connected}
+          loading={loading}
+          agentStatus={agentStatus}
+          streamingContent={streamingContent}
+          currentAgentName={currentAgentNameRef.current}
+          toolActivity={toolActivity}
+          compact={false}
+          showToolActivityLog={true}
+          emptyMessage={`Send a message to start chatting with ${selectedAgentName}.`}
+          deleteMode={deleteMode}
+          onDeleteMessage={deleteMessage}
+          onResendMessage={resendMessage}
+          selectedAgentName={selectedAgentName}
+        />
       </div>
     </div>
   );
@@ -728,118 +549,5 @@ const styles: Record<string, React.CSSProperties> = {
   },
   status: {
     fontSize: "0.85rem",
-  },
-  messages: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "24px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "16px",
-  },
-  empty: {
-    textAlign: "center",
-    color: "#8888a0",
-    marginTop: "40vh",
-  },
-  message: {
-    padding: "12px 16px",
-    borderRadius: "12px",
-    backgroundColor: "#12121a",
-    maxWidth: "85%",
-  },
-  userMessage: {
-    alignSelf: "flex-end",
-    backgroundColor: "#1a2a3a",
-  },
-  systemMessage: {
-    alignSelf: "center",
-    backgroundColor: "#2a1a1a",
-    fontSize: "0.85rem",
-  },
-  messageRole: {
-    fontSize: "0.75rem",
-    color: "#6c8aff",
-    marginBottom: "4px",
-    fontWeight: 600,
-  },
-  messageContent: {
-    whiteSpace: "pre-wrap",
-    lineHeight: 1.6,
-  },
-  inputArea: {
-    display: "flex",
-    gap: "12px",
-    padding: "16px 24px",
-    borderTop: "1px solid #1e1e2e",
-  },
-  textarea: {
-    flex: 1,
-    backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
-    borderRadius: "12px",
-    padding: "12px 16px",
-    color: "#e0e0e8",
-    fontSize: "1rem",
-    fontFamily: "inherit",
-    resize: "none",
-    outline: "none",
-  },
-  stopButton: {
-    backgroundColor: "#ff4444",
-    color: "#fff",
-    border: "none",
-    borderRadius: "12px",
-    padding: "12px 16px",
-    fontSize: "1rem",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  sendButton: {
-    backgroundColor: "#6c8aff",
-    color: "#fff",
-    border: "none",
-    borderRadius: "12px",
-    padding: "12px 24px",
-    fontSize: "1rem",
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  planCard: {
-    padding: "12px 16px",
-    borderRadius: "12px",
-    backgroundColor: "#12121a",
-    border: "1px solid #2a2a3e",
-    maxWidth: "85%",
-    alignSelf: "center" as const,
-  },
-  planCardHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    color: "#e0e0e8",
-    marginBottom: "8px",
-  },
-  planCardViewBtn: {
-    color: "#6c8aff",
-    textDecoration: "none",
-    fontSize: "0.78rem",
-    padding: "4px 10px",
-    borderRadius: "6px",
-    border: "1px solid #2a2a3e",
-  },
-  planCardItems: {
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: "4px",
-  },
-  planCardItem: {
-    display: "flex",
-    gap: "8px",
-    alignItems: "center",
-    fontSize: "0.82rem",
-    padding: "2px 0",
   },
 };
