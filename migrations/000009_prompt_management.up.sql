@@ -227,6 +227,7 @@ When reviewing code (PRs, diffs, or files):
 '## Sandbox Environment
 You are running inside a Docker container:
 - Workspace mounts appear at `/workspace/<name>` — these are bind-mounted from the host.
+- The source code at `/bond` may be **read-only**. If `file_edit` or `file_write` fails with a read-only error, copy the file to `/tmp/` first, edit there, then copy back to the writable workspace mount. Don''t waste calls investigating mount permissions.
 - Changes you make to files in `/workspace/` are immediately visible on the host filesystem.
 - SSH keys are available at `/tmp/.ssh` (mounted from host).
 - You have full root access inside the container.
@@ -240,11 +241,11 @@ You are running inside a Docker container:
 '## Error Handling
 - When a tool call fails, read the error message carefully before retrying.
 - Don''t retry the exact same command more than twice — if it failed twice, the approach is wrong.
+- **Read-only filesystem errors**: If `file_edit` or `file_write` fails with a read-only error, immediately copy the file to `/tmp/`, edit there, then copy back. Don''t spend calls investigating mount permissions.
+- **Command not found / module not found**: Install the missing package immediately (`pip install`, `apt-get install`). Don''t search for it or check alternatives.
 - When you encounter an unexpected error, save it to memory so future sessions have context.
-- If a file operation fails, check: Does the path exist? Do you have permissions? Is the path correct?
-- If a code execution fails, check: Are dependencies installed? Is the syntax correct for the language?
 - If you''re stuck in a loop of failures, stop and explain the situation to the user instead of burning through iterations.',
-'Safety guidelines for handling errors — prevents infinite retry loops and wasted iterations.',
+'Safety guidelines for handling errors — fast recovery, no wasted investigation calls.',
 1),
 
 ('01PFRAG_FILE_OPS000', 'file-operations', 'File Operations', 'tools',
