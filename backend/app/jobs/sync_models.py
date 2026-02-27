@@ -45,23 +45,48 @@ def _parse_openai_compat(data: dict, prefix: str) -> list[tuple[str, str]]:
 # ── Provider-specific fetchers ────────────────────────────────
 
 
+# Well-known Anthropic models — used when OAuth token can't hit /v1/models
+_ANTHROPIC_FALLBACK_MODELS: list[tuple[str, str]] = [
+    ("claude-sonnet-4-20250514", "Claude Sonnet 4"),
+    ("claude-opus-4-20250514", "Claude Opus 4"),
+    ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku"),
+    ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet"),
+    ("claude-3-haiku-20240307", "Claude 3 Haiku"),
+]
+
+
+def _is_anthropic_api_key(key: str) -> bool:
+    """Anthropic API keys start with sk-ant-. Anything else is likely an OAuth token."""
+    return key.startswith("sk-ant-")
+
+
 async def _fetch_anthropic(client: httpx.AsyncClient, api_key: str) -> list[tuple[str, str]]:
-    """Fetch Anthropic models."""
-    resp = await client.get(
-        "https://api.anthropic.com/v1/models?limit=100",
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-        },
-    )
-    resp.raise_for_status()
-    data = resp.json()
+    """Fetch Anthropic models. Falls back to known list for OAuth tokens."""
+    if _is_anthropic_api_key(api_key):
+        try:
+            resp = await client.get(
+                "https://api.anthropic.com/v1/models?limit=100",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            models = []
+            for m in data.get("data", []):
+                mid = m.get("id", "")
+                display = m.get("display_name", mid)
+                models.append((mid, display))
+                models.append((f"anthropic/{mid}", f"{display} (anthropic/)"))
+            return models
+        except httpx.HTTPStatusError:
+            logger.warning("sync_models: Anthropic API failed, using fallback model list")
+
+    # OAuth token or API call failed — use fallback list
+    logger.info("sync_models: Using fallback Anthropic model list (OAuth token or API error)")
     models = []
-    for m in data.get("data", []):
-        mid = m.get("id", "")
-        display = m.get("display_name", mid)
-        # Anthropic models: use bare ID for utility (litellm handles it),
-        # and anthropic/ prefix for explicit chat usage
+    for mid, display in _ANTHROPIC_FALLBACK_MODELS:
         models.append((mid, display))
         models.append((f"anthropic/{mid}", f"{display} (anthropic/)"))
     return models
