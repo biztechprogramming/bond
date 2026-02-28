@@ -145,26 +145,13 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "file_read",
-            "description": "Read the contents of a file from the workspace. Supports line-range reads and outline mode for context-efficient exploration.",
+            "description": "Read the full contents of a file from the workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Path to the file to read (relative to workspace root).",
-                    },
-                    "line_start": {
-                        "type": "integer",
-                        "description": "First line to read (1-indexed). If omitted, reads from the beginning.",
-                    },
-                    "line_end": {
-                        "type": "integer",
-                        "description": "Last line to read (1-indexed, inclusive). If omitted, reads to the end.",
-                    },
-                    "outline": {
-                        "type": "boolean",
-                        "description": "If true, return a structural outline (function/class signatures with line numbers) instead of full content. Ignores line_start/line_end.",
-                        "default": False,
                     },
                 },
                 "required": ["path"],
