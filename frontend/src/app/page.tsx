@@ -151,12 +151,14 @@ export default function Home() {
       } else if (msg.type === "done") {
         setStreamingContent((prev) => {
           if (prev) {
+            const newMsg = { id: msg.messageId, role: "assistant" as const, content: prev, agentName: msg.agentName || currentAgentNameRef.current };
             setMessages((msgs) => {
+              // Deduplicate: skip if message with this ID already exists
+              if (newMsg.id && msgs.some(m => m.id === newMsg.id)) return msgs;
+              // Also skip if last message has identical content (fallback dedup)
               const last = msgs[msgs.length - 1];
-              if (last?.role === "assistant" && last.content === prev) {
-                return msgs;
-              }
-              return [...msgs, { id: msg.messageId, role: "assistant", content: prev, agentName: msg.agentName || currentAgentNameRef.current }];
+              if (last?.role === "assistant" && last.content === prev) return msgs;
+              return [...msgs, newMsg];
             });
           }
           return "";
@@ -177,9 +179,16 @@ export default function Home() {
           )
         );
       } else if (msg.type === "history" && msg.messages) {
+        const seen = new Set<string>();
         setMessages(
           msg.messages
             .filter((m) => m.role === "user" || m.role === "assistant")
+            .filter((m) => {
+              if (!m.id) return true;
+              if (seen.has(m.id)) return false;
+              seen.add(m.id);
+              return true;
+            })
             .map((m) => ({
               id: m.id,
               role: m.role as "user" | "assistant",

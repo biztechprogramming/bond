@@ -59,6 +59,8 @@ function BoardPage() {
   const wsRef = useRef<GatewayWebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fetchPlansRef = useRef<() => void>(() => {});
+  const fetchPlanDetailsRef = useRef<() => void>(() => {});
 
   // Persist conversation ID
   useEffect(() => {
@@ -113,6 +115,10 @@ function BoardPage() {
     } catch { /* ignore */ }
   }, [selectedPlanId]);
 
+  // Keep refs current so the WebSocket handler (stable closure) can call latest versions
+  fetchPlansRef.current = fetchPlans;
+  fetchPlanDetailsRef.current = fetchPlanDetails;
+
   useEffect(() => { fetchPlans(); }, [fetchPlans]);
   useEffect(() => { fetchPlanDetails(); }, [fetchPlanDetails]);
   useEffect(() => { if (selectedPlanId) fetchLineage(); }, [selectedPlanId, fetchLineage]);
@@ -164,7 +170,15 @@ function BoardPage() {
       } else if (msg.type === "done") {
         setStreamingContent(prev => {
           if (prev) {
-            setMessages(msgs => [...msgs, { id: msg.messageId, role: "assistant", content: prev, agentName: msg.agentName || currentAgentNameRef.current }]);
+            const newMsg = { id: msg.messageId, role: "assistant" as const, content: prev, agentName: msg.agentName || currentAgentNameRef.current };
+            setMessages(msgs => {
+              // Deduplicate: skip if message with this ID already exists
+              if (newMsg.id && msgs.some(m => m.id === newMsg.id)) return msgs;
+              // Also skip if last message has identical content (fallback dedup)
+              const last = msgs[msgs.length - 1];
+              if (last?.role === "assistant" && last.content === newMsg.content) return msgs;
+              return [...msgs, newMsg];
+            });
           }
           return "";
         });
@@ -172,12 +186,19 @@ function BoardPage() {
         setAgentStatus("idle");
         setToolActivity([]);
         if (msg.conversationId) setConversationId(msg.conversationId);
-        fetchPlans();
-        fetchPlanDetails();
+        fetchPlansRef.current();
+        fetchPlanDetailsRef.current();
       } else if (msg.type === "history" && msg.messages) {
+        const seen = new Set<string>();
         setMessages(
           msg.messages
             .filter(m => m.role === "user" || m.role === "assistant")
+            .filter(m => {
+              if (!m.id) return true;
+              if (seen.has(m.id)) return false;
+              seen.add(m.id);
+              return true;
+            })
             .map(m => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content }))
         );
         if (msg.conversationId) setConversationId(msg.conversationId);
@@ -188,8 +209,8 @@ function BoardPage() {
       }
       // Plan SSE events
       if (msg.type === "plan_created" || msg.type === "plan_updated" || msg.type === "item_updated" || msg.type === "plan_completed") {
-        fetchPlans();
-        fetchPlanDetails();
+        fetchPlansRef.current();
+        fetchPlanDetailsRef.current();
         if (msg.type === "plan_created" && msg.planId) {
           setSelectedPlanId(msg.planId);
         }

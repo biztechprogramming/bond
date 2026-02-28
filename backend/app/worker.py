@@ -411,46 +411,11 @@ async def _run_agent_loop(
     prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
     full_system_prompt = "\n\n".join(prompt_parts)
 
-    # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
-    windowed_history = history
-    if history:
-        windowed_history = await _apply_sliding_window(
-            history, conversation_id, config, utility_kwargs,
-            agent_db=_state.agent_db,
-        )
-
-    # Stage 3: Progressive decay on tool results
-    # Only decay messages that will remain verbatim — messages above the
-    # compression threshold will be summarized anyway, so decaying them
-    # is wasted work (and the decay output gets discarded).
-    if windowed_history:
-        total_tokens = sum(_estimate_tokens(m.get("content", "")) for m in windowed_history)
-        if total_tokens >= COMPRESSION_THRESHOLD and len(windowed_history) > VERBATIM_MESSAGE_COUNT:
-            # Only decay the verbatim tail — the rest will be compressed
-            head = windowed_history[:-VERBATIM_MESSAGE_COUNT]
-            tail = windowed_history[-VERBATIM_MESSAGE_COUNT:]
-            tail = apply_progressive_decay(tail)
-            windowed_history = head + tail
-        else:
-            windowed_history = apply_progressive_decay(windowed_history)
-
-    # Stage 4: Compress remaining history if still over threshold
-    compressed_history = windowed_history
+    # Stages 2-4 disabled — context destruction was causing the model to
+    # lose track of what it already read, leading to 40+ tool call loops.
+    # TODO: re-enable with less aggressive pruning once the agent is stable.
+    compressed_history = history
     compression_stats = {"original_tokens": 0, "compressed_tokens": 0}
-    if windowed_history:
-        compressed_history, compression_stats = await _compress_history(
-            windowed_history, conversation_id, config, utility_kwargs,
-            agent_db=_state.agent_db,
-        )
-
-    # Emit compression stats via SSE
-    if event_queue is not None and compression_stats.get("original_tokens", 0) > COMPRESSION_THRESHOLD:
-        await event_queue.put(_sse_event("status", {
-            "state": "context_compressed",
-            "original_tokens": compression_stats["original_tokens"],
-            "compressed_tokens": compression_stats["compressed_tokens"],
-            "tools_pruned": compression_stats.get("tools_pruned", 0),
-        }))
 
     # Log compression audit trail
     await _log_compression_stats(
@@ -555,8 +520,9 @@ async def _run_agent_loop(
         # In-loop decay: compress tool results accumulated during this turn.
         # Keep the last 2 tool results verbatim; older ones get progressively decayed.
         # frozen_up_to prevents modifying messages before the cache breakpoint.
-        if _iteration > 0 and _iteration % 3 == 0:
-            messages = _decay_in_loop_tool_results(messages, _preturn_msg_count, frozen_up_to=_cache_bp2_index)
+        # In-loop decay disabled — was destroying tool results the model needs
+        # if _iteration > 0 and _iteration % 3 == 0:
+        #     messages = _decay_in_loop_tool_results(messages, _preturn_msg_count, frozen_up_to=_cache_bp2_index)
 
         current_max_tokens = TOKEN_TIERS[current_tier]
         context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
@@ -767,7 +733,7 @@ async def _run_agent_loop(
                         # For full reads: hash-compare content
                         # For partial/line-range reads: if we already read the full file, dedup
                         # For outline reads: always dedup if we have the file cached
-                        if _is_outline:
+                        if _is_outline and cached.get("has_full_content"):
                             result = {
                                 "note": f"File already read at tool call #{cached['tool_call_num']} ({cached['total_lines']} lines, {cached['size']} bytes). Outline not needed — you already have the full content.",
                                 "path": _fpath,
@@ -800,7 +766,7 @@ async def _run_agent_loop(
                     elif _fpath:
                         _fhash = hashlib.md5(_fcontent.encode(errors="replace")).hexdigest() if isinstance(_fcontent, str) else ""
                         _ftotal = _flines_returned if _flines_returned else (_fcontent.count("\n") + 1 if isinstance(_fcontent, str) and _fcontent else 0)
-                        _file_read_cache[_fpath] = {"content_hash": _fhash, "tool_call_num": tool_calls_made, "total_lines": _ftotal, "size": _fsize, "has_full_content": not _is_partial}
+                        _file_read_cache[_fpath] = {"content_hash": _fhash, "tool_call_num": tool_calls_made, "total_lines": _ftotal, "size": _fsize, "has_full_content": not _is_partial and not _is_outline}
 
                 # Invalidate file read cache on successful file_edit/file_write
                 if tool_name in ("file_edit", "file_write") and isinstance(result, dict) and "error" not in result:
@@ -836,21 +802,9 @@ async def _run_agent_loop(
                 if result.get("_terminal"):
                     return result.get("message", ""), tool_calls_made
 
-                # Rule-based pruning (no LLM call) before utility model filter
+                # Rule-based pruning (no LLM call) — ANSI stripping, blank line collapse
                 pruned = rule_based_prune(tool_name, tool_args, result)
-                if pruned is not None:
-                    result_json = json.dumps(pruned)
-                else:
-                    # Fall through to utility model filter
-                    result_json = await filter_tool_result(
-                        tool_name=tool_name,
-                        tool_args=tool_args,
-                        raw_result=result,
-                        user_message=user_message,
-                        last_assistant_content=last_assistant,
-                        utility_model=utility_model,
-                        utility_kwargs=utility_kwargs,
-                    )
+                result_json = json.dumps(pruned if pruned is not None else result)
 
                 messages.append({
                     "role": "tool",

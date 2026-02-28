@@ -90,7 +90,7 @@ export default function ChatPanel({
         )}
         {messages.map((msg, i) => (
           <div
-            key={msg.id || i}
+            key={`msg-${i}`}
             style={{
               ...s.chatMsg,
               ...(msg.role === "user" ? s.chatMsgUser : {}),
