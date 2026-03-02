@@ -4,13 +4,13 @@
 
 You must use your file tools to read and modify files. Do not just describe changes — actually make them using file_read and file_edit.
 
-The code is in the coding-workspace directory within your workspace. Read the files first to understand the codebase.
+The code is in `/workspace/bond/tests/coding-workspace/`. Read the files first to understand the codebase.
 
 ## Step 1: Read the existing code
 
 Read these files:
-- `tests/coding-workspace/task_manager.py`
-- `tests/coding-workspace/test_task_manager.py`
+- `/workspace/bond/tests/coding-workspace/task_manager.py`
+- `/workspace/bond/tests/coding-workspace/test_task_manager.py`
 
 ## Step 2: Modify task_manager.py
 
@@ -44,7 +44,7 @@ Add these methods to the `TaskManager` class:
 
 ## Constraints
 
-- Only modify `tests/coding-workspace/task_manager.py`
+- Only modify `/workspace/bond/tests/coding-workspace/task_manager.py`
 - Do NOT modify the test file or any other file
 - Follow the existing code style
 - Do not add new imports — everything you need is already there
