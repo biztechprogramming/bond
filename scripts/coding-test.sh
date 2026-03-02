@@ -291,7 +291,6 @@ TESTS_ERROR=$(echo "$TEST_OUTPUT" | grep -c " ERROR" || echo 0)
 
 log "Project tests: $TESTS_PASSED passed, $TESTS_FAILED failed, $TESTS_ERROR errors"
 log "Test exit code: $TEST_EXIT"
-fi
 
 # ─── Step 7: Static validation ─────────────────────────────────────────
 section "STEP 7: STATIC VALIDATION"

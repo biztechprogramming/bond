@@ -482,7 +482,21 @@ class SandboxManager:
         """
         slug = agent_name.lower().replace(" ", "-")
         key = f"bond-{slug}-{agent_id}"
+        lock = self._get_agent_lock(key)
 
+        async with lock:
+            return await self._get_or_create_container_inner(
+                agent_id, sandbox_image, workspace_mounts, agent_name, key
+            )
+
+    async def _get_or_create_container_inner(
+        self,
+        agent_id: str,
+        sandbox_image: str,
+        workspace_mounts: list[dict[str, str]] | None,
+        agent_name: str,
+        key: str,
+    ) -> str:
         # Check if already tracked and running
         if key in self._containers:
             cid = self._containers[key]["container_id"]
