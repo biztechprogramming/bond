@@ -122,18 +122,7 @@ function BoardPage() {
   useEffect(() => { fetchPlanDetails(); }, [fetchPlanDetails]);
   useEffect(() => { if (selectedPlanId) fetchLineage(); }, [selectedPlanId, fetchLineage]);
 
-  // Slow fallback poll every 30 seconds (primary updates via WebSocket events)
-  useEffect(() => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    if (selectedPlanId) {
-      pollRef.current = setInterval(() => {
-        fetchPlanDetails();
-      }, 30000);
-    }
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [selectedPlanId, fetchPlanDetails]);
+  // Plan updates are push-based via WebSocket events — no polling.
 
   // WebSocket
   useEffect(() => {

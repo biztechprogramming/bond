@@ -739,6 +739,11 @@ async def _run_agent_loop(
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
                     result = await registry.execute(tool_name, tool_args, tool_context)
 
+                # Emit any SSE events from tool results (e.g., plan/item updates)
+                if isinstance(result, dict) and "_sse_event" in result and event_queue is not None:
+                    sse = result.pop("_sse_event")
+                    await event_queue.put(_sse_event(sse["event"], sse.get("data", {})))
+
                 # Smart build output parsing: compress verbose build/test output
                 if tool_name == "code_execute" and isinstance(result, dict):
                     from backend.app.agent.build_output_parser import parse_build_output

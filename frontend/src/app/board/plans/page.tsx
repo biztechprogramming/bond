@@ -80,6 +80,25 @@ export default function AllPlansPage() {
     return { done, total: plan.items.length };
   };
 
+  const [ctrlShift, setCtrlShift] = useState(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.ctrlKey && e.shiftKey) setCtrlShift(true); };
+    const up = () => setCtrlShift(false);
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
+  }, []);
+
+  const deletePlan = async (planId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!ctrlShift && !confirm("Delete this plan?")) return;
+    try {
+      await fetch(`${API_BASE}/plans/${planId}`, { method: "DELETE" });
+      setPlans(prev => prev.filter(p => p.id !== planId));
+    } catch { /* ignore */ }
+  };
+
   const formatDate = (iso: string) => {
     const d = new Date(iso);
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -146,6 +165,13 @@ export default function AllPlansPage() {
                     </div>
                   </div>
                 </div>
+                <button
+                  onClick={(e) => deletePlan(plan.id, e)}
+                  style={ctrlShift ? s.deleteBtnDanger : s.deleteBtn}
+                  title={ctrlShift ? "Delete immediately" : "Delete plan"}
+                >
+                  ✕
+                </button>
                 <span style={s.arrow}>&rsaquo;</span>
               </a>
             );
@@ -320,5 +346,27 @@ const s: Record<string, React.CSSProperties> = {
   pageInfo: {
     fontSize: "0.85rem",
     color: "#8888a0",
+  },
+  deleteBtn: {
+    background: "none",
+    border: "none",
+    color: "#5a5a6e",
+    fontSize: "1rem",
+    cursor: "pointer",
+    padding: "4px 8px",
+    borderRadius: "4px",
+    flexShrink: 0,
+    lineHeight: 1,
+  },
+  deleteBtnDanger: {
+    background: "none",
+    border: "none",
+    color: "#ff4444",
+    fontSize: "1rem",
+    cursor: "pointer",
+    padding: "4px 8px",
+    borderRadius: "4px",
+    flexShrink: 0,
+    lineHeight: 1,
   },
 };

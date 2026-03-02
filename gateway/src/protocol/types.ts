@@ -12,7 +12,8 @@ export interface IncomingMessage {
 
 export interface OutgoingMessage {
   type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list"
-    | "queued" | "status" | "tool_call" | "tool_result" | "new_input" | "done";
+    | "queued" | "status" | "tool_call" | "tool_result" | "new_input" | "done"
+    | "plan_created" | "item_updated" | "plan_completed";
   sessionId?: string;
   content?: string;
   error?: string;
@@ -24,6 +25,12 @@ export interface OutgoingMessage {
   queuedCount?: number;
   messages?: Array<{ role: string; content: string; id?: string; created_at?: string }>;
   conversations?: Array<ConversationSummary>;
+  planId?: string;
+  planTitle?: string;
+  planStatus?: string;
+  itemId?: string;
+  itemStatus?: string;
+  itemTitle?: string;
 }
 
 export interface ConversationSummary {
