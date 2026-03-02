@@ -393,13 +393,10 @@ log "└────────────────────────
 
 # ─── Revert ─────────────────────────────────────────────────────────────
 section "REVERT"
-log "Revert is DISABLED — uncomment below to enable"
-
-# # Uncomment these lines to revert changes after the test:
-# log "Reverting to $START_SHA..."
-# git -C "$REPO_ROOT" checkout "$START_SHA" -- . 2>/dev/null
-# git -C "$REPO_ROOT" clean -fd -- backend/ 2>/dev/null
-# log "Reverted."
+log "Reverting coding workspace to pre-test state..."
+git -C "$REPO_ROOT" checkout "$START_SHA" -- tests/coding-workspace/ 2>/dev/null
+git -C "$REPO_ROOT" clean -fd -- tests/coding-workspace/ 2>/dev/null
+log "Reverted tests/coding-workspace/."
 
 # Save list of changed files for make coding-test-revert
 REVERT_FILE="$LOG_DIR/.last-changed-files"
