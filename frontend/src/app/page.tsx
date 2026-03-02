@@ -114,7 +114,7 @@ export default function Home() {
           if (def) setSelectedAgentId(def.id);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   useEffect(() => {
@@ -268,7 +268,9 @@ export default function Home() {
 
   const handleDeleteConversation = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Delete this conversation?")) return;
+    if (!(e.ctrlKey && e.shiftKey)) {
+      if (!confirm("Delete this conversation?")) return;
+    }
     wsRef.current?.deleteConversation(id);
     if (id === conversationId) {
       setMessages([]);
@@ -319,11 +321,11 @@ export default function Home() {
                 {formatDate(conv.updated_at)} · {conv.message_count} msgs
               </div>
               <button
-                style={styles.convDeleteBtn}
+                style={deleteMode ? styles.convDeleteBtnDanger : styles.convDeleteBtnCircle}
                 onClick={(e) => handleDeleteConversation(conv.id, e)}
                 title="Delete conversation"
               >
-                x
+                X
               </button>
             </div>
           ))}
@@ -512,6 +514,42 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.8rem",
     padding: "2px 6px",
     borderRadius: "4px",
+  },
+  convDeleteBtnCircle: {
+    position: "absolute" as const,
+    top: "8px",
+    right: "8px",
+    background: "rgba(100,100,100,0.1)",
+    border: "1px solid rgba(100,100,100,0.3)",
+    borderRadius: "50%",
+    width: "22px",
+    height: "22px",
+    color: "#666",
+    fontSize: "0.75rem",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 1,
+    padding: 0,
+  },
+  convDeleteBtnDanger: {
+    position: "absolute" as const,
+    top: "8px",
+    right: "8px",
+    background: "rgba(255,60,80,0.15)",
+    border: "1px solid rgba(255,60,80,0.4)",
+    borderRadius: "50%",
+    width: "22px",
+    height: "22px",
+    color: "#ff3c50",
+    fontSize: "0.75rem",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    lineHeight: 1,
+    padding: 0,
   },
   convEmpty: {
     textAlign: "center" as const,
