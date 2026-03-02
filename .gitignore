@@ -33,3 +33,4 @@ Thumbs.db
 gateway/pnpm-lock.yaml
 frontend/pnpm-lock.yaml
 data/
+tests/coding-runs/
