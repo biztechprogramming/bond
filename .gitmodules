@@ -1,0 +1,3 @@
+[submodule "vendor/OpenSandbox"]
+	path = vendor/OpenSandbox
+	url = https://github.com/alibaba/OpenSandbox.git

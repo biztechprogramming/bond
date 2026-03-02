@@ -33,6 +33,11 @@ _DEFAULTS: dict[str, Any] = {
     "database": {
         "path": str(BOND_HOME / "data" / "knowledge.db"),
     },
+    "sandbox_backend": "legacy",
+    "opensandbox": {
+        "server_url": "http://localhost:8090",
+        "api_key": "",
+    },
 }
 
 
@@ -61,6 +66,13 @@ class Settings(BaseModel):
 
     # Vault
     vault_path: str = str(BOND_HOME / "data" / "credentials.enc")
+
+    # Sandbox backend: "legacy" (Docker direct) or "opensandbox"
+    sandbox_backend: str = "legacy"
+
+    # OpenSandbox settings (only used when sandbox_backend == "opensandbox")
+    opensandbox_server_url: str = "http://localhost:8090"
+    opensandbox_api_key: str = ""
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
@@ -95,6 +107,8 @@ def get_settings() -> Settings:
     frontend = config.get("frontend", {})
     database = config.get("database", {})
 
+    opensandbox = config.get("opensandbox", {})
+
     return Settings(
         bond_home=Path(os.environ.get("BOND_HOME", BOND_HOME)),
         llm_provider=os.environ.get("BOND_LLM_PROVIDER", llm.get("provider", "anthropic")),
@@ -106,4 +120,7 @@ def get_settings() -> Settings:
         frontend_port=int(os.environ.get("BOND_FRONTEND_PORT", frontend.get("port", 18788))),
         database_path=os.environ.get("BOND_DATABASE_PATH", database.get("path", str(BOND_HOME / "data" / "knowledge.db"))),
         vault_path=os.environ.get("BOND_VAULT_PATH", str(BOND_HOME / "data" / "credentials.enc")),
+        sandbox_backend=os.environ.get("BOND_SANDBOX_BACKEND", config.get("sandbox_backend", "legacy")),
+        opensandbox_server_url=os.environ.get("OPENSANDBOX_SERVER_URL", opensandbox.get("server_url", "http://localhost:8090")),
+        opensandbox_api_key=os.environ.get("OPEN_SANDBOX_API_KEY", opensandbox.get("api_key", "")),
     )

@@ -38,6 +38,30 @@ services:
     volumes:
       - ./frontend:/app/frontend
 
+  # OpenSandbox server — sidecar for sandbox execution (Phase 1)
+  # Activate with: docker compose --profile opensandbox up
+  opensandbox-server:
+    build:
+      context: ./vendor/OpenSandbox/server
+    container_name: bond-opensandbox-server
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - SANDBOX_CONFIG_PATH=/etc/opensandbox/config.toml
+    configs:
+      - source: opensandbox-config
+        target: /etc/opensandbox/config.toml
+    profiles:
+      - opensandbox
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   migrate:
     image: migrate/migrate
     volumes:
@@ -51,6 +75,31 @@ services:
       ]
     profiles:
       - tools
+
+configs:
+  opensandbox-config:
+    content: |
+      [server]
+      host = "0.0.0.0"
+      port = 8090
+      log_level = "INFO"
+
+      [runtime]
+      type = "docker"
+      execd_image = "opensandbox/execd:v1.0.6"
+
+      [egress]
+      image = "opensandbox/egress:v1.0.1"
+
+      [docker]
+      network_mode = "bridge"
+      host_ip = "host.docker.internal"
+      drop_capabilities = ["AUDIT_WRITE", "MKNOD", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_TIME", "SYS_TTY_CONFIG"]
+      no_new_privileges = true
+      pids_limit = 512
+
+      [ingress]
+      mode = "direct"
 
 volumes:
   bond-data:
