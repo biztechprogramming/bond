@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # coding-test.sh — Bond agent coding evaluation harness
 #
-# Runs a coding task through BOND'S OWN AGENT (agent_turn), captures every
-# step, tool call, diff, model metrics, and runs functional tests.
+# Runs a coding task through the Bond gateway (WebSocket), which routes
+# to the correct container worker. Captures every step, tool call, diff,
+# model metrics, and runs functional tests.
 #
 # Usage:
 #   ./scripts/coding-test.sh [--task-file path] [--label run-name]
 #
-# Requires: Bond backend running (make backend) or starts it temporarily.
+# Requires: Bond backend + gateway running (make dev) or starts them.
 #
 # Output:
 #   tests/coding-runs/<label>-<timestamp>.log
@@ -22,6 +23,9 @@ AGENT_ID=""
 LOG_DIR="$REPO_ROOT/tests/coding-runs"
 BOND_PORT="${BOND_PORT:-18790}"
 BOND_URL="http://127.0.0.1:${BOND_PORT}"
+GATEWAY_PORT="${BOND_GATEWAY_PORT:-18789}"
+GATEWAY_WS="ws://127.0.0.1:${GATEWAY_PORT}/ws"
+GATEWAY_HTTP="http://127.0.0.1:${GATEWAY_PORT}"
 
 # ─── Parse args ─────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -72,36 +76,65 @@ section() {
   } >> "$LOGFILE"
 }
 
-# ─── Check Bond is running ──────────────────────────────────────────────
-STARTED_BOND=false
+# ─── Check Bond backend + gateway are running ─────────────────────────
+STARTED_BACKEND=false
+STARTED_GATEWAY=false
+
 if ! curl -sf "$BOND_URL/api/v1/health" > /dev/null 2>&1; then
   log "Bond backend not running. Starting it..."
   cd "$REPO_ROOT"
   uv run uvicorn backend.app.main:app --host 127.0.0.1 --port "$BOND_PORT" &
-  BOND_PID=$!
-  STARTED_BOND=true
-  # Wait for health
+  BACKEND_PID=$!
+  STARTED_BACKEND=true
   for i in $(seq 1 30); do
     if curl -sf "$BOND_URL/api/v1/health" > /dev/null 2>&1; then
-      log "Bond backend started (pid $BOND_PID)"
+      log "Bond backend started (pid $BACKEND_PID)"
       break
     fi
     sleep 1
   done
   if ! curl -sf "$BOND_URL/api/v1/health" > /dev/null 2>&1; then
     log "ERROR: Bond backend failed to start"
-    kill $BOND_PID 2>/dev/null || true
+    kill $BACKEND_PID 2>/dev/null || true
     exit 1
   fi
 else
   log "Bond backend already running at $BOND_URL"
 fi
 
+if ! curl -sf "$GATEWAY_HTTP/health" > /dev/null 2>&1; then
+  log "Bond gateway not running. Starting it..."
+  cd "$REPO_ROOT/gateway"
+  pnpm dev &
+  GATEWAY_PID=$!
+  STARTED_GATEWAY=true
+  for i in $(seq 1 15); do
+    if curl -sf "$GATEWAY_HTTP/health" > /dev/null 2>&1; then
+      log "Bond gateway started (pid $GATEWAY_PID)"
+      break
+    fi
+    sleep 1
+  done
+  if ! curl -sf "$GATEWAY_HTTP/health" > /dev/null 2>&1; then
+    log "ERROR: Bond gateway failed to start"
+    kill $GATEWAY_PID 2>/dev/null || true
+    exit 1
+  fi
+  cd "$REPO_ROOT"
+else
+  log "Bond gateway already running at $GATEWAY_HTTP"
+fi
+
 cleanup() {
-  if [[ "$STARTED_BOND" == "true" ]]; then
-    log "Stopping Bond backend (pid $BOND_PID)..."
-    kill $BOND_PID 2>/dev/null || true
-    wait $BOND_PID 2>/dev/null || true
+  if [[ "$STARTED_GATEWAY" == "true" ]]; then
+    log "Stopping Bond gateway (pid $GATEWAY_PID)..."
+    kill $GATEWAY_PID 2>/dev/null || true
+    wait $GATEWAY_PID 2>/dev/null || true
+  fi
+  if [[ "$STARTED_BACKEND" == "true" ]]; then
+    log "Stopping Bond backend (pid $BACKEND_PID)..."
+    kill $BACKEND_PID 2>/dev/null || true
+    wait $BACKEND_PID 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
@@ -109,8 +142,9 @@ trap cleanup EXIT
 # ─── Header ─────────────────────────────────────────────────────────────
 section "CODING TEST RUN: $RUN_ID"
 log "Run ID:       $RUN_ID"
-log "Agent:        Bond (agent_turn) ${AGENT_ID:-default}"
-log "Bond URL:     $BOND_URL"
+log "Agent:        Bond (gateway→container) ${AGENT_ID:-default}"
+log "Backend URL:  $BOND_URL"
+log "Gateway WS:   $GATEWAY_WS"
 log "Repo:         $REPO_ROOT"
 log "Branch:       $START_BRANCH"
 log "Start SHA:    $START_SHA"
@@ -134,35 +168,32 @@ for f in $REFERENCED_FILES; do
   fi
 done
 
-# ─── Step 2: Run Bond agent ─────────────────────────────────────────────
-section "STEP 2: BOND AGENT EXECUTION"
-log "Sending task to Bond agent..."
+# ─── Step 2: Run Bond agent via gateway WebSocket ──────────────────────
+section "STEP 2: BOND AGENT EXECUTION (via gateway WebSocket)"
+log "Sending task to Bond agent via gateway..."
 
 AGENT_START="$(date +%s)"
 AGENT_RESPONSE_FILE="$LOG_DIR/${RUN_ID}.response.json"
+WS_EVENTS_FILE="$LOG_DIR/${RUN_ID}.ws-events.jsonl"
 
-# Build JSON payload
-if [[ -n "$AGENT_ID" ]]; then
-  PAYLOAD=$(jq -n --arg msg "$TASK" --arg aid "$AGENT_ID" '{message: $msg, agent_id: $aid}')
-else
-  PAYLOAD=$(jq -n --arg msg "$TASK" '{message: $msg}')
-fi
-
-# Call Bond's agent turn API
+# Run the WebSocket client — connects to gateway, sends task, collects all
+# events until "done", writes response JSON and raw events to files.
 set +e
-HTTP_CODE=$(curl -sf -o "$AGENT_RESPONSE_FILE" -w '%{http_code}' \
-  -X POST "$BOND_URL/api/v1/agent/turn" \
-  -H "Content-Type: application/json" \
-  -d "$PAYLOAD" \
-  --max-time 300)
+uv run python3 "$REPO_ROOT/scripts/ws-agent-client.py" \
+  --ws-url "$GATEWAY_WS" \
+  --message "$TASK" \
+  ${AGENT_ID:+--agent-id "$AGENT_ID"} \
+  --timeout 600 \
+  --response-file "$AGENT_RESPONSE_FILE" \
+  --events-file "$WS_EVENTS_FILE" \
+  2>> "$LOGFILE"
 AGENT_EXIT=$?
 set -e
 
 AGENT_END="$(date +%s)"
 AGENT_DURATION=$((AGENT_END - AGENT_START))
 
-log "HTTP status:   $HTTP_CODE"
-log "curl exit:     $AGENT_EXIT"
+log "WS exit code:  $AGENT_EXIT"
 log "Duration:      ${AGENT_DURATION}s"
 
 # ─── Step 2b: Parse response ────────────────────────────────────────────
@@ -177,6 +208,12 @@ if [[ -f "$AGENT_RESPONSE_FILE" ]]; then
   echo "────────────────────────────────────────────────" >> "$LOGFILE"
   echo "$AGENT_RESPONSE" >> "$LOGFILE"
   echo "────────────────────────────────────────────────" >> "$LOGFILE"
+
+  # Log tool calls from WS events
+  if [[ -f "$WS_EVENTS_FILE" ]]; then
+    TOOL_CALL_COUNT=$(grep -c '"type":"tool_call"' "$WS_EVENTS_FILE" 2>/dev/null || echo 0)
+    log "Tool calls (WS events): $TOOL_CALL_COUNT"
+  fi
 else
   log "ERROR: No response file"
   AGENT_RESPONSE=""
@@ -348,18 +385,18 @@ fi
 section "SUMMARY"
 log "┌─────────────────────────────────────────────┐"
 log "│ Run ID:         $RUN_ID"
-log "│ Agent:          Bond (agent_turn)"
+log "│ Agent:          Bond (gateway→container)"
 log "│ Duration:       ${AGENT_DURATION}s"
 log "│ Model calls:    ${NUM_TURNS:-unknown}"
 log "│ Tool calls:     ${TOOL_CALLS:-unknown}"
-log "│ HTTP status:    $HTTP_CODE"
+log "│ WS exit code:   $AGENT_EXIT"
 log "│ Files changed:  $(echo "$CHANGED_FILES" | grep -c . || echo 0)"
 log "│ Static checks:  $PASS_COUNT passed, $FAIL_COUNT failed"
 if [[ $TEST_EXIT -ge 0 ]]; then
   log "│ Func tests:     $TESTS_PASSED passed, $TESTS_FAILED failed"
 fi
 log "│"
-if [[ $FAIL_COUNT -eq 0 && $TESTS_FAILED -eq 0 && $TESTS_ERROR -eq 0 && "$HTTP_CODE" == "200" ]]; then
+if [[ $FAIL_COUNT -eq 0 && $TESTS_FAILED -eq 0 && $TESTS_ERROR -eq 0 && "$AGENT_EXIT" == "0" ]]; then
   log "│ Result: ✅ PASS"
 else
   log "│ Result: ❌ FAIL"
@@ -384,6 +421,7 @@ log ""
 log "Log:      $LOGFILE"
 log "Response: $AGENT_RESPONSE_FILE"
 [[ -f "$LOG_DIR/${RUN_ID}.messages.json" ]] && log "Messages: $LOG_DIR/${RUN_ID}.messages.json"
+[[ -f "$WS_EVENTS_FILE" ]] && log "WS events: $WS_EVENTS_FILE"
 echo ""
 echo "📄 Log:      $LOGFILE"
 echo "📊 Response: $AGENT_RESPONSE_FILE"
