@@ -25,6 +25,190 @@ class ItemStatusUpdate(BaseModel):
     status: str
 
 
+class CreatePlanRequest(BaseModel):
+    title: str
+    agent_id: str
+    conversation_id: str | None = None
+    parent_plan_id: str | None = None
+
+
+class AddItemRequest(BaseModel):
+    title: str
+    ordinal: int | None = None
+
+
+class UpdateItemRequest(BaseModel):
+    status: str | None = None
+    notes: str | None = None
+    context_snapshot: dict | None = None
+    files_changed: list[str] | None = None
+
+
+class CompletePlanRequest(BaseModel):
+    status: str = "completed"
+
+
+# -- Create plan --
+
+
+@router.post("")
+async def create_plan(body: CreatePlanRequest, db: AsyncSession = Depends(get_db)):
+    """Create a new work plan."""
+    from ulid import ULID
+    plan_id = str(ULID())
+    now = datetime.now(timezone.utc).isoformat()
+
+    await db.execute(
+        text(
+            "INSERT INTO work_plans (id, agent_id, conversation_id, parent_plan_id, title, status, created_at, updated_at) "
+            "VALUES (:id, :agent_id, :conv_id, :parent_id, :title, 'active', :now, :now)"
+        ),
+        {
+            "id": plan_id,
+            "agent_id": body.agent_id,
+            "conv_id": body.conversation_id or "",
+            "parent_id": body.parent_plan_id,
+            "title": body.title,
+            "now": now,
+        },
+    )
+    await db.commit()
+    logger.info("Created plan %s: %s", plan_id, body.title[:80])
+    return {"status": "created", "plan_id": plan_id, "title": body.title}
+
+
+# -- Add item to plan --
+
+
+@router.post("/{plan_id}/items")
+async def add_item(plan_id: str, body: AddItemRequest, db: AsyncSession = Depends(get_db)):
+    """Add a work item to a plan."""
+    from ulid import ULID
+
+    # Verify plan exists
+    result = await db.execute(
+        text("SELECT status FROM work_plans WHERE id = :plan_id"),
+        {"plan_id": plan_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if row[0] in ("completed", "failed", "cancelled"):
+        raise HTTPException(status_code=400, detail=f"Plan in terminal status: {row[0]}")
+
+    # Auto-increment ordinal if not provided
+    ordinal = body.ordinal
+    if ordinal is None:
+        max_result = await db.execute(
+            text("SELECT COALESCE(MAX(ordinal), 0) FROM work_items WHERE plan_id = :plan_id"),
+            {"plan_id": plan_id},
+        )
+        ordinal = max_result.fetchone()[0] + 1
+
+    item_id = str(ULID())
+    now = datetime.now(timezone.utc).isoformat()
+
+    await db.execute(
+        text(
+            "INSERT INTO work_items (id, plan_id, title, status, ordinal, notes, files_changed, created_at, updated_at) "
+            "VALUES (:id, :plan_id, :title, 'new', :ordinal, '[]', '[]', :now, :now)"
+        ),
+        {
+            "id": item_id,
+            "plan_id": plan_id,
+            "title": body.title,
+            "ordinal": ordinal,
+            "now": now,
+        },
+    )
+    await db.commit()
+    logger.info("Added item %s to plan %s: %s", item_id, plan_id, body.title[:80])
+    return {"status": "added", "item_id": item_id, "plan_id": plan_id, "title": body.title, "ordinal": ordinal}
+
+
+# -- Update item (full) --
+
+
+@router.put("/{plan_id}/items/{item_id}")
+async def update_item_full(
+    plan_id: str,
+    item_id: str,
+    body: UpdateItemRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a work item (status, notes, context, files)."""
+    result = await db.execute(
+        text("SELECT id, status, notes, files_changed, context_snapshot FROM work_items WHERE id = :item_id AND plan_id = :plan_id"),
+        {"item_id": item_id, "plan_id": plan_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Item not found in this plan")
+
+    now = datetime.now(timezone.utc).isoformat()
+    updates = ["updated_at = :now"]
+    params: dict = {"now": now, "item_id": item_id}
+
+    if body.status is not None:
+        updates.append("status = :status")
+        params["status"] = body.status
+        if body.status == "in_progress" and row[1] != "in_progress":
+            updates.append("started_at = :now")
+        if body.status in ("done", "complete", "failed"):
+            updates.append("completed_at = :now")
+
+    if body.notes is not None:
+        existing_notes = json.loads(row[2]) if row[2] else []
+        existing_notes.append({"text": body.notes, "timestamp": now})
+        updates.append("notes = :notes")
+        params["notes"] = json.dumps(existing_notes)
+
+    if body.context_snapshot is not None:
+        updates.append("context_snapshot = :snapshot")
+        params["snapshot"] = json.dumps(body.context_snapshot)
+
+    if body.files_changed is not None:
+        existing_files = json.loads(row[3]) if row[3] else []
+        for f in body.files_changed:
+            if f not in existing_files:
+                existing_files.append(f)
+        updates.append("files_changed = :files")
+        params["files"] = json.dumps(existing_files)
+
+    await db.execute(
+        text(f"UPDATE work_items SET {', '.join(updates)} WHERE id = :item_id"),
+        params,
+    )
+    await db.commit()
+    return {"status": "updated", "item_id": item_id}
+
+
+# -- Complete plan --
+
+
+@router.post("/{plan_id}/complete")
+async def complete_plan(plan_id: str, body: CompletePlanRequest, db: AsyncSession = Depends(get_db)):
+    """Complete or fail a plan."""
+    if body.status not in ("completed", "failed"):
+        raise HTTPException(status_code=400, detail="status must be 'completed' or 'failed'")
+
+    result = await db.execute(
+        text("SELECT status FROM work_plans WHERE id = :plan_id"),
+        {"plan_id": plan_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.execute(
+        text("UPDATE work_plans SET status = :status, completed_at = :now, updated_at = :now WHERE id = :plan_id"),
+        {"status": body.status, "now": now, "plan_id": plan_id},
+    )
+    await db.commit()
+    return {"status": body.status, "plan_id": plan_id}
+
+
 # -- List plans --
 
 

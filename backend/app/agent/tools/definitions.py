@@ -409,7 +409,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "work_plan",
-            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work — do not wait until you have read everything. The user sees plan updates in real-time.",
+            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work — do not wait until you have read everything. IMPORTANT: As you work on each item, update its status with update_item (new → in_progress → done). The user sees plan updates in real-time on a Kanban board. Always set an item to in_progress before starting it, and done when finished.",
             "parameters": {
                 "type": "object",
                 "properties": {

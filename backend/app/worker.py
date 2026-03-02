@@ -516,6 +516,7 @@ async def _run_agent_loop(
     tool_context: dict[str, Any] = {
         "agent_db": _state.agent_db,
         "agent_id": _state.agent_id,
+        "conversation_id": conversation_id,
     }
 
     tool_calls_made = 0

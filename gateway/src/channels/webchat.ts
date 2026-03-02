@@ -402,7 +402,7 @@ export class WebChatChannel {
 
           case "plan_created":
             console.log(`[gateway] Container turn SSE event: plan_created id=${event.data.plan_id}`);
-            this.send(socket, {
+            this.broadcast({
               type: "plan_created",
               sessionId,
               planId: event.data.plan_id as string,
@@ -412,9 +412,22 @@ export class WebChatChannel {
             });
             break;
 
+          case "item_created":
+            console.log(`[gateway] Container turn SSE event: item_created plan=${event.data.plan_id} item=${event.data.item_id}`);
+            this.broadcast({
+              type: "item_updated",
+              sessionId,
+              planId: event.data.plan_id as string,
+              itemId: event.data.item_id as string,
+              itemStatus: "new",
+              itemTitle: (event.data.title as string) || "",
+              conversationId,
+            });
+            break;
+
           case "item_updated":
             console.log(`[gateway] Container turn SSE event: item_updated plan=${event.data.plan_id} item=${event.data.item_id} status=${event.data.status}`);
-            this.send(socket, {
+            this.broadcast({
               type: "item_updated",
               sessionId,
               planId: event.data.plan_id as string,
@@ -427,7 +440,7 @@ export class WebChatChannel {
 
           case "plan_completed":
             console.log(`[gateway] Container turn SSE event: plan_completed id=${event.data.plan_id} status=${event.data.status}`);
-            this.send(socket, {
+            this.broadcast({
               type: "plan_completed",
               sessionId,
               planId: event.data.plan_id as string,
@@ -619,6 +632,15 @@ export class WebChatChannel {
         type: "error",
         error: err instanceof Error ? err.message : "Failed to delete conversation",
       });
+    }
+  }
+
+  private broadcast(msg: OutgoingMessage): void {
+    const payload = JSON.stringify(msg);
+    for (const socket of this.sessionManager.getAllSockets()) {
+      if (socket.readyState === socket.OPEN) {
+        socket.send(payload);
+      }
     }
   }
 

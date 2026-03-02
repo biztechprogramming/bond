@@ -379,6 +379,10 @@ class SandboxManager:
         # PYTHONPATH so worker can import backend.app.worker
         cmd.extend(["-e", "PYTHONPATH=/bond"])
 
+        # Bond API URL so tools (e.g. work_plan) can call host API
+        cmd.extend(["-e", "BOND_API_URL=http://host.docker.internal:18790"])
+        cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+
         # --- Mounts (Task 2) ---
 
         # Bond library (read-only) — validate project root has the worker
@@ -430,7 +434,7 @@ class SandboxManager:
         bond_home = Path(get_settings().bond_home)
         vault_data_dir = bond_home / "data"
         if vault_data_dir.exists():
-            cmd.extend(["-v", f"{vault_data_dir}:/bond-home/data:ro"])
+            cmd.extend(["-v", f"{vault_data_dir}:/bond-home/data:rw"])
 
         # --- Entrypoint (Task 1) ---
         cmd.extend([

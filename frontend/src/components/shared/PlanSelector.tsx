@@ -9,6 +9,17 @@ interface PlanSelectorProps {
   onSelect: (planId: string) => void;
 }
 
+function formatAge(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export default function PlanSelector({ plans, selectedPlanId, selectedPlan, onSelect }: PlanSelectorProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -41,27 +52,43 @@ export default function PlanSelector({ plans, selectedPlanId, selectedPlan, onSe
               No plans yet
             </div>
           )}
-          {plans.map(p => (
-            <div
-              key={p.id}
-              onClick={() => { onSelect(p.id); setOpen(false); }}
-              style={{
-                padding: "10px 14px",
-                cursor: "pointer",
-                fontSize: "0.85rem",
-                color: p.id === selectedPlanId ? "#6c8aff" : "#e0e0e8",
-                backgroundColor: p.id === selectedPlanId ? "#12121a" : "transparent",
-                display: "flex",
-                gap: "8px",
-                alignItems: "center",
-              }}
-              onMouseEnter={e => { if (p.id !== selectedPlanId) (e.currentTarget as HTMLElement).style.backgroundColor = "#2a2a3e"; }}
-              onMouseLeave={e => { if (p.id !== selectedPlanId) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
-            >
-              <span>{STATUS_EMOJI[p.status] || "\uD83D\uDCCB"}</span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</span>
-            </div>
-          ))}
+          {plans.map(p => {
+            const itemCount = p.items?.length || 0;
+            const doneCount = p.items?.filter(i => i.status === "done" || i.status === "complete").length || 0;
+            const age = formatAge(p.created_at);
+            return (
+              <div
+                key={p.id}
+                onClick={() => { onSelect(p.id); setOpen(false); }}
+                style={{
+                  padding: "10px 14px",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                  color: p.id === selectedPlanId ? "#6c8aff" : "#e0e0e8",
+                  backgroundColor: p.id === selectedPlanId ? "#12121a" : "transparent",
+                  borderBottom: "1px solid #1a1a2a",
+                }}
+                onMouseEnter={e => { if (p.id !== selectedPlanId) (e.currentTarget as HTMLElement).style.backgroundColor = "#2a2a3e"; }}
+                onMouseLeave={e => { if (p.id !== selectedPlanId) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+              >
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <span>{STATUS_EMOJI[p.status] || "\uD83D\uDCCB"}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{p.title}</span>
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "#5a5a6e", marginTop: "4px", paddingLeft: "26px", display: "flex", gap: "8px" }}>
+                  {itemCount > 0 && <span>{doneCount}/{itemCount} items</span>}
+                  <span>{age}</span>
+                  {p.agent_id && <span style={{ color: "#6c8aff" }}>{p.agent_id.slice(-6)}</span>}
+                </div>
+                {p.items && p.items.length > 0 && (
+                  <div style={{ fontSize: "0.72rem", color: "#4a4a5e", marginTop: "3px", paddingLeft: "26px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.items.slice(0, 3).map(i => `${i.status === "done" ? "✓" : "○"} ${i.title}`).join("  ·  ")}
+                    {p.items.length > 3 && `  (+${p.items.length - 3} more)`}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

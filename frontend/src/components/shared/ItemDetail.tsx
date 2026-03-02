@@ -8,6 +8,15 @@ interface ItemDetailProps {
 export default function ItemDetail({ item }: ItemDetailProps) {
   return (
     <div style={styles.cardDetail}>
+      <div style={styles.detailSection}>
+        <div style={{ display: "flex", gap: "16px", fontSize: "0.78rem", color: "#8888a0", flexWrap: "wrap" }}>
+          <span><strong style={{ color: "#6c8aff" }}>Status:</strong> {item.status}</span>
+          <span><strong style={{ color: "#6c8aff" }}>Order:</strong> #{item.ordinal}</span>
+          {item.started_at && <span><strong style={{ color: "#6c8aff" }}>Started:</strong> {new Date(item.started_at).toLocaleString()}</span>}
+          {item.completed_at && <span><strong style={{ color: "#6c8aff" }}>Completed:</strong> {new Date(item.completed_at).toLocaleString()}</span>}
+          <span><strong style={{ color: "#6c8aff" }}>Created:</strong> {new Date(item.created_at).toLocaleString()}</span>
+        </div>
+      </div>
       {item.notes.length > 0 && (
         <div style={styles.detailSection}>
           <div style={styles.detailLabel}>Notes</div>
@@ -22,6 +31,11 @@ export default function ItemDetail({ item }: ItemDetailProps) {
           {item.files_changed.map((f, i) => (
             <div key={i} style={styles.fileItem}>{f}</div>
           ))}
+        </div>
+      )}
+      {item.notes.length === 0 && item.files_changed.length === 0 && !item.context_snapshot && (
+        <div style={{ fontSize: "0.75rem", color: "#4a4a5e", fontStyle: "italic" }}>
+          No notes, files, or context recorded yet.
         </div>
       )}
       {item.context_snapshot && (

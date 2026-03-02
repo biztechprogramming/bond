@@ -79,7 +79,7 @@ function BoardPage() {
       .catch(() => {});
   }, []);
 
-  // Fetch plans list
+  // Fetch plans list (lightweight - no item details)
   const fetchPlans = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/plans?limit=50`);
@@ -100,9 +100,14 @@ function BoardPage() {
       if (res.ok) {
         const data: WorkPlan = await res.json();
         setSelectedPlan(data);
+        // Auto-switch chat to plan's conversation (only on initial plan selection, not polls)
+        if (data.conversation_id && data.conversation_id !== conversationId && wsRef.current && !selectedPlan) {
+          setConversationId(data.conversation_id);
+          wsRef.current.switchConversation(data.conversation_id);
+        }
       }
     } catch { /* ignore */ }
-  }, [selectedPlanId]);
+  }, [selectedPlanId, conversationId]);
 
   // Fetch plan lineage
   const fetchLineage = useCallback(async () => {
@@ -117,18 +122,18 @@ function BoardPage() {
   useEffect(() => { fetchPlanDetails(); }, [fetchPlanDetails]);
   useEffect(() => { if (selectedPlanId) fetchLineage(); }, [selectedPlanId, fetchLineage]);
 
-  // Poll plan details every 3 seconds when agent is active
+  // Slow fallback poll every 30 seconds (primary updates via WebSocket events)
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
-    if (selectedPlanId && agentStatus !== "idle") {
+    if (selectedPlanId) {
       pollRef.current = setInterval(() => {
         fetchPlanDetails();
-      }, 3000);
+      }, 30000);
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [selectedPlanId, agentStatus, fetchPlanDetails]);
+  }, [selectedPlanId, fetchPlanDetails]);
 
   // WebSocket
   useEffect(() => {
@@ -164,7 +169,10 @@ function BoardPage() {
       } else if (msg.type === "done") {
         setStreamingContent(prev => {
           if (prev) {
-            setMessages(msgs => [...msgs, { id: msg.messageId, role: "assistant", content: prev, agentName: msg.agentName || currentAgentNameRef.current }]);
+            setMessages(msgs => {
+              if (msg.messageId && msgs.some(m => m.id === msg.messageId)) return msgs;
+              return [...msgs, { id: msg.messageId, role: "assistant", content: prev, agentName: msg.agentName || currentAgentNameRef.current }];
+            });
           }
           return "";
         });

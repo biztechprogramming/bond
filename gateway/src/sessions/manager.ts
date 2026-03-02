@@ -60,4 +60,8 @@ export class SessionManager {
   getClient(socket: WebSocket): ConnectedClient | undefined {
     return this.clients.get(socket);
   }
+
+  getAllSockets(): WebSocket[] {
+    return Array.from(this.clients.keys());
+  }
 }

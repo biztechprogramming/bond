@@ -17,8 +17,21 @@ from ulid import ULID
 
 logger = logging.getLogger("bond.agent.tools.work_plan")
 
+# When running in a container, use the host API instead of direct DB access.
+# The container gets BOND_API_URL set by the sandbox manager.
+_BOND_API_URL = os.environ.get("BOND_API_URL", "")
+
+def _use_api() -> bool:
+    """Return True if we should use the host API instead of direct DB."""
+    return bool(_BOND_API_URL)
+
 # Plans live in the shared database so they're visible across agents and the API.
-_SHARED_PLANS_DB = os.path.expanduser("~/.bond/data/plans.db")
+# Inside container: /bond-home/data/knowledge.db; on host: ~/.bond/data/knowledge.db
+_SHARED_PLANS_DB = (
+    "/bond-home/data/knowledge.db"
+    if os.path.exists("/bond-home/data/knowledge.db")
+    else os.path.expanduser("~/.bond/data/knowledge.db")
+)
 
 _PLANS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS work_plans (
@@ -85,6 +98,9 @@ async def handle_work_plan(
     if not action:
         return {"error": "action is required"}
 
+    if _use_api():
+        return await _handle_via_api(action, arguments, agent_id, context)
+
     db = await _get_plans_db()
     try:
         if action == "create_plan":
@@ -104,6 +120,118 @@ async def handle_work_plan(
         return {"error": str(e)}
     finally:
         await db.close()
+
+
+async def _handle_via_api(
+    action: str,
+    arguments: dict[str, Any],
+    agent_id: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Route work_plan actions through the host Bond API."""
+    import httpx
+
+    base = _BOND_API_URL.rstrip("/")
+    url = f"{base}/api/v1/plans"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            if action == "create_plan":
+                title = arguments.get("title", "")
+                if not title:
+                    return {"error": "title is required for create_plan"}
+                resp = await client.post(url, json={
+                    "title": title,
+                    "agent_id": agent_id,
+                    "conversation_id": context.get("conversation_id", ""),
+                    "parent_plan_id": arguments.get("parent_plan_id"),
+                })
+                resp.raise_for_status()
+                result = resp.json()
+                result["_sse_event"] = {
+                    "event": "plan_created",
+                    "data": {"plan_id": result["plan_id"], "title": title, "agent_id": agent_id},
+                }
+                logger.info("work_plan create_plan (API) id=%s title=%s", result["plan_id"], title[:80])
+                return result
+
+            elif action == "add_item":
+                plan_id = arguments.get("plan_id", "")
+                title = arguments.get("title", "")
+                if not plan_id:
+                    return {"error": "plan_id is required for add_item"}
+                if not title:
+                    return {"error": "title is required for add_item"}
+                ordinal = arguments.get("ordinal")
+                body: dict[str, Any] = {"title": title}
+                if ordinal is not None:
+                    body["ordinal"] = ordinal
+                resp = await client.post(f"{url}/{plan_id}/items", json=body)
+                resp.raise_for_status()
+                result = resp.json()
+                result["_sse_event"] = {
+                    "event": "item_created",
+                    "data": {"plan_id": plan_id, "item_id": result["item_id"], "title": title, "ordinal": result.get("ordinal")},
+                }
+                logger.info("work_plan add_item (API) id=%s plan=%s title=%s", result["item_id"], plan_id, title[:80])
+                return result
+
+            elif action == "update_item":
+                plan_id = arguments.get("plan_id", "")
+                item_id = arguments.get("item_id", "")
+                if not plan_id or not item_id:
+                    return {"error": "plan_id and item_id are required for update_item"}
+                body = {}
+                if "status" in arguments:
+                    body["status"] = arguments["status"]
+                if "notes" in arguments:
+                    body["notes"] = arguments["notes"]
+                if "context_snapshot" in arguments:
+                    body["context_snapshot"] = arguments["context_snapshot"]
+                if "files_changed" in arguments:
+                    body["files_changed"] = arguments["files_changed"]
+                resp = await client.put(f"{url}/{plan_id}/items/{item_id}", json=body)
+                resp.raise_for_status()
+                result = resp.json()
+                result["_sse_event"] = {
+                    "event": "item_updated",
+                    "data": {"plan_id": plan_id, "item_id": item_id, "status": arguments.get("status")},
+                }
+                logger.info("work_plan update_item (API) item=%s status=%s", item_id, arguments.get("status"))
+                return result
+
+            elif action == "complete_plan":
+                plan_id = arguments.get("plan_id", "")
+                if not plan_id:
+                    return {"error": "plan_id is required for complete_plan"}
+                status = arguments.get("status", "completed")
+                resp = await client.post(f"{url}/{plan_id}/complete", json={"status": status})
+                resp.raise_for_status()
+                result = resp.json()
+                result["_sse_event"] = {
+                    "event": "plan_completed",
+                    "data": {"plan_id": plan_id, "status": status},
+                }
+                logger.info("work_plan complete_plan (API) plan=%s status=%s", plan_id, status)
+                return result
+
+            elif action == "get_plan":
+                plan_id = arguments.get("plan_id", "")
+                if not plan_id:
+                    return {"error": "plan_id is required for get_plan"}
+                resp = await client.get(f"{url}/{plan_id}")
+                resp.raise_for_status()
+                return resp.json()
+
+            else:
+                return {"error": f"Unknown action: {action}. Valid: create_plan, add_item, update_item, complete_plan, get_plan"}
+
+    except httpx.HTTPStatusError as e:
+        logger.warning("work_plan API error: %s %s", e.response.status_code, e.response.text[:200])
+        return {"error": f"API error: {e.response.status_code} {e.response.text[:200]}"}
+    except Exception as e:
+        logger.warning("work_plan API call failed: %s", e)
+        return {"error": f"API call failed: {e}"}
 
 
 async def _create_plan(
