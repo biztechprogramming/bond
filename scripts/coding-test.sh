@@ -18,6 +18,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LABEL="test"
 TASK_FILE=""
+AGENT_ID=""
 LOG_DIR="$REPO_ROOT/tests/coding-runs"
 BOND_PORT="${BOND_PORT:-18790}"
 BOND_URL="http://127.0.0.1:${BOND_PORT}"
@@ -26,6 +27,7 @@ BOND_URL="http://127.0.0.1:${BOND_PORT}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --task-file) TASK_FILE="$2"; shift 2 ;;
+    --agent)     AGENT_ID="$2"; shift 2 ;;
     --label)     LABEL="$2"; shift 2 ;;
     *)           echo "Unknown arg: $1"; exit 1 ;;
   esac
@@ -107,7 +109,7 @@ trap cleanup EXIT
 # ─── Header ─────────────────────────────────────────────────────────────
 section "CODING TEST RUN: $RUN_ID"
 log "Run ID:       $RUN_ID"
-log "Agent:        Bond (agent_turn)"
+log "Agent:        Bond (agent_turn) ${AGENT_ID:-default}"
 log "Bond URL:     $BOND_URL"
 log "Repo:         $REPO_ROOT"
 log "Branch:       $START_BRANCH"
@@ -139,12 +141,19 @@ log "Sending task to Bond agent..."
 AGENT_START="$(date +%s)"
 AGENT_RESPONSE_FILE="$LOG_DIR/${RUN_ID}.response.json"
 
+# Build JSON payload
+if [[ -n "$AGENT_ID" ]]; then
+  PAYLOAD=$(jq -n --arg msg "$TASK" --arg aid "$AGENT_ID" '{message: $msg, agent_id: $aid}')
+else
+  PAYLOAD=$(jq -n --arg msg "$TASK" '{message: $msg}')
+fi
+
 # Call Bond's agent turn API
 set +e
 HTTP_CODE=$(curl -sf -o "$AGENT_RESPONSE_FILE" -w '%{http_code}' \
   -X POST "$BOND_URL/api/v1/agent/turn" \
   -H "Content-Type: application/json" \
-  -d "$(jq -n --arg msg "$TASK" '{message: $msg}')" \
+  -d "$PAYLOAD" \
   --max-time 300)
 AGENT_EXIT=$?
 set -e

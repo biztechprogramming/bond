@@ -55,6 +55,7 @@ async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
             context.get("agent_id", "default"),
             sandbox_image,
             context.get("workspace_mounts", []),
+            agent_name=context.get("agent_name", "agent"),
         )
         return container_id
     except Exception as e:

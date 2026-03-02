@@ -28,7 +28,8 @@ async def handle_code_execute(
         try:
             workspace_mounts = context.get("workspace_mounts", [])
             container_id = await manager.get_or_create_container(
-                agent_id, sandbox_image, workspace_mounts
+                agent_id, sandbox_image, workspace_mounts,
+                agent_name=context.get("agent_name", "agent"),
             )
             return await manager.execute(container_id, language, code, timeout)
         except Exception as e:

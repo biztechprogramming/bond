@@ -189,6 +189,7 @@ async def agent_turn(
     tool_context: dict[str, Any] = {
         "db": db,
         "agent_id": agent["id"],
+        "agent_name": agent.get("name", "agent"),
         "sandbox_image": agent.get("sandbox_image"),
         "workspace_dirs": workspace_dirs,
         "workspace_mounts": agent.get("workspace_mounts", []),

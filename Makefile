@@ -67,9 +67,14 @@ clean:
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .ruff_cache
 
-# Run coding agent evaluation test
+# Run coding agent evaluation test (default agent)
 coding-test:
 	@./scripts/coding-test.sh --label coding-test
+
+# Run coding test with a specific agent
+coding-test-agent:
+	@test -n "$(AGENT)" || (echo "Usage: make coding-test-agent AGENT=<agent-id>" && exit 1)
+	@./scripts/coding-test.sh --label coding-test-$(AGENT) --agent $(AGENT)
 
 # Revert changes from a previous coding test run
 coding-test-revert:

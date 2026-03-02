@@ -7,6 +7,7 @@ for crash recovery and user visibility via the Task Board UI.
 from __future__ import annotations
 
 import json
+import os
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -17,7 +18,7 @@ from ulid import ULID
 logger = logging.getLogger("bond.agent.tools.work_plan")
 
 # Plans live in the shared database so they're visible across agents and the API.
-_SHARED_PLANS_DB = "/data/shared/plans.db"
+_SHARED_PLANS_DB = os.path.expanduser("~/.bond/data/plans.db")
 
 _PLANS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS work_plans (
@@ -49,7 +50,6 @@ CREATE TABLE IF NOT EXISTS work_items (
 
 async def _get_plans_db() -> aiosqlite.Connection:
     """Get a connection to the shared plans database."""
-    import os
     os.makedirs(os.path.dirname(_SHARED_PLANS_DB), exist_ok=True)
     db = await aiosqlite.connect(_SHARED_PLANS_DB)
     await db.executescript(_PLANS_SCHEMA)

@@ -1,50 +1,50 @@
-# Coding Task: Add importance decay and batch update to MemoryRepository
+# Coding Task: Add filtering, sorting, and statistics to TaskManager
 
-## Context
+## Instructions
 
-The memory system in `backend/app/features/memory/repository.py` stores memories with an `importance` score (0.0–1.0) but this score never changes after creation. Memories that haven't been accessed in a long time should have their importance decay, and frequently accessed memories should get a boost.
+You must use your file tools to read and modify files. Do not just describe changes — actually make them using file_read and file_edit.
 
-## Requirements
+The code is in the coding-workspace directory within your workspace. Read the files first to understand the codebase.
 
-Read these files first to understand the codebase:
-- `backend/app/features/memory/repository.py` — the repository you'll modify
-- `backend/app/features/memory/models.py` — the data models
-- `backend/tests/test_memory_repository.py` — existing tests (for style reference)
+## Step 1: Read the existing code
 
-Then make these changes to `backend/app/features/memory/repository.py`:
+Read these files:
+- `tests/coding-workspace/task_manager.py`
+- `tests/coding-workspace/test_task_manager.py`
 
-### 1. Add an `decay_importance` method
+## Step 2: Modify task_manager.py
 
-Add a method `async def decay_importance(self, days_threshold: int = 30, decay_factor: float = 0.95) -> int` that:
-- Finds all non-deleted memories where `last_accessed_at` is older than `days_threshold` days ago (or `last_accessed_at` is NULL and `created_at` is older than the threshold)
-- Multiplies their `importance` by `decay_factor`
-- Enforces a minimum importance of `0.05` (never decay below this)
-- Updates `updated_at` to the current timestamp
-- Returns the number of memories that were decayed
+Add these methods to the `TaskManager` class:
 
-### 2. Add a `boost_importance` method
+### filter_by_priority(priority: str) -> list[Task]
+- Return all tasks matching the given priority string (e.g., "high")
+- Return empty list if no matches
 
-Add a method `async def boost_importance(self, memory_id: str, boost: float = 0.1, max_importance: float = 1.0) -> Memory` that:
-- Increases the memory's `importance` by `boost`
-- Caps at `max_importance`
-- Updates `updated_at` to the current timestamp
-- Raises `ValueError` if memory not found
-- Returns the updated memory
+### filter_by_tag(tag: str) -> list[Task]
+- Return all tasks that have the given tag in their tags list
+- Return empty list if no matches
 
-### 3. Add a `batch_update_type` method
+### list_sorted(sort_by: str = "priority", reverse: bool = False) -> list[Task]
+- Sort tasks by the given field
+- When sort_by is "priority", sort by priority weight: critical=4, high=3, medium=2, low=1
+- When sort_by is "created_at", sort by creation timestamp
+- When sort_by is "title", sort alphabetically by title
+- reverse=True means descending order
+- Raise ValueError for unknown sort_by values
 
-Add a method `async def batch_update_type(self, memory_ids: list[str], new_type: str, changed_by: str, reason: str) -> int` that:
-- Updates the `type` field for all given memory IDs (only non-deleted ones)
-- Creates a version entry for each updated memory
-- Returns the count of memories actually updated (skipping not-found and already-deleted)
+### stats() -> dict
+- Return a dictionary with:
+  - "total": total number of tasks
+  - "completed": number of completed tasks
+  - "pending": number of non-completed tasks
+  - "by_priority": dict mapping priority value strings to counts (e.g., {"high": 2, "low": 1})
 
-### 4. Modify the existing `update` method
-
-Change the existing `update` method so it also updates `updated_at` to the current timestamp. Currently it only updates `content` but not the `updated_at` field.
+### Also modify the existing `complete` method:
+- If the task is already completed, raise a ValueError saying it's already completed
 
 ## Constraints
 
-- Only modify `backend/app/features/memory/repository.py` — do NOT change models, tests, or other files
-- Follow the existing code style (use `text()` for SQL, ULID for IDs, ISO timestamps)
-- All methods must be async and use `self._session`
-- Import nothing new — everything you need is already imported
+- Only modify `tests/coding-workspace/task_manager.py`
+- Do NOT modify the test file or any other file
+- Follow the existing code style
+- Do not add new imports — everything you need is already there
