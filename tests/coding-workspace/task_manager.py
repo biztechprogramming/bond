@@ -68,8 +68,6 @@ class TaskManager:
         task = self._tasks.get(task_id)
         if task is None:
             raise ValueError(f"Task {task_id} not found")
-        if task.completed:
-            raise ValueError(f"Task {task_id} is already completed")
         task.completed = True
         task.completed_at = datetime.now(timezone.utc).isoformat()
         return task
@@ -80,48 +78,6 @@ class TaskManager:
             del self._tasks[task_id]
             return True
         return False
-
-    def filter_by_priority(self, priority: str) -> list[Task]:
-        """Return all tasks matching the given priority."""
-        target = Priority(priority)
-        return [t for t in self._tasks.values() if t.priority == target]
-
-    def filter_by_tag(self, tag: str) -> list[Task]:
-        """Return all tasks that have the given tag."""
-        return [t for t in self._tasks.values() if tag in t.tags]
-
-    def list_sorted(self, sort_by: str = "priority", reverse: bool = False) -> list[Task]:
-        """Return tasks sorted by the given field."""
-        priority_weight = {
-            Priority.CRITICAL: 4,
-            Priority.HIGH: 3,
-            Priority.MEDIUM: 2,
-            Priority.LOW: 1,
-        }
-        if sort_by == "priority":
-            key = lambda t: priority_weight[t.priority]
-        elif sort_by == "created_at":
-            key = lambda t: t.created_at
-        elif sort_by == "title":
-            key = lambda t: t.title
-        else:
-            raise ValueError(f"Unknown sort field: {sort_by}")
-        return sorted(self._tasks.values(), key=key, reverse=reverse)
-
-    def stats(self) -> dict:
-        """Return statistics about tasks."""
-        tasks = list(self._tasks.values())
-        completed = sum(1 for t in tasks if t.completed)
-        by_priority: dict[str, int] = {}
-        for t in tasks:
-            p = t.priority.value
-            by_priority[p] = by_priority.get(p, 0) + 1
-        return {
-            "total": len(tasks),
-            "completed": completed,
-            "pending": len(tasks) - completed,
-            "by_priority": by_priority,
-        }
 
     def count(self) -> int:
         """Return total number of tasks."""
