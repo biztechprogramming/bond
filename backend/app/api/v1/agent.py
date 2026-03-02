@@ -422,7 +422,9 @@ async def resolve_agent(
     # Fetch prompt fragments for this agent (include metadata for utility model selection)
     frag_result = await db.execute(
         text(
-            "SELECT pf.id, pf.name, pf.display_name, pf.description, pf.content, apf.enabled "
+            "SELECT pf.id, pf.name, pf.display_name, pf.description, pf.content, "
+            "pf.summary, pf.tier, pf.task_triggers, pf.token_estimate, "
+            "apf.enabled, apf.rank "
             "FROM agent_prompt_fragments apf "
             "JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
             "WHERE apf.agent_id = :id AND pf.is_active = 1 "
@@ -437,7 +439,12 @@ async def resolve_agent(
             "display_name": r["display_name"],
             "description": r["description"],
             "content": r["content"],
+            "summary": r["summary"],
+            "tier": r["tier"],
+            "task_triggers": r["task_triggers"],
+            "token_estimate": r["token_estimate"],
             "enabled": bool(r["enabled"]),
+            "rank": r["rank"],
         }
         for r in frag_result.mappings().all()
     ]

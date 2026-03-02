@@ -160,6 +160,109 @@ def _prune_tool_result(msg: dict, age: str) -> dict:
 # Fragment selection via utility model
 # ---------------------------------------------------------------------------
 
+FRAGMENT_TOKEN_BUDGET = 2500  # ~10K chars max for fragment content
+
+
+def _matches_triggers(fragment: dict, search_text: str) -> bool:
+    """Check if any of the fragment's task_triggers match the search text."""
+    triggers_raw = fragment.get("task_triggers", "[]")
+    if isinstance(triggers_raw, str):
+        try:
+            triggers = json.loads(triggers_raw)
+        except (json.JSONDecodeError, TypeError):
+            return False
+    else:
+        triggers = triggers_raw
+    if not triggers:
+        return False
+    search_lower = search_text.lower()
+    return any(t.lower() in search_lower for t in triggers)
+
+
+def _build_search_text(user_message: str, history: list[dict]) -> str:
+    """Build the text to search for keyword triggers — user message only.
+
+    We intentionally do NOT include history messages here because system-injected
+    context (crash recovery, plan summaries) contains words like 'plan' and 'build'
+    that cause false trigger matches.
+    """
+    return user_message
+
+
+async def _utility_model_select(
+    candidates: list[dict],
+    user_message: str,
+    history: list[dict],
+    budget_remaining: int,
+    config: dict,
+    extra_kwargs: dict,
+) -> list[dict]:
+    """Use the utility model to select from candidate fragments.
+
+    Shows summary + token cost per fragment (not full content).
+    Returns the selected fragment dicts.
+    """
+    utility_model = config.get("utility_model", "claude-sonnet-4-6")
+
+    catalog_lines = []
+    for frag in candidates:
+        name = frag.get("display_name") or frag.get("name", "?")
+        summary = frag.get("summary") or frag.get("description", "")
+        tokens = frag.get("token_estimate", 0)
+        frag_id = frag.get("id", "?")
+        catalog_lines.append(f"- ID: {frag_id} | {name} (~{tokens} tokens): {summary}")
+
+    catalog = "\n".join(catalog_lines)
+
+    recent_history = ""
+    if history:
+        recent_lines = []
+        for msg in history[-2:]:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                recent_lines.append(f"{role}: {content[:200]}")
+        recent_history = "\n".join(recent_lines)
+
+    selection_prompt = f"""You are a prompt fragment selector. Pick ONLY fragments directly useful for this task. Do NOT include fragments "just in case".
+
+Available fragments (with token costs):
+{catalog}
+
+Token budget remaining: ~{budget_remaining} tokens
+
+Recent conversation:
+{recent_history}
+
+Current user message:
+{user_message}
+
+Return a JSON array of fragment IDs to include. Include ONLY fragments directly useful for handling this specific request. Err on the side of fewer fragments — the core guidelines are already included.
+
+Example: ["01PFRAG_MEMORY_GUID"]
+
+JSON array only:"""
+
+    response = await litellm.acompletion(
+        model=utility_model,
+        messages=[{"role": "user", "content": selection_prompt}],
+        temperature=0.0,
+        max_tokens=512,
+        **extra_kwargs,
+    )
+
+    result_text = response.choices[0].message.content or "[]"
+    result_text = result_text.strip()
+    if result_text.startswith("```"):
+        result_text = result_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+    selected_ids = json.loads(result_text)
+    if not isinstance(selected_ids, list):
+        raise RuntimeError(f"Utility model returned non-list for fragment selection: {result_text}")
+
+    return [f for f in candidates if f.get("id") in selected_ids]
+
+
 async def _select_relevant_fragments(
     fragments: list[dict],
     user_message: str,
@@ -167,11 +270,12 @@ async def _select_relevant_fragments(
     config: dict,
     extra_kwargs: dict,
 ) -> list[dict]:
-    """Use the utility model to select which prompt fragments are relevant.
+    """Tiered fragment selection: core → keyword triggers → LLM pick → budget enforcement.
 
-    Sends fragment names + descriptions to a fast model (e.g. claude-sonnet-4-6)
-    which returns the IDs of fragments that are relevant to the current turn.
-    Falls back to all fragments if the utility call fails.
+    Layer 1: CORE tier fragments are always included.
+    Layer 2: Fragments whose task_triggers match the current context are auto-included.
+    Layer 3: LLM selects from remaining standard-tier fragments (specialized only via triggers).
+    Finally: Token budget enforcement drops lowest-rank non-core fragments if over budget.
     """
     if not fragments:
         return []
@@ -192,83 +296,69 @@ async def _select_relevant_fragments(
     if not utility_model:
         raise RuntimeError("No utility_model configured — refusing to send all fragments to primary model")
 
-    # Build the fragment catalog for the utility model
-    catalog_lines = []
-    for i, frag in enumerate(fragments):
-        name = frag.get("display_name") or frag.get("name", f"fragment-{i}")
-        desc = frag.get("description", "")
-        frag_id = frag.get("id", str(i))
-        catalog_lines.append(f"- ID: {frag_id} | {name}: {desc}")
+    # Only consider enabled fragments
+    enabled = [f for f in fragments if f.get("enabled", True)]
 
-    catalog = "\n".join(catalog_lines)
+    # --- Layer 1: Always include core tier ---
+    core = [f for f in enabled if f.get("tier") == "core"]
+    rest = [f for f in enabled if f.get("tier") != "core"]
 
-    # Get recent history context (last 3 messages for efficiency)
-    recent_history = ""
-    if history:
-        recent = history[-3:]
-        recent_lines = []
-        for msg in recent:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")
-            if isinstance(content, str) and content:
-                recent_lines.append(f"{role}: {content[:200]}")
-        recent_history = "\n".join(recent_lines)
+    # --- Layer 2: Auto-include by keyword triggers ---
+    search_text = _build_search_text(user_message, history)
+    triggered = [f for f in rest if _matches_triggers(f, search_text)]
+    triggered_ids = {f.get("id") for f in triggered}
 
-    selection_prompt = f"""You are a prompt fragment selector. Given a user's message and recent conversation history, determine which prompt fragments are relevant and should be included in the agent's system prompt.
+    # --- Layer 3: LLM selection for remaining standard fragments ---
+    # Specialized fragments are ONLY included via keyword triggers, not offered to LLM
+    standard_remaining = [
+        f for f in rest
+        if f.get("tier") == "standard" and f.get("id") not in triggered_ids
+    ]
 
-Available fragments:
-{catalog}
+    core_tokens = sum(f.get("token_estimate", 0) for f in core)
+    triggered_tokens = sum(f.get("token_estimate", 0) for f in triggered)
+    budget_remaining = FRAGMENT_TOKEN_BUDGET - core_tokens - triggered_tokens
 
-Recent conversation:
-{recent_history}
+    llm_picks: list[dict] = []
+    if standard_remaining and budget_remaining > 200:
+        try:
+            llm_picks = await _utility_model_select(
+                standard_remaining, user_message, history,
+                budget_remaining, config, extra_kwargs,
+            )
+        except Exception as e:
+            logger.warning("LLM fragment selection failed, proceeding without: %s", e)
 
-Current user message:
-{user_message}
+    # --- Assemble selected fragments ---
+    selected = core + triggered + llm_picks
 
-Return ONLY a JSON array of fragment IDs that are relevant to this turn. Include fragments that provide useful context or guidelines for handling this request. When in doubt, include the fragment.
-
-Example response: ["01PFRAG_MEMORY_GUID", "01PFRAG_ERROR_HANDL"]
-
-Respond with just the JSON array, nothing else."""
-
-    try:
-        response = await litellm.acompletion(
-            model=utility_model,
-            messages=[{"role": "user", "content": selection_prompt}],
-            temperature=0.0,
-            max_tokens=1024,
-            **extra_kwargs,
+    # --- Layer 4: Budget enforcement — drop lowest-rank non-core if over budget ---
+    total_tokens = sum(f.get("token_estimate", 0) for f in selected)
+    if total_tokens > FRAGMENT_TOKEN_BUDGET:
+        # Sort non-core by rank descending (highest rank = lowest priority = drop first)
+        core_ids = {f.get("id") for f in core}
+        droppable = sorted(
+            [f for f in selected if f.get("id") not in core_ids],
+            key=lambda f: f.get("rank", 0),
+            reverse=True,
         )
+        while total_tokens > FRAGMENT_TOKEN_BUDGET and droppable:
+            dropped = droppable.pop(0)
+            total_tokens -= dropped.get("token_estimate", 0)
+            selected = [f for f in selected if f.get("id") != dropped.get("id")]
+            logger.info("Budget enforcement: dropped fragment '%s' (%d tokens)",
+                        dropped.get("name"), dropped.get("token_estimate", 0))
 
-        result_text = response.choices[0].message.content or "[]"
-        # Parse the JSON array — strip markdown fences if present
-        result_text = result_text.strip()
-        if result_text.startswith("```"):
-            result_text = result_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    logger.info(
+        "Fragment selection: %d/%d fragments (core=%d, triggered=%d, llm=%d, ~%d tokens). Selected: %s",
+        len(selected), len(enabled), len(core), len(triggered), len(llm_picks),
+        sum(f.get("token_estimate", 0) for f in selected),
+        [f.get("name") for f in selected],
+    )
 
-        selected_ids = json.loads(result_text)
-        if not isinstance(selected_ids, list):
-            raise RuntimeError(f"Utility model returned non-list for fragment selection: {result_text}")
-
-        # Filter fragments by selected IDs
-        selected = [f for f in fragments if f.get("id") in selected_ids]
-
-        logger.info(
-            "Fragment selection: %d/%d fragments selected by utility model (%s). Selected: %s",
-            len(selected), len(fragments), utility_model,
-            [f.get("name") for f in selected],
-        )
-
-        # If utility model selected nothing, return empty — do NOT fall back to all
-        if not selected:
-            logger.warning("Utility model selected 0 fragments — proceeding with none")
-
-        # Cache the result
-        _fragment_cache[cache_key] = (time.monotonic(), selected)
-        return selected
-
-    except Exception as e:
-        raise RuntimeError(f"Fragment selection failed — refusing to send all {len(fragments)} fragments to primary model: {e}") from e
+    # Cache the result
+    _fragment_cache[cache_key] = (time.monotonic(), selected)
+    return selected
 
 
 # ---------------------------------------------------------------------------

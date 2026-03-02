@@ -26,6 +26,9 @@ class FragmentCreate(BaseModel):
     category: str
     content: str
     description: str = ""
+    summary: str = ""
+    tier: str = "standard"
+    task_triggers: list[str] = []
 
 
 class FragmentUpdate(BaseModel):
@@ -34,6 +37,9 @@ class FragmentUpdate(BaseModel):
     content: str | None = None
     description: str | None = None
     is_active: bool | None = None
+    summary: str | None = None
+    tier: str | None = None
+    task_triggers: list[str] | None = None
     change_reason: str = ""
 
 
@@ -107,12 +113,17 @@ async def create_fragment(body: FragmentCreate, db: AsyncSession = Depends(get_d
     frag_id = str(ULID())
     ver_id = str(ULID())
 
+    token_estimate = len(body.content) // 4
     await db.execute(text(
-        "INSERT INTO prompt_fragments (id, name, display_name, category, content, description, is_system) "
-        "VALUES (:id, :name, :display_name, :category, :content, :description, 0)"
+        "INSERT INTO prompt_fragments (id, name, display_name, category, content, description, "
+        "summary, tier, task_triggers, token_estimate, is_system) "
+        "VALUES (:id, :name, :display_name, :category, :content, :description, "
+        ":summary, :tier, :task_triggers, :token_estimate, 0)"
     ), {
         "id": frag_id, "name": body.name, "display_name": body.display_name,
         "category": body.category, "content": body.content, "description": body.description,
+        "summary": body.summary, "tier": body.tier,
+        "task_triggers": json.dumps(body.task_triggers), "token_estimate": token_estimate,
     })
 
     await db.execute(text(
@@ -159,10 +170,20 @@ async def update_fragment(fragment_id: str, body: FragmentUpdate, db: AsyncSessi
         updates["category"] = body.category
     if body.content is not None:
         updates["content"] = body.content
+        updates["token_estimate"] = len(body.content) // 4
     if body.description is not None:
         updates["description"] = body.description
     if body.is_active is not None:
         updates["is_active"] = 1 if body.is_active else 0
+    if body.summary is not None:
+        updates["summary"] = body.summary
+    if body.tier is not None:
+        valid_tiers = {"core", "standard", "specialized"}
+        if body.tier not in valid_tiers:
+            raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {valid_tiers}")
+        updates["tier"] = body.tier
+    if body.task_triggers is not None:
+        updates["task_triggers"] = json.dumps(body.task_triggers)
 
     if updates:
         set_clause = ", ".join(f"{k} = :{k}" for k in updates)
@@ -383,7 +404,8 @@ async def list_agent_fragments(agent_id: str, db: AsyncSession = Depends(get_db)
     """List fragments attached to an agent, ordered by rank."""
     result = await db.execute(text(
         "SELECT apf.id as attachment_id, apf.rank, apf.enabled, "
-        "pf.id, pf.name, pf.display_name, pf.category, pf.content, pf.is_active "
+        "pf.id, pf.name, pf.display_name, pf.category, pf.content, pf.is_active, "
+        "pf.summary, pf.tier, pf.task_triggers, pf.token_estimate "
         "FROM agent_prompt_fragments apf "
         "JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
         "WHERE apf.agent_id = :agent_id "
