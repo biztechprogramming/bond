@@ -211,7 +211,7 @@ if [[ -f "$AGENT_RESPONSE_FILE" ]]; then
 
   # Log tool calls from WS events
   if [[ -f "$WS_EVENTS_FILE" ]]; then
-    TOOL_CALL_COUNT=$(grep -c '"type":"tool_call"' "$WS_EVENTS_FILE" 2>/dev/null || echo 0)
+    TOOL_CALL_COUNT=$(grep -c '"type": *"tool_call"' "$WS_EVENTS_FILE" 2>/dev/null || echo 0)
     log "Tool calls (WS events): $TOOL_CALL_COUNT"
   fi
 else
@@ -220,41 +220,29 @@ else
   CONVERSATION_ID="unknown"
 fi
 
-# ─── Step 2c: Model metrics from Bond logs ──────────────────────────────
-section "STEP 2c: MODEL METRICS"
+# ─── Step 2c: Metrics from WS events + response ─────────────────────────
+section "STEP 2c: AGENT METRICS"
 
-# Query Bond's internal metrics if available (conversation messages give us tool call count)
-if [[ "$CONVERSATION_ID" != "unknown" ]]; then
-  set +e
-  MESSAGES_JSON=$(curl -sf "$BOND_URL/api/v1/conversations/$CONVERSATION_ID/messages" 2>/dev/null)
-  set -e
+# Extract metrics from the WS events file (the real source of truth for
+# container-based agents — conversation_messages only stores the final result)
+if [[ -f "$WS_EVENTS_FILE" ]]; then
+  TOOL_CALLS=$(grep -c '"type": *"tool_call"' "$WS_EVENTS_FILE" 2>/dev/null || echo 0)
+  # Count "thinking" status events as model calls (each LLM round starts with thinking)
+  MODEL_CALLS=$(grep -c '"agentStatus": *"thinking"' "$WS_EVENTS_FILE" 2>/dev/null || echo 0)
 
-  if [[ -n "$MESSAGES_JSON" ]]; then
-    echo "$MESSAGES_JSON" > "$LOG_DIR/${RUN_ID}.messages.json"
+  log "Tool calls:     $TOOL_CALLS"
+  log "Model calls:    $MODEL_CALLS"
 
-    # Count tool calls and assistant messages (each assistant message = 1 model call)
-    TOTAL_MESSAGES=$(echo "$MESSAGES_JSON" | jq 'length' 2>/dev/null || echo "unknown")
-    ASSISTANT_MESSAGES=$(echo "$MESSAGES_JSON" | jq '[.[] | select(.role == "assistant")] | length' 2>/dev/null || echo "unknown")
-    TOOL_CALLS=$(echo "$MESSAGES_JSON" | jq '[.[] | select(.role == "tool")] | length' 2>/dev/null || echo "unknown")
-    USER_MESSAGES=$(echo "$MESSAGES_JSON" | jq '[.[] | select(.role == "user")] | length' 2>/dev/null || echo "unknown")
+  # Log tool call sequence
+  log ""
+  log "Tool call sequence:"
+  grep '"type": *"tool_call"' "$WS_EVENTS_FILE" 2>/dev/null | \
+    jq -r '.content | fromjson | "  [\(.tool_calls_made)] \(.tool_name)  \(.args | tostring | .[0:100])"' 2>/dev/null >> "$LOGFILE" || true
 
-    log "Total messages:    $TOTAL_MESSAGES"
-    log "Model calls:       $ASSISTANT_MESSAGES"
-    log "Tool calls:        $TOOL_CALLS"
-    log "User messages:     $USER_MESSAGES"
-
-    # Log each tool call for step-by-step review
-    log ""
-    log "Tool call sequence:"
-    echo "$MESSAGES_JSON" | jq -r '.[] | select(.role == "tool") | "  → \(.tool_call_id // "?"): \(.content[:120] // "?")"' 2>/dev/null >> "$LOGFILE" || true
-
-    NUM_TURNS="$ASSISTANT_MESSAGES"
-  else
-    log "Could not fetch conversation messages"
-    NUM_TURNS="unknown"
-  fi
+  NUM_TURNS="$MODEL_CALLS"
 else
-  log "No conversation ID — cannot fetch metrics"
+  log "No WS events file — cannot extract metrics"
+  TOOL_CALLS=0
   NUM_TURNS="unknown"
 fi
 
