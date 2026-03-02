@@ -16,6 +16,45 @@ from ulid import ULID
 
 logger = logging.getLogger("bond.agent.tools.work_plan")
 
+# Plans live in the shared database so they're visible across agents and the API.
+_SHARED_PLANS_DB = "/data/shared/plans.db"
+
+_PLANS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS work_plans (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    conversation_id TEXT,
+    parent_plan_id TEXT,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS work_items (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES work_plans(id),
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    context_snapshot TEXT,
+    notes TEXT DEFAULT '[]',
+    files_changed TEXT DEFAULT '[]',
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+async def _get_plans_db() -> aiosqlite.Connection:
+    """Get a connection to the shared plans database."""
+    import os
+    os.makedirs(os.path.dirname(_SHARED_PLANS_DB), exist_ok=True)
+    db = await aiosqlite.connect(_SHARED_PLANS_DB)
+    await db.executescript(_PLANS_SCHEMA)
+    return db
+
 # Terminal statuses for work items
 _TERMINAL_ITEM_STATUSES = frozenset({"done", "complete", "failed"})
 
@@ -41,30 +80,30 @@ async def handle_work_plan(
     Actions: create_plan, add_item, update_item, complete_plan, get_plan.
     """
     action = arguments.get("action", "")
-    agent_db: aiosqlite.Connection | None = context.get("agent_db")
     agent_id: str = context.get("agent_id", "unknown")
 
     if not action:
         return {"error": "action is required"}
-    if agent_db is None:
-        return {"error": "No agent database available."}
 
+    db = await _get_plans_db()
     try:
         if action == "create_plan":
-            return await _create_plan(arguments, agent_db, agent_id, context)
+            return await _create_plan(arguments, db, agent_id, context)
         elif action == "add_item":
-            return await _add_item(arguments, agent_db, context)
+            return await _add_item(arguments, db, context)
         elif action == "update_item":
-            return await _update_item(arguments, agent_db, context)
+            return await _update_item(arguments, db, context)
         elif action == "complete_plan":
-            return await _complete_plan(arguments, agent_db, context)
+            return await _complete_plan(arguments, db, context)
         elif action == "get_plan":
-            return await _get_plan(arguments, agent_db)
+            return await _get_plan(arguments, db)
         else:
             return {"error": f"Unknown action: {action}. Valid: create_plan, add_item, update_item, complete_plan, get_plan"}
     except Exception as e:
         logger.warning("work_plan action=%s failed: %s", action, e, exc_info=True)
         return {"error": str(e)}
+    finally:
+        await db.close()
 
 
 async def _create_plan(
@@ -397,8 +436,20 @@ async def _get_plan(
 # ---------------------------------------------------------------------------
 
 
-async def load_active_plan(db: aiosqlite.Connection, agent_id: str) -> dict[str, Any] | None:
+async def load_active_plan(db: aiosqlite.Connection | None, agent_id: str) -> dict[str, Any] | None:
     """Load the most recent active work plan for an agent, with all items."""
+    _own_db = False
+    if db is None:
+        db = await _get_plans_db()
+        _own_db = True
+    try:
+        return await _load_active_plan_impl(db, agent_id)
+    finally:
+        if _own_db:
+            await db.close()
+
+
+async def _load_active_plan_impl(db: aiosqlite.Connection, agent_id: str) -> dict[str, Any] | None:
     cursor = await db.execute(
         "SELECT id FROM work_plans WHERE agent_id = ? AND status = 'active' "
         "ORDER BY updated_at DESC LIMIT 1",
@@ -474,7 +525,7 @@ def format_recovery_context(plan: dict[str, Any]) -> str:
 
 
 async def checkpoint_active_plan(
-    db: aiosqlite.Connection,
+    db: aiosqlite.Connection | None,
     agent_id: str,
     context_note: str = "Max iterations reached — saving checkpoint",
 ) -> bool:
@@ -483,29 +534,37 @@ async def checkpoint_active_plan(
     Called when max iterations is hit or on crash recovery.
     Returns True if a checkpoint was saved.
     """
-    plan = await load_active_plan(db, agent_id)
-    if not plan:
-        return False
+    _own_db = False
+    if db is None:
+        db = await _get_plans_db()
+        _own_db = True
+    try:
+        plan = await load_active_plan(db, agent_id)
+        if not plan:
+            return False
 
-    items = plan.get("items", [])
-    in_progress = [i for i in items if i["status"] == "in_progress"]
-    if not in_progress:
-        return False
+        items = plan.get("items", [])
+        in_progress = [i for i in items if i["status"] == "in_progress"]
+        if not in_progress:
+            return False
 
-    current_item = in_progress[0]
-    now = datetime.now(timezone.utc).isoformat()
+        current_item = in_progress[0]
+        now = datetime.now(timezone.utc).isoformat()
 
-    # Append a note about the checkpoint
-    notes = current_item.get("notes", [])
-    if not isinstance(notes, list):
-        notes = []
-    notes.append({"at": now, "text": context_note})
+        # Append a note about the checkpoint
+        notes = current_item.get("notes", [])
+        if not isinstance(notes, list):
+            notes = []
+        notes.append({"at": now, "text": context_note})
 
-    await db.execute(
-        "UPDATE work_items SET notes = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(notes), now, current_item["id"]),
-    )
-    await db.commit()
+        await db.execute(
+            "UPDATE work_items SET notes = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(notes), now, current_item["id"]),
+        )
+        await db.commit()
 
-    logger.info("Checkpoint saved for item %s in plan %s", current_item["id"], plan["id"])
-    return True
+        logger.info("Checkpoint saved for item %s in plan %s", current_item["id"], plan["id"])
+        return True
+    finally:
+        if _own_db:
+            await db.close()

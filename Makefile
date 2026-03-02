@@ -66,3 +66,18 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .ruff_cache
+
+# Run coding agent evaluation test
+coding-test:
+	@./scripts/coding-test.sh --label coding-test
+
+# Revert changes from a previous coding test run
+coding-test-revert:
+	@if [ -f tests/coding-runs/.last-changed-files ]; then \
+		echo "Reverting files from last coding test..."; \
+		xargs git checkout HEAD -- < tests/coding-runs/.last-changed-files 2>/dev/null || true; \
+		rm tests/coding-runs/.last-changed-files; \
+		echo "Done."; \
+	else \
+		echo "No previous coding test to revert."; \
+	fi
