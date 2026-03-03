@@ -163,11 +163,14 @@ class TestCreatePlan:
         _run(_test())
 
     def test_create_plan_no_db(self):
+        # work_plan now uses its own shared plans DB, not agent_db from context.
+        # Passing agent_db=None should still succeed.
         result = _run(handle_work_plan(
             {"action": "create_plan", "title": "Test"},
             {"agent_id": "a", "agent_db": None},
         ))
-        assert "error" in result
+        assert result.get("status") == "created"
+        assert "plan_id" in result
 
 
 # ---------------------------------------------------------------------------

@@ -96,7 +96,7 @@ export async function connectToSpacetimeDB(
           const data = await res.json();
           token = data.token || null;
         }
-      } catch {}
+      } catch { }
 
       let builder = DbConnection.builder()
         .withUri(uri)
@@ -122,7 +122,7 @@ export async function connectToSpacetimeDB(
               console.error("[spacetimedb] Subscription error:", errCtx?.event);
             })
             .subscribe([
-              "SELECT * FROM conversations", 
+              "SELECT * FROM conversations",
               "SELECT * FROM conversation_messages",
               "SELECT * FROM work_plans",
               "SELECT * FROM work_items"
@@ -139,7 +139,7 @@ export async function connectToSpacetimeDB(
       conn.db.conversations.onInsert(() => notifyListeners());
       conn.db.conversations.onUpdate(() => notifyListeners());
       conn.db.conversations.onDelete(() => notifyListeners());
-      
+
       conn.db.conversationMessages.onInsert(() => notifyListeners());
       conn.db.conversationMessages.onDelete(() => notifyListeners());
 

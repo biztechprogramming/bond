@@ -30,13 +30,9 @@ async def agents_client(_clear_settings_cache):
     db_path = Path(tmpdir) / "test.db"
     os.environ["BOND_DATABASE_PATH"] = str(db_path)
 
+    from tests.conftest import apply_all_migrations
     async with aiosqlite.connect(db_path) as db:
-        await _apply_sql(db, MIGRATIONS_DIR / "000001_init.up.sql")
-        await _apply_sql(db, MIGRATIONS_DIR / "000002_knowledge_store.up.sql")
-        await _apply_sql(db, MIGRATIONS_DIR / "000003_entity_graph.up.sql")
-        await _apply_sql(db, MIGRATIONS_DIR / "000004_audit_log.up.sql")
-        await _apply_sql(db, MIGRATIONS_DIR / "000005_agents.up.sql")
-        await _apply_sql(db, MIGRATIONS_DIR / "000007_mount_container_path.up.sql")
+        await apply_all_migrations(db)
 
     from backend.app.config import get_settings
     get_settings.cache_clear()

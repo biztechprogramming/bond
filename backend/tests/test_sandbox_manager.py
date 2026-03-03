@@ -43,10 +43,14 @@ def _make_agent(**overrides) -> dict:
         "id": "agent-abc123",
         "sandbox_image": "python:3.12-slim",
         "model": "claude-sonnet-4-20250514",
+        "utility_model": "claude-sonnet-4-6",
         "system_prompt": "You are helpful.",
         "tools": ["respond", "search_memory"],
+        "max_iterations": 10,
         "api_keys": {"anthropic": "sk-test"},
         "workspace_mounts": [],
+        "prompt_fragments": [],
+        "provider_aliases": {},
     }
     defaults.update(overrides)
     return defaults

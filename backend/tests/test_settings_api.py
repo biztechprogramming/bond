@@ -35,8 +35,8 @@ async def settings_client(_clear_settings_cache):
 
     # Apply migrations to create tables
     async with aiosqlite.connect(db_path) as db:
-        await _apply_sql(db, MIGRATIONS_DIR / "000001_init.up.sql")
-        await _apply_sql(db, MIGRATIONS_DIR / "000002_knowledge_store.up.sql")
+        from tests.conftest import apply_all_migrations
+        await apply_all_migrations(db)
 
     # Clear settings cache again after env change
     from backend.app.config import get_settings
