@@ -12,11 +12,10 @@ import {
 
 export default {
   id: __t.string(),
-  name: __t.string(),
-  displayName: __t.string(),
-  systemPrompt: __t.string(),
-  model: __t.string(),
-  utilityModel: __t.string(),
-  tools: __t.string(),
-  isDefault: __t.bool(),
+  agentId: __t.string(),
+  sessionId: __t.string(),
+  toolName: __t.string(),
+  input: __t.string(),
+  output: __t.string(),
+  duration: __t.u32(),
 };

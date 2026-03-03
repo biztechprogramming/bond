@@ -3,11 +3,20 @@
 import { Suspense, useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { GatewayWebSocket, type GatewayMessage } from "@/lib/ws";
-import type { WorkItem, WorkPlan, ChatMessage, AgentStatus } from "@/lib/types";
+import type { ChatMessage, AgentStatus } from "@/lib/types";
 import { STATUS_EMOJI, KANBAN_COLUMNS } from "@/lib/theme";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanSelector from "@/components/shared/PlanSelector";
 import KanbanColumn from "@/components/shared/KanbanColumn";
+import { useSpacetimeDB, useWorkPlans, useWorkItems } from "@/hooks/useSpacetimeDB";
+import { 
+  connectToSpacetimeDB, 
+  getWorkPlans, 
+  getWorkItems,
+  getConversations,
+  type WorkPlan as STDBWorkPlan,
+  type WorkItem as STDBWorkItem
+} from "@/lib/spacetimedb-client";
 
 const API_BASE = "http://localhost:18790/api/v1";
 
@@ -23,11 +32,45 @@ export default function BoardPageWrapper() {
 
 function BoardPage() {
   const searchParams = useSearchParams();
-  const [plans, setPlans] = useState<WorkPlan[]>([]);
+  
+  // ── SpacetimeDB Reactive State ──
+  const stdbPlans = useWorkPlans();
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(
     () => (typeof window !== "undefined" ? searchParams.get("plan") : null)
   );
-  const [selectedPlan, setSelectedPlan] = useState<WorkPlan | null>(null);
+  
+  const currentPlanItems = useWorkItems(selectedPlanId || "");
+
+  // Derive selected plan with items for compatibility
+  const selectedPlan = useSpacetimeDB(() => {
+    if (!selectedPlanId) return null;
+    const plans = getWorkPlans();
+    const plan = plans.find(p => p.id === selectedPlanId);
+    if (!plan) return null;
+    
+    const items = getWorkItems(plan.id).map(it => {
+        let notes: any[] = [];
+        let files_changed: string[] = [];
+        try { notes = JSON.parse(it.notes || "[]"); } catch { notes = []; }
+        try { files_changed = JSON.parse(it.filesChanged || "[]"); } catch { files_changed = []; }
+
+        return {
+            ...it,
+            notes,
+            files_changed,
+            created_at: new Date(Number(it.createdAt)).toISOString(),
+            updated_at: new Date(Number(it.updatedAt)).toISOString(),
+        };
+    });
+
+    return { 
+        ...plan, 
+        items,
+        created_at: new Date(Number(plan.createdAt)).toISOString(),
+        updated_at: new Date(Number(plan.updatedAt)).toISOString(),
+    } as any;
+  }, [selectedPlanId]);
+
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
@@ -57,8 +100,11 @@ function BoardPage() {
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Initialize SpacetimeDB connection
+  useEffect(() => {
+    connectToSpacetimeDB();
+  }, []);
 
   // Persist conversation ID
   useEffect(() => {
@@ -79,37 +125,15 @@ function BoardPage() {
       .catch(() => {});
   }, []);
 
-  // Fetch plans list (lightweight - no item details)
-  const fetchPlans = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/plans?limit=50`);
-      const data: WorkPlan[] = await res.json();
-      setPlans(data);
-      if (!selectedPlanId && data.length > 0) {
-        const active = data.find(p => p.status === "active") || data[0];
-        setSelectedPlanId(active.id);
-      }
-    } catch { /* API not available */ }
-  }, [selectedPlanId]);
+  // Auto-select initial plan if none selected
+  useEffect(() => {
+    if (!selectedPlanId && stdbPlans.length > 0) {
+      const active = stdbPlans.find(p => p.status === "active") || stdbPlans[0];
+      setSelectedPlanId(active.id);
+    }
+  }, [selectedPlanId, stdbPlans]);
 
-  // Fetch selected plan details
-  const fetchPlanDetails = useCallback(async () => {
-    if (!selectedPlanId) return;
-    try {
-      const res = await fetch(`${API_BASE}/plans/${selectedPlanId}`);
-      if (res.ok) {
-        const data: WorkPlan = await res.json();
-        setSelectedPlan(data);
-        // Auto-switch chat to plan's conversation (only on initial plan selection, not polls)
-        if (data.conversation_id && data.conversation_id !== conversationId && wsRef.current && !selectedPlan) {
-          setConversationId(data.conversation_id);
-          wsRef.current.switchConversation(data.conversation_id);
-        }
-      }
-    } catch { /* ignore */ }
-  }, [selectedPlanId, conversationId]);
-
-  // Fetch plan lineage
+  // Fetch plan lineage (still uses API for now as lineage logic is complex for SQL-less SpacetimeDB)
   const fetchLineage = useCallback(async () => {
     if (!selectedPlanId) return;
     try {
@@ -118,13 +142,9 @@ function BoardPage() {
     } catch { /* ignore */ }
   }, [selectedPlanId]);
 
-  useEffect(() => { fetchPlans(); }, [fetchPlans]);
-  useEffect(() => { fetchPlanDetails(); }, [fetchPlanDetails]);
   useEffect(() => { if (selectedPlanId) fetchLineage(); }, [selectedPlanId, fetchLineage]);
 
-  // Plan updates are push-based via WebSocket events — no polling.
-
-  // WebSocket
+  // WebSocket for Chat
   useEffect(() => {
     let cancelled = false;
     const ws = new GatewayWebSocket();
@@ -140,6 +160,9 @@ function BoardPage() {
         const status = msg.agentStatus || "idle";
         setAgentStatus(status);
         if (msg.agentName) currentAgentNameRef.current = msg.agentName;
+        if (status !== "idle") {
+          setLoading(true);
+        }
       } else if (msg.type === "tool_call" && msg.content) {
         try {
           const data = JSON.parse(msg.content);
@@ -169,8 +192,6 @@ function BoardPage() {
         setAgentStatus("idle");
         setToolActivity([]);
         if (msg.conversationId) setConversationId(msg.conversationId);
-        fetchPlans();
-        fetchPlanDetails();
       } else if (msg.type === "history" && msg.messages) {
         setMessages(
           msg.messages
@@ -183,13 +204,11 @@ function BoardPage() {
         setLoading(false);
         setAgentStatus("idle");
       }
-      // Plan SSE events
-      if (msg.type === "plan_created" || msg.type === "plan_updated" || msg.type === "item_updated" || msg.type === "plan_completed") {
-        fetchPlans();
-        fetchPlanDetails();
-        if (msg.type === "plan_created" && msg.planId) {
-          setSelectedPlanId(msg.planId);
-        }
+      
+      // SpacetimeDB handles plan updates reactively now. 
+      // We only force-select new plans.
+      if (msg.type === "plan_created" && msg.planId) {
+        setSelectedPlanId(msg.planId);
       }
     });
 
@@ -240,17 +259,16 @@ function BoardPage() {
     if (!selectedPlanId) return;
     try {
       await fetch(`${API_BASE}/plans/${selectedPlanId}`, { method: "DELETE" });
-      fetchPlans();
-      fetchPlanDetails();
+      // Reactive reload happens automatically
     } catch { /* ignore */ }
     if (conversationId) wsRef.current?.interrupt(conversationId);
-  }, [selectedPlanId, conversationId, fetchPlans, fetchPlanDetails]);
+  }, [selectedPlanId, conversationId]);
 
   // -- Kanban helpers --
 
-  const itemsByColumn = (column: string): WorkItem[] => {
+  const itemsByColumn = (column: string): STDBWorkItem[] => {
     if (!selectedPlan?.items) return [];
-    return selectedPlan.items.filter(item => item.status === column).sort((a, b) => a.ordinal - b.ordinal);
+    return selectedPlan.items.filter((item: any) => item.status === column).sort((a: any, b: any) => a.ordinal - b.ordinal);
   };
 
   const planIsActive = selectedPlan?.status === "active" || selectedPlan?.status === "paused";
@@ -270,7 +288,7 @@ function BoardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: columnKey }),
       });
-      fetchPlanDetails();
+      // SpacetimeDB sync is triggered by backend, frontend re-renders reactively
     } catch { /* ignore */ }
   };
 
@@ -297,9 +315,9 @@ function BoardPage() {
 
         {/* Plan selector */}
         <PlanSelector
-          plans={plans}
+          plans={stdbPlans as any}
           selectedPlanId={selectedPlanId}
-          selectedPlan={selectedPlan}
+          selectedPlan={selectedPlan as any}
           onSelect={setSelectedPlanId}
         />
 
@@ -404,7 +422,7 @@ function BoardPage() {
                   key={col.key}
                   columnKey={col.key}
                   label={col.label}
-                  items={itemsByColumn(col.key)}
+                  items={itemsByColumn(col.key) as any}
                   expandedItemId={expandedItemId}
                   dragItemId={dragItemId}
                   isDropTarget={dragOverColumn === col.key}

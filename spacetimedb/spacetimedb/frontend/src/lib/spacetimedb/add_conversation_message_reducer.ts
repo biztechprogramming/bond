@@ -12,11 +12,11 @@ import {
 
 export default {
   id: __t.string(),
-  name: __t.string(),
-  displayName: __t.string(),
-  systemPrompt: __t.string(),
-  model: __t.string(),
-  utilityModel: __t.string(),
-  tools: __t.string(),
-  isDefault: __t.bool(),
+  conversationId: __t.string(),
+  role: __t.string(),
+  content: __t.string(),
+  toolCalls: __t.string(),
+  toolCallId: __t.string(),
+  tokenCount: __t.u32(),
+  status: __t.string(),
 };

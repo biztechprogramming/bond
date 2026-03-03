@@ -1,60 +1,68 @@
+import { useEffect, useState } from 'react';
+import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, type Conversation, type WorkPlan, type WorkItem } from '@/lib/spacetimedb-client';
+
 /**
- * React hooks for SpacetimeDB subscriptions.
+ * useSpacetimeDB React hook.
+ * 
+ * Subscribes to the SpacetimeDB client data changes and triggers
+ * a re-render in the component whenever table data is updated.
+ * 
+ * @param selector A function that selects data from the database.
+ * @param deps Dependencies for the selector.
  */
-
-"use client";
-
-import { useEffect, useState } from "react";
-import {
-  connectToSpacetimeDB,
-  onDataChange,
-  getConversations,
-  getMessagesForConversation,
-  getConversation,
-  getAgentName,
-  type Conversation,
-  type ConversationMessage,
-} from "@/lib/spacetimedb-client";
-
-export function useSpacetimeConnection() {
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function useSpacetimeDB<T>(selector: (db: any) => T, deps: any[] = []): T {
+  const [data, setData] = useState<T>(() => selector(getConnection()));
 
   useEffect(() => {
-    connectToSpacetimeDB()
-      .then(() => setConnected(true))
-      .catch((err) => setError(err?.message || "Failed to connect"));
-  }, []);
-
-  return { connected, error };
-}
-
-function useSpacetimeData<T>(selector: () => T): T {
-  const [data, setData] = useState<T>(selector);
-
-  useEffect(() => {
-    setData(selector());
-    const unsub = onDataChange(() => setData(selector()));
-    return unsub;
-  }, []);
+    const unsubscribe = onDataChange(() => {
+      setData(selector(getConnection()));
+    });
+    
+    // Initial fetch in case connection was established before mount
+    setData(selector(getConnection()));
+    
+    return unsubscribe;
+  }, [...deps]);
 
   return data;
 }
 
+/**
+ * Hook to get conversations from SpacetimeDB.
+ */
 export function useConversations(): Conversation[] {
-  return useSpacetimeData(getConversations);
+  return useSpacetimeDB(() => getConversations());
 }
 
-export function useConversation(id: string | null): Conversation | null {
-  return useSpacetimeData(() => (id ? getConversation(id) : null));
+/**
+ * Hook to get work plans from SpacetimeDB.
+ */
+export function useWorkPlans(): WorkPlan[] {
+  return useSpacetimeDB(() => getWorkPlans());
 }
 
-export function useConversationMessages(conversationId: string | null): ConversationMessage[] {
-  return useSpacetimeData(() =>
-    conversationId ? getMessagesForConversation(conversationId) : []
-  );
+/**
+ * Hook to get work items for a specific plan from SpacetimeDB.
+ */
+export function useWorkItems(planId: string): WorkItem[] {
+  return useSpacetimeDB(() => getWorkItems(planId), [planId]);
 }
 
-export function useAgentName(agentId: string | null): string | null {
-  return useSpacetimeData(() => (agentId ? getAgentName(agentId) : null));
+/**
+ * Hook to get SpacetimeDB connection status.
+ */
+export function useSpacetimeConnection() {
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    const check = () => {
+      const conn = getConnection();
+      setConnected(!!conn && conn.isActive);
+    };
+
+    check();
+    return onDataChange(check);
+  }, []);
+
+  return { connected };
 }

@@ -127,6 +127,36 @@ const spacetimedb = schema({
       updatedAt: t.u64(),
     }
   ),
+
+  // -- Work Plans (Kanban Board) --
+  workPlans: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agentId: t.string(),
+      conversationId: t.string(),
+      title: t.string(),
+      status: t.string(), // 'active', 'completed', 'cancelled'
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
+  // -- Work Items --
+  workItems: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      planId: t.string(),
+      title: t.string(),
+      status: t.string(), // 'new', 'in_progress', 'done', 'blocked'
+      ordinal: t.u32(),
+      notes: t.string(), // JSON array of strings
+      filesChanged: t.string(), // JSON array
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
 });
 
 export default spacetimedb;
@@ -134,6 +164,22 @@ export default spacetimedb;
 // ===============================================================
 // Reducers
 // ===============================================================
+
+// -- Models --
+
+export const addModel = spacetimedb.reducer(
+  {
+    id: t.string(),
+    provider: t.string(),
+    modelId: t.string(),
+    displayName: t.string(),
+    contextWindow: t.u32(),
+    isEnabled: t.bool(),
+  },
+  (ctx, model) => {
+    ctx.db.llm_models.insert(model);
+  }
+);
 
 // -- Agents --
 
@@ -146,12 +192,12 @@ export const addAgent = spacetimedb.reducer(
     model: t.string(),
     utilityModel: t.string(),
     tools: t.string(),
+    isDefault: t.bool(),
   },
   (ctx, agent) => {
     ctx.db.agents.insert({
       ...agent,
       isActive: true,
-      isDefault: false,
       createdAt: BigInt(Date.now()),
     });
   }
@@ -428,5 +474,137 @@ export const deleteSetting = spacetimedb.reducer(
   },
   (ctx, args) => {
     ctx.db.settings.key.delete(args.key);
+  }
+);
+
+// -- Work Plans --
+
+export const createWorkPlan = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    conversationId: t.string(),
+    title: t.string(),
+  },
+  (ctx, plan) => {
+    const now = BigInt(Date.now());
+    ctx.db.workPlans.insert({
+      ...plan,
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+);
+
+export const updateWorkPlanStatus = spacetimedb.reducer(
+  {
+    id: t.string(),
+    status: t.string(),
+  },
+  (ctx, args) => {
+    const plan = ctx.db.workPlans.id.find(args.id);
+    if (!plan) return;
+    ctx.db.workPlans.id.update({
+      ...plan,
+      status: args.status,
+      updatedAt: BigInt(Date.now()),
+    });
+  }
+);
+
+// -- Work Items --
+
+export const addWorkItem = spacetimedb.reducer(
+  {
+    id: t.string(),
+    planId: t.string(),
+    title: t.string(),
+    ordinal: t.u32(),
+  },
+  (ctx, item) => {
+    const now = BigInt(Date.now());
+    ctx.db.workItems.insert({
+      ...item,
+      status: 'new',
+      notes: '[]',
+      filesChanged: '[]',
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+);
+
+export const updateWorkItem = spacetimedb.reducer(
+  {
+    id: t.string(),
+    status: t.string(),
+    notes: t.string().optional(),
+    filesChanged: t.string().optional(),
+  },
+  (ctx, args) => {
+    const item = ctx.db.workItems.id.find(args.id);
+    if (!item) return;
+    ctx.db.workItems.id.update({
+      ...item,
+      status: args.status,
+      notes: args.notes ?? item.notes,
+      filesChanged: args.filesChanged ?? item.filesChanged,
+      updatedAt: BigInt(Date.now()),
+    });
+  }
+);
+
+// -- Import (Data Sync) --
+
+export const importWorkItem = spacetimedb.reducer(
+  {
+    id: t.string(),
+    planId: t.string(),
+    title: t.string(),
+    status: t.string(),
+    ordinal: t.u32(),
+    notes: t.string(),
+    filesChanged: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, item) => {
+    const existing = ctx.db.workItems.id.find(item.id);
+    if (existing) {
+      ctx.db.workItems.id.update({
+        ...existing,
+        ...item,
+        title: item.title === "" ? existing.title : item.title,
+        ordinal: item.ordinal === 0 ? existing.ordinal : item.ordinal,
+        createdAt: item.createdAt === 0n ? existing.createdAt : item.createdAt,
+      });
+    } else {
+      ctx.db.workItems.insert(item);
+    }
+  }
+);
+
+export const importWorkPlan = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    conversationId: t.string(),
+    title: t.string(),
+    status: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, plan) => {
+    const existing = ctx.db.workPlans.id.find(plan.id);
+    if (existing) {
+      ctx.db.workPlans.id.update({
+        ...existing,
+        ...plan,
+        createdAt: plan.createdAt === 0n ? existing.createdAt : plan.createdAt,
+      });
+    } else {
+      ctx.db.workPlans.insert(plan);
+    }
   }
 );

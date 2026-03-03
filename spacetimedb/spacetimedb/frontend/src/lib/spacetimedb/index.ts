@@ -163,7 +163,7 @@ const tablesSchema = __schema({
       { name: 'tool_logs_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ToolLogsRow),
-  workItems: __table({
+  work_items: __table({
     name: 'work_items',
     indexes: [
       { name: 'id', algorithm: 'btree', columns: [
@@ -174,7 +174,7 @@ const tablesSchema = __schema({
       { name: 'work_items_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, WorkItemsRow),
-  workPlans: __table({
+  work_plans: __table({
     name: 'work_plans',
     indexes: [
       { name: 'id', algorithm: 'btree', columns: [

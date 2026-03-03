@@ -635,10 +635,11 @@ export class WebChatChannel {
     }
   }
 
-  private broadcast(msg: OutgoingMessage): void {
+  public broadcast(msg: OutgoingMessage): void {
     const payload = JSON.stringify(msg);
+    console.log(`[gateway] Broadcasting message: type=${msg.type} sessionId=${msg.sessionId || 'all'}`);
     for (const socket of this.sessionManager.getAllSockets()) {
-      if (socket.readyState === socket.OPEN) {
+      if (socket.readyState === 1) { // 1 is OPEN
         socket.send(payload);
       }
     }

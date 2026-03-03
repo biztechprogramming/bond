@@ -12,11 +12,14 @@ import {
 
 export default {
   id: __t.string(),
-  name: __t.string(),
-  displayName: __t.string(),
-  systemPrompt: __t.string(),
-  model: __t.string(),
-  utilityModel: __t.string(),
-  tools: __t.string(),
-  isDefault: __t.bool(),
+  agentId: __t.string(),
+  channel: __t.string(),
+  title: __t.string(),
+  isActive: __t.bool(),
+  messageCount: __t.u32(),
+  rollingSummary: __t.string(),
+  summaryCoversto: __t.u32(),
+  recentToolsUsed: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
 };

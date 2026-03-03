@@ -52,6 +52,12 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   // Conversations API (backed by SpacetimeDB)
   app.use("/api/v1", createConversationsRouter(config));
 
+  // Global Broadcast API for internal services
+  app.post("/api/v1/broadcast", (req: any, res: any) => {
+    webchat.broadcast(req.body);
+    res.status(200).json({ status: "broadcasted" });
+  });
+
   // HTTP server for health check + WS upgrade
   app.get("/health", (req: any, res: any) => {
     res.json({ status: "ok", service: "bond-gateway" });

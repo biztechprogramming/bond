@@ -56,8 +56,37 @@ async def create_plan(body: CreatePlanRequest, db: AsyncSession = Depends(get_db
     """Create a new work plan."""
     from ulid import ULID
     plan_id = str(ULID())
-    now = datetime.now(timezone.utc).isoformat()
+    now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+    now_iso = datetime.now(timezone.utc).isoformat()
 
+    # 1. Save to SpacetimeDB via Gateway if persistence is enabled
+    from backend.app.config import get_settings
+    settings = get_settings()
+    # We use a direct HTTP call to the gateway for now to ensure SpacetimeDB gets the plan
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"http://localhost:{settings.gateway_port}/api/v1/sync/work-plans", json={
+                "id": plan_id,
+                "agentId": body.agent_id,
+                "conversationId": body.conversation_id or "",
+                "title": body.title,
+                "status": "active",
+                "createdAt": now_ts,
+                "updatedAt": now_ts
+            })
+            # Also broadcast plan_created for real-time UI
+            await client.post(f"http://localhost:{settings.gateway_port}/api/v1/broadcast", json={
+                "type": "plan_created",
+                "planId": plan_id,
+                "planTitle": body.title,
+                "planStatus": "active",
+                "conversationId": body.conversation_id or ""
+            })
+    except Exception as e:
+        logger.warning("Failed to sync new plan to SpacetimeDB: %s", e)
+
+    # 2. Save to local SQLite (source of truth for now)
     await db.execute(
         text(
             "INSERT INTO work_plans (id, agent_id, conversation_id, parent_plan_id, title, status, created_at, updated_at) "
@@ -69,7 +98,7 @@ async def create_plan(body: CreatePlanRequest, db: AsyncSession = Depends(get_db
             "conv_id": body.conversation_id or "",
             "parent_id": body.parent_plan_id,
             "title": body.title,
-            "now": now,
+            "now": now_iso,
         },
     )
     await db.commit()
@@ -106,8 +135,52 @@ async def add_item(plan_id: str, body: AddItemRequest, db: AsyncSession = Depend
         ordinal = max_result.fetchone()[0] + 1
 
     item_id = str(ULID())
-    now = datetime.now(timezone.utc).isoformat()
+    now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+    now_iso = datetime.now(timezone.utc).isoformat()
 
+    # 1. Sync to SpacetimeDB
+    from backend.app.config import get_settings
+    settings = get_settings()
+    # Fetch conversation_id for broadcast
+    result = await db.execute(
+        text("SELECT conversation_id FROM work_plans WHERE id = :plan_id"),
+        {"plan_id": plan_id},
+    )
+    conv_id_row = result.fetchone()
+    conv_id = conv_id_row[0] if conv_id_row else ""
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"http://localhost:{settings.gateway_port}/api/v1/sync/work-items", json={
+                "id": item_id,
+                "planId": plan_id,
+                "title": body.title,
+                "status": "new",
+                "ordinal": ordinal,
+                "notes": "[]",
+                "filesChanged": "[]",
+                "createdAt": now_ts,
+                "updatedAt": now_ts
+            })
+    except Exception as e:
+        logger.warning("Failed to sync new item to SpacetimeDB: %s", e)
+
+    # 3. Broadcast SSE via Gateway for real-time UI
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(f"http://localhost:{settings.gateway_port}/api/v1/broadcast", json={
+                "type": "item_updated",
+                "planId": plan_id,
+                "itemId": item_id,
+                "itemStatus": "new",
+                "itemTitle": body.title,
+                "conversationId": conv_id
+            })
+    except: pass
+
+    # 2. Save to local SQLite
     await db.execute(
         text(
             "INSERT INTO work_items (id, plan_id, title, status, ordinal, notes, files_changed, created_at, updated_at) "
@@ -118,7 +191,7 @@ async def add_item(plan_id: str, body: AddItemRequest, db: AsyncSession = Depend
             "plan_id": plan_id,
             "title": body.title,
             "ordinal": ordinal,
-            "now": now,
+            "now": now_iso,
         },
     )
     await db.commit()
@@ -145,9 +218,14 @@ async def update_item_full(
     if not row:
         raise HTTPException(status_code=404, detail="Item not found in this plan")
 
-    now = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
     updates = ["updated_at = :now"]
-    params: dict = {"now": now, "item_id": item_id}
+    params: dict = {"now": now_iso, "item_id": item_id}
+
+    new_status = body.status or row[1]
+    new_notes_raw = row[2]
+    new_files_raw = row[3]
 
     if body.status is not None:
         updates.append("status = :status")
@@ -159,9 +237,10 @@ async def update_item_full(
 
     if body.notes is not None:
         existing_notes = json.loads(row[2]) if row[2] else []
-        existing_notes.append({"text": body.notes, "timestamp": now})
+        existing_notes.append({"text": body.notes, "timestamp": now_iso})
+        new_notes_raw = json.dumps(existing_notes)
         updates.append("notes = :notes")
-        params["notes"] = json.dumps(existing_notes)
+        params["notes"] = new_notes_raw
 
     if body.context_snapshot is not None:
         updates.append("context_snapshot = :snapshot")
@@ -172,8 +251,37 @@ async def update_item_full(
         for f in body.files_changed:
             if f not in existing_files:
                 existing_files.append(f)
+        new_files_raw = json.dumps(existing_files)
         updates.append("files_changed = :files")
-        params["files"] = json.dumps(existing_files)
+        params["files"] = new_files_raw
+
+    # Sync to SpacetimeDB
+    from backend.app.config import get_settings
+    settings = get_settings()
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"http://localhost:{settings.gateway_port}/api/v1/sync/work-items", json={
+                "id": item_id,
+                "planId": plan_id,
+                "title": "", # Reducer will use existing title
+                "status": new_status,
+                "ordinal": 0, # Reducer will use existing ordinal
+                "notes": new_notes_raw,
+                "filesChanged": new_files_raw,
+                "updatedAt": now_ts
+            })
+            # Broadcast update for real-time UI
+            await client.post(f"http://localhost:{settings.gateway_port}/api/v1/broadcast", json={
+                "type": "item_updated",
+                "planId": plan_id,
+                "itemId": item_id,
+                "itemStatus": new_status,
+                "itemTitle": "", # Client should keep current title
+                "conversationId": "" # Board is global
+            })
+    except Exception as e:
+        logger.warning("Failed to sync item update to SpacetimeDB: %s", e)
 
     await db.execute(
         text(f"UPDATE work_items SET {', '.join(updates)} WHERE id = :item_id"),
@@ -382,6 +490,21 @@ async def update_item_status(
         params,
     )
     await db.commit()
+
+    # Broadcast update for real-time UI
+    try:
+        from backend.app.config import get_settings
+        settings = get_settings()
+        import httpx
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(f"http://localhost:{settings.gateway_port}/api/v1/broadcast", json={
+                "type": "item_updated",
+                "planId": plan_id,
+                "itemId": item_id,
+                "itemStatus": body.status,
+                "conversationId": "" # Board handles global updates
+            })
+    except: pass
 
     return {"status": "updated", "item_id": item_id, "new_status": body.status}
 

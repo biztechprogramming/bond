@@ -10,13 +10,15 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {
-  id: __t.string(),
+export default __t.row({
+  id: __t.string().primaryKey(),
   name: __t.string(),
-  displayName: __t.string(),
-  systemPrompt: __t.string(),
+  displayName: __t.string().name("display_name"),
+  systemPrompt: __t.string().name("system_prompt"),
   model: __t.string(),
-  utilityModel: __t.string(),
+  utilityModel: __t.string().name("utility_model"),
   tools: __t.string(),
-  isDefault: __t.bool(),
-};
+  isActive: __t.bool().name("is_active"),
+  isDefault: __t.bool().name("is_default"),
+  createdAt: __t.u64().name("created_at"),
+});

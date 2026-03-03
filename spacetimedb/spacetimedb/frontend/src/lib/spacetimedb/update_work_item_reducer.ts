@@ -12,11 +12,7 @@ import {
 
 export default {
   id: __t.string(),
-  name: __t.string(),
-  displayName: __t.string(),
-  systemPrompt: __t.string(),
-  model: __t.string(),
-  utilityModel: __t.string(),
-  tools: __t.string(),
-  isDefault: __t.bool(),
+  status: __t.string(),
+  notes: __t.option(__t.string()),
+  filesChanged: __t.option(__t.string()),
 };
