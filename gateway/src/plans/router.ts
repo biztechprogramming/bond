@@ -15,7 +15,7 @@ async function callReducer(
   baseUrl: string,
   module: string,
   reducer: string,
-  args: (string | number | boolean | null)[]
+  args: unknown[]
 ): Promise<void> {
   const url = `${baseUrl}/v1/database/${module}/call/${reducer}`;
   const res = await fetch(url, {
@@ -261,16 +261,20 @@ export function createPlansRouter(config: GatewayConfig) {
     const current = currentRows[0];
 
     const resolvedStatus = status ?? current.status;
-    // Option<string>: pass null for None so SpacetimeDB preserves/clears correctly
-    const resolvedNotes: string | null = notes !== undefined
-      ? JSON.stringify(Array.isArray(notes) ? notes : [{ text: String(notes) }])
-      : (current.notes ?? null);
-    const resolvedFiles: string | null = files_changed !== undefined
-      ? JSON.stringify(files_changed)
-      : (current.files_changed ?? null);
+
+    // SpacetimeDB Option<string> sum type encoding: {"some": value} or {"none": []}
+    const encodeOption = (val: string | null | undefined): { some: string } | { none: [] } =>
+      (val !== null && val !== undefined) ? { some: val } : { none: [] as [] };
+
+    const resolvedNotes = notes !== undefined
+      ? encodeOption(JSON.stringify(Array.isArray(notes) ? notes : [{ text: String(notes) }]))
+      : encodeOption(current.notes ?? null);
+    const resolvedFiles = files_changed !== undefined
+      ? encodeOption(JSON.stringify(files_changed))
+      : encodeOption(current.files_changed ?? null);
 
     // Reducer always requires exactly 4 positional args: [id, status, notes, filesChanged]
-    const reducerArgs: (string | null)[] = [itemId, resolvedStatus, resolvedNotes, resolvedFiles];
+    const reducerArgs = [itemId, resolvedStatus, resolvedNotes, resolvedFiles];
 
     try {
       await callReducer(url, mod, "update_work_item", reducerArgs);
