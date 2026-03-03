@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>13 — SpacetimeDB Integration | Bond Architecture</title>
+<style>
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e0e0e8; --muted: #8888a0; --accent: #6c8aff; --accent2: #ff6c8a; --accent3: #6cffa0; --card-bg: #16161f; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+  .container { max-width: 960px; margin: 0 auto; padding: 60px 24px; }
+  .back { color: var(--muted); font-size: 0.9rem; margin-bottom: 32px; display: inline-block; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  h1 { font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+  h2 { font-size: 1.4rem; font-weight: 600; margin: 40px 0 12px; color: var(--accent); }
+  h3 { font-size: 1.1rem; font-weight: 600; margin: 24px 0 8px; }
+  p { margin-bottom: 14px; }
+  ul { margin: 0 0 16px 24px; } li { margin-bottom: 6px; }
+  code { background: var(--surface); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; font-family: 'JetBrains Mono', monospace; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; }
+  .diagram pre { color: var(--accent3); font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; line-height: 1.5; }
+  .schema { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; }
+  .schema h3 { margin-top: 0; color: var(--accent2); }
+  .status-tag { display: inline-block; background: #2a1a1a; border: 1px solid #ff6c8a; border-radius: 4px; padding: 2px 8px; font-size: 0.7rem; color: #ff6c8a; text-transform: uppercase; font-weight: bold; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<div class="container">
+<a class="back" href="index.html">← Back to overview</a>
+
+<div class="status-tag">Draft / Proposal</div>
+<h1><span>13</span> — SpacetimeDB Integration</h1>
+<p class="subtitle">Evolving from passive SQLite storage to an active, real-time relational engine.</p>
+
+<h2>Overview</h2>
+<p>While the initial design used SQLite for simplicity, <strong>SpacetimeDB</strong> offers a "Serverless Real-Time" paradigm where application logic (Reducers) lives directly inside the database. This eliminates the traditional mismatch between database state and application memory, providing instant reactivity for multi-agent coordination and UI updates.</p>
+
+<h2>Why SpacetimeDB?</h2>
+<ul>
+  <li><strong>Unified State:</strong> No more "database vs. runtime memory." The database <em>is</em> the runtime.</li>
+  <li><strong>Instant Reactivity:</strong> Clients (Webchat, CLI) subscribe to tables. When an agent updates a row, the UI reflects it immediately without polling.</li>
+  <li><strong>ACID Reducers:</strong> Logic like "deducting credits" or "claiming a task" is transactional and runs in WebAssembly inside the DB.</li>
+  <li><strong>Zero-Downtime Migrations:</strong> Module hotswapping allows updating Bond's "brain" logic without dropping active agent sessions.</li>
+</ul>
+
+<h2>Architectural Shift</h2>
+<p>The Python backend (FastAPI) shifts from being the <em>owner</em> of the state to a <em>client</em> of the SpacetimeDB module. The "Mediator Pipeline" logic can gradually migrate into Reducers.</p>
+
+<div class="diagram"><pre>
+  [ Channels / UI ] ◀──(Subscription)──▶ [ SpacetimeDB Module ]
+                                               │
+                                       (Logic & Tables)
+                                               │
+  [ Python Worker ] ◀──(Reducer Calls)──▶ [ WASM Reducers ]
+          │                                    │
+          └─▶ (Heavy lifting: LLM, Embeddings, Tool Execution)
+</pre></div>
+
+<h2>Database Modules</h2>
+<p>Bond's SpacetimeDB module will be written in <strong>Rust</strong> (primary) or <strong>TypeScript</strong>, compiled to WASM.</p>
+
+<div class="schema">
+  <h3>Tables (Subscribable)</h3>
+  <ul>
+    <li><code>Agents</code> — Status, current task, active tool, heartbeat.</li>
+    <li><code>Messages</code> — Full conversation history with real-time tailing.</li>
+    <li><code>TaskGraph</code> — Real-time dependency tracking and status updates.</li>
+    <li><code>ActiveSubscriptions</code> — Managed OAuth/API profiles and their cooldowns.</li>
+  </ul>
+</div>
+
+<div class="schema">
+  <h3>Reducers (Transactional)</h3>
+  <ul>
+    <li><code>SendMessage(content, sender_id)</code> — Validates sender, appends message, triggers agent notification.</li>
+    <li><code>UpdateTask(task_id, new_status)</code> — Atomically updates status and checks if dependencies are cleared.</li>
+    <li><code>LogAudit(action, actor, context)</code> — Immutable append-only audit trail.</li>
+    <li><code>ClaimTask(agent_id, task_id)</code> — Ensures atomic task assignment in multi-agent race conditions.</li>
+  </ul>
+</div>
+
+<h2>Migration Strategy</h2>
+<ol>
+  <li><strong>Hybrid Storage:</strong> Keep SQLite for local file-heavy data (Blobs, Vector Indexes) while moving coordination state (Tasks, Agents, Messages) to SpacetimeDB.</li>
+  <li><strong>Client SDKs:</strong> Use the SpacetimeDB SDK in the TypeScript Gateway for instant UI updates.</li>
+  <li><strong>Incremental Logic:</strong> Move validation logic from Python/FastAPI into WASM Reducers for guaranteed consistency.</li>
+</ol>
+
+<h2>Vector Search Note</h2>
+<p>As SpacetimeDB does not currently have native vector indexing as robust as <code>sqlite-vec</code>, we will maintain a **Sidecar Vector Store** (SQLite) for RAG/Embeddings, linked to SpacetimeDB records via unique IDs.</p>
+
+<p style="color:var(--muted);margin-top:60px;font-size:0.85rem;">Bond Architecture — 13 SpacetimeDB Integration</p>
+</div>
+</body>
+</html>

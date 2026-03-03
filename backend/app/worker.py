@@ -225,8 +225,47 @@ async def _lifespan(application: FastAPI):
     config_path = os.environ.get("BOND_WORKER_CONFIG", "/config/agent.json")
     data_dir = os.environ.get("BOND_WORKER_DATA_DIR", "/data")
     await _startup(config_path, data_dir)
+    
+    # MCP Setup for worker
+    try:
+        from backend.app.mcp import mcp_manager
+        # In worker, we can load servers from the local agent_db if they exist
+        if _state.agent_db:
+            # We need to wrap the aiosqlite connection in something load_servers_from_db accepts
+            # Or just implement a simplified version for aiosqlite
+            await _worker_load_mcp_servers(mcp_manager)
+    except Exception as e:
+        logger.error(f"Failed to load MCP servers in worker: {e}")
+        
     yield
+    
+    # MCP Shutdown
+    try:
+        from backend.app.mcp import mcp_manager
+        await mcp_manager.stop_all()
+    except:
+        pass
+        
     await _shutdown()
+
+async def _worker_load_mcp_servers(manager):
+    """Simplified MCP loader for worker using aiosqlite."""
+    from backend.app.mcp import MCPServerConfig
+    try:
+        async with _state.agent_db.execute("SELECT * FROM mcp_servers WHERE enabled = 1") as cursor:
+            async for row in cursor:
+                # aiosqlite rows are indexed or can be turned into dict
+                row_dict = dict(zip([column[0] for column in cursor.description], row))
+                config = MCPServerConfig(
+                    name=row_dict["name"],
+                    command=row_dict["command"],
+                    args=json.loads(row_dict["args"]),
+                    env=json.loads(row_dict["env"]),
+                    enabled=bool(row_dict["enabled"])
+                )
+                await manager.add_server(config)
+    except Exception as e:
+        logger.debug(f"MCP servers table not found or error in agent_db: {e}")
 
 app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 
@@ -482,6 +521,17 @@ async def _run_agent_loop(
 
     # Build tool definitions + registry with heuristic selection
     registry = build_native_registry()
+    
+    # Refresh MCP tools
+    try:
+        from backend.app.mcp import mcp_manager
+        await mcp_manager.refresh_tools(registry)
+        # Add any mcp tools to the enabled set for heuristic selection
+        for name in registry.registered_names:
+            if name.startswith("mcp_") and name not in agent_tools:
+                agent_tools.append(name)
+    except Exception as e:
+        logger.error(f"Failed to refresh MCP tools in worker loop: {e}")
 
     # Extract last assistant message for tool selection context
     last_assistant = ""

@@ -21,6 +21,7 @@ from backend.app.api.v1.conversations import router as conversations_router
 from backend.app.api.v1.memory import router as memory_router
 from backend.app.api.v1.prompts import router as prompts_router
 from backend.app.api.v1.plans import router as plans_router
+from backend.app.api.v1.mcp import router as mcp_router
 
 
 @asynccontextmanager
@@ -35,17 +36,13 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     app.state.scheduler = scheduler
 
-    # MCP Setup (Phase 1: hardcoded test server)
-    # We use 'npx' to run the 'everything' server which is a standard test server
+    # MCP Setup (Load enabled servers from DB)
     try:
-        await mcp_manager.add_server(MCPServerConfig(
-            name="everything",
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-everything"]
-        ))
+        async with get_session_factory()() as db:
+            await mcp_manager.load_servers_from_db(db)
     except Exception as e:
         import logging
-        logging.getLogger("bond.mcp").error(f"Failed to start test MCP server: {e}")
+        logging.getLogger("bond.mcp").error(f"Failed to load MCP servers on startup: {e}")
 
     yield
 
@@ -93,3 +90,4 @@ app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(memory_router, prefix="/api/v1")
 app.include_router(prompts_router, prefix="/api/v1")
 app.include_router(plans_router, prefix="/api/v1")
+app.include_router(mcp_router, prefix="/api/v1")

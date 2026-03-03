@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import os
 from contextlib import AsyncExitStack
@@ -7,6 +8,8 @@ from typing import Dict, List, Optional, Any, TYPE_CHECKING, Union, Type
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from pydantic import BaseModel, Field, create_model
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     from app.agent.tools import ToolRegistry
@@ -18,6 +21,7 @@ class MCPServerConfig(BaseModel):
     command: str
     args: List[str] = []
     env: Dict[str, str] = {}
+    enabled: bool = True
 
 class MCPConnection:
     """Manages a single MCP server connection."""
@@ -69,6 +73,10 @@ class MCPManager:
         self._bond_to_class_map: Dict[str, str] = {} # ClassName -> bond_tool_name
 
     async def add_server(self, config: MCPServerConfig):
+        # Prevent duplicate servers with same name
+        if config.name in self.connections:
+            await self.connections[config.name].stop()
+            
         conn = MCPConnection(config)
         self.connections[config.name] = conn
         await conn.start()
@@ -139,6 +147,22 @@ class MCPManager:
         
         return handler
 
+    def _create_handler_from_name(self, bond_tool_name: str):
+        """Reconstruct a handler from a bond_tool_name (used by worker registry)."""
+        # bond_tool_name = f"mcp_{server_name}_{mcp_tool_name}"
+        if not bond_tool_name.startswith("mcp_"):
+            raise ValueError(f"Invalid MCP tool name: {bond_tool_name}")
+        
+        # This is a bit brittle if server names have underscores, but let's try
+        # Better: find the longest matching server name
+        for server_name in self.connections:
+            prefix = f"mcp_{server_name}_"
+            if bond_tool_name.startswith(prefix):
+                mcp_tool_name = bond_tool_name[len(prefix):]
+                return self._create_handler(server_name, mcp_tool_name)
+        
+        raise ValueError(f"Server not found for tool: {bond_tool_name}")
+
     def get_definitions(self, tool_names: list[str]) -> list[dict]:
         return [self._dynamic_definitions[name] for name in tool_names if name in self._dynamic_definitions]
 
@@ -203,3 +227,21 @@ class MCPManager:
                 continue
             
         return models
+
+    async def load_servers_from_db(self, db: AsyncSession):
+        """Load and start all enabled MCP servers from the database."""
+        try:
+            result = await db.execute(text("SELECT * FROM mcp_servers WHERE enabled = 1"))
+            rows = result.mappings().all()
+            for row in rows:
+                config = MCPServerConfig(
+                    name=row["name"],
+                    command=row["command"],
+                    args=json.loads(row["args"]),
+                    env=json.loads(row["env"]),
+                    enabled=bool(row["enabled"])
+                )
+                if config.name not in self.connections:
+                    await self.add_server(config)
+        except Exception as e:
+            logger.error(f"Failed to load MCP servers from DB: {e}")
