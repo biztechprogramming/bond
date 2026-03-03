@@ -50,8 +50,8 @@ class ParallelWorkPlan(BaseModel):
 ### 3. Native Parallel Optimizations
 Beyond the general orchestration loop, specific high-latency read operations will be natively parallelized:
 - **Parallel File Discovery & Reading**: When the Architect requests multiple file reads or an entire directory scan, the `NativeRegistry` will utilize `asyncio.gather` to perform I/O concurrently rather than sequentially.
-- **Concurrent Schema Reflection**: During agent orientation, database schema reflection (connecting to `knowledge.db` or `agent.db` to retrieve table structures) will be parallelized across all attached databases to minimize startup latency.
-- **Parallel Context Retrieval**: Searching across multiple memory types (Knowledge, Entity Graph, Audit Logs) will be dispatched concurrently during the `ContextDistillation` phase.
+- **Concurrent SpacetimeDB Schema Reflection**: Parallelizing the retrieval of table structures and reducer signatures from the SpacetimeDB module via the HTTP/WS control plane, ensuring the agent is immediately oriented with the latest global state.
+- **Parallel Context Retrieval**: Searching across multiple memory types (Knowledge, Entity Graph, SpacetimeDB Message History) will be dispatched concurrently during the `ContextDistillation` phase.
 
 ## Implementation Plan
 

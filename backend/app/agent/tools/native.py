@@ -83,10 +83,33 @@ async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Read a file from the container filesystem (native open)."""
-    path_str = arguments.get("path", "")
+    """Read one or more files from the container filesystem (native open)."""
+    path_str = arguments.get("path")
+    paths_list = arguments.get("paths")
+
+    # Handle multiple paths in parallel
+    if paths_list and isinstance(paths_list, list):
+        tasks = []
+        for p in paths_list:
+            if not isinstance(p, str):
+                continue
+            # Create a localized arguments dict for each path
+            local_args = arguments.copy()
+            del local_args["paths"]
+            local_args["path"] = p
+            tasks.append(handle_file_read(local_args, context))
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        combined_results = []
+        for res in results:
+            if isinstance(res, Exception):
+                combined_results.append({"error": str(res)})
+            else:
+                combined_results.append(res)
+        return {"results": combined_results}
+
     if not path_str:
-        return {"error": "path is required"}
+        return {"error": "path or paths is required"}
 
     path = Path(path_str)
     if not path.exists():
@@ -690,4 +713,60 @@ async def handle_respond(
     return {
         "message": arguments.get("message", ""),
         "_terminal": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Parallel Orchestration
+# ---------------------------------------------------------------------------
+
+async def handle_parallel_orchestrate(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute multiple tool calls in parallel batches."""
+    from backend.app.agent.tools.native_registry import build_native_registry
+
+    plan_data = arguments.get("plan", {})
+    batches = plan_data.get("batches", [])
+    if not batches:
+        return {"error": "No batches found in parallel plan."}
+
+    registry = build_native_registry()
+    batch_results = []
+
+    for i, batch in enumerate(batches):
+        batch_name = batch.get("batch_name", f"Batch {i+1}")
+        calls = batch.get("calls", [])
+        
+        logger.info("Executing parallel batch: %s (%d calls)", batch_name, len(calls))
+        
+        tasks = []
+        for call in calls:
+            tool_name = call.get("tool_name")
+            args = call.get("arguments", {})
+            
+            # TODO: Integrate model_override once litellm support is added to registry
+            if tool_name:
+                tasks.append(registry.execute(tool_name, args, context))
+
+        # Run all calls in the batch concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        processed_results = []
+        for res in results:
+            if isinstance(res, Exception):
+                processed_results.append({"error": str(res)})
+            else:
+                processed_results.append(res)
+        
+        batch_results.append({
+            "batch_name": batch_name,
+            "results": processed_results
+        })
+
+    return {
+        "status": "completed",
+        "batches_executed": len(batches),
+        "results": batch_results
     }

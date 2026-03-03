@@ -462,11 +462,37 @@ async def _run_agent_loop(
     # Stage 1: Select relevant fragments via utility model
     fragments = config.get("prompt_fragments", [])
     enabled_fragments = [f for f in fragments if f.get("enabled", True)]
-    selected_fragments = await _select_relevant_fragments(
-        enabled_fragments, user_message, history, config, utility_kwargs,
-    )
+    
+    # Concurrent Context Retrieval: Retrieve relevant fragments and memory search in parallel
+    async def _fetch_fragments():
+        return await _select_relevant_fragments(
+            enabled_fragments, user_message, history, config, utility_kwargs,
+        )
+
+    async def _fetch_memory():
+        # Quick search for related context
+        try:
+            from backend.app.agent.tools.native import handle_search_memory
+            res = await handle_search_memory(
+                {"query": user_message, "limit": 3},
+                {"agent_db": _state.agent_db}
+            )
+            return res.get("results", [])
+        except Exception:
+            return []
+
+    context_results = await asyncio.gather(_fetch_fragments(), _fetch_memory())
+    selected_fragments = context_results[0]
+    recent_memories = context_results[1]
+    
     fragment_stats = {"selected": len(selected_fragments), "total": len(enabled_fragments)}
     prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
+    
+    # Inject relevant memories directly into the system prompt prefix
+    if recent_memories:
+        mem_text = "\n".join([f"- {m['content']}" for m in recent_memories])
+        prompt_parts.append(f"## Relevant Memories\n{mem_text}")
+        
     full_system_prompt = "\n\n".join(prompt_parts)
 
     # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
@@ -1088,6 +1114,35 @@ async def _startup(config_path: str, data_dir: str) -> None:
     # Initialize persistence client (auto-detects mode if not configured)
     _state.persistence = PersistenceClient(agent_id=_state.agent_id)
     await _state.persistence.init()
+    
+    # ── Parallel SpacetimeDB Schema Reflection ──
+    try:
+        if _state.persistence and _state.persistence.mode == "api":
+            logger.info("Starting parallel SpacetimeDB schema reflection...")
+            # We concurrently fetch tables and reducers to orient the agent faster
+            async def _fetch_schema(endpoint: str):
+                try:
+                    url = f"{_state.persistence.gateway_url}/api/v1/spacetimedb/{endpoint}"
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.get(url)
+                        return resp.json() if resp.status_code == 200 else None
+                except Exception:
+                    return None
+
+            schema_tasks = [
+                _fetch_schema("tables"),
+                _fetch_schema("reducers")
+            ]
+            schema_results = await asyncio.gather(*schema_tasks)
+            _state.spacetimedb_schema = {
+                "tables": schema_results[0],
+                "reducers": schema_results[1]
+            }
+            logger.info("SpacetimeDB schema reflection complete: %d tables, %d reducers", 
+                        len(_state.spacetimedb_schema["tables"] or []),
+                        len(_state.spacetimedb_schema["reducers"] or []))
+    except Exception as e:
+        logger.warning("Failed parallel schema reflection: %s", e)
     
     logger.info(
         "Agent worker initialized: agent_id=%s persistence_mode=%s",

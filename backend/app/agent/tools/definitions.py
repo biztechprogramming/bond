@@ -508,8 +508,9 @@ class CodeExecute(ToolCall):
     timeout: int = 30
 
 class FileRead(ToolCall):
-    """Read file content from the workspace."""
-    path: str
+    """Read one or more files from the workspace. Supports parallel reading."""
+    path: Optional[str] = Field(None, description="Path to a single file to read.")
+    paths: Optional[List[str]] = Field(None, description="Array of file paths to read in parallel.")
     line_start: Optional[int] = None
     line_end: Optional[int] = None
     outline: bool = False
@@ -564,6 +565,27 @@ class WorkPlan(ToolCall):
     notes: Optional[str] = None
     parent_plan_id: Optional[str] = None
 
+class ToolInvocation(BaseModel):
+    """Execution details for a single tool call."""
+    tool_name: str = Field(..., description="The name of the tool to call.")
+    arguments: Dict[str, Any] = Field(..., description="Arguments for the tool (matches its schema).")
+    model_override: Optional[str] = Field(None, description="Optional cheaper model to use for this execution.")
+    description: str = Field(..., description="Purpose of this specific call.")
+
+class ParallelBatch(BaseModel):
+    """A collection of tool calls to be executed simultaneously."""
+    batch_name: str
+    calls: List[ToolInvocation] = Field(..., min_length=1)
+
+class ParallelWorkPlan(BaseModel):
+    """An orchestration plan containing one or more batches of parallel tool calls."""
+    reasoning: str = Field(..., description="Architect's reasoning for this decomposition.")
+    batches: List[ParallelBatch] = Field(..., description="Sequential list of batches. Batch 2 runs only after Batch 1 finishes.")
+
+class ParallelOrchestrate(ToolCall):
+    """Execute multiple tool calls in parallel batches using a High-Power Architect / Low-Power Worker pattern."""
+    plan: ParallelWorkPlan
+
 # Mapping for Instructor
 INSTRUCTOR_TOOL_MAP = {
     "respond": Respond,
@@ -581,6 +603,7 @@ INSTRUCTOR_TOOL_MAP = {
     "browser": Browser,
     "email": Email,
     "work_plan": WorkPlan,
+    "parallel_orchestrate": ParallelOrchestrate,
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:
