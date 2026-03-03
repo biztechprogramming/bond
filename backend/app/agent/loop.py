@@ -15,8 +15,9 @@ import litellm
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.llm import chat_completion, _resolve_api_key
+from backend.app.agent.llm import chat_completion, _resolve_api_key, get_instructor_client
 from backend.app.agent.tools import build_registry
+from backend.app.agent.tools.definitions import get_pydantic_definitions
 
 logger = logging.getLogger("bond.agent.loop")
 
@@ -217,14 +218,78 @@ async def agent_turn(
     # Tool-use loop
     for iteration in range(max_iterations):
         current_max_tokens = TOKEN_TIERS[current_tier]
-        response = await litellm.acompletion(
-            model=model_string,
-            messages=messages,
-            tools=tool_defs if tool_defs else None,
-            temperature=0.7,
-            max_tokens=current_max_tokens,
-            **extra_kwargs,
-        )
+        # Use Instructor for validated tool calls
+        pydantic_tools = get_pydantic_definitions(agent_tools)
+        if pydantic_tools:
+            from typing import Union
+            # Create a Union of all available tools
+            # Instructor will handle the routing and validation
+            ToolUnion = Union[tuple(pydantic_tools)]
+            
+            # Patch the call to use Instructor
+            instructor_client = get_instructor_client()
+            
+            try:
+                # Instructor's mode=instructor.Mode.TOOLS translates Pydantic to JSON Schema
+                # and handles the response back into Pydantic objects.
+                tool_call_obj = await instructor_client(
+                    model=model_string,
+                    messages=messages,
+                    response_model=ToolUnion,
+                    max_retries=2, # Self-correction turns!
+                    temperature=0.7,
+                    max_tokens=current_max_tokens,
+                    **extra_kwargs,
+                )
+                
+                # Convert Instructor result back into a format the loop expects
+                # (Simulating a LiteLLM response object for minimum code disruption)
+                tool_name = tool_call_obj.__class__.__name__.lower()
+                # Fix camelCase to snake_case if needed (e.g. CodeExecute -> code_execute)
+                import re
+                tool_name = re.sub(r'(?<!^)(?=[A-Z])', '_', tool_call_obj.__class__.__name__).lower()
+                
+                args = tool_call_obj.model_dump(exclude_none=True)
+                
+                # Mock a response object
+                class MockMessage:
+                    def __init__(self, name, args):
+                        self.content = None
+                        self.tool_calls = [type('TC', (), {
+                            'function': type('FN', (), {'name': name, 'arguments': json.dumps(args)}),
+                            'id': f"call_{iteration}"
+                        })]
+                
+                class MockChoice:
+                    def __init__(self, msg):
+                        self.message = msg
+                        self.finish_reason = "tool_calls"
+                
+                class MockResponse:
+                    def __init__(self, choice):
+                        self.choices = [choice]
+                
+                response = MockResponse(MockChoice(MockMessage(tool_name, args)))
+            except Exception as e:
+                logger.error("Instructor tool call failed: %s", e)
+                # Fallback to standard litellm on error
+                response = await litellm.acompletion(
+                    model=model_string,
+                    messages=messages,
+                    tools=tool_defs if tool_defs else None,
+                    temperature=0.7,
+                    max_tokens=current_max_tokens,
+                    **extra_kwargs,
+                )
+        else:
+            response = await litellm.acompletion(
+                model=model_string,
+                messages=messages,
+                tools=tool_defs if tool_defs else None,
+                temperature=0.7,
+                max_tokens=current_max_tokens,
+                **extra_kwargs,
+            )
 
         choice = response.choices[0]
         message = choice.message

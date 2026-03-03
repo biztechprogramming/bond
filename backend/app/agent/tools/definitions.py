@@ -468,3 +468,120 @@ TOOL_SUMMARIES: dict[str, str] = {
 TOOL_MAP: dict[str, dict] = {
     d["function"]["name"]: d for d in TOOL_DEFINITIONS
 }
+
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Literal, Union
+
+class ToolCall(BaseModel):
+    """Base class for all tools used by Instructor"""
+    pass
+
+class Respond(ToolCall):
+    """Send a text response to the user. Ends your turn."""
+    message: str = Field(description="The message to send to the user.")
+
+class SearchMemory(ToolCall):
+    """Search long-term memory for relevant information."""
+    query: str = Field(description="The search query.")
+    limit: int = Field(default=5, description="Max results.")
+
+class MemorySave(ToolCall):
+    """Save new information to long-term memory."""
+    content: str = Field(description="The content to save.")
+    memory_type: str = Field(default="general", description="fact, preference, etc.")
+    summary: Optional[str] = Field(None, description="Brief summary.")
+
+class MemoryUpdate(ToolCall):
+    """Update existing memory."""
+    memory_id: str = Field(description="ID of memory to update.")
+    content: str = Field(description="New content.")
+    reason: Optional[str] = Field(None, description="Reason for update.")
+
+class MemoryDelete(ToolCall):
+    """Soft-delete a memory."""
+    memory_id: str = Field(description="ID of memory to delete.")
+
+class CodeExecute(ToolCall):
+    """Execute code or shell commands in the sandbox."""
+    language: Literal["python", "shell", "javascript", "typescript"]
+    code: str
+    timeout: int = 30
+
+class FileRead(ToolCall):
+    """Read file content from the workspace."""
+    path: str
+    line_start: Optional[int] = None
+    line_end: Optional[int] = None
+    outline: bool = False
+
+class FileWrite(ToolCall):
+    """Write file content to the workspace."""
+    path: str
+    content: str
+
+class FileEdit(ToolCall):
+    """Apply precise edits to a file using old/new string matching."""
+    path: str
+    old_string: str
+    new_string: str
+
+class CallSubordinate(ToolCall):
+    """Delegate a task to a specialized agent."""
+    agent_name: str
+    task: str
+
+class WebSearch(ToolCall):
+    """Search the web using DuckDuckGo."""
+    query: str
+    max_results: int = 5
+
+class WebRead(ToolCall):
+    """Extract readable text and metadata from a URL."""
+    url: str
+
+class Browser(ToolCall):
+    """Interact with a web browser (navigate, click, type)."""
+    action: Literal["navigate", "click", "type", "screenshot", "scroll"]
+    url: Optional[str] = None
+    selector: Optional[str] = None
+    text: Optional[str] = None
+
+class Email(ToolCall):
+    """Search or send emails."""
+    action: Literal["search", "send", "read"]
+    to: Optional[str] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    query: Optional[str] = None
+
+class WorkPlan(ToolCall):
+    """Manage agentic work plans and items."""
+    action: Literal["create_plan", "add_item", "update_item", "complete_plan", "get_plan"]
+    plan_id: Optional[str] = None
+    item_id: Optional[str] = None
+    title: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    parent_plan_id: Optional[str] = None
+
+# Mapping for Instructor
+INSTRUCTOR_TOOL_MAP = {
+    "respond": Respond,
+    "search_memory": SearchMemory,
+    "memory_save": MemorySave,
+    "memory_update": MemoryUpdate,
+    "memory_delete": MemoryDelete,
+    "code_execute": CodeExecute,
+    "file_read": FileRead,
+    "file_write": FileWrite,
+    "file_edit": FileEdit,
+    "call_subordinate": CallSubordinate,
+    "web_search": WebSearch,
+    "web_read": WebRead,
+    "browser": Browser,
+    "email": Email,
+    "work_plan": WorkPlan,
+}
+
+def get_pydantic_definitions(enabled_tools: List[str]) -> List[type]:
+    return [INSTRUCTOR_TOOL_MAP[name] for name in enabled_tools if name in INSTRUCTOR_TOOL_MAP]
