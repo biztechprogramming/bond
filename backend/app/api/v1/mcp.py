@@ -43,9 +43,16 @@ class MCPServerUpdate(BaseModel):
     agent_id: Optional[str] = None
 
 @router.get("/servers", response_model=List[MCPServerRead])
-async def list_servers(db: AsyncSession = Depends(get_db)):
-    """List all configured MCP servers."""
-    result = await db.execute(text("SELECT * FROM mcp_servers"))
+async def list_servers(agent_id: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """List configured MCP servers. If agent_id is provided, returns global + agent-specific."""
+    if agent_id:
+        result = await db.execute(
+            text("SELECT * FROM mcp_servers WHERE agent_id IS NULL OR agent_id = :agent_id"),
+            {"agent_id": agent_id}
+        )
+    else:
+        result = await db.execute(text("SELECT * FROM mcp_servers"))
+        
     rows = result.mappings().all()
     
     servers = []
