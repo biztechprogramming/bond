@@ -22,6 +22,7 @@ import ImportConversationMessageReducer from "../import_conversation_message_red
 import ImportWorkItemReducer from "../import_work_item_reducer";
 import ImportWorkPlanReducer from "../import_work_plan_reducer";
 import LogToolReducer from "../log_tool_reducer";
+import RenameWorkItemReducer from "../rename_work_item_reducer";
 import SaveMessageReducer from "../save_message_reducer";
 import SetSettingReducer from "../set_setting_reducer";
 import UpdateConversationReducer from "../update_conversation_reducer";
@@ -45,6 +46,7 @@ export type ImportConversationMessageParams = __Infer<typeof ImportConversationM
 export type ImportWorkItemParams = __Infer<typeof ImportWorkItemReducer>;
 export type ImportWorkPlanParams = __Infer<typeof ImportWorkPlanReducer>;
 export type LogToolParams = __Infer<typeof LogToolReducer>;
+export type RenameWorkItemParams = __Infer<typeof RenameWorkItemReducer>;
 export type SaveMessageParams = __Infer<typeof SaveMessageReducer>;
 export type SetSettingParams = __Infer<typeof SetSettingReducer>;
 export type UpdateConversationParams = __Infer<typeof UpdateConversationReducer>;

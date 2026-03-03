@@ -50,6 +50,7 @@ import ImportConversationMessageReducer from "./import_conversation_message_redu
 import ImportWorkItemReducer from "./import_work_item_reducer";
 import ImportWorkPlanReducer from "./import_work_plan_reducer";
 import LogToolReducer from "./log_tool_reducer";
+import RenameWorkItemReducer from "./rename_work_item_reducer";
 import SaveMessageReducer from "./save_message_reducer";
 import SetSettingReducer from "./set_setting_reducer";
 import UpdateConversationReducer from "./update_conversation_reducer";
@@ -163,7 +164,7 @@ const tablesSchema = __schema({
       { name: 'tool_logs_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ToolLogsRow),
-  work_items: __table({
+  workItems: __table({
     name: 'work_items',
     indexes: [
       { name: 'id', algorithm: 'btree', columns: [
@@ -174,7 +175,7 @@ const tablesSchema = __schema({
       { name: 'work_items_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, WorkItemsRow),
-  work_plans: __table({
+  workPlans: __table({
     name: 'work_plans',
     indexes: [
       { name: 'id', algorithm: 'btree', columns: [
@@ -205,6 +206,7 @@ const reducersSchema = __reducers(
   __reducerSchema("import_work_item", ImportWorkItemReducer),
   __reducerSchema("import_work_plan", ImportWorkPlanReducer),
   __reducerSchema("log_tool", LogToolReducer),
+  __reducerSchema("rename_work_item", RenameWorkItemReducer),
   __reducerSchema("save_message", SaveMessageReducer),
   __reducerSchema("set_setting", SetSettingReducer),
   __reducerSchema("update_conversation", UpdateConversationReducer),
