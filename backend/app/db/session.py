@@ -27,6 +27,7 @@ def get_engine():
             f"sqlite+aiosqlite:///{db_path}",
             echo=False,
             connect_args={"check_same_thread": False},
+            pool_pre_ping=True,
         )
 
         # Load sqlite-vec extension on every connection
@@ -70,7 +71,10 @@ async def init_db() -> None:
 
     engine = get_engine()
     async with engine.begin() as conn:
+        # Tuning for LibSQL-like performance in SQLite
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        await conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
+        await conn.exec_driver_sql("PRAGMA busy_timeout=5000")
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
     # Read embedding dimension from settings (default 1024)
