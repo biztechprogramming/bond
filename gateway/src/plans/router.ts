@@ -15,7 +15,7 @@ async function callReducer(
   baseUrl: string,
   module: string,
   reducer: string,
-  args: (string | number | boolean)[]
+  args: (string | number | boolean | null)[]
 ): Promise<void> {
   const url = `${baseUrl}/v1/database/${module}/call/${reducer}`;
   const res = await fetch(url, {
@@ -261,14 +261,16 @@ export function createPlansRouter(config: GatewayConfig) {
     const current = currentRows[0];
 
     const resolvedStatus = status ?? current.status;
-    const resolvedNotes = notes !== undefined
+    // Option<string>: pass null for None so SpacetimeDB preserves/clears correctly
+    const resolvedNotes: string | null = notes !== undefined
       ? JSON.stringify(Array.isArray(notes) ? notes : [{ text: String(notes) }])
-      : (current.notes ?? "[]");
-    const resolvedFiles = files_changed !== undefined
+      : (current.notes ?? null);
+    const resolvedFiles: string | null = files_changed !== undefined
       ? JSON.stringify(files_changed)
-      : (current.files_changed ?? "[]");
+      : (current.files_changed ?? null);
 
-    const reducerArgs: string[] = [itemId, resolvedStatus, resolvedNotes, resolvedFiles];
+    // Reducer always requires exactly 4 positional args: [id, status, notes, filesChanged]
+    const reducerArgs: (string | null)[] = [itemId, resolvedStatus, resolvedNotes, resolvedFiles];
 
     try {
       await callReducer(url, mod, "update_work_item", reducerArgs);
