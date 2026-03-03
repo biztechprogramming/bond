@@ -280,7 +280,7 @@ export default function Home() {
       if (resp.ok) {
         const conv = await resp.json();
         setConversationId(conv.id);
-        wsRef.current?.switchConversation(conv.id);
+        wsRef.current?.newConversation(); // reset session — no history to load for a new conversation
       } else {
         // fallback — let the gateway assign an ID on first message
         wsRef.current?.newConversation();
