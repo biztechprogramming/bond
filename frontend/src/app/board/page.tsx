@@ -35,9 +35,14 @@ function BoardPage() {
   
   // ── SpacetimeDB Reactive State ──
   const stdbPlans = useWorkPlans();
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(
-    () => (typeof window !== "undefined" ? searchParams.get("plan") : null)
-  );
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    // URL param wins, then localStorage, then null (auto-select picks it up)
+    return searchParams.get("plan") || localStorage.getItem("bond-selected-plan-id");
+  });
+
+  // Track whether the user has explicitly chosen a plan this session
+  const userPickedPlanRef = useRef(false);
   
   const currentPlanItems = useWorkItems(selectedPlanId || "");
 
@@ -127,7 +132,14 @@ function BoardPage() {
       .catch(() => {});
   }, []);
 
-  // Auto-select initial plan if none selected
+  // Persist selected plan to localStorage
+  useEffect(() => {
+    if (selectedPlanId) {
+      localStorage.setItem("bond-selected-plan-id", selectedPlanId);
+    }
+  }, [selectedPlanId]);
+
+  // Auto-select initial plan only when nothing is selected yet
   useEffect(() => {
     if (!selectedPlanId && stdbPlans.length > 0) {
       const active = stdbPlans.find(p => p.status === "active") || stdbPlans[0];
@@ -228,9 +240,9 @@ function BoardPage() {
         setAgentStatus("idle");
       }
       
-      // SpacetimeDB handles plan updates reactively now. 
-      // We only force-select new plans.
-      if (msg.type === "plan_created" && msg.planId) {
+      // Only auto-switch to a newly created plan if the user hasn't manually
+      // chosen one. Once the user has picked, agent-created plans don't hijack.
+      if (msg.type === "plan_created" && msg.planId && !userPickedPlanRef.current) {
         setSelectedPlanId(msg.planId);
       }
     });
@@ -341,7 +353,10 @@ function BoardPage() {
           plans={stdbPlans as any}
           selectedPlanId={selectedPlanId}
           selectedPlan={selectedPlan as any}
-          onSelect={setSelectedPlanId}
+          onSelect={(id) => {
+            userPickedPlanRef.current = true;
+            setSelectedPlanId(id);
+          }}
         />
 
         {/* Controls */}
