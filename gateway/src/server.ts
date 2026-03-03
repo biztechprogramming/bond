@@ -14,6 +14,7 @@ import { BackendClient } from "./backend/index.js";
 import { WebChatChannel } from "./channels/index.js";
 import { createPersistenceRouter } from "./persistence/index.js";
 import { createConversationsRouter } from "./conversations/index.js";
+import { createPlansRouter } from "./plans/index.js";
 
 export interface GatewayServer {
   close(): void;
@@ -51,6 +52,9 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // Conversations API (backed by SpacetimeDB)
   app.use("/api/v1", createConversationsRouter(config));
+
+  // Plans API (backed by SpacetimeDB)
+  app.use("/api/v1", createPlansRouter(config));
 
   // Global Broadcast API for internal services
   app.post("/api/v1/broadcast", (req: any, res: any) => {

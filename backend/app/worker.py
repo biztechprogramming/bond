@@ -251,27 +251,30 @@ async def _lifespan(application: FastAPI):
     await _shutdown()
 
 async def _worker_load_mcp_servers(manager):
-    """Simplified MCP loader for worker using aiosqlite."""
+    """Load MCP servers from SpacetimeDB via the Gateway API."""
     from backend.app.mcp import MCPServerConfig
+    if not _state.persistence or _state.persistence.mode != "api":
+        logger.warning("Cannot load MCP servers: persistence not in API mode")
+        return
     try:
-        # Load global servers (agent_id IS NULL) AND agent-specific servers
-        async with _state.agent_db.execute(
-            "SELECT * FROM mcp_servers WHERE enabled = 1 AND (agent_id IS NULL OR agent_id = ?)",
-            (_state.agent_id,)
-        ) as cursor:
-            async for row in cursor:
-                # aiosqlite rows are indexed or can be turned into dict
-                row_dict = dict(zip([column[0] for column in cursor.description], row))
-                config = MCPServerConfig(
-                    name=row_dict["name"],
-                    command=row_dict["command"],
-                    args=json.loads(row_dict["args"]),
-                    env=json.loads(row_dict["env"]),
-                    enabled=bool(row_dict["enabled"])
-                )
-                await manager.add_server(config)
+        gateway_url = _state.persistence.gateway_url.rstrip("/")
+        url = f"{gateway_url}/api/v1/mcp?agent_id={_state.agent_id}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            servers = resp.json()
+        for s in servers:
+            config = MCPServerConfig(
+                name=s["name"],
+                command=s["command"],
+                args=s.get("args", []),
+                env=s.get("env", {}),
+                enabled=s.get("enabled", True),
+            )
+            await manager.add_server(config)
+        logger.info("Loaded %d MCP server(s) from SpacetimeDB", len(servers))
     except Exception as e:
-        logger.debug(f"MCP servers table not found or error in agent_db: {e}")
+        logger.error("Failed to load MCP servers from Gateway: %s", e)
 
 app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 

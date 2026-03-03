@@ -62,6 +62,12 @@ async function sqlQuery(
   });
 }
 
+function safeParseJson(val: any, fallback: any): any {
+  if (val === null || val === undefined || val === "") return fallback;
+  if (typeof val !== "string") return val;
+  try { return JSON.parse(val); } catch { return fallback; }
+}
+
 export function createPersistenceRouter(config: GatewayConfig) {
   const router = Router();
   const { spacetimedbUrl, spacetimedbModuleName } = config;
@@ -138,6 +144,37 @@ export function createPersistenceRouter(config: GatewayConfig) {
       await callReducer(spacetimedbUrl, spacetimedbModuleName, "delete_setting", [req.params.key]);
       res.status(204).end();
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /mcp?agent_id=X
+   * List MCP servers for an agent (global + agent-specific).
+   */
+  router.get("/mcp", async (req: any, res: any) => {
+    const { agent_id } = req.query;
+    try {
+      const servers = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM mcp_servers");
+      const filtered = servers.filter((s: any) => {
+        const isEnabled = s.enabled === true || s.enabled === 1;
+        const isGlobal = s.agent_id === null || s.agent_id === "" || s.agent_id === undefined;
+        const isForAgent = agent_id ? s.agent_id === agent_id : false;
+        return isEnabled && (isGlobal || isForAgent);
+      });
+      res.json(
+        filtered.map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          command: s.command,
+          args: safeParseJson(s.args, []),
+          env: safeParseJson(s.env, {}),
+          enabled: s.enabled === true || s.enabled === 1,
+          agent_id: s.agent_id || null,
+        }))
+      );
+    } catch (err: any) {
+      console.error("[persistence] GET /mcp failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
