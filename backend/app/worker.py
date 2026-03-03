@@ -448,17 +448,26 @@ async def _run_agent_loop(
     _has_active_plan = False
     _active_plan_id: str | None = None
     try:
-        from backend.app.agent.tools.work_plan import load_active_plan, format_recovery_context
+        from backend.app.agent.tools.work_plan import load_active_plan, format_plan_context, format_recovery_context
         active_plan = await load_active_plan(_state.agent_db, _state.agent_id)
         if active_plan:
             _has_active_plan = True
             _active_plan_id = active_plan["id"]
-            recovery_ctx = format_recovery_context(active_plan)
-            # Prepend recovery context as a user message before the actual message
-            history = [{"role": "user", "content": recovery_ctx}] + history
-            logger.info("Crash recovery: injected context for plan %s", _active_plan_id)
+
+            # Always inject plan context with real IDs so the agent never hallucinates them.
+            # Use recovery format if the plan has in-progress items (resuming interrupted work),
+            # otherwise use the compact ID-focused format.
+            in_progress = [i for i in active_plan.get("items", []) if i["status"] == "in_progress"]
+            if in_progress:
+                plan_ctx = format_recovery_context(active_plan) + "\n\n" + format_plan_context(active_plan)
+            else:
+                plan_ctx = format_plan_context(active_plan)
+
+            # Inject as a system message prefix so the agent always has IDs in context
+            history = [{"role": "user", "content": plan_ctx}] + history
+            logger.info("Injected active plan context for plan %s (%d items)", _active_plan_id, len(active_plan.get("items", [])))
     except Exception as e:
-        logger.debug("Work plan recovery check skipped: %s", e)
+        logger.debug("Work plan context injection skipped: %s", e)
 
     # --- Context Distillation Pipeline ---
 

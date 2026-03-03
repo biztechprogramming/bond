@@ -222,6 +222,32 @@ async def load_active_plan(db: None, agent_id: str) -> dict[str, Any] | None:
         return None
 
 
+def format_plan_context(plan: dict[str, Any]) -> str:
+    """Inject the active plan with real IDs into the agent's context.
+
+    Called on every turn when a plan is active so the agent always has
+    the correct plan_id and item IDs and never hallucinates them.
+    """
+    lines = [
+        f"## Active Work Plan",
+        f"plan_id: {plan['id']}",
+        f"Title: {plan['title']}",
+        f"Status: {plan['status']}",
+        "",
+        "Items (use these exact IDs with work_plan tool):",
+    ]
+    for item in sorted(plan.get("items", []), key=lambda i: i.get("ordinal", 0)):
+        status_emoji = {
+            "new": "⬜", "in_progress": "🔄", "done": "✅",
+            "complete": "✅", "failed": "❌", "blocked": "🛑",
+            "in_review": "👀", "approved": "👍",
+        }.get(item["status"], "⬜")
+        lines.append(f"  {status_emoji} item_id: {item['id']} | \"{item['title']}\" | status: {item['status']}")
+    lines.append("")
+    lines.append("To update an item: work_plan(action='update_item', item_id='<id above>', status='in_progress'|'done', ...)")
+    return "\n".join(lines)
+
+
 def format_recovery_context(plan: dict[str, Any]) -> str:
     """Build a human-readable recovery context message from a plan."""
     lines = [f"[Resuming work plan: \"{plan['title']}\"]", ""]
