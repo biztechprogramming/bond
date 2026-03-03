@@ -254,35 +254,21 @@ export function createPlansRouter(config: GatewayConfig) {
       }
     }
 
-    // update_work_item takes: {id, status, notes?, filesChanged?}
-    // status is required by the reducer — fetch current if not provided
-    let resolvedStatus = status;
-    if (resolvedStatus === undefined) {
-      const rows = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE id = '${itemId}'`);
-      if (rows.length === 0) return res.status(404).json({ error: "Item not found" });
-      resolvedStatus = rows[0].status;
-    }
+    // update_work_item reducer always requires exactly 4 args: [id, status, notes, files_changed]
+    // Fetch current row to fill in any fields not provided by the caller
+    const currentRows = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE id = '${itemId}'`);
+    if (currentRows.length === 0) return res.status(404).json({ error: "Item not found" });
+    const current = currentRows[0];
 
-    // update_work_item positional args: [id, status, notes?, filesChanged?]
-    // Only include optional args if provided — don't pass nulls for missing ones
-    const reducerArgs: string[] = [itemId, resolvedStatus];
-    if (notes !== undefined || files_changed !== undefined) {
-      const notesJson = notes !== undefined
-        ? JSON.stringify(Array.isArray(notes) ? notes : [{ text: String(notes) }])
-        : undefined;
-      const filesJson = files_changed !== undefined ? JSON.stringify(files_changed) : undefined;
-      // If either optional arg is needed, we must provide both in order
-      // Use existing values from SpacetimeDB when one is missing
-      if (notesJson !== undefined) reducerArgs.push(notesJson);
-      if (filesJson !== undefined) {
-        if (notesJson === undefined) {
-          // Need to fetch current notes to preserve them
-          const rows = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE id = '${itemId}'`);
-          reducerArgs.push(rows[0]?.notes ?? "[]");
-        }
-        reducerArgs.push(filesJson);
-      }
-    }
+    const resolvedStatus = status ?? current.status;
+    const resolvedNotes = notes !== undefined
+      ? JSON.stringify(Array.isArray(notes) ? notes : [{ text: String(notes) }])
+      : (current.notes ?? "[]");
+    const resolvedFiles = files_changed !== undefined
+      ? JSON.stringify(files_changed)
+      : (current.files_changed ?? "[]");
+
+    const reducerArgs: string[] = [itemId, resolvedStatus, resolvedNotes, resolvedFiles];
 
     try {
       await callReducer(url, mod, "update_work_item", reducerArgs);
