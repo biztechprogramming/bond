@@ -15,7 +15,7 @@ async function callReducer(
   baseUrl: string,
   module: string,
   reducer: string,
-  args: (string | number | boolean | null)[]
+  args: (string | number | boolean)[]
 ): Promise<void> {
   const url = `${baseUrl}/v1/database/${module}/call/${reducer}`;
   const res = await fetch(url, {
@@ -164,12 +164,11 @@ export function createPlansRouter(config: GatewayConfig) {
 
     const planId = ulid();
     try {
-      await callReducer(url, mod, "import_work_plan", [
+      await callReducer(url, mod, "create_work_plan", [
         planId,
         agent_id,
         conversation_id || "",
         title,
-        "active",
       ]);
       res.status(201).json({
         plan_id: planId,
@@ -201,15 +200,8 @@ export function createPlansRouter(config: GatewayConfig) {
         const existing = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`);
         ord = existing.length;
       }
-      await callReducer(url, mod, "import_work_item", [
-        itemId,
-        planId,
-        title,
-        "new",
-        ord,
-        "[]",
-        "[]",
-      ]);
+      // add_work_item: {id, planId, title, ordinal}
+      await callReducer(url, mod, "add_work_item", [itemId, planId, title, ord]);
       res.status(201).json({
         item_id: itemId,
         id: itemId,
@@ -227,21 +219,48 @@ export function createPlansRouter(config: GatewayConfig) {
   /**
    * PUT /plans/:planId/items/:itemId
    * Update a work item (status, notes, files_changed).
+   * Single reducer call: update_work_item {id, status, notes?, filesChanged?}
    */
   router.put("/plans/:planId/items/:itemId", async (req: any, res: any) => {
     const { itemId } = req.params;
     const { status, notes, files_changed } = req.body;
 
+    if (status === undefined && notes === undefined && files_changed === undefined) {
+      return res.status(400).json({ error: "Provide at least one of: status, notes, files_changed" });
+    }
+
+    // update_work_item takes: {id, status, notes?, filesChanged?}
+    // status is required by the reducer — fetch current if not provided
+    let resolvedStatus = status;
+    if (resolvedStatus === undefined) {
+      const rows = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE id = '${itemId}'`);
+      if (rows.length === 0) return res.status(404).json({ error: "Item not found" });
+      resolvedStatus = rows[0].status;
+    }
+
+    // update_work_item positional args: [id, status, notes?, filesChanged?]
+    // Only include optional args if provided — don't pass nulls for missing ones
+    const reducerArgs: string[] = [itemId, resolvedStatus];
+    if (notes !== undefined || files_changed !== undefined) {
+      const notesJson = notes !== undefined
+        ? JSON.stringify(Array.isArray(notes) ? notes : [{ text: String(notes) }])
+        : undefined;
+      const filesJson = files_changed !== undefined ? JSON.stringify(files_changed) : undefined;
+      // If either optional arg is needed, we must provide both in order
+      // Use existing values from SpacetimeDB when one is missing
+      if (notesJson !== undefined) reducerArgs.push(notesJson);
+      if (filesJson !== undefined) {
+        if (notesJson === undefined) {
+          // Need to fetch current notes to preserve them
+          const rows = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE id = '${itemId}'`);
+          reducerArgs.push(rows[0]?.notes ?? "[]");
+        }
+        reducerArgs.push(filesJson);
+      }
+    }
+
     try {
-      if (status !== undefined) {
-        await callReducer(url, mod, "update_work_item_status", [itemId, status]);
-      }
-      if (notes !== undefined) {
-        await callReducer(url, mod, "update_work_item_notes", [itemId, JSON.stringify(notes)]);
-      }
-      if (files_changed !== undefined) {
-        await callReducer(url, mod, "update_work_item_files", [itemId, JSON.stringify(files_changed)]);
-      }
+      await callReducer(url, mod, "update_work_item", reducerArgs);
       res.json({ item_id: itemId, updated: true });
     } catch (err: any) {
       console.error("[plans] update item failed:", err.message);
@@ -257,7 +276,8 @@ export function createPlansRouter(config: GatewayConfig) {
     const { planId } = req.params;
     const { status = "completed" } = req.body;
     try {
-      await callReducer(url, mod, "complete_work_plan", [planId, status]);
+      // update_work_plan_status: {id, status}
+      await callReducer(url, mod, "update_work_plan_status", [planId, status]);
       res.json({ plan_id: planId, status });
     } catch (err: any) {
       console.error("[plans] complete plan failed:", err.message);
