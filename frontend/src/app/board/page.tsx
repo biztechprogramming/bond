@@ -100,6 +100,8 @@ function BoardPage() {
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
+  const selectedPlanIdRef = useRef<string | null>(selectedPlanId);
+  useEffect(() => { selectedPlanIdRef.current = selectedPlanId; }, [selectedPlanId]);
 
   // Initialize SpacetimeDB connection
   useEffect(() => {
@@ -133,6 +135,22 @@ function BoardPage() {
     }
   }, [selectedPlanId, stdbPlans]);
 
+  // When selected plan changes, switch the chat pane to its conversation
+  useEffect(() => {
+    if (!selectedPlanId) return;
+    const plans = getWorkPlans();
+    const plan = plans.find(p => p.id === selectedPlanId);
+    const convId = plan?.conversationId || (plan as any)?.conversation_id;
+    if (!convId) return;
+
+    setConversationId(convId);
+    setMessages([]);
+    // Request history for this conversation from the gateway
+    if (wsRef.current?.connected) {
+      wsRef.current.switchConversation(convId);
+    }
+  }, [selectedPlanId]);
+
   // Fetch plan lineage (still uses API for now as lineage logic is complex for SQL-less SpacetimeDB)
   const fetchLineage = useCallback(async () => {
     if (!selectedPlanId) return;
@@ -154,8 +172,13 @@ function BoardPage() {
       if (cancelled) return;
       if (msg.type === "connected") {
         setConnected(true);
-        const storedId = localStorage.getItem("bond-conversation-id");
-        if (storedId) ws.switchConversation(storedId);
+        // Use the plan's conversation if one is selected, otherwise fall back to localStorage
+        const plans = getWorkPlans();
+        const activePlanId = selectedPlanIdRef.current || (typeof window !== "undefined" ? searchParams.get("plan") : null);
+        const activePlan = activePlanId ? plans.find(p => p.id === activePlanId) : null;
+        const convId = activePlan?.conversationId || (activePlan as any)?.conversation_id
+          || localStorage.getItem("bond-conversation-id");
+        if (convId) ws.switchConversation(convId);
       } else if (msg.type === "status") {
         const status = msg.agentStatus || "idle";
         setAgentStatus(status);
