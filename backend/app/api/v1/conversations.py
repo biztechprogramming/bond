@@ -44,8 +44,9 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
 class ConversationCreate(BaseModel):
+    id: str | None = None
     agent_id: str | None = None
-    channel: str = "webchat"
+    channel: str | None = "webchat"
     title: str | None = None
 
 
@@ -95,7 +96,7 @@ async def create_conversation(
     if result.fetchone() is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    conv_id = str(ULID())
+    conv_id = body.id or str(ULID())
     await db.execute(
         text(
             "INSERT INTO conversations (id, agent_id, channel, title) "

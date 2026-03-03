@@ -77,6 +77,17 @@ export function createConversationsRouter(config: GatewayConfig) {
 
       await callReducer(url, mod, "create_conversation", [id, agentId, channel, title || ""]);
 
+      // Mirror to backend SQLite so history/switch_conversation lookups work
+      try {
+        await fetch(`${config.backendUrl}/api/v1/conversations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, agent_id: agentId, channel, title: title ?? null }),
+        });
+      } catch (syncErr: any) {
+        console.warn("[conversations] backend sync failed (non-fatal):", syncErr.message);
+      }
+
       // Return the created conversation
       const rows = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${id}'`);
       if (rows.length === 0) {
@@ -222,6 +233,12 @@ export function createConversationsRouter(config: GatewayConfig) {
     const { id } = req.params;
     try {
       await callReducer(url, mod, "delete_conversation", [id]);
+      // Mirror delete to backend SQLite
+      try {
+        await fetch(`${config.backendUrl}/api/v1/conversations/${id}`, { method: "DELETE" });
+      } catch (syncErr: any) {
+        console.warn("[conversations] backend delete sync failed (non-fatal):", syncErr.message);
+      }
       res.json({ status: "deleted", conversation_id: id });
     } catch (err: any) {
       console.error("[conversations] delete failed:", err.message);
