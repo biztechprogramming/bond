@@ -23,7 +23,7 @@ export default function PlanCard({ plan, onViewBoard }: PlanCardProps) {
         {onViewBoard ? (
           <button onClick={onViewBoard} style={styles.planCardViewBtn}>View</button>
         ) : (
-          <a href="/board" style={styles.planCardViewBtn}>View</a>
+          <a href={`/board?plan=${plan.id}`} style={styles.planCardViewBtn}>View</a>
         )}
       </div>
       {plan.items.length > 0 && (
