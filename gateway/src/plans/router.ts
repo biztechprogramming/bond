@@ -8,55 +8,7 @@
 import { Router } from "express";
 import { ulid } from "ulid";
 import type { GatewayConfig } from "../config/index.js";
-
-// ── SpacetimeDB helpers (duplicated from conversations/router.ts — consider extracting) ──
-
-async function callReducer(
-  baseUrl: string,
-  module: string,
-  reducer: string,
-  args: unknown[]
-): Promise<void> {
-  const url = `${baseUrl}/v1/database/${module}/call/${reducer}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`SpacetimeDB ${reducer} failed (${res.status}): ${body}`);
-  }
-}
-
-async function sqlQuery(
-  baseUrl: string,
-  module: string,
-  sql: string
-): Promise<any[]> {
-  const url = `${baseUrl}/v1/database/${module}/sql`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: sql,
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`SpacetimeDB SQL failed (${res.status}): ${body}`);
-  }
-  const data = await res.json();
-  if (!data || !Array.isArray(data) || data.length === 0) return [];
-  const resultSet = data[0];
-  if (!resultSet.rows || !resultSet.schema) return [];
-  const columns = resultSet.schema.elements.map((e: any) => e.name?.some || e.name);
-  return resultSet.rows.map((row: any[]) => {
-    const obj: any = {};
-    columns.forEach((col: string, i: number) => {
-      obj[col] = row[i];
-    });
-    return obj;
-  });
-}
+import { callReducer, sqlQuery, encodeOption } from "../spacetimedb/client.js";
 
 // ── Helpers ──
 
@@ -261,10 +213,6 @@ export function createPlansRouter(config: GatewayConfig) {
     const current = currentRows[0];
 
     const resolvedStatus = status ?? current.status;
-
-    // SpacetimeDB Option<string> sum type encoding: {"some": value} or {"none": []}
-    const encodeOption = (val: string | null | undefined): { some: string } | { none: [] } =>
-      (val !== null && val !== undefined) ? { some: val } : { none: [] as [] };
 
     const resolvedNotes = notes !== undefined
       ? encodeOption(JSON.stringify(Array.isArray(notes) ? notes : [{ text: String(notes) }]))

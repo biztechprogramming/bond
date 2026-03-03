@@ -8,59 +8,7 @@ import { Router } from "express";
 import { ulid } from "ulid";
 import type { GatewayConfig } from "../config/index.js";
 
-async function callReducer(
-  baseUrl: string,
-  moduleName: string,
-  reducerName: string,
-  args: (string | number | boolean | bigint)[]
-): Promise<void> {
-  const url = `${baseUrl}/v1/database/${moduleName}/call/${reducerName}`;
-  
-  // Custom JSON stringifier to handle BigInt
-  const body = JSON.stringify(args, (_key, value) =>
-    typeof value === "bigint" ? Number(value) : value
-  );
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
-  if (!res.ok) {
-    const errorBody = await res.text();
-    throw new Error(`SpacetimeDB ${reducerName} failed (${res.status}): ${errorBody}`);
-  }
-}
-
-async function sqlQuery(
-  baseUrl: string,
-  module: string,
-  sql: string
-): Promise<any[]> {
-  const url = `${baseUrl}/v1/database/${module}/sql`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: sql,
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`SpacetimeDB SQL failed (${res.status}): ${body}`);
-  }
-  const data = await res.json();
-  if (!data || !Array.isArray(data) || data.length === 0) return [];
-  const resultSet = data[0];
-  if (!resultSet.rows || !resultSet.schema) return [];
-
-  const columns = resultSet.schema.elements.map((e: any) => e.name?.some || e.name);
-  return resultSet.rows.map((row: any[]) => {
-    const obj: any = {};
-    columns.forEach((col: string, i: number) => {
-      obj[col] = row[i];
-    });
-    return obj;
-  });
-}
+import { callReducer, sqlQuery } from "../spacetimedb/client.js";
 
 function safeParseJson(val: any, fallback: any): any {
   if (val === null || val === undefined || val === "") return fallback;

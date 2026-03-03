@@ -8,58 +8,7 @@
 import { Router } from "express";
 import { ulid } from "ulid";
 import type { GatewayConfig } from "../config/index.js";
-
-// ── SpacetimeDB HTTP helpers ──
-
-async function callReducer(
-  baseUrl: string,
-  module: string,
-  reducer: string,
-  args: (string | number | boolean)[]
-): Promise<void> {
-  const url = `${baseUrl}/v1/database/${module}/call/${reducer}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`SpacetimeDB ${reducer} failed (${res.status}): ${body}`);
-  }
-}
-
-async function sqlQuery(
-  baseUrl: string,
-  module: string,
-  sql: string
-): Promise<any[]> {
-  const url = `${baseUrl}/v1/database/${module}/sql`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: sql,
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`SpacetimeDB SQL failed (${res.status}): ${body}`);
-  }
-  const data = await res.json();
-  // SpacetimeDB SQL API returns an array of result sets.
-  // Each result set has { schema: { elements: [...] }, rows: [...] }
-  if (!data || !Array.isArray(data) || data.length === 0) return [];
-  const resultSet = data[0];
-  if (!resultSet.rows || !resultSet.schema) return [];
-
-  const columns = resultSet.schema.elements.map((e: any) => e.name?.some || e.name);
-  return resultSet.rows.map((row: any[]) => {
-    const obj: any = {};
-    columns.forEach((col: string, i: number) => {
-      obj[col] = row[i];
-    });
-    return obj;
-  });
-}
+import { callReducer, sqlQuery } from "../spacetimedb/client.js";
 
 // ── Router ──
 
