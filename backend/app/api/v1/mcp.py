@@ -23,6 +23,7 @@ class MCPServerRead(BaseModel):
     args: List[str]
     env: dict
     enabled: bool
+    agent_id: Optional[str] = None
     status: str = "stopped"
 
 class MCPServerCreate(BaseModel):
@@ -31,6 +32,7 @@ class MCPServerCreate(BaseModel):
     args: Optional[List[str]] = []
     env: Optional[dict] = {}
     enabled: Optional[bool] = True
+    agent_id: Optional[str] = None
 
 class MCPServerUpdate(BaseModel):
     name: Optional[str] = None
@@ -38,6 +40,7 @@ class MCPServerUpdate(BaseModel):
     args: Optional[List[str]] = None
     env: Optional[dict] = None
     enabled: Optional[bool] = None
+    agent_id: Optional[str] = None
 
 @router.get("/servers", response_model=List[MCPServerRead])
 async def list_servers(db: AsyncSession = Depends(get_db)):
@@ -66,8 +69,8 @@ async def create_server(data: MCPServerCreate, db: AsyncSession = Depends(get_db
     try:
         await db.execute(
             text("""
-                INSERT INTO mcp_servers (id, name, command, args, env, enabled)
-                VALUES (:id, :name, :command, :args, :env, :enabled)
+                INSERT INTO mcp_servers (id, name, command, args, env, enabled, agent_id)
+                VALUES (:id, :name, :command, :args, :env, :enabled, :agent_id)
             """),
             {
                 "id": server_id,
@@ -75,7 +78,8 @@ async def create_server(data: MCPServerCreate, db: AsyncSession = Depends(get_db
                 "command": data.command,
                 "args": json.dumps(data.args),
                 "env": json.dumps(data.env),
-                "enabled": 1 if data.enabled else 0
+                "enabled": 1 if data.enabled else 0,
+                "agent_id": data.agent_id
             }
         )
         await db.commit()

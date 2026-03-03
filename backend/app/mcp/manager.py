@@ -228,10 +228,19 @@ class MCPManager:
             
         return models
 
-    async def load_servers_from_db(self, db: AsyncSession):
+    async def load_servers_from_db(self, db: AsyncSession, agent_id: Optional[str] = None):
         """Load and start all enabled MCP servers from the database."""
         try:
-            result = await db.execute(text("SELECT * FROM mcp_servers WHERE enabled = 1"))
+            # If agent_id is provided, load global + agent-specific
+            if agent_id:
+                result = await db.execute(
+                    text("SELECT * FROM mcp_servers WHERE enabled = 1 AND (agent_id IS NULL OR agent_id = :agent_id)"),
+                    {"agent_id": agent_id}
+                )
+            else:
+                # Load only global servers
+                result = await db.execute(text("SELECT * FROM mcp_servers WHERE enabled = 1 AND agent_id IS NULL"))
+                
             rows = result.mappings().all()
             for row in rows:
                 config = MCPServerConfig(

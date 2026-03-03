@@ -252,7 +252,11 @@ async def _worker_load_mcp_servers(manager):
     """Simplified MCP loader for worker using aiosqlite."""
     from backend.app.mcp import MCPServerConfig
     try:
-        async with _state.agent_db.execute("SELECT * FROM mcp_servers WHERE enabled = 1") as cursor:
+        # Load global servers (agent_id IS NULL) AND agent-specific servers
+        async with _state.agent_db.execute(
+            "SELECT * FROM mcp_servers WHERE enabled = 1 AND (agent_id IS NULL OR agent_id = ?)",
+            (_state.agent_id,)
+        ) as cursor:
             async for row in cursor:
                 # aiosqlite rows are indexed or can be turned into dict
                 row_dict = dict(zip([column[0] for column in cursor.description], row))
