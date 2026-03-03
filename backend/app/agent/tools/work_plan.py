@@ -209,9 +209,12 @@ async def load_active_plan(
     try:
         import httpx
         base = _BOND_API_URL.rstrip("/")
-        params = f"agent_id={agent_id}&status=active&limit=1"
+        # When conversation_id is known, search by conversation first — this
+        # finds the plan regardless of which agent_id created it.
         if conversation_id:
-            params += f"&conversation_id={conversation_id}"
+            params = f"conversation_id={conversation_id}&status=active&limit=1"
+        else:
+            params = f"agent_id={agent_id}&status=active&limit=1"
         url = f"{base}/api/v1/plans?{params}"
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url)
