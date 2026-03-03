@@ -133,6 +133,24 @@ async def update_item_status(plan_id: str, item_id: str, body: ItemStatusUpdate)
     return {"status": "updated", "item_id": item_id, "new_status": body.status}
 
 
+@router.put("/items/{item_id}")
+async def update_item_flat(item_id: str, body: UpdateItemRequest):
+    """Flat route — update an item without needing plan_id in the path."""
+    payload: dict = {}
+    if body.title is not None:
+        payload["title"] = body.title
+    if body.status is not None:
+        payload["status"] = body.status
+    if body.notes is not None:
+        payload["notes"] = body.notes
+    if body.files_changed is not None:
+        payload["files_changed"] = body.files_changed
+    if not payload:
+        raise HTTPException(status_code=400, detail="Provide at least one of: title, status, notes, files_changed")
+    await _put(f"/items/{item_id}", payload)
+    return {"status": "updated", "item_id": item_id}
+
+
 @router.post("/{plan_id}/complete")
 async def complete_plan(plan_id: str, body: CompletePlanRequest):
     result = await _post(f"/plans/{plan_id}/complete", {"status": body.status})

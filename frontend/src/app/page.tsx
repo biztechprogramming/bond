@@ -268,10 +268,26 @@ export default function Home() {
     wsRef.current.interrupt(conversationId);
   }, [conversationId]);
 
-  const handleNewConversation = () => {
+  const handleNewConversation = async () => {
     setMessages([]);
     setConversationId(null);
-    wsRef.current?.newConversation();
+    try {
+      const resp = await fetch("http://localhost:18792/api/v1/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (resp.ok) {
+        const conv = await resp.json();
+        setConversationId(conv.id);
+        wsRef.current?.switchConversation(conv.id);
+      } else {
+        // fallback — let the gateway assign an ID on first message
+        wsRef.current?.newConversation();
+      }
+    } catch {
+      wsRef.current?.newConversation();
+    }
   };
 
   const handleSwitchConversation = (id: string) => {
