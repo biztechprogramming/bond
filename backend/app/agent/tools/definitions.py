@@ -409,7 +409,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "work_plan",
-            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work — do not wait until you have read everything. IMPORTANT: As you work on each item, update its status with update_item (new → in_progress → done). The user sees plan updates in real-time on a Kanban board. Always set an item to in_progress before starting it, and done when finished.",
+            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work. CRITICAL: You MUST update item status using update_item as you work — never describe plan progress in text. Lifecycle: new → in_progress (before starting) → done (when finished). Only item_id is required for update_item; plan_id is optional.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -420,7 +420,7 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "plan_id": {
                         "type": "string",
-                        "description": "ID of existing plan (for add_item, update_item, complete_plan, get_plan).",
+                        "description": "ID of existing plan (required for add_item, complete_plan, get_plan; optional for update_item).",
                     },
                     "title": {
                         "type": "string",
@@ -428,7 +428,7 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "item_id": {
                         "type": "string",
-                        "description": "ID of item to update (for update_item).",
+                        "description": "ID of item to update (required for update_item).",
                     },
                     "status": {
                         "type": "string",

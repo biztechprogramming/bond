@@ -217,11 +217,23 @@ export function createPlansRouter(config: GatewayConfig) {
   });
 
   /**
+   * PUT /items/:itemId   (flat — no plan_id needed)
+   * Alias for the nested route below. The agent often loses plan_id from
+   * context by the time it needs to update an item.
+   */
+  router.put("/items/:itemId", async (req: any, res: any) => {
+    req.params.planId = "_"; // planId not used by the handler
+    return updateItemHandler(req, res);
+  });
+
+  /**
    * PUT /plans/:planId/items/:itemId
    * Update a work item (status, notes, files_changed).
    * Single reducer call: update_work_item {id, status, notes?, filesChanged?}
    */
-  router.put("/plans/:planId/items/:itemId", async (req: any, res: any) => {
+  router.put("/plans/:planId/items/:itemId", updateItemHandler);
+
+  async function updateItemHandler(req: any, res: any) {
     const { itemId } = req.params;
     const { status, notes, files_changed } = req.body;
 
@@ -266,7 +278,7 @@ export function createPlansRouter(config: GatewayConfig) {
       console.error("[plans] update item failed:", err.message);
       res.status(500).json({ error: err.message });
     }
-  });
+  }
 
   /**
    * POST /plans/:planId/complete

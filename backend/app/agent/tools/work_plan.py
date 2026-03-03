@@ -118,10 +118,9 @@ async def _handle_via_api(
                 return result
 
             elif action == "update_item":
-                plan_id = arguments.get("plan_id", "")
                 item_id = arguments.get("item_id", "")
-                if not plan_id or not item_id:
-                    return {"error": "plan_id and item_id are required for update_item"}
+                if not item_id:
+                    return {"error": "item_id is required for update_item"}
                 body = {}
                 if "status" in arguments:
                     body["status"] = arguments["status"]
@@ -131,7 +130,14 @@ async def _handle_via_api(
                     body["context_snapshot"] = arguments["context_snapshot"]
                 if "files_changed" in arguments:
                     body["files_changed"] = arguments["files_changed"]
-                resp = await client.put(f"{url}/{plan_id}/items/{item_id}", json=body)
+                plan_id = arguments.get("plan_id", "")
+                # Use flat /items/:id endpoint — plan_id not needed by the reducer.
+                # Fall back to nested URL if plan_id is known (both routes work).
+                item_url = (
+                    f"{url}/{plan_id}/items/{item_id}" if plan_id
+                    else f"{base}/api/v1/items/{item_id}"
+                )
+                resp = await client.put(item_url, json=body)
                 resp.raise_for_status()
                 result = resp.json()
                 result["_sse_event"] = {
