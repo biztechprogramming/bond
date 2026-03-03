@@ -120,7 +120,7 @@ export class WebChatChannel {
     }
 
     // Agent is idle — start a new turn with SSE streaming
-    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId, msg.agentId);
+    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId, msg.agentId, msg.planId);
   }
 
   private async handleInterrupt(
@@ -165,6 +165,7 @@ export class WebChatChannel {
     message: string | undefined,
     conversationId: string | undefined,
     agentId?: string,
+    planId?: string,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
@@ -178,7 +179,7 @@ export class WebChatChannel {
       );
 
       if (resolution.mode === "container" && resolution.worker_url) {
-        await this.startContainerTurn(socket, sessionId, message, resolution);
+        await this.startContainerTurn(socket, sessionId, message, resolution, planId);
       } else {
         await this.startHostTurn(socket, sessionId, message, resolution);
       }
@@ -312,6 +313,7 @@ export class WebChatChannel {
     sessionId: string,
     message: string | undefined,
     resolution: AgentResolution,
+    planId?: string,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
@@ -368,6 +370,7 @@ export class WebChatChannel {
       for await (const event of worker.turnStream({
         messages,
         conversation_id: conversationId,
+        plan_id: planId,
       })) {
         switch (event.event) {
           case "status":

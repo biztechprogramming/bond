@@ -9,6 +9,7 @@ import { parseSSEStream, type SSEEvent } from "./sse-parser.js";
 export interface WorkerTurnRequest {
   messages: Array<{ role: string; content: string }>;
   conversation_id: string;
+  plan_id?: string;
 }
 
 export interface WorkerSSEEvent extends SSEEvent {

@@ -334,6 +334,7 @@ async def turn(request: Request) -> StreamingResponse:
     message = body.get("message", "")
     history = body.get("history", [])
     conversation_id = body.get("conversation_id", "")
+    plan_id = body.get("plan_id", "")
 
     import asyncio
     event_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -341,7 +342,7 @@ async def turn(request: Request) -> StreamingResponse:
     async def run_loop():
         try:
             response_text, tool_calls_made = await _run_agent_loop(
-                message, history, conversation_id, event_queue=event_queue,
+                message, history, conversation_id, event_queue=event_queue, plan_id=plan_id,
             )
             
             # Persist assistant response
@@ -384,6 +385,7 @@ async def _run_agent_loop(
     conversation_id: str,
     *,
     event_queue: Any = None,
+    plan_id: str = "",
 ) -> tuple[str, int]:
     """Run the agent tool-use loop locally.
 
@@ -449,7 +451,7 @@ async def _run_agent_loop(
     _active_plan_id: str | None = None
     try:
         from backend.app.agent.tools.work_plan import load_active_plan, format_plan_context, format_recovery_context
-        active_plan = await load_active_plan(_state.agent_db, _state.agent_id, conversation_id=conversation_id)
+        active_plan = await load_active_plan(_state.agent_db, _state.agent_id, conversation_id=conversation_id, plan_id=plan_id)
         if active_plan:
             _has_active_plan = True
             _active_plan_id = active_plan["id"]

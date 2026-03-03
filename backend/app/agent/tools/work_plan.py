@@ -196,6 +196,7 @@ async def load_active_plan(
     db: None,
     agent_id: str,
     conversation_id: str | None = None,
+    plan_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Load the active work plan for an agent via the Gateway API.
 
@@ -209,23 +210,23 @@ async def load_active_plan(
     try:
         import httpx
         base = _BOND_API_URL.rstrip("/")
-        # When conversation_id is known, search by conversation first — this
-        # finds the plan regardless of which agent_id created it.
-        if conversation_id:
-            params = f"conversation_id={conversation_id}&status=active&limit=1"
-        else:
-            params = f"agent_id={agent_id}&status=active&limit=1"
-        url = f"{base}/api/v1/plans?{params}"
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
+            if plan_id:
+                # ID from the board dropdown — use it directly, no search needed.
+                resp = await client.get(f"{base}/api/v1/plans/{plan_id}")
+                resp.raise_for_status()
+                return resp.json()
+            # Fall back to searching by conversation_id
+            if conversation_id:
+                params = f"conversation_id={conversation_id}&status=active&limit=1"
+            else:
+                params = f"agent_id={agent_id}&status=active&limit=1"
+            resp = await client.get(f"{base}/api/v1/plans?{params}")
             resp.raise_for_status()
             plans = resp.json()
-        if not plans:
-            return None
-        # Fetch full plan with items
-        plan_id = plans[0]["id"]
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{base}/api/v1/plans/{plan_id}")
+            if not plans:
+                return None
+            resp = await client.get(f"{base}/api/v1/plans/{plans[0]['id']}")
             resp.raise_for_status()
             return resp.json()
     except Exception as e:

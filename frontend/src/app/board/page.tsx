@@ -259,7 +259,7 @@ function BoardPage() {
     setInput("");
     setMessages(prev => [...prev, { role: "user", content }]);
     setLoading(true);
-    wsRef.current.send(content, conversationId || undefined, selectedAgentId || undefined);
+    wsRef.current.send(content, conversationId || undefined, selectedAgentId || undefined, selectedPlanId || undefined);
   }, [input, conversationId, selectedAgentId]);
 
   const handleStop = useCallback(() => {

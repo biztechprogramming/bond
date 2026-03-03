@@ -8,6 +8,7 @@ export interface IncomingMessage {
   content?: string;
   conversationId?: string;
   agentId?: string;
+  planId?: string;
 }
 
 export interface OutgoingMessage {
