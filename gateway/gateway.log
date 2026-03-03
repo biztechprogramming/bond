@@ -1,0 +1,655 @@
+$ tsx watch src/index.ts
+[persistence] Initializing SpacetimeDB connection to http://localhost:18787 module bond-core
+ℹ️ INFO Connecting to SpacetimeDB WS...
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] Connected to SpacetimeDB. Identity: c2000f1b4ce70c363d9e5c23c72925ce76aa6a4626317e3d4ff2764aeaf46731
+[persistence] Saving message 01KJT29X4EZ7PCFM6SCR64BVYV for agent test-agent
+[persistence] Logging tool test_tool (01KJT29X4SSH2GVDMW9C7W3CB8)
+[persistence] Saving message 01KJT29XWXE8AH2ZP1BTD64Q1X for agent test-agent
+[persistence] Logging tool test_tool (01KJT29XX6344DK0S9PKFDBMG0)
+[persistence] Saving message 01KJT3EF5WW2SBNRCPE0D17F4W for agent test-agent
+[persistence] Logging tool test_tool (01KJT3EF5ZBK5N07AK56H42FCB)
+10:03:41 AM [tsx] change in ./src/persistence.ts Restarting...
+[gateway] Shutting down...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+10:04:08 AM [tsx] change in ./src/index.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+10:50:06 AM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] SpacetimeDB healthy: v2.0.2
+10:50:10 AM [tsx] change in ./src/server.ts Restarting...
+[gateway] Shutting down...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] SpacetimeDB healthy: v2.0.2
+[conversations] list failed: SpacetimeDB SQL failed (400): Unsupported: SELECT c.id, c.agent_id, c.channel, c.title, c.is_active, c.message_count, c.created_at, c.updated_at, a.display_name FROM conversations AS c LEFT JOIN agents AS a ON c.agent_id = a.id ORDER BY c.updated_at DESC
+10:50:42 AM [tsx] change in ./src/conversations.ts Restarting...
+[gateway] Shutting down...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] SpacetimeDB healthy: v2.0.2
+10:50:47 AM [tsx] change in ./src/conversations.ts Restarting...
+[gateway] Shutting down...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+10:51:00 AM [tsx] change in ./src/conversations.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] SpacetimeDB healthy: v2.0.2
+[conversations] get failed: SpacetimeDB SQL failed (400): Unsupported: SELECT id, role, content, tool_calls, tool_call_id, token_count, created_at FROM conversation_messages WHERE conversation_id = '01KJR1T215SYQTJJN9CHMCKC9W' ORDER BY created_at
+[conversations] get failed: SpacetimeDB SQL failed (400): Unsupported: SELECT id, role, content, tool_calls, tool_call_id, token_count, created_at FROM conversation_messages WHERE conversation_id = '01KJR1T215SYQTJJN9CHMCKC9W' ORDER BY created_at
+10:52:31 AM [tsx] change in ./src/conversations.ts Restarting...
+[gateway] Shutting down...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+10:52:37 AM [tsx] change in ./src/conversations.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] SpacetimeDB healthy: v2.0.2
+10:52:44 AM [tsx] change in ./src/conversations.ts Restarting...
+[gateway] Shutting down...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+10:52:49 AM [tsx] change in ./src/conversations.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] SpacetimeDB healthy: v2.0.2
+[gateway] Shutting down...
+1:04:25 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+1:40:22 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:15:02 PM [tsx] change in ./src/persistence.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:15:50 PM [tsx] change in ./src/persistence.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:15:54 PM [tsx] unlink in ./src/persistence.ts Rerunning...
+c
+node:internal/process/esm_loader:40
+      internalBinding('errors').triggerUncaughtException(
+                                ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/home/andrew/bond/gateway/src/persistence.js' imported from /home/andrew/bond/gateway/src/server.ts
+    at new NodeError (node:internal/errors:405:5)
+    at finalizeResolution (node:internal/modules/esm/resolve:327:11)
+    at moduleResolve (node:internal/modules/esm/resolve:980:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1193:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565355318:2:3744)
+    at async resolveDirectory (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565355318:2:4237)
+    at async resolve (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565355318:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:302:24) {
+  url: 'file:///home/andrew/bond/gateway/src/persistence.js',
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v18.19.1
+2:15:57 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:15:59 PM [tsx] unlink in ./src/conversations.ts Rerunning...
+c
+node:internal/process/esm_loader:40
+      internalBinding('errors').triggerUncaughtException(
+                                ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/home/andrew/bond/gateway/src/conversations.js' imported from /home/andrew/bond/gateway/src/server.ts
+    at new NodeError (node:internal/errors:405:5)
+    at finalizeResolution (node:internal/modules/esm/resolve:327:11)
+    at moduleResolve (node:internal/modules/esm/resolve:980:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1193:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565359751:2:3744)
+    at async resolveDirectory (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565359751:2:4237)
+    at async resolve (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565359751:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:302:24) {
+  url: 'file:///home/andrew/bond/gateway/src/conversations.js',
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v18.19.1
+2:16:05 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:16:07 PM [tsx] unlink in ./src/config.ts Rerunning...
+c
+node:internal/process/esm_loader:40
+      internalBinding('errors').triggerUncaughtException(
+                                ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/home/andrew/bond/gateway/src/config.js' imported from /home/andrew/bond/gateway/src/index.ts
+    at new NodeError (node:internal/errors:405:5)
+    at finalizeResolution (node:internal/modules/esm/resolve:327:11)
+    at moduleResolve (node:internal/modules/esm/resolve:980:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1193:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565368047:2:3744)
+    at async resolveDirectory (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565368047:2:4237)
+    at async resolve (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565368047:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:302:24) {
+  url: 'file:///home/andrew/bond/gateway/src/config.js',
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v18.19.1
+2:16:09 PM [tsx] change in ./src/server.ts Rerunning...
+c
+node:internal/process/esm_loader:40
+      internalBinding('errors').triggerUncaughtException(
+                                ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/home/andrew/bond/gateway/src/config.js' imported from /home/andrew/bond/gateway/src/index.ts
+    at new NodeError (node:internal/errors:405:5)
+    at finalizeResolution (node:internal/modules/esm/resolve:327:11)
+    at moduleResolve (node:internal/modules/esm/resolve:980:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1193:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565370202:2:3744)
+    at async resolveDirectory (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565370202:2:4237)
+    at async resolve (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565370202:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:302:24) {
+  url: 'file:///home/andrew/bond/gateway/src/config.js',
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v18.19.1
+2:16:14 PM [tsx] change in ./src/persistence/router.ts Rerunning...
+c
+node:internal/process/esm_loader:40
+      internalBinding('errors').triggerUncaughtException(
+                                ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/home/andrew/bond/gateway/src/config.js' imported from /home/andrew/bond/gateway/src/index.ts
+    at new NodeError (node:internal/errors:405:5)
+    at finalizeResolution (node:internal/modules/esm/resolve:327:11)
+    at moduleResolve (node:internal/modules/esm/resolve:980:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1193:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565374315:2:3744)
+    at async resolveDirectory (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565374315:2:4237)
+    at async resolve (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565374315:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:302:24) {
+  url: 'file:///home/andrew/bond/gateway/src/config.js',
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v18.19.1
+2:16:20 PM [tsx] change in ./src/conversations/router.ts Rerunning...
+c
+node:internal/process/esm_loader:40
+      internalBinding('errors').triggerUncaughtException(
+                                ^
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/home/andrew/bond/gateway/src/config.js' imported from /home/andrew/bond/gateway/src/index.ts
+    at new NodeError (node:internal/errors:405:5)
+    at finalizeResolution (node:internal/modules/esm/resolve:327:11)
+    at moduleResolve (node:internal/modules/esm/resolve:980:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1193:11)
+    at nextResolve (node:internal/modules/esm/hooks:864:28)
+    at resolveBase (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565380678:2:3744)
+    at async resolveDirectory (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565380678:2:4237)
+    at async resolve (file:///home/andrew/bond/gateway/node_modules/.pnpm/tsx@4.21.0/node_modules/tsx/dist/esm/index.mjs?1772565380678:2:5355)
+    at async nextResolve (node:internal/modules/esm/hooks:864:22)
+    at async Hooks.resolve (node:internal/modules/esm/hooks:302:24) {
+  url: 'file:///home/andrew/bond/gateway/src/config.js',
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v18.19.1
+2:16:22 PM [tsx] change in ./src/index.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:16:31 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:16:40 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:17:12 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:20:17 PM [tsx] change in ./src/config/index.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core-v2
+[gateway] Bond gateway started
+[gateway] Bond gateway listening on ws://127.0.0.1:18792/ws
+[gateway] Backend URL: http://127.0.0.1:18790
+[persistence] SpacetimeDB healthy: v2.0.2
+[gateway] New WebSocket connection from 127.0.0.1
+[gateway] New WebSocket connection from 127.0.0.1
+[gateway] Shutting down...
+ already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:17:12 PM [tsx] change in ./src/server.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1
+2:20:17 PM [tsx] change in ./src/config/index.ts Rerunning...
+c[persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core-v2
+[gateway] Bond gateway started
+node:events:495
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: listen EADDRINUSE: address already in use 127.0.0.1:18792
+    at __node_internal_captureLargerStackTrace (node:internal/errors:496:5)
+    at __node_internal_uvExceptionWithHostPort (node:internal/errors:593:12)
+    at Server.setupListenHandle [as _listen2] (node:net:1811:16)
+    at listenInCluster (node:net:1859:12)
+    at doListen (node:net:2008:7)
+    at process.processTicksAndRejections (node:internal/process/task_queues:83:21)
+Emitted 'error' event on WebSocketServer instance at:
+    at Server.emit (node:events:517:28)
+    at emitErrorNT (node:net:1838:8)
+    at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+  code: 'EADDRINUSE',
+  errno: -98,
+  syscall: 'listen',
+  address: '127.0.0.1',
+  port: 18792
+}
+
+Node.js v18.19.1

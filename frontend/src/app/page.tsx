@@ -5,6 +5,8 @@ import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from 
 import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
+import { useSpacetimeConnection, useConversations } from "@/hooks/useSpacetimeDB";
+import { getAgentName } from "@/lib/spacetimedb-client";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
   if (name === "file_write" || name === "file_read") {
@@ -37,7 +39,17 @@ export default function Home() {
     }
     return null;
   });
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  // Conversations from SpacetimeDB — auto-updates via subscription
+  const spacetimeConversations = useConversations();
+  const { connected: stdbConnected } = useSpacetimeConnection();
+  const conversations: ConversationSummary[] = spacetimeConversations.map((c) => ({
+    id: c.id,
+    title: c.title || null,
+    message_count: c.messageCount,
+    updated_at: new Date(Number(c.updatedAt)).toISOString(),
+    agent_id: c.agentId,
+    agent_name: getAgentName(c.agentId),
+  }));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -76,7 +88,7 @@ export default function Home() {
   const deleteMessage = async (msgId: string, index: number) => {
     if (msgId && conversationId) {
       try {
-        await fetch(`http://localhost:18790/api/v1/conversations/${conversationId}/messages/${msgId}`, {
+        await fetch(`http://localhost:18792/api/v1/conversations/${conversationId}/messages/${msgId}`, {
           method: "DELETE",
         });
       } catch { /* best effort */ }
@@ -190,7 +202,7 @@ export default function Home() {
           setConversationId(msg.conversationId);
         }
       } else if (msg.type === "conversations_list" && msg.conversations) {
-        setConversations(msg.conversations);
+        // Legacy: still handle for agent selection init until agents are in SpacetimeDB
         if (!initialAgentSetRef.current) {
           initialAgentSetRef.current = true;
           const storedConvId = localStorage.getItem("bond-conversation-id");

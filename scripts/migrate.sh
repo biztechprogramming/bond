@@ -33,7 +33,25 @@ echo "  Using: $MIGRATE"
 echo "  Path: $MIGRATIONS_PATH"
 echo "  Database: $DB_FILE"
 
-# Run migrations using the correct SQLite URL format
+# Run SQLite migrations
 $MIGRATE -path "$MIGRATIONS_PATH" -database "sqlite3://$DB_FILE" up
 
-echo "Migrations complete."
+echo "SQLite migrations complete."
+
+# Run SpacetimeDB migrations (publish module)
+SPACETIMEDB_URL="${SPACETIMEDB_URL:-http://localhost:18787}"
+SPACETIMEDB_MODULE="$PROJECT_ROOT/spacetimedb/spacetimedb"
+
+if curl -s "$SPACETIMEDB_URL/v1/health" > /dev/null 2>&1; then
+    echo ""
+    echo "Publishing SpacetimeDB module..."
+    echo "  Module: $SPACETIMEDB_MODULE"
+    echo "  Server: $SPACETIMEDB_URL"
+    cd "$SPACETIMEDB_MODULE"
+    spacetime publish --server "$SPACETIMEDB_URL" --yes
+    echo "SpacetimeDB migrations complete."
+else
+    echo ""
+    echo "SpacetimeDB not running at $SPACETIMEDB_URL — skipping module publish."
+    echo "  Start it with: spacetime start --listen-addr 127.0.0.1:18787 --data-dir ~/.bond/spacetimedb"
+fi

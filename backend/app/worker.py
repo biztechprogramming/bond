@@ -41,6 +41,7 @@ from backend.app.agent.cache_manager import (
     _advance_cache_breakpoint,
     _decay_in_loop_tool_results,
 )
+from backend.app.agent.persistence_client import PersistenceClient
 litellm.suppress_debug_info = True
 import logging as _logging
 _logging.getLogger("LiteLLM").setLevel(_logging.WARNING)
@@ -203,6 +204,7 @@ class WorkerState:
 
     def __init__(self) -> None:
         self.agent_db: aiosqlite.Connection | None = None
+        self.persistence: PersistenceClient | None = None
         self.config: dict[str, Any] = {}
         self.agent_id: str = "unknown"
         self.start_time: float = 0.0
@@ -338,6 +340,19 @@ async def turn(request: Request) -> StreamingResponse:
             response_text, tool_calls_made = await _run_agent_loop(
                 message, history, conversation_id, event_queue=event_queue,
             )
+            
+            # Persist assistant response
+            if _state.persistence:
+                try:
+                    await _state.persistence.save_message(
+                        session_id=conversation_id,
+                        role="assistant",
+                        content=response_text,
+                        agent_db=_state.agent_db,
+                    )
+                except Exception as e:
+                    logger.error("Failed to persist assistant message: %s", e)
+
             await event_queue.put(_sse_event("chunk", {"content": response_text}))
             await event_queue.put(_sse_event("done", {"response": response_text, "tool_calls_made": tool_calls_made}))
         except Exception as e:
@@ -522,6 +537,18 @@ async def _run_agent_loop(
     if compressed_history:
         messages.extend(compressed_history)
     messages.append({"role": "user", "content": user_message})
+    
+    # Persist user message
+    if _state.persistence:
+        try:
+            await _state.persistence.save_message(
+                session_id=conversation_id,
+                role="user",
+                content=user_message,
+                agent_db=_state.agent_db,
+            )
+        except Exception as e:
+            logger.error("Failed to persist user message: %s", e)
 
     # Build tool definitions + registry with heuristic selection
     registry = build_native_registry()
@@ -791,7 +818,24 @@ async def _run_agent_loop(
                         selected_tool_names.append(tool_name)
                         if tool_name in TOOL_MAP:
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
+                    
+                    start_ts = time.time()
                     result = await registry.execute(tool_name, tool_args, tool_context)
+                    duration = time.time() - start_ts
+                    
+                    # Persist tool log
+                    if _state.persistence:
+                        try:
+                            await _state.persistence.log_tool(
+                                session_id=conversation_id,
+                                tool_name=tool_name,
+                                input=tool_args,
+                                output=result,
+                                duration=duration,
+                                agent_db=_state.agent_db,
+                            )
+                        except Exception as e:
+                            logger.error("Failed to persist tool log: %s", e)
 
                 # Emit any SSE events from tool results (e.g., plan/item updates)
                 if isinstance(result, dict) and "_sse_event" in result and event_queue is not None:
@@ -1040,11 +1084,21 @@ async def _startup(config_path: str, data_dir: str) -> None:
 
     # Initialize agent DB
     _state.agent_db = await _init_agent_db(_state.data_dir)
-    logger.info("Agent worker initialized: agent_id=%s", _state.agent_id)
+    
+    # Initialize persistence client (auto-detects mode if not configured)
+    _state.persistence = PersistenceClient(agent_id=_state.agent_id)
+    await _state.persistence.init()
+    
+    logger.info(
+        "Agent worker initialized: agent_id=%s persistence_mode=%s",
+        _state.agent_id, _state.persistence.mode,
+    )
 
 
 async def _shutdown() -> None:
     """Clean up on shutdown."""
+    if _state.persistence:
+        await _state.persistence.close()
     if _state.agent_db:
         await _state.agent_db.close()
         _state.agent_db = None

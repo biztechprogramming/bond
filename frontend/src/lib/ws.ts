@@ -48,7 +48,7 @@ export class GatewayWebSocket {
   private maxReconnectDelay = 30000;
 
   constructor(url?: string) {
-    this.url = url || `ws://localhost:18789/ws`;
+    this.url = url || `ws://localhost:18792/ws`;
   }
 
   connect(): void {

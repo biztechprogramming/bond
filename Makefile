@@ -11,7 +11,7 @@ backend:
 
 # Gateway (TypeScript WebSocket server)
 gateway:
-	cd /home/andrew/bond/gateway && pnpm dev
+	cd /home/andrew/bond/gateway && SPACETIMEDB_TOKEN=$$(grep 'spacetimedb_token' ~/.config/spacetime/cli.toml 2>/dev/null | cut -d'"' -f2) pnpm dev
 
 # Frontend (Next.js)
 frontend:
@@ -23,9 +23,11 @@ setup:
 
 # Install all dependencies
 install:
+	@chmod +x ./scripts/setup-spacetimedb.sh
+	@./scripts/setup-spacetimedb.sh
 	uv sync
-	cd /home/andrew/bond/gateway && pnpm install
-	cd /home/andrew/bond/frontend && pnpm install
+	cd /home/andrew/bond/gateway && $$(grep -oP '"package_manager":\s*"\K[^"]+' ~/.bond/config.json || echo "pnpm") install
+	cd /home/andrew/bond/frontend && $$(grep -oP '"package_manager":\s*"\K[^"]+' ~/.bond/config.json || echo "pnpm") install
 
 # Run tests
 test:
