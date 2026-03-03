@@ -1,6 +1,8 @@
 """LLM client — LiteLLM wrapper with provider config from vault."""
 
 from __future__ import annotations
+import vendor  # noqa: F401
+import instructor
 
 import logging
 import os
@@ -152,3 +154,7 @@ async def _stream_response(response) -> AsyncIterator[str]:
     async for chunk in response:
         if chunk.choices and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
+
+def get_instructor_client():
+    """Return a litellm client patched with instructor."""
+    return instructor.from_litellm(litellm.acompletion)

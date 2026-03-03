@@ -1,3 +1,6 @@
 [submodule "vendor/OpenSandbox"]
 	path = vendor/OpenSandbox
 	url = https://github.com/alibaba/OpenSandbox.git
+[submodule "vendor/instructor"]
+	path = vendor/instructor
+	url = https://github.com/jxnl/instructor.git
