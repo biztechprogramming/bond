@@ -122,6 +122,8 @@ async def _handle_via_api(
                 if not item_id:
                     return {"error": "item_id is required for update_item"}
                 body = {}
+                if "title" in arguments:
+                    body["title"] = arguments["title"]
                 if "status" in arguments:
                     body["status"] = arguments["status"]
                 if "notes" in arguments:

@@ -430,6 +430,10 @@ TOOL_DEFINITIONS: list[dict] = [
                         "type": "string",
                         "description": "ID of item to update (required for update_item).",
                     },
+                    "title": {
+                        "type": "string",
+                        "description": "New title for the item (for update_item — renames it).",
+                    },
                     "status": {
                         "type": "string",
                         "description": "New status (for update_item, complete_plan).",

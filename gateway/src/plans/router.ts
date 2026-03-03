@@ -235,10 +235,23 @@ export function createPlansRouter(config: GatewayConfig) {
 
   async function updateItemHandler(req: any, res: any) {
     const { itemId } = req.params;
-    const { status, notes, files_changed } = req.body;
+    const { status, notes, files_changed, title } = req.body;
 
-    if (status === undefined && notes === undefined && files_changed === undefined) {
-      return res.status(400).json({ error: "Provide at least one of: status, notes, files_changed" });
+    if (status === undefined && notes === undefined && files_changed === undefined && title === undefined) {
+      return res.status(400).json({ error: "Provide at least one of: title, status, notes, files_changed" });
+    }
+
+    if (title !== undefined) {
+      try {
+        await callReducer(url, mod, "rename_work_item", [itemId, title]);
+      } catch (err: any) {
+        console.error("[plans] rename item failed:", err.message);
+        return res.status(500).json({ error: err.message });
+      }
+      // If only title was requested, return early
+      if (status === undefined && notes === undefined && files_changed === undefined) {
+        return res.json({ item_id: itemId, updated: true });
+      }
     }
 
     // update_work_item takes: {id, status, notes?, filesChanged?}

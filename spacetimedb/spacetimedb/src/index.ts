@@ -538,6 +538,21 @@ export const addWorkItem = spacetimedb.reducer(
   }
 );
 
+export const renameWorkItem = spacetimedb.reducer(
+  {
+    id: t.string(),
+    title: t.string(),
+  },
+  (ctx, args) => {
+    const item = ctx.db.workItems.id.find(args.id);
+    if (!item) return;
+    const now = BigInt(Date.now());
+    ctx.db.workItems.id.update({ ...item, title: args.title, updatedAt: now });
+    const plan = ctx.db.workPlans.id.find(item.planId);
+    if (plan) ctx.db.workPlans.id.update({ ...plan, updatedAt: now });
+  }
+);
+
 export const updateWorkItem = spacetimedb.reducer(
   {
     id: t.string(),

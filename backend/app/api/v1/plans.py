@@ -39,6 +39,7 @@ class AddItemRequest(BaseModel):
 
 
 class UpdateItemRequest(BaseModel):
+    title: str | None = None
     status: str | None = None
     notes: str | None = None
     context_snapshot: dict | None = None
@@ -70,9 +71,9 @@ async def _post(path: str, body: dict) -> dict:
     base = _gateway_url()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(f"{base}{path}", json=body)
-        if resp.status_code == 404:
-            raise HTTPException(status_code=404, detail=resp.json().get("error", "Not found"))
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = resp.json().get("error", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
+            raise HTTPException(status_code=resp.status_code, detail=detail)
         return resp.json()
 
 
@@ -80,9 +81,9 @@ async def _put(path: str, body: dict) -> dict:
     base = _gateway_url()
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.put(f"{base}{path}", json=body)
-        if resp.status_code == 404:
-            raise HTTPException(status_code=404, detail=resp.json().get("error", "Not found"))
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = resp.json().get("error", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
+            raise HTTPException(status_code=resp.status_code, detail=detail)
         return resp.json()
 
 
@@ -112,12 +113,16 @@ async def add_item(plan_id: str, body: AddItemRequest):
 @router.put("/{plan_id}/items/{item_id}")
 async def update_item_full(plan_id: str, item_id: str, body: UpdateItemRequest):
     payload: dict = {}
+    if body.title is not None:
+        payload["title"] = body.title
     if body.status is not None:
         payload["status"] = body.status
     if body.notes is not None:
         payload["notes"] = body.notes
     if body.files_changed is not None:
         payload["files_changed"] = body.files_changed
+    if not payload:
+        raise HTTPException(status_code=400, detail="Provide at least one of: title, status, notes, files_changed")
     await _put(f"/plans/{plan_id}/items/{item_id}", payload)
     return {"status": "updated", "item_id": item_id}
 
