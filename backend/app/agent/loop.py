@@ -183,7 +183,21 @@ async def agent_turn(
 
     # Build tool definitions
     registry = build_registry()
-    tool_defs = registry.get_definitions_for(agent_tools)
+    
+    # Inject MCP tools
+    all_enabled_tools = list(agent_tools)
+    try:
+        from backend.app.mcp import mcp_manager
+        await mcp_manager.refresh_tools(registry)
+        
+        # Add MCP tools to the agent_tools list
+        for name in registry.registered_names:
+            if name.startswith("mcp_") and name not in all_enabled_tools:
+                all_enabled_tools.append(name)
+    except Exception as e:
+        logger.error(f"Failed to refresh MCP tools: {e}")
+
+    tool_defs = registry.get_definitions_for(all_enabled_tools)
 
     # Build context for tool handlers
     workspace_dirs = [os.path.expanduser(m["host_path"]) for m in agent.get("workspace_mounts", [])]
@@ -219,12 +233,14 @@ async def agent_turn(
     for iteration in range(max_iterations):
         current_max_tokens = TOKEN_TIERS[current_tier]
         # Use Instructor for validated tool calls
-        pydantic_tools = get_pydantic_definitions(agent_tools)
+        pydantic_tools = get_pydantic_definitions(all_enabled_tools)
         if pydantic_tools:
-            from typing import Union
             # Create a Union of all available tools
             # Instructor will handle the routing and validation
-            ToolUnion = Union[tuple(pydantic_tools)]
+            if len(pydantic_tools) > 1:
+                ToolUnion = Union[tuple(pydantic_tools)]
+            else:
+                ToolUnion = pydantic_tools[0]
             
             # Patch the call to use Instructor
             instructor_client = get_instructor_client()
@@ -244,10 +260,10 @@ async def agent_turn(
                 
                 # Convert Instructor result back into a format the loop expects
                 # (Simulating a LiteLLM response object for minimum code disruption)
-                tool_name = tool_call_obj.__class__.__name__.lower()
-                # Fix camelCase to snake_case if needed (e.g. CodeExecute -> code_execute)
-                import re
-                tool_name = re.sub(r'(?<!^)(?=[A-Z])', '_', tool_call_obj.__class__.__name__).lower()
+                
+                # Resolve tool name (handles both native snake_case and MCP PascalCase)
+                from backend.app.mcp import mcp_manager
+                tool_name = mcp_manager.resolve_tool_name(tool_call_obj.__class__.__name__)
                 
                 args = tool_call_obj.model_dump(exclude_none=True)
                 
@@ -324,7 +340,7 @@ async def agent_turn(
 
                 logger.info("Tool call [%d]: %s(%s)", iteration, tool_name, list(tool_args.keys()))
 
-                if tool_name not in agent_tools:
+                if tool_name not in all_enabled_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled for this agent."}
                 else:
                     result = await registry.execute(tool_name, tool_args, tool_context)

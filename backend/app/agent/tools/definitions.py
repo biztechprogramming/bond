@@ -470,7 +470,7 @@ TOOL_MAP: dict[str, dict] = {
 }
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List, Literal, Union
+from typing import Optional, List, Literal, Union, Type
 
 class ToolCall(BaseModel):
     """Base class for all tools used by Instructor"""
@@ -583,5 +583,16 @@ INSTRUCTOR_TOOL_MAP = {
     "work_plan": WorkPlan,
 }
 
-def get_pydantic_definitions(enabled_tools: List[str]) -> List[type]:
-    return [INSTRUCTOR_TOOL_MAP[name] for name in enabled_tools if name in INSTRUCTOR_TOOL_MAP]
+def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:
+    # 1. Get static native tool models
+    models: List[Type[BaseModel]] = [INSTRUCTOR_TOOL_MAP[name] for name in enabled_tools if name in INSTRUCTOR_TOOL_MAP]
+    
+    # 2. Add dynamic MCP tool models
+    try:
+        from backend.app.mcp import mcp_manager
+        mcp_models = mcp_manager.get_pydantic_models(enabled_tools)
+        models.extend(mcp_models)
+    except (ImportError, Exception):
+        pass
+        
+    return models

@@ -11,6 +11,7 @@ from backend.app.config import get_settings
 from backend.app.db.session import get_db, get_session_factory, init_db
 from backend.app.jobs import JobScheduler
 from backend.app.jobs.sync_models import sync_models
+from backend.app.mcp import mcp_manager, MCPServerConfig
 from backend.app.mediator import configure_logging
 from backend.app.api.v1.health import router as health_router
 from backend.app.api.v1.agent import router as agent_router
@@ -34,8 +35,21 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     app.state.scheduler = scheduler
 
+    # MCP Setup (Phase 1: hardcoded test server)
+    # We use 'npx' to run the 'everything' server which is a standard test server
+    try:
+        await mcp_manager.add_server(MCPServerConfig(
+            name="everything",
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-everything"]
+        ))
+    except Exception as e:
+        import logging
+        logging.getLogger("bond.mcp").error(f"Failed to start test MCP server: {e}")
+
     yield
 
+    await mcp_manager.stop_all()
     await scheduler.stop()
 
 
