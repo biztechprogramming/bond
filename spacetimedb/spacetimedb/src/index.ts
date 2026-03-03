@@ -532,6 +532,9 @@ export const addWorkItem = spacetimedb.reducer(
       createdAt: now,
       updatedAt: now,
     });
+    // Bump parent plan's updatedAt so sorting always reflects latest activity
+    const plan = ctx.db.workPlans.id.find(item.planId);
+    if (plan) ctx.db.workPlans.id.update({ ...plan, updatedAt: now });
   }
 );
 
@@ -545,13 +548,17 @@ export const updateWorkItem = spacetimedb.reducer(
   (ctx, args) => {
     const item = ctx.db.workItems.id.find(args.id);
     if (!item) return;
+    const now = BigInt(Date.now());
     ctx.db.workItems.id.update({
       ...item,
       status: args.status,
       notes: args.notes ?? item.notes,
       filesChanged: args.filesChanged ?? item.filesChanged,
-      updatedAt: BigInt(Date.now()),
+      updatedAt: now,
     });
+    // Bump parent plan's updatedAt so sorting always reflects latest activity
+    const plan = ctx.db.workPlans.id.find(item.planId);
+    if (plan) ctx.db.workPlans.id.update({ ...plan, updatedAt: now });
   }
 );
 
