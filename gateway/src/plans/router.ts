@@ -106,14 +106,20 @@ export function createPlansRouter(config: GatewayConfig) {
    */
   router.get("/plans", async (req: any, res: any) => {
     try {
-      const { agent_id, status, limit } = req.query;
+      const { agent_id, status, limit, conversation_id } = req.query;
       let plans = await sqlQuery(url, mod, "SELECT * FROM work_plans");
 
       if (agent_id) plans = plans.filter((p: any) => p.agent_id === agent_id);
       if (status) plans = plans.filter((p: any) => p.status === status);
+      if (conversation_id) plans = plans.filter((p: any) => p.conversation_id === conversation_id);
 
-      // Sort by updated_at descending
-      plans.sort((a: any, b: any) => Number(b.updated_at) - Number(a.updated_at));
+      // Sort by updated_at descending; fall back to ULID order (lexicographic = time-ordered)
+      // when updated_at is 0 (plans created before timestamps were fixed).
+      plans.sort((a: any, b: any) => {
+        const tDiff = Number(b.updated_at) - Number(a.updated_at);
+        if (tDiff !== 0) return tDiff;
+        return b.id > a.id ? 1 : b.id < a.id ? -1 : 0;
+      });
 
       if (limit) plans = plans.slice(0, parseInt(limit as string, 10));
 

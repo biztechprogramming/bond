@@ -192,11 +192,16 @@ async def _handle_via_api(
 # ---------------------------------------------------------------------------
 
 
-async def load_active_plan(db: None, agent_id: str) -> dict[str, Any] | None:
-    """Load the most recent active work plan for an agent via the Gateway API.
+async def load_active_plan(
+    db: None,
+    agent_id: str,
+    conversation_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Load the active work plan for an agent via the Gateway API.
 
-    The ``db`` argument is accepted for backwards-compatibility but is ignored;
-    all data comes from SpacetimeDB.
+    Filters by conversation_id when provided so the correct plan is returned
+    when multiple active plans exist (e.g. one per conversation).
+    The ``db`` argument is accepted for backwards-compatibility but is ignored.
     """
     if not _use_api():
         logger.warning("load_active_plan: BOND_API_URL not set, cannot load plan from SpacetimeDB")
@@ -204,7 +209,10 @@ async def load_active_plan(db: None, agent_id: str) -> dict[str, Any] | None:
     try:
         import httpx
         base = _BOND_API_URL.rstrip("/")
-        url = f"{base}/api/v1/plans?agent_id={agent_id}&status=active&limit=1"
+        params = f"agent_id={agent_id}&status=active&limit=1"
+        if conversation_id:
+            params += f"&conversation_id={conversation_id}"
+        url = f"{base}/api/v1/plans?{params}"
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url)
             resp.raise_for_status()
