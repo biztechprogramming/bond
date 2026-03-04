@@ -50,7 +50,7 @@ function safeParseJson(val: any, fallback: any): any {
 
 export function createPlansRouter(config: GatewayConfig) {
   const router = Router();
-  const { spacetimedbUrl: url, spacetimedbModuleName: mod } = config;
+  const { spacetimedbUrl: url, spacetimedbModuleName: mod, spacetimedbToken: token } = config;
 
   /**
    * GET /plans?agent_id=X&status=active&limit=1

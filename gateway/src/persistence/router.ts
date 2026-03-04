@@ -18,7 +18,7 @@ function safeParseJson(val: any, fallback: any): any {
 
 export function createPersistenceRouter(config: GatewayConfig) {
   const router = Router();
-  const { spacetimedbUrl, spacetimedbModuleName } = config;
+  const { spacetimedbUrl, spacetimedbModuleName, spacetimedbToken: token } = config;
 
   console.log(`[persistence] Using SpacetimeDB HTTP API at ${spacetimedbUrl} module ${spacetimedbModuleName}`);
 
@@ -37,7 +37,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         role,
         content,
         JSON.stringify(metadata || {}),
-      ]);
+      ], token);
       res.status(201).json({ id, status: "saved" });
     } catch (err: any) {
       console.error(`[persistence] save_message failed:`, err.message);
@@ -61,7 +61,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         JSON.stringify(input),
         JSON.stringify(output),
         Math.round((duration || 0) * 1000),
-      ]);
+      ], token);
       res.status(201).json({ id, status: "logged" });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -77,7 +77,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
       await callReducer(spacetimedbUrl, spacetimedbModuleName, "set_setting", [
         key,
         typeof value === "string" ? value : JSON.stringify(value),
-      ]);
+      ], token);
       res.status(200).json({ status: "saved" });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -89,7 +89,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
    */
   router.delete("/settings/:key", async (req: any, res: any) => {
     try {
-      await callReducer(spacetimedbUrl, spacetimedbModuleName, "delete_setting", [req.params.key]);
+      await callReducer(spacetimedbUrl, spacetimedbModuleName, "delete_setting", [req.params.key], token);
       res.status(204).end();
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -103,7 +103,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
   router.get("/mcp", async (req: any, res: any) => {
     const { agent_id } = req.query;
     try {
-      const servers = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM mcp_servers");
+      const servers = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM mcp_servers", token);
       const filtered = servers.filter((s: any) => {
         const isEnabled = s.enabled === true || s.enabled === 1;
         const isGlobal = s.agent_id === null || s.agent_id === "" || s.agent_id === undefined;
@@ -138,7 +138,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         id,
         name,
         command,
-        JSON.stringify(args || []),
+        JSON.stringify(args || [], token),
         JSON.stringify(env || {}),
         agentId || "",
       ]);
@@ -161,7 +161,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         systemPrompt,
         model,
         utilityModel,
-        typeof tools === "string" ? tools : JSON.stringify(tools || []),
+        typeof tools === "string" ? tools : JSON.stringify(tools || [], token),
         !!isDefault
       ]);
       res.status(201).json({ status: "synced" });
@@ -183,7 +183,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         displayName,
         contextWindow,
         isEnabled
-      ]);
+      ], token);
       res.status(201).json({ status: "synced" });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -201,7 +201,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         agentId,
         channel || "webchat",
         title || ""
-      ]);
+      ], token);
       res.status(201).json({ status: "synced" });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -223,7 +223,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         "", // tool_call_id
         0,  // token_count
         status || "delivered"
-      ]);
+      ], token);
       res.status(201).json({ status: "synced" });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -244,7 +244,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         status || "active",
         BigInt(createdAt || 0),
         BigInt(updatedAt || 0)
-      ]);
+      ], token);
       res.status(201).json({ status: "synced" });
     } catch (err: any) {
       console.error(`[persistence] import_work_plan failed:`, err.message);
@@ -264,7 +264,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         title || "",
         status || "new",
         ordinal || 0,
-        typeof notes === "string" ? notes : JSON.stringify(notes || []),
+        typeof notes === "string" ? notes : JSON.stringify(notes || [], token),
         typeof filesChanged === "string" ? filesChanged : JSON.stringify(filesChanged || []),
         BigInt(createdAt || 0),
         BigInt(updatedAt || 0)
@@ -281,7 +281,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
    */
   router.get("/spacetimedb/tables", async (req: any, res: any) => {
     try {
-      const data = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM system_table");
+      const data = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM system_table", token);
       res.json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -293,7 +293,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
    */
   router.get("/spacetimedb/reducers", async (req: any, res: any) => {
     try {
-      const data = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM system_reducer");
+      const data = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM system_reducer", token);
       res.json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
