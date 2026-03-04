@@ -64,6 +64,9 @@ export class WebChatChannel {
       case "interrupt":
         await this.handleInterrupt(socket, session.id, msg);
         break;
+      case "pause":
+        await this.handlePause(socket, session.id, msg);
+        break;
       case "switch_conversation":
         await this.handleSwitchConversation(socket, session.id, msg);
         break;
@@ -155,6 +158,43 @@ export class WebChatChannel {
         type: "error",
         sessionId,
         error: err instanceof Error ? err.message : "Failed to interrupt",
+      });
+    }
+  }
+
+  private async handlePause(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const conversationId = msg.conversationId || session.conversationId;
+    if (!conversationId) return;
+
+    try {
+      const resolution = await this.backendClient.resolveAgent(conversationId);
+
+      if (resolution.mode === "container" && resolution.worker_url) {
+        const worker = this.workerPool.get(resolution.worker_url);
+        await worker.interrupt([]); // empty = pause signal; worker breaks loop when no pending messages
+      } else {
+        // Fallback: use interrupt for non-container agents
+        await this.backendClient.interrupt(conversationId);
+      }
+
+      this.send(socket, {
+        type: "status",
+        sessionId,
+        agentStatus: "idle",
+        conversationId,
+      });
+    } catch (err) {
+      this.send(socket, {
+        type: "error",
+        sessionId,
+        error: err instanceof Error ? err.message : "Failed to pause",
       });
     }
   }

@@ -147,7 +147,7 @@ function BoardPage() {
     }
   }, [selectedPlanId, stdbPlans]);
 
-  // When selected plan changes, switch the chat pane to its conversation
+  // When selected plan changes, switch the chat pane to its conversation and agent
   useEffect(() => {
     if (!selectedPlanId) return;
     const plans = getWorkPlans();
@@ -156,6 +156,11 @@ function BoardPage() {
     if (!convId) return;
 
     setConversationId(convId);
+    // Switch to the plan's agent so messages go to the correct worker
+    const agentId = plan?.agentId || (plan as any)?.agent_id;
+    if (agentId) {
+      setSelectedAgentId(agentId);
+    }
     setMessages([]);
     // Request history for this conversation from the gateway
     if (wsRef.current?.connected) {
@@ -269,7 +274,7 @@ function BoardPage() {
 
   const handlePause = useCallback(async () => {
     if (!conversationId) return;
-    wsRef.current?.interrupt(conversationId);
+    wsRef.current?.pause(conversationId);
   }, [conversationId]);
 
   const handleResume = useCallback(async () => {

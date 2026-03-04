@@ -91,4 +91,5 @@ export class WorkerClient {
       throw new Error(`Worker interrupt error ${res.status}: ${text}`);
     }
   }
+
 }

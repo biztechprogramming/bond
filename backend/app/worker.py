@@ -302,6 +302,7 @@ async def interrupt(request: Request) -> dict:
 
 
 
+
 def _discover_workspace() -> str | None:
     """List contents of /workspace to orient the agent on what's mounted."""
     workspace = Path("/workspace")
@@ -666,13 +667,19 @@ async def _run_agent_loop(
     _cache_bp2_index = len(messages) - 1
 
     for _iteration in range(max_iterations):
-        # Check interrupt
+        # Check interrupt: if pending messages, inject them and continue.
+        # If no messages, this is a pure pause signal — break the loop.
         if _state.interrupt_event.is_set():
             _state.interrupt_event.clear()
-            # Inject pending messages
-            for msg in _state.pending_messages:
-                messages.append(msg)
-            _state.pending_messages.clear()
+            if _state.pending_messages:
+                for msg in _state.pending_messages:
+                    messages.append(msg)
+                _state.pending_messages.clear()
+            else:
+                logger.info("Agent loop paused by interrupt signal (no pending messages)")
+                if event_queue:
+                    await event_queue.put(_sse_event("status", {"state": "paused"}))
+                break
 
         # In-loop decay: compress tool results accumulated during this turn.
         # Keep the last 2 tool results verbatim; older ones get progressively decayed.

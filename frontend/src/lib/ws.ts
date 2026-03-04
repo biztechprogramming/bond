@@ -153,6 +153,16 @@ export class GatewayWebSocket {
     );
   }
 
+  pause(conversationId?: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "pause",
+        conversationId,
+      })
+    );
+  }
+
   deleteConversation(conversationId: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(

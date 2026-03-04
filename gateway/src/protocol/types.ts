@@ -3,7 +3,7 @@
  */
 
 export interface IncomingMessage {
-  type: "message" | "interrupt" | "switch_conversation" | "new_conversation" | "list_conversations" | "delete_conversation";
+  type: "message" | "interrupt" | "pause" | "switch_conversation" | "new_conversation" | "list_conversations" | "delete_conversation";
   sessionId?: string;
   content?: string;
   conversationId?: string;
