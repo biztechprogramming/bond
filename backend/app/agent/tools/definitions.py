@@ -409,7 +409,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "work_plan",
-            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work. CRITICAL: You MUST update item status using update_item as you work — never describe plan progress in text. Lifecycle: new → in_progress (before starting) → done (when finished). Only item_id is required for update_item; plan_id is optional.",
+            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work.\n\nCRITICAL RULES:\n1. STATUS: Always update item status — new → in_progress (before starting) → done (when finished). Never describe progress in text instead of updating status.\n2. DESCRIPTION (required on add_item): Every item MUST have a description with: which codebase/repo (e.g. ~/bond, ~/inspections), relevant file paths, what to implement, approach, and acceptance criteria. This is the only context another agent has when picking up this item.\n3. NOTES (use on update_item while working): Append notes as you make progress — decisions made, problems encountered, what was changed and why. Notes are timestamped and visible to anyone resuming the work.\n4. FILES_CHANGED: Always record files you modified on update_item when marking done.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -444,7 +444,7 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "notes": {
                         "type": "string",
-                        "description": "Note to append (for update_item). Timestamped automatically.",
+                        "description": "Note to append while working (for update_item). Use this to document: what you did, decisions made, problems encountered, what changed and why. Timestamped automatically. Append notes frequently — they are the audit trail.",
                     },
                     "context_snapshot": {
                         "type": "object",
