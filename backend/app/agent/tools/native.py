@@ -717,6 +717,95 @@ async def handle_respond(
 
 
 # ---------------------------------------------------------------------------
+# Repo PR — propose changes to the Bond repo
+# ---------------------------------------------------------------------------
+
+async def handle_repo_pr(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Create a branch, write files, commit, push, and open a PR."""
+    import subprocess
+    import os
+
+    branch = arguments.get("branch", "")
+    title = arguments.get("title", "")
+    body = arguments.get("body", "")
+    files = arguments.get("files", {})
+    commit_message = arguments.get("commit_message", "")
+
+    if not branch or not title or not files or not commit_message:
+        return {"error": "branch, title, files, and commit_message are all required"}
+
+    bond_root = Path("/bond")
+    if not (bond_root / ".git").exists():
+        return {"error": "/bond is not a git repository. This agent does not have repo write access."}
+
+    try:
+        # Return to main, pull latest
+        subprocess.run(["git", "checkout", "main"], cwd=bond_root, check=True, capture_output=True)
+        subprocess.run(["git", "pull", "origin", "main", "--ff-only"], cwd=bond_root, capture_output=True)
+
+        # Create branch
+        result = subprocess.run(["git", "checkout", "-b", branch], cwd=bond_root, capture_output=True)
+        if result.returncode != 0:
+            # Branch may already exist
+            subprocess.run(["git", "checkout", branch], cwd=bond_root, check=True, capture_output=True)
+
+        # Write files
+        for rel_path, content in files.items():
+            target = bond_root / rel_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+
+        # Stage and commit
+        subprocess.run(["git", "add", "-A"], cwd=bond_root, check=True, capture_output=True)
+        diff_result = subprocess.run(["git", "diff", "--cached", "--stat"], cwd=bond_root, capture_output=True)
+        if not diff_result.stdout.strip():
+            return {"status": "no_changes", "message": "Nothing to commit — files are identical to current branch."}
+
+        subprocess.run(["git", "commit", "-m", commit_message], cwd=bond_root, check=True, capture_output=True)
+
+        # Push
+        push_result = subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            cwd=bond_root, capture_output=True,
+        )
+        if push_result.returncode != 0:
+            stderr = push_result.stderr.decode()
+            return {"error": f"Push failed: {stderr[:300]}"}
+
+        # Create PR via GitHub API
+        github_token = os.getenv("GITHUB_TOKEN", "")
+        if not github_token:
+            return {"status": "pushed", "message": f"Branch {branch!r} pushed. Set GITHUB_TOKEN to auto-create PRs."}
+
+        import httpx
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.github.com/repos/biztechprogramming/bond/pulls",
+                headers={
+                    "Authorization": f"Bearer {github_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={"title": title, "body": body, "head": branch, "base": "main"},
+            )
+            if resp.status_code == 201:
+                pr_url = resp.json().get("html_url", "")
+                return {"status": "pr_created", "pr_url": pr_url}
+            elif resp.status_code == 422:
+                return {"status": "pushed", "message": f"Branch pushed. PR may already exist. ({resp.text[:200]})"}
+            else:
+                return {"status": "pushed", "message": f"Branch pushed but PR creation failed ({resp.status_code}): {resp.text[:200]}"}
+
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode() if e.stderr else ""
+        return {"error": f"Git error: {stderr or str(e)}"}
+    finally:
+        subprocess.run(["git", "checkout", "main"], cwd=bond_root, capture_output=True)
+
+
+# ---------------------------------------------------------------------------
 # Load Context (prompt hierarchy)
 # ---------------------------------------------------------------------------
 

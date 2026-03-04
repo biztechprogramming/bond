@@ -520,6 +520,40 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "repo_pr",
+            "description": "Propose a change to the Bond repo. Creates a feature branch, writes the specified files, commits, pushes, and opens a PR on GitHub. Use this to add tools, update prompts, or fix bugs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch name e.g. feat/add-weather-tool",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "PR title",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "PR description — what and why",
+                    },
+                    "files": {
+                        "type": "object",
+                        "description": "Relative paths to file contents: {path: content}",
+                        "additionalProperties": {"type": "string"},
+                    },
+                    "commit_message": {
+                        "type": "string",
+                        "description": "Git commit message",
+                    },
+                },
+                "required": ["branch", "title", "body", "files", "commit_message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "load_context",
             "description": "Load prompt context for the current task. Pick the most specific relevant category from the manifest in your system prompt. Call this as your FIRST action on any non-trivial task.",
             "parameters": {
@@ -664,6 +698,14 @@ class ParallelOrchestrate(ToolCall):
     """Execute multiple tool calls in parallel batches using a High-Power Architect / Low-Power Worker pattern."""
     plan: ParallelWorkPlan
 
+class RepoPr(ToolCall):
+    """Propose a change to the Bond repo via PR."""
+    branch: str = Field(description="Branch name e.g. feat/add-weather-tool")
+    title: str = Field(description="PR title")
+    body: str = Field(description="PR description")
+    files: dict[str, str] = Field(description="Relative paths to file contents")
+    commit_message: str = Field(description="Git commit message")
+
 class LoadContext(ToolCall):
     """Load prompt context for the current task. Pick the most specific relevant category from the manifest."""
     category: str = Field(description="Dot-separated category path e.g. engineering.git.commits")
@@ -686,6 +728,7 @@ INSTRUCTOR_TOOL_MAP = {
     "email": Email,
     "work_plan": WorkPlan,
     "parallel_orchestrate": ParallelOrchestrate,
+    "repo_pr": RepoPr,
     "load_context": LoadContext,
 }
 

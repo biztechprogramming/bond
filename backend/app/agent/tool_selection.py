@@ -92,6 +92,10 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "parallel", "concurrent", "simultaneously", "at the same time",
         "in parallel", "batch", "orchestrate", "multiple items",
     ],
+    "repo_pr": [
+        "pull request", "open pr", "create tool", "propose change",
+        "add prompt", "push branch", "new tool", "submit pr",
+    ],
 }
 
 # Pre-compile patterns for efficiency

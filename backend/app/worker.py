@@ -278,6 +278,9 @@ async def _worker_load_mcp_servers(manager):
 
 app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 
+# Module-level manifest cache (updated by /reload)
+_prompt_manifest_cache: str | None = None
+
 
 @app.get("/health")
 async def health() -> dict:
@@ -299,6 +302,32 @@ async def interrupt(request: Request) -> dict:
     _state.interrupt_event.set()
     return {"acknowledged": True}
 
+
+@app.post("/reload")
+async def reload_prompts():
+    """Called by Gateway after main branch merge to refresh prompt manifest."""
+    global _prompt_manifest_cache
+    import subprocess as _sp
+    from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
+
+    # Pull latest from main
+    bond_root = Path("/bond")
+    try:
+        _sp.run(
+            ["git", "pull", "origin", "main", "--ff-only"],
+            cwd=bond_root, capture_output=True, timeout=30,
+        )
+    except Exception:
+        pass  # Non-fatal — manifest still regenerates from current state
+
+    prompts_dir = bond_root / "prompts"
+    if prompts_dir.exists():
+        _prompt_manifest_cache = _gen_manifest(prompts_dir)
+        count = _prompt_manifest_cache.count(",") + 1
+    else:
+        count = 0
+
+    return {"ok": True, "categories": count}
 
 
 
@@ -510,13 +539,20 @@ async def _run_agent_loop(
         
     full_system_prompt = "\n\n".join(prompt_parts)
 
-    # Inject prompt hierarchy manifest into system prompt
+    # Inject prompt hierarchy manifest into system prompt (use cache if populated)
     from backend.app.agent.tools.dynamic_loader import generate_manifest
+    import backend.app.worker as _worker_module
+
     _prompts_dir = Path("/bond/prompts")
     if not _prompts_dir.exists():
         # dev fallback
         _prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-    _manifest = generate_manifest(_prompts_dir)
+
+    _manifest = _worker_module._prompt_manifest_cache
+    if _manifest is None:
+        _manifest = generate_manifest(_prompts_dir)
+        _worker_module._prompt_manifest_cache = _manifest
+
     if _manifest:
         full_system_prompt = full_system_prompt + "\n\n" + _manifest
 

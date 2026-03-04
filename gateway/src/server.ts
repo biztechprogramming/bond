@@ -15,6 +15,7 @@ import { WebChatChannel } from "./channels/index.js";
 import { createPersistenceRouter } from "./persistence/index.js";
 import { createConversationsRouter } from "./conversations/index.js";
 import { createPlansRouter } from "./plans/index.js";
+import { createWebhookRouter } from "./webhooks.js";
 
 export interface GatewayServer {
   close(): void;
@@ -55,6 +56,31 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // Plans API (backed by SpacetimeDB)
   app.use("/api/v1", createPlansRouter(config));
+
+  // GitHub webhook handler for repo update notifications
+  // Raw body capture middleware for signature verification
+  app.use("/webhooks/github", (req: any, _res: any, next: any) => {
+    let data: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => data.push(chunk));
+    req.on("end", () => {
+      (req as any).rawBody = Buffer.concat(data);
+      // Parse JSON body manually since express.json() may have already consumed it
+      try {
+        req.body = JSON.parse((req as any).rawBody.toString());
+      } catch {
+        // body will be parsed by express.json() fallback
+      }
+      next();
+    });
+  });
+
+  const webhookRouter = createWebhookRouter({
+    onMainMerge: async () => {
+      // Notify all known workers to reload
+      console.log("[webhook] TODO: notify connected workers to /reload");
+    },
+  });
+  app.use("/webhooks", webhookRouter);
 
   // Global Broadcast API for internal services
   app.post("/api/v1/broadcast", (req: any, res: any) => {

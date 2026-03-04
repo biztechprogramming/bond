@@ -50,3 +50,16 @@ This file defines what AI agents can and cannot modify when working on the Bond 
 - **Renaming or moving categories** — changing the tree structure affects all agents' manifest and context loading. This requires human review.
 - **Deleting categories** — removing a category may break agents that reference it. Human decision only.
 - **Modifying `universal/` structure** — universal fragments load for every task. Changes here affect all agent behavior globally.
+
+## Repo Autonomy
+
+Agents have their own writable clone of the Bond repo at `/bond`. All changes flow through pull requests via the `repo_pr` tool.
+
+### Workflow
+1. Agent identifies an improvement (new tool, prompt fix, bug)
+2. Agent calls `repo_pr` with branch name, files, commit message, and PR details
+3. PR is created on GitHub for human review
+4. On merge to `main`, the Gateway webhook triggers `/reload` on all workers
+
+### Dynamic tools
+Agent-created tools land in `backend/app/agent/tools/dynamic/`. Each file must export `SCHEMA` and `execute()` — see `dynamic/README.md` for the contract.

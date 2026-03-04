@@ -9,10 +9,13 @@
 
 FROM python:3.12-slim
 
-# System deps: git (for agent git ops), curl (for health checks during debug)
+# System deps: git (for agent git ops), curl (for health checks during debug), openssh-client (for git push)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git curl && \
+    apt-get install -y --no-install-recommends git curl openssh-client && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Mark /bond as safe for git operations
+RUN git config --global --add safe.directory /bond
 
 # Install uv for fast Python package management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -26,7 +29,12 @@ RUN pip install --no-cache-dir \
     uvicorn \
     litellm \
     python-ulid \
-    pydantic
+    pydantic \
+    httpx
+
+# Copy entrypoint script
+COPY scripts/agent-entrypoint.sh /agent-entrypoint.sh
+RUN chmod +x /agent-entrypoint.sh
 
 # Create directories the worker expects
 RUN mkdir -p /data /data/shared /config /workspace
@@ -38,5 +46,6 @@ WORKDIR /bond
 
 EXPOSE 18791
 
-# Default entrypoint — SandboxManager overrides args (port, config, data-dir)
-CMD ["python", "-m", "backend.app.worker", "--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]
+# Entrypoint handles git clone/pull, then execs worker
+ENTRYPOINT ["/agent-entrypoint.sh"]
+CMD ["--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]

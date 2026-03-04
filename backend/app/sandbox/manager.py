@@ -383,18 +383,32 @@ class SandboxManager:
         cmd.extend(["-e", "BOND_API_URL=http://host.docker.internal:18790"])
         cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
 
+        # --- Agent identity & repo env vars ---
+        cmd.extend(["-e", f"AGENT_NAME=bond-agent-{agent_id}"])
+        cmd.extend(["-e", f"AGENT_EMAIL=agent-{agent_id}@bond.internal"])
+        cmd.extend(["-e", "BOND_REPO_URL=git@github.com:biztechprogramming/bond.git"])
+
+        # Inject GITHUB_TOKEN from vault if available
+        try:
+            from backend.app.core.vault import get_vault
+            vault = get_vault()
+            github_token = vault.get("github.token")
+            if github_token:
+                cmd.extend(["-e", f"GITHUB_TOKEN={github_token}"])
+        except Exception:
+            pass
+
         # --- Mounts (Task 2) ---
 
-        # Bond library (read-only) — validate project root has the worker
+        # Bond repo: named volume per agent (read-write clone)
         project_root = _PROJECT_ROOT
-        worker_path = project_root / "backend" / "app" / "worker.py"
-        if worker_path.exists():
-            cmd.extend(["-v", f"{project_root}:/bond:ro"])
-        else:
-            raise RuntimeError(
-                f"Cannot mount Bond library: {worker_path} not found. "
-                f"Project root resolved to {project_root}"
-            )
+        bond_volume = f"bond-clone-{agent_id}"
+        await asyncio.create_subprocess_exec(
+            "docker", "volume", "create", bond_volume,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        cmd.extend(["-v", f"{bond_volume}:/bond:rw"])
 
         # Workspace mounts
         workspace_mounts = agent.get("workspace_mounts", [])
@@ -437,9 +451,10 @@ class SandboxManager:
             cmd.extend(["-v", f"{vault_data_dir}:/bond-home/data:rw"])
 
         # --- Entrypoint (Task 1) ---
+        # Image uses /agent-entrypoint.sh as ENTRYPOINT which handles
+        # git clone/pull then execs worker. We pass worker args as CMD.
         cmd.extend([
             sandbox_image,
-            "python", "-m", "backend.app.worker",
             "--port", str(_WORKER_INTERNAL_PORT),
             "--data-dir", "/data",
             "--config", "/config/agent.json",
