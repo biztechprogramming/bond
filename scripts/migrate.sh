@@ -42,13 +42,47 @@ echo "SQLite migrations complete."
 SPACETIMEDB_URL="${SPACETIMEDB_URL:-http://localhost:18787}"
 SPACETIMEDB_MODULE="$PROJECT_ROOT/spacetimedb/spacetimedb"
 
+spacetime_publish() {
+    local server_url="$1"
+    local output
+    local exit_code
+
+    set +e
+    output=$(spacetime publish --server "$server_url" --yes 2>&1)
+    exit_code=$?
+    set -e
+
+    echo "$output"
+
+    if [ $exit_code -ne 0 ] && echo "$output" | grep -qiE "401|Unauthorized|InvalidSignature|InvalidToken"; then
+        echo "  Auth error detected — fetching fresh token from $server_url..."
+        local fresh_token
+        fresh_token=$(curl -s -X POST "$server_url/v1/identity" 2>/dev/null | \
+            python3 -c "import sys,json; print(json.load(sys.stdin)['token'])" 2>/dev/null)
+
+        if [ -z "$fresh_token" ]; then
+            echo "  Failed to fetch token from $server_url — is the server running?"
+            return $exit_code
+        fi
+
+        spacetime login --token "$fresh_token"
+
+        echo "  Retrying publish..."
+        spacetime publish --server "$server_url" --yes
+        return $?
+    fi
+
+    return $exit_code
+}
+
 if curl -s "$SPACETIMEDB_URL/v1/health" > /dev/null 2>&1; then
     echo ""
     echo "Publishing SpacetimeDB module..."
     echo "  Module: $SPACETIMEDB_MODULE"
     echo "  Server: $SPACETIMEDB_URL"
+
     cd "$SPACETIMEDB_MODULE"
-    spacetime publish --server "$SPACETIMEDB_URL" --yes
+    spacetime_publish "$SPACETIMEDB_URL"
     echo "SpacetimeDB migrations complete."
 else
     echo ""
