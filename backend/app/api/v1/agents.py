@@ -7,10 +7,8 @@ import json
 import logging
 import subprocess
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
 from backend.app.core.spacetimedb import get_stdb
