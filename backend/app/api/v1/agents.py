@@ -70,53 +70,10 @@ class AgentUpdate(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────
 
 
-async def _get_agent_with_relations(db: AsyncSession, agent_id: str) -> dict | None:
-    """Fetch an agent with its workspace mounts and channels."""
-    result = await db.execute(
-        text("SELECT * FROM agents WHERE id = :id"), {"id": agent_id}
-    )
-    row = result.mappings().first()
-    if row is None:
-        return None
-
-    agent = dict(row)
-    agent["tools"] = json.loads(agent["tools"]) if isinstance(agent["tools"], str) else agent["tools"]
-    agent["auto_rag"] = bool(agent["auto_rag"])
-    agent["is_default"] = bool(agent["is_default"])
-    agent["is_active"] = bool(agent["is_active"])
-
-    # Fetch mounts
-    mounts_result = await db.execute(
-        text("SELECT * FROM agent_workspace_mounts WHERE agent_id = :id ORDER BY mount_name"),
-        {"id": agent_id},
-    )
-    agent["workspace_mounts"] = [
-        {
-            "id": m["id"],
-            "host_path": m["host_path"],
-            "mount_name": m["mount_name"],
-            "container_path": m["container_path"] or f"/workspace/{m['mount_name']}",
-            "readonly": bool(m["readonly"]),
-        }
-        for m in mounts_result.mappings().all()
-    ]
-
-    # Fetch channels
-    channels_result = await db.execute(
-        text("SELECT * FROM agent_channels WHERE agent_id = :id ORDER BY channel"),
-        {"id": agent_id},
-    )
-    agent["channels"] = [
-        {
-            "id": c["id"],
-            "channel": c["channel"],
-            "enabled": bool(c["enabled"]),
-            "sandbox_override": c["sandbox_override"],
-        }
-        for c in channels_result.mappings().all()
-    ]
-
-    return agent
+# This function is no longer used after migrating to SpacetimeDB
+# async def _get_agent_with_relations(db: AsyncSession, agent_id: str) -> dict | None:
+#     """Fetch an agent with its workspace mounts and channels."""
+#     # Removed for SpacetimeDB migration
 
 
 # ── Endpoints ─────────────────────────────────────────────────
@@ -300,229 +257,32 @@ async def get_agent(agent_id: str):
 
 
 @router.post("")
-async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
+async def create_agent(body: AgentCreate):
     """Create a new agent with mounts and channels."""
-    agent_id = str(ULID())
-
-    await db.execute(
-        text(
-            "INSERT INTO agents (id, name, display_name, system_prompt, model, utility_model, "
-            "sandbox_image, tools, max_iterations, auto_rag, auto_rag_limit, "
-            "is_default, is_active) "
-            "VALUES (:id, :name, :display_name, :system_prompt, :model, :utility_model, "
-            ":sandbox_image, :tools, :max_iterations, :auto_rag, :auto_rag_limit, "
-            "0, 1)"
-        ),
-        {
-            "id": agent_id,
-            "name": body.name,
-            "display_name": body.display_name,
-            "system_prompt": body.system_prompt,
-            "model": body.model,
-            "utility_model": body.utility_model,
-            "sandbox_image": body.sandbox_image,
-            "tools": json.dumps(body.tools),
-            "max_iterations": body.max_iterations,
-            "auto_rag": 1 if body.auto_rag else 0,
-            "auto_rag_limit": body.auto_rag_limit,
-        },
-    )
-
-    # Insert workspace mounts
-    for mount in body.workspace_mounts:
-        mount_id = str(ULID())
-        await db.execute(
-            text(
-                "INSERT INTO agent_workspace_mounts (id, agent_id, host_path, mount_name, readonly, container_path) "
-                "VALUES (:id, :agent_id, :host_path, :mount_name, :readonly, :container_path)"
-            ),
-            {
-                "id": mount_id,
-                "agent_id": agent_id,
-                "host_path": mount.host_path,
-                "mount_name": mount.mount_name,
-                "readonly": 1 if mount.readonly else 0,
-                "container_path": mount.container_path or f"/workspace/{mount.mount_name}",
-            },
-        )
-
-    # Insert channels
-    for ch in body.channels:
-        ch_id = str(ULID())
-        await db.execute(
-            text(
-                "INSERT INTO agent_channels (id, agent_id, channel, enabled, sandbox_override) "
-                "VALUES (:id, :agent_id, :channel, :enabled, :sandbox_override)"
-            ),
-            {
-                "id": ch_id,
-                "agent_id": agent_id,
-                "channel": ch.channel,
-                "enabled": 1 if ch.enabled else 0,
-                "sandbox_override": ch.sandbox_override,
-            },
-        )
-
-    await db.commit()
-    return await _get_agent_with_relations(db, agent_id)
+    # TODO: Implement SpacetimeDB version
+    # For now, return NotImplemented since we're migrating
+    raise HTTPException(status_code=501, detail="Create agent not yet implemented for SpacetimeDB")
 
 
 @router.put("/{agent_id}")
-async def update_agent(agent_id: str, body: AgentUpdate, db: AsyncSession = Depends(get_db)):
-    """Update an agent, replacing mounts and channels if provided."""
-    # Load current agent state (for sandbox change detection)
-    existing = await db.execute(
-        text("SELECT id, sandbox_image FROM agents WHERE id = :id"), {"id": agent_id}
-    )
-    old_row = existing.fetchone()
-    if old_row is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    old_image = old_row[1]
-
-    # Load current mounts for comparison
-    old_mounts_result = await db.execute(
-        text("SELECT host_path, mount_name, readonly FROM agent_workspace_mounts WHERE agent_id = :id ORDER BY mount_name"),
-        {"id": agent_id},
-    )
-    old_mounts = [(r[0], r[1], r[2]) for r in old_mounts_result.fetchall()]
-
-    # Build SET clause dynamically
-    updates = {}
-    if body.name is not None:
-        updates["name"] = body.name
-    if body.display_name is not None:
-        updates["display_name"] = body.display_name
-    if body.system_prompt is not None:
-        updates["system_prompt"] = body.system_prompt
-    if body.model is not None:
-        updates["model"] = body.model
-    if body.utility_model is not None:
-        updates["utility_model"] = body.utility_model
-    if body.sandbox_image is not None:
-        updates["sandbox_image"] = body.sandbox_image
-    if body.tools is not None:
-        updates["tools"] = json.dumps(body.tools)
-    if body.max_iterations is not None:
-        updates["max_iterations"] = body.max_iterations
-    if body.auto_rag is not None:
-        updates["auto_rag"] = 1 if body.auto_rag else 0
-    if body.auto_rag_limit is not None:
-        updates["auto_rag_limit"] = body.auto_rag_limit
-
-    if updates:
-        set_clause = ", ".join(f"{k} = :{k}" for k in updates)
-        updates["id"] = agent_id
-        await db.execute(
-            text(f"UPDATE agents SET {set_clause} WHERE id = :id"),
-            updates,
-        )
-
-    # Replace workspace mounts if provided
-    if body.workspace_mounts is not None:
-        await db.execute(
-            text("DELETE FROM agent_workspace_mounts WHERE agent_id = :id"),
-            {"id": agent_id},
-        )
-        for mount in body.workspace_mounts:
-            mount_id = str(ULID())
-            await db.execute(
-                text(
-                    "INSERT INTO agent_workspace_mounts (id, agent_id, host_path, mount_name, readonly, container_path) "
-                    "VALUES (:id, :agent_id, :host_path, :mount_name, :readonly, :container_path)"
-                ),
-                {
-                    "id": mount_id,
-                    "agent_id": agent_id,
-                    "host_path": mount.host_path,
-                    "mount_name": mount.mount_name,
-                    "readonly": 1 if mount.readonly else 0,
-                    "container_path": mount.container_path or f"/workspace/{mount.mount_name}",
-                },
-            )
-
-    # Replace channels if provided
-    if body.channels is not None:
-        await db.execute(
-            text("DELETE FROM agent_channels WHERE agent_id = :id"),
-            {"id": agent_id},
-        )
-        for ch in body.channels:
-            ch_id = str(ULID())
-            await db.execute(
-                text(
-                    "INSERT INTO agent_channels (id, agent_id, channel, enabled, sandbox_override) "
-                    "VALUES (:id, :agent_id, :channel, :enabled, :sandbox_override)"
-                ),
-                {
-                    "id": ch_id,
-                    "agent_id": agent_id,
-                    "channel": ch.channel,
-                    "enabled": 1 if ch.enabled else 0,
-                    "sandbox_override": ch.sandbox_override,
-                },
-            )
-
-    await db.commit()
-
-    # Detect sandbox-relevant changes and destroy old container if needed
-    # Any change to image, mounts, model, tools, or system prompt requires
-    # container recreation since the config is read at startup.
-    needs_recreate = False
-    new_image = body.sandbox_image if body.sandbox_image is not None else old_image
-
-    if new_image != old_image:
-        needs_recreate = True
-
-    if body.workspace_mounts is not None:
-        new_mounts = [(m.host_path, m.mount_name, 1 if m.readonly else 0) for m in body.workspace_mounts]
-        if new_mounts != old_mounts:
-            needs_recreate = True
-
-    # Config file changes: model, tools, system_prompt
-    if body.model is not None or body.tools is not None or body.system_prompt is not None or body.max_iterations is not None:
-        needs_recreate = True
-
-    if needs_recreate and new_image:
-        from backend.app.sandbox.manager import get_sandbox_manager
-        manager = get_sandbox_manager()
-        await manager.destroy_agent_container(agent_id)
-        logger.info("Destroyed container for agent %s due to settings change", agent_id)
-
-    return await _get_agent_with_relations(db, agent_id)
+async def update_agent(agent_id: str, body: AgentUpdate):
+    """Update an existing agent."""
+    # TODO: Implement SpacetimeDB version
+    # For now, return NotImplemented since we're migrating
+    raise HTTPException(status_code=501, detail="Update agent not yet implemented for SpacetimeDB")
 
 
 @router.delete("/{agent_id}")
-async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
-    """Delete an agent (rejects if default)."""
-    result = await db.execute(
-        text("SELECT is_default FROM agents WHERE id = :id"), {"id": agent_id}
-    )
-    row = result.fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    if row[0]:
-        raise HTTPException(status_code=400, detail="Cannot delete the default agent")
-
-    await db.execute(text("DELETE FROM agents WHERE id = :id"), {"id": agent_id})
-    await db.commit()
-    return {"status": "deleted", "agent_id": agent_id}
+async def delete_agent(agent_id: str):
+    """Delete an agent."""
+    # TODO: Implement SpacetimeDB version
+    # For now, return NotImplemented since we're migrating
+    raise HTTPException(status_code=501, detail="Delete agent not yet implemented for SpacetimeDB")
 
 
 @router.post("/{agent_id}/default")
-async def set_default_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def set_default_agent(agent_id: str):
     """Set an agent as the default."""
-    result = await db.execute(
-        text("SELECT id FROM agents WHERE id = :id"), {"id": agent_id}
-    )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    # Clear current default
-    await db.execute(text("UPDATE agents SET is_default = 0 WHERE is_default = 1"))
-    # Set new default
-    await db.execute(
-        text("UPDATE agents SET is_default = 1 WHERE id = :id"), {"id": agent_id}
-    )
-    await db.commit()
-    return await _get_agent_with_relations(db, agent_id)
+    # TODO: Implement SpacetimeDB version
+    # For now, return NotImplemented since we're migrating
+    raise HTTPException(status_code=501, detail="Set default agent not yet implemented for SpacetimeDB")
