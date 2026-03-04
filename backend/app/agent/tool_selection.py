@@ -14,7 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Always included regardless of heuristics
-ALWAYS_INCLUDE = {"respond"}
+ALWAYS_INCLUDE = {"respond", "load_context"}
 
 # Maximum tools to send per turn
 MAX_TOOLS_PER_TURN = 8

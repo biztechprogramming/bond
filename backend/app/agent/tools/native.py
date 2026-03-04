@@ -717,6 +717,32 @@ async def handle_respond(
 
 
 # ---------------------------------------------------------------------------
+# Load Context (prompt hierarchy)
+# ---------------------------------------------------------------------------
+
+async def handle_load_context(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Load prompt context fragments for a given category."""
+    category = arguments.get("category", "")
+    if not category:
+        return {"error": "category is required"}
+
+    from backend.app.agent.tools.dynamic_loader import load_context_fragments
+
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    # Fallback: container path
+    if not prompts_dir.exists():
+        prompts_dir = Path("/bond/prompts")
+
+    result = load_context_fragments(category, prompts_dir)
+    if result.startswith("Error:"):
+        return {"error": result}
+    return {"context": result}
+
+
+# ---------------------------------------------------------------------------
 # Parallel Orchestration
 # ---------------------------------------------------------------------------
 

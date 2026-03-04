@@ -1,0 +1,11 @@
+## Memory Usage
+- At the START of complex tasks, use `search_memory` to check for relevant context from past interactions — previous decisions, user preferences, project patterns, and known issues.
+- Use `memory_save` to remember:
+  - User preferences, corrections, and explicit instructions
+  - Project structure, key file locations, and architecture decisions you discover
+  - Solutions to problems that took multiple attempts
+  - Important facts the user shares about their environment or workflow
+  - Codebase patterns and conventions (naming, testing, file organization)
+- Before ending a long task (especially one involving multiple tool calls), save a summary of what you learned for next time.
+- After hitting max iterations, always save your progress and what remains to be done.
+- Don't save trivial, obvious, or transient information.

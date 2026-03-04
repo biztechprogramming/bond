@@ -17,6 +17,7 @@ def build_native_registry() -> ToolRegistry:
         handle_file_edit,
         handle_file_read,
         handle_file_write,
+        handle_load_context,
         handle_memory_delete,
         handle_memory_save,
         handle_memory_update,
@@ -53,4 +54,5 @@ def build_native_registry() -> ToolRegistry:
     registry.register("web_read", handle_web_read)
     registry.register("work_plan", handle_work_plan)
     registry.register("parallel_orchestrate", handle_parallel_orchestrate)
+    registry.register("load_context", handle_load_context)
     return registry

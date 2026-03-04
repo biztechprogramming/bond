@@ -517,6 +517,23 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "load_context",
+            "description": "Load prompt context for the current task. Pick the most specific relevant category from the manifest in your system prompt. Call this as your FIRST action on any non-trivial task.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Dot-separated category path e.g. engineering.git.commits or infrastructure.docker.sandbox",
+                    }
+                },
+                "required": ["category"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
@@ -647,6 +664,10 @@ class ParallelOrchestrate(ToolCall):
     """Execute multiple tool calls in parallel batches using a High-Power Architect / Low-Power Worker pattern."""
     plan: ParallelWorkPlan
 
+class LoadContext(ToolCall):
+    """Load prompt context for the current task. Pick the most specific relevant category from the manifest."""
+    category: str = Field(description="Dot-separated category path e.g. engineering.git.commits")
+
 # Mapping for Instructor
 INSTRUCTOR_TOOL_MAP = {
     "respond": Respond,
@@ -665,6 +686,7 @@ INSTRUCTOR_TOOL_MAP = {
     "email": Email,
     "work_plan": WorkPlan,
     "parallel_orchestrate": ParallelOrchestrate,
+    "load_context": LoadContext,
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:

@@ -510,6 +510,16 @@ async def _run_agent_loop(
         
     full_system_prompt = "\n\n".join(prompt_parts)
 
+    # Inject prompt hierarchy manifest into system prompt
+    from backend.app.agent.tools.dynamic_loader import generate_manifest
+    _prompts_dir = Path("/bond/prompts")
+    if not _prompts_dir.exists():
+        # dev fallback
+        _prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+    _manifest = generate_manifest(_prompts_dir)
+    if _manifest:
+        full_system_prompt = full_system_prompt + "\n\n" + _manifest
+
     # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
     windowed_history = history
     if history:
@@ -807,6 +817,18 @@ async def _run_agent_loop(
                     tool_args = {}
 
                 tool_calls_made += 1
+
+                # Mandatory first call enforcement: first tool call must be load_context
+                if tool_calls_made == 1 and tool_name != "load_context" and _manifest:
+                    logger.info("Mandatory load_context enforcement: agent called %s first", tool_name)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps({
+                            "error": "You must call load_context first. Select the most specific category from the manifest for this task."
+                        }),
+                    })
+                    continue
 
                 # Repetition detection: hash tool name + first 200 chars of args
                 args_sig = hashlib.md5(f"{tool_name}:{json.dumps(tool_args)[:200]}".encode()).hexdigest()[:8]
