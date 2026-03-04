@@ -571,6 +571,12 @@ async def _run_agent_loop(
     if _manifest:
         full_system_prompt = full_system_prompt + "\n\n" + _manifest
 
+    # Set process cwd to /workspace so file_read/file_edit/file_write resolve
+    # relative paths the same way code_execute does.
+    _workspace_ctx = _discover_workspace()
+    if _workspace_ctx:
+        full_system_prompt = full_system_prompt + "\n\n" + _workspace_ctx
+
     # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
     windowed_history = history
     if history:
