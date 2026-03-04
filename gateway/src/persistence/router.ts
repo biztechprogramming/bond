@@ -138,7 +138,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         id,
         name,
         command,
-        JSON.stringify(args || [], token),
+        JSON.stringify(args || []),
         JSON.stringify(env || {}),
         agentId || "",
       ]);
@@ -161,7 +161,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         systemPrompt,
         model,
         utilityModel,
-        typeof tools === "string" ? tools : JSON.stringify(tools || [], token),
+        typeof tools === "string" ? tools : JSON.stringify(tools || []),
         !!isDefault
       ]);
       res.status(201).json({ status: "synced" });
@@ -264,7 +264,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
         title || "",
         status || "new",
         ordinal || 0,
-        typeof notes === "string" ? notes : JSON.stringify(notes || [], token),
+        typeof notes === "string" ? notes : JSON.stringify(notes || []),
         typeof filesChanged === "string" ? filesChanged : JSON.stringify(filesChanged || []),
         BigInt(createdAt || 0),
         BigInt(updatedAt || 0)
