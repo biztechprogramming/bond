@@ -11,7 +11,11 @@ backend:
 
 # Gateway (TypeScript WebSocket server)
 gateway:
-	cd /home/andrew/bond/gateway && SPACETIMEDB_TOKEN=$$(grep 'spacetimedb_token' ~/.config/spacetime/cli.toml 2>/dev/null | cut -d'"' -f2) pnpm dev
+	cd /home/andrew/bond/gateway && \
+	  SPACETIMEDB_TOKEN=$$(grep 'spacetimedb_token' ~/.config/spacetime/cli.toml 2>/dev/null | cut -d'"' -f2) \
+	  BOND_SPACETIMEDB_URL=http://localhost:18787 \
+	  BOND_SPACETIMEDB_MODULE=bond-core-v2 \
+	  pnpm dev
 
 # Frontend (Next.js)
 frontend:

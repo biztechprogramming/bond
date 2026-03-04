@@ -50,7 +50,7 @@ function safeParseJson(val: any, fallback: any): any {
 
 export function createPlansRouter(config: GatewayConfig) {
   const router = Router();
-  const { spacetimedbUrl: url, spacetimedbModuleName: mod } = config;
+  const { spacetimedbUrl: url, spacetimedbModuleName: mod, spacetimedbToken: token } = config;
 
   /**
    * GET /plans?agent_id=X&status=active&limit=1
@@ -59,7 +59,7 @@ export function createPlansRouter(config: GatewayConfig) {
   router.get("/plans", async (req: any, res: any) => {
     try {
       const { agent_id, status, limit, conversation_id } = req.query;
-      let plans = await sqlQuery(url, mod, "SELECT * FROM work_plans");
+      let plans = await sqlQuery(url, mod, "SELECT * FROM work_plans", token);
 
       if (agent_id) plans = plans.filter((p: any) => p.agent_id === agent_id);
       if (status) plans = plans.filter((p: any) => p.status === status);
@@ -93,11 +93,11 @@ export function createPlansRouter(config: GatewayConfig) {
   router.get("/plans/:planId", async (req: any, res: any) => {
     const { planId } = req.params;
     try {
-      const plans = await sqlQuery(url, mod, `SELECT * FROM work_plans WHERE id = '${planId}'`);
+      const plans = await sqlQuery(url, mod, `SELECT * FROM work_plans WHERE id = '${planId}'`, token);
       if (plans.length === 0) {
         return res.status(404).json({ error: "Plan not found" });
       }
-      const items = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`);
+      const items = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`, token);
       res.json(formatPlan(plans[0], items));
     } catch (err: any) {
       console.error("[plans] get failed:", err.message);
@@ -121,7 +121,7 @@ export function createPlansRouter(config: GatewayConfig) {
         agent_id,
         conversation_id || "",
         title,
-      ]);
+      ], token);
       res.status(201).json({
         plan_id: planId,
         id: planId,
@@ -149,11 +149,11 @@ export function createPlansRouter(config: GatewayConfig) {
     try {
       let ord = ordinal;
       if (ord === undefined) {
-        const existing = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`);
+        const existing = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`, token);
         ord = existing.length;
       }
       // add_work_item: {id, planId, title, ordinal, description}
-      await callReducer(url, mod, "add_work_item", [itemId, planId, title, ord, description]);
+      await callReducer(url, mod, "add_work_item", [itemId, planId, title, ord, description], token);
       res.status(201).json({
         item_id: itemId,
         id: itemId,
@@ -196,7 +196,7 @@ export function createPlansRouter(config: GatewayConfig) {
 
     if (title !== undefined) {
       try {
-        await callReducer(url, mod, "rename_work_item", [itemId, title]);
+        await callReducer(url, mod, "rename_work_item", [itemId, title], token);
       } catch (err: any) {
         console.error("[plans] rename item failed:", err.message);
         return res.status(500).json({ error: err.message });
@@ -209,7 +209,7 @@ export function createPlansRouter(config: GatewayConfig) {
 
     // update_work_item reducer always requires exactly 4 args: [id, status, notes, files_changed]
     // Fetch current row to fill in any fields not provided by the caller
-    const currentRows = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE id = '${itemId}'`);
+    const currentRows = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE id = '${itemId}'`, token);
     if (currentRows.length === 0) return res.status(404).json({ error: "Item not found" });
     const current = currentRows[0];
 
@@ -244,7 +244,7 @@ export function createPlansRouter(config: GatewayConfig) {
     const { status = "completed" } = req.body;
     try {
       // update_work_plan_status: {id, status}
-      await callReducer(url, mod, "update_work_plan_status", [planId, status]);
+      await callReducer(url, mod, "update_work_plan_status", [planId, status], token);
       res.json({ plan_id: planId, status });
     } catch (err: any) {
       console.error("[plans] complete plan failed:", err.message);
@@ -259,7 +259,7 @@ export function createPlansRouter(config: GatewayConfig) {
   router.delete("/plans/:planId", async (req: any, res: any) => {
     const { planId } = req.params;
     try {
-      await callReducer(url, mod, "delete_work_plan", [planId]);
+      await callReducer(url, mod, "delete_work_plan", [planId], token);
       res.json({ plan_id: planId, deleted: true });
     } catch (err: any) {
       console.error("[plans] delete plan failed:", err.message);

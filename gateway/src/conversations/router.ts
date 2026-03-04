@@ -14,29 +14,25 @@ import { callReducer, sqlQuery } from "../spacetimedb/client.js";
 
 export function createConversationsRouter(config: GatewayConfig) {
   const router = Router();
-  const { spacetimedbUrl: url, spacetimedbModuleName: mod } = config;
+  const { spacetimedbUrl: url, spacetimedbModuleName: mod, spacetimedbToken: token } = config;
 
   // Helper: build agent name lookup map
   async function agentNameMap(): Promise<Record<string, string>> {
-    try {
-      const agents = await sqlQuery(url, mod, "SELECT id, display_name FROM agents");
-      const map: Record<string, string> = {};
-      for (const a of agents) map[a.id] = a.display_name;
-      return map;
-    } catch {
-      return {};
-    }
+    const agents = await sqlQuery(url, mod, "SELECT id, display_name FROM agents", token);
+    const map: Record<string, string> = {};
+    for (const a of agents) map[a.id] = a.display_name;
+    return map;
   }
 
   /**
-   * GET /api/v1/conversations
+   * GET /api/v1/conversations — reads from SpacetimeDB (authoritative store).
+   * Throws if SpacetimeDB is unreachable or token is missing.
    */
   router.get("/conversations", async (_req: any, res: any) => {
     try {
-      const rows = await sqlQuery(url, mod, "SELECT * FROM conversations");
+      const rows = await sqlQuery(url, mod, "SELECT * FROM conversations", token);
       const agents = await agentNameMap();
 
-      // Sort by updated_at descending
       rows.sort((a: any, b: any) => Number(b.updated_at) - Number(a.updated_at));
 
       const conversations = rows.map((r: any) => ({
@@ -44,11 +40,11 @@ export function createConversationsRouter(config: GatewayConfig) {
         agent_id: r.agent_id,
         agent_name: agents[r.agent_id] || null,
         channel: r.channel,
-        title: r.title || null,
+        title: r.title?.some ?? r.title ?? null,
         is_active: r.is_active,
         message_count: r.message_count,
-        created_at: new Date(Number(r.created_at)).toISOString(),
-        updated_at: new Date(Number(r.updated_at)).toISOString(),
+        created_at: new Date(Number(r.created_at) * 1000).toISOString(),
+        updated_at: new Date(Number(r.updated_at) * 1000).toISOString(),
       }));
       res.json(conversations);
     } catch (err: any) {
@@ -68,14 +64,14 @@ export function createConversationsRouter(config: GatewayConfig) {
       // If no agent_id, find default
       let agentId = agent_id;
       if (!agentId) {
-        const agents = await sqlQuery(url, mod, "SELECT id FROM agents WHERE is_default = true");
+        const agents = await sqlQuery(url, mod, "SELECT id FROM agents WHERE is_default = true", token);
         if (agents.length === 0) {
           return res.status(500).json({ error: "No default agent configured" });
         }
         agentId = agents[0].id;
       }
 
-      await callReducer(url, mod, "create_conversation", [id, agentId, channel, title || ""]);
+      await callReducer(url, mod, "create_conversation", [id, agentId, channel, title || ""], token);
 
       // Mirror to backend SQLite so history/switch_conversation lookups work
       try {
@@ -89,7 +85,7 @@ export function createConversationsRouter(config: GatewayConfig) {
       }
 
       // Return the created conversation
-      const rows = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${id}'`);
+      const rows = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${id}'`, token);
       if (rows.length === 0) {
         return res.status(201).json({ id, agent_id: agentId, channel, title });
       }
@@ -116,7 +112,7 @@ export function createConversationsRouter(config: GatewayConfig) {
   router.get("/conversations/:id", async (req: any, res: any) => {
     const { id } = req.params;
     try {
-      const convs = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${id}'`);
+      const convs = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${id}'`, token);
       if (convs.length === 0) {
         return res.status(404).json({ error: "Conversation not found" });
       }
@@ -166,7 +162,7 @@ export function createConversationsRouter(config: GatewayConfig) {
 
     try {
       // Verify conversation exists
-      const convs = await sqlQuery(url, mod, `SELECT id FROM conversations WHERE id = '${id}'`);
+      const convs = await sqlQuery(url, mod, `SELECT id FROM conversations WHERE id = '${id}'`, token);
       if (convs.length === 0) {
         return res.status(404).json({ error: "Conversation not found" });
       }
@@ -204,8 +200,8 @@ export function createConversationsRouter(config: GatewayConfig) {
     const { title } = req.body;
 
     try {
-      await callReducer(url, mod, "update_conversation", [id, title]);
-      const rows = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${id}'`);
+      await callReducer(url, mod, "update_conversation", [id, title], token);
+      const rows = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${id}'`, token);
       if (rows.length === 0) {
         return res.status(404).json({ error: "Conversation not found" });
       }
@@ -232,7 +228,7 @@ export function createConversationsRouter(config: GatewayConfig) {
   router.delete("/conversations/:id", async (req: any, res: any) => {
     const { id } = req.params;
     try {
-      await callReducer(url, mod, "delete_conversation", [id]);
+      await callReducer(url, mod, "delete_conversation", [id], token);
       // Mirror delete to backend SQLite
       try {
         await fetch(`${config.backendUrl}/api/v1/conversations/${id}`, { method: "DELETE" });
@@ -256,7 +252,7 @@ export function createConversationsRouter(config: GatewayConfig) {
 
     try {
       // Verify conversation exists
-      const convs = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${conversationId}'`);
+      const convs = await sqlQuery(url, mod, `SELECT * FROM conversations WHERE id = '${conversationId}'`, token);
       if (convs.length === 0) {
         return res.status(404).json({ error: "Conversation not found" });
       }
@@ -271,7 +267,7 @@ export function createConversationsRouter(config: GatewayConfig) {
           if (lastSpace > 0) autoTitle = autoTitle.substring(0, lastSpace);
           autoTitle += "...";
         }
-        await callReducer(url, mod, "update_conversation", [conversationId, autoTitle]);
+        await callReducer(url, mod, "update_conversation", [conversationId, autoTitle], token);
       }
 
       await callReducer(url, mod, "add_conversation_message", [
@@ -283,7 +279,7 @@ export function createConversationsRouter(config: GatewayConfig) {
         "", // tool_call_id
         0,  // token_count
         status,
-      ]);
+      ], token);
 
       if (status === "queued") {
         // Count queued messages — SpacetimeDB SQL doesn't support AND, so filter in JS
@@ -316,7 +312,7 @@ export function createConversationsRouter(config: GatewayConfig) {
   router.delete("/conversations/:id/messages/:messageId", async (req: any, res: any) => {
     const { id: conversationId, messageId } = req.params;
     try {
-      await callReducer(url, mod, "delete_conversation_message", [messageId, conversationId]);
+      await callReducer(url, mod, "delete_conversation_message", [messageId, conversationId], token);
       res.json({ status: "deleted", message_id: messageId });
     } catch (err: any) {
       console.error("[conversations] delete message failed:", err.message);
