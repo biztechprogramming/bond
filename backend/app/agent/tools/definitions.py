@@ -464,6 +464,59 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "parallel_orchestrate",
+            "description": (
+                "Execute multiple independent tool calls in parallel batches. "
+                "Use when a work plan has multiple items that can be implemented concurrently. "
+                "Decompose the work into batches: batch 1 runs all calls simultaneously, then batch 2, etc. "
+                "Each call in a batch runs in parallel — use this aggressively for independent file edits, "
+                "reads, or code execution steps. Do NOT use for sequential steps that depend on each other."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan": {
+                        "type": "object",
+                        "description": "The parallel execution plan.",
+                        "properties": {
+                            "reasoning": {
+                                "type": "string",
+                                "description": "Why this decomposition makes sense — which items are independent.",
+                            },
+                            "batches": {
+                                "type": "array",
+                                "description": "Sequential list of batches. All calls within a batch run simultaneously.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "batch_name": {"type": "string"},
+                                        "calls": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "tool_name": {"type": "string", "description": "Name of the tool to call."},
+                                                    "arguments": {"type": "object", "description": "Arguments matching the tool's schema."},
+                                                    "description": {"type": "string", "description": "What this specific call does."},
+                                                },
+                                                "required": ["tool_name", "arguments", "description"],
+                                            },
+                                        },
+                                    },
+                                    "required": ["batch_name", "calls"],
+                                },
+                            },
+                        },
+                        "required": ["reasoning", "batches"],
+                    },
+                },
+                "required": ["plan"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
