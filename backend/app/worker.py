@@ -539,8 +539,8 @@ async def _run_agent_loop(
         
     full_system_prompt = "\n\n".join(prompt_parts)
 
-    # Inject prompt hierarchy manifest into system prompt (use cache if populated)
-    from backend.app.agent.tools.dynamic_loader import generate_manifest
+    # Inject prompt hierarchy: universal fragments + manifest into system prompt
+    from backend.app.agent.tools.dynamic_loader import generate_manifest, load_universal_fragments
     import backend.app.worker as _worker_module
 
     _prompts_dir = Path("/bond/prompts")
@@ -552,6 +552,13 @@ async def _run_agent_loop(
     if _manifest is None:
         _manifest = generate_manifest(_prompts_dir)
         _worker_module._prompt_manifest_cache = _manifest
+
+    # Universal fragments are always-on guidelines — inject once into system prompt
+    # so the agent has them without burning a tool call. load_context only loads
+    # task-specific category chains on top of these.
+    _universal = load_universal_fragments(_prompts_dir)
+    if _universal:
+        full_system_prompt = full_system_prompt + "\n\n" + _universal
 
     if _manifest:
         full_system_prompt = full_system_prompt + "\n\n" + _manifest
@@ -853,18 +860,6 @@ async def _run_agent_loop(
                     tool_args = {}
 
                 tool_calls_made += 1
-
-                # Mandatory first call enforcement: first tool call must be load_context
-                if tool_calls_made == 1 and tool_name != "load_context" and _manifest:
-                    logger.info("Mandatory load_context enforcement: agent called %s first", tool_name)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps({
-                            "error": "You must call load_context first. Select the most specific category from the manifest for this task."
-                        }),
-                    })
-                    continue
 
                 # Repetition detection: hash tool name + first 200 chars of args
                 args_sig = hashlib.md5(f"{tool_name}:{json.dumps(tool_args)[:200]}".encode()).hexdigest()[:8]

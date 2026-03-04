@@ -63,14 +63,9 @@ def load_context_fragments(category: str, prompts_dir: Path) -> str:
 
     fragments: list[str] = []
 
-    # Always load all universal fragments
-    universal_dir = prompts_dir / "universal"
-    if universal_dir.exists():
-        for f in sorted(universal_dir.glob("*.md")):
-            try:
-                fragments.append(f.read_text().strip())
-            except Exception as e:
-                logger.warning("Failed to read universal fragment %s: %s", f, e)
+    # Universal fragments are injected into the system prompt at startup — do NOT
+    # reload them here. That would duplicate thousands of tokens into conversation
+    # history on every load_context call. Only load the specific category chain.
 
     # Walk the category path, loading one fragment per level
     parts = category.replace(".", "/").split("/")
@@ -93,6 +88,26 @@ def load_context_fragments(category: str, prompts_dir: Path) -> str:
 
     if not found_any:
         return f"Error: unknown category '{category}'. Check the manifest for available categories."
+
+    return "\n\n---\n\n".join(fragments)
+
+
+def load_universal_fragments(prompts_dir: Path) -> str:
+    """Load all universal fragment files and return them as a single string.
+
+    Called once at system prompt build time so the agent always has these
+    guidelines without needing a load_context tool call.
+    """
+    universal_dir = prompts_dir / "universal"
+    if not universal_dir.exists():
+        return ""
+
+    fragments: list[str] = []
+    for f in sorted(universal_dir.glob("*.md")):
+        try:
+            fragments.append(f.read_text().strip())
+        except Exception as e:
+            logger.warning("Failed to read universal fragment %s: %s", f, e)
 
     return "\n\n---\n\n".join(fragments)
 

@@ -10,6 +10,7 @@ import pytest
 from backend.app.agent.tools.dynamic_loader import (
     generate_manifest,
     load_context_fragments,
+    load_universal_fragments,
 )
 
 
@@ -109,12 +110,14 @@ class TestGenerateManifest:
 
 
 class TestLoadContextFragments:
-    def test_loads_universal_plus_ancestor_chain(self, prompts_dir: Path):
+    def test_loads_ancestor_chain_only(self, prompts_dir: Path):
+        """load_context loads only the specific category chain — NOT universal.
+        Universal fragments are injected into the system prompt at startup."""
         result = load_context_fragments("engineering.git.commits", prompts_dir)
-        # Should contain all universal fragments
-        assert "Communication" in result
-        assert "Safety" in result
-        assert "Reasoning" in result
+        # Should NOT contain universal fragments (those go in system prompt)
+        assert "Communication" not in result
+        assert "Safety" not in result
+        assert "Reasoning" not in result
         # Should contain the ancestor chain
         assert "Engineering" in result
         assert "Git" in result  # engineering/git/git.md
@@ -129,7 +132,7 @@ class TestLoadContextFragments:
 
     def test_infrastructure_path(self, prompts_dir: Path):
         result = load_context_fragments("infrastructure.docker.sandbox", prompts_dir)
-        assert "Communication" in result  # universal
+        assert "Communication" not in result  # universal NOT loaded here
         assert "Infrastructure" in result  # infrastructure.md
         assert "Docker" in result  # docker.md
         assert "Container rules" in result  # sandbox.md
@@ -143,15 +146,15 @@ class TestLoadContextFragments:
     def test_partial_path_loads_available(self, prompts_dir: Path):
         """Loading just 'engineering' should work — it's a valid node."""
         result = load_context_fragments("engineering", prompts_dir)
-        assert "Communication" in result  # universal
+        assert "Communication" not in result  # universal NOT loaded here
         assert "Engineering" in result  # engineering.md
         # Should NOT contain deeper fragments
         assert "Atomic commits" not in result
 
-    def test_empty_category_returns_universal_only(self, prompts_dir: Path):
+    def test_empty_category_returns_error(self, prompts_dir: Path):
+        """Empty category is invalid — should return an error."""
         result = load_context_fragments("", prompts_dir)
-        # Empty category should still return universal fragments
-        assert "Communication" in result
+        assert "Error:" in result
 
     def test_separator_joined_by_dividers(self, prompts_dir: Path):
         result = load_context_fragments("engineering.git", prompts_dir)
@@ -160,3 +163,25 @@ class TestLoadContextFragments:
     def test_nonexistent_prompts_dir(self, tmp_path: Path):
         result = load_context_fragments("engineering", tmp_path / "nope")
         assert "Error:" in result
+
+
+class TestLoadUniversalFragments:
+    def test_loads_all_universal_files(self, prompts_dir: Path):
+        result = load_universal_fragments(prompts_dir)
+        assert "Communication" in result
+        assert "Safety" in result
+        assert "Reasoning" in result
+
+    def test_returns_empty_for_missing_universal_dir(self, tmp_path: Path):
+        # No universal/ subdirectory
+        (tmp_path / "engineering").mkdir()
+        result = load_universal_fragments(tmp_path)
+        assert result == ""
+
+    def test_returns_empty_for_nonexistent_dir(self, tmp_path: Path):
+        result = load_universal_fragments(tmp_path / "nope")
+        assert result == ""
+
+    def test_fragments_separated_by_dividers(self, prompts_dir: Path):
+        result = load_universal_fragments(prompts_dir)
+        assert "---" in result
