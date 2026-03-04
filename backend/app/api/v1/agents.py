@@ -81,8 +81,11 @@ class AgentUpdate(BaseModel):
 async def list_agents():
     """List all agents with workspace mounts and channels."""
     stdb = get_stdb()
-    # Query agents from SpacetimeDB
-    rows = await stdb.query("SELECT id, name, display_name, system_prompt, model, utility_model, tools, sandbox_image, max_iterations, is_active, is_default, created_at FROM agents ORDER BY is_default DESC, name")
+    # Query agents from SpacetimeDB (SpacetimeDB doesn't support ORDER BY)
+    rows = await stdb.query("SELECT id, name, display_name, system_prompt, model, utility_model, tools, sandbox_image, max_iterations, is_active, is_default, created_at FROM agents")
+    
+    # Sort in Python: default agents first, then by name
+    rows = sorted(rows, key=lambda x: (not x["is_default"], x["name"].lower()))
     
     agents = []
     for row in rows:
