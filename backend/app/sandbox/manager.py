@@ -359,12 +359,13 @@ class SandboxManager:
         agent_id = agent["id"]
         sandbox_image = agent["sandbox_image"]
 
-        # Remove any stale container with the same name
-        await asyncio.create_subprocess_exec(
+        # Remove any stale container with the same name (must await completion)
+        rm_proc = await asyncio.create_subprocess_exec(
             "docker", "rm", "-f", key,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        await rm_proc.communicate()
 
         cmd = [
             "docker", "run", "-d",
