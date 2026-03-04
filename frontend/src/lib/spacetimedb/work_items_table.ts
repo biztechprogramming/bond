@@ -20,4 +20,5 @@ export default __t.row({
   filesChanged: __t.string().name("files_changed"),
   createdAt: __t.u64().name("created_at"),
   updatedAt: __t.u64().name("updated_at"),
+  description: __t.string(),
 });

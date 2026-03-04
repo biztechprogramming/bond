@@ -16,6 +16,7 @@ export default {
   title: __t.string(),
   status: __t.string(),
   ordinal: __t.u32(),
+  description: __t.string(),
   notes: __t.string(),
   filesChanged: __t.string(),
   createdAt: __t.u64(),

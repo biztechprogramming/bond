@@ -15,4 +15,5 @@ export default {
   planId: __t.string(),
   title: __t.string(),
   ordinal: __t.u32(),
+  description: __t.string(),
 };

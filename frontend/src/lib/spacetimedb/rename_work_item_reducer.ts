@@ -12,8 +12,5 @@ import {
 
 export default {
   id: __t.string(),
-  status: __t.string(),
-  notes: __t.option(__t.string()),
-  filesChanged: __t.option(__t.string()),
-  description: __t.option(__t.string()),
+  title: __t.string(),
 };
