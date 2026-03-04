@@ -14,7 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Always included regardless of heuristics
-ALWAYS_INCLUDE = {"respond"}
+ALWAYS_INCLUDE = {"respond", "load_context"}
 
 # Maximum tools to send per turn
 MAX_TOOLS_PER_TURN = 8
@@ -88,6 +88,14 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "implement", "build", "create", "fix", "refactor", "change",
         "update", "migrate", "plan", "task", "work plan", "multi-step",
     ],
+    "parallel_orchestrate": [
+        "parallel", "concurrent", "simultaneously", "at the same time",
+        "in parallel", "batch", "orchestrate", "multiple items",
+    ],
+    "repo_pr": [
+        "pull request", "open pr", "create tool", "propose change",
+        "add prompt", "push branch", "new tool", "submit pr",
+    ],
 }
 
 # Pre-compile patterns for efficiency
@@ -118,9 +126,11 @@ def select_tools(
     """
     selected: set[str] = set(ALWAYS_INCLUDE & set(enabled_tools))
 
-    # Always include work_plan if agent has an active plan
+    # Always include work_plan + parallel_orchestrate if agent has an active plan
     if has_active_plan and "work_plan" in enabled_tools:
         selected.add("work_plan")
+    if has_active_plan and "parallel_orchestrate" in enabled_tools:
+        selected.add("parallel_orchestrate")
 
     # Text to match against
     match_text = user_message

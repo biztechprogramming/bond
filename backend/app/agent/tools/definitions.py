@@ -409,7 +409,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "work_plan",
-            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work — do not wait until you have read everything. IMPORTANT: As you work on each item, update its status with update_item (new → in_progress → done). The user sees plan updates in real-time on a Kanban board. Always set an item to in_progress before starting it, and done when finished.",
+            "description": "Create and manage work plans with trackable items. REQUIRED: Create a plan within your first 2-3 tool calls for any multi-step task. Add items incrementally as you discover work.\n\nCRITICAL RULES:\n1. STATUS: Always update item status — new → in_progress (before starting) → done (when finished). Never describe progress in text instead of updating status.\n2. DESCRIPTION (required on add_item): Every item MUST have a description with: which codebase/repo (e.g. ~/bond, ~/inspections), relevant file paths, what to implement, approach, and acceptance criteria. This is the only context another agent has when picking up this item.\n3. NOTES (use on update_item while working): Append notes as you make progress — decisions made, problems encountered, what was changed and why. Notes are timestamped and visible to anyone resuming the work.\n4. FILES_CHANGED: Always record files you modified on update_item when marking done.\n5. CHECK RESULT: The tool returns {\"success\": true} on success. If the response contains \"success\": false or an \"error\" key, the call FAILED — do NOT proceed as if it succeeded, do NOT claim the item was updated.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -420,7 +420,7 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "plan_id": {
                         "type": "string",
-                        "description": "ID of existing plan (for add_item, update_item, complete_plan, get_plan).",
+                        "description": "ID of existing plan (required for add_item, complete_plan, get_plan; optional for update_item).",
                     },
                     "title": {
                         "type": "string",
@@ -428,7 +428,11 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "item_id": {
                         "type": "string",
-                        "description": "ID of item to update (for update_item).",
+                        "description": "ID of item to update (required for update_item).",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "New title for the item (for update_item — renames it).",
                     },
                     "status": {
                         "type": "string",
@@ -440,7 +444,7 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "notes": {
                         "type": "string",
-                        "description": "Note to append (for update_item). Timestamped automatically.",
+                        "description": "Note to append while working (for update_item). Use this to document: what you did, decisions made, problems encountered, what changed and why. Timestamped automatically. Append notes frequently — they are the audit trail.",
                     },
                     "context_snapshot": {
                         "type": "object",
@@ -451,8 +455,116 @@ TOOL_DEFINITIONS: list[dict] = [
                         "description": "Array of file paths modified (for update_item).",
                         "items": {"type": "string"},
                     },
+                    "description": {
+                        "type": "string",
+                        "description": "Execution context for add_item (REQUIRED) and update_item. Must specify: which codebase/repo (e.g. ~/bond, ~/inspections), relevant file paths, what to implement, approach, and acceptance criteria. This is the only context a different agent has when picking up this item.",
+                    },
                 },
                 "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "parallel_orchestrate",
+            "description": (
+                "Execute multiple independent tool calls in parallel batches. "
+                "Use when a work plan has multiple items that can be implemented concurrently. "
+                "Decompose the work into batches: batch 1 runs all calls simultaneously, then batch 2, etc. "
+                "Each call in a batch runs in parallel — use this aggressively for independent file edits, "
+                "reads, or code execution steps. Do NOT use for sequential steps that depend on each other."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "plan": {
+                        "type": "object",
+                        "description": "The parallel execution plan.",
+                        "properties": {
+                            "reasoning": {
+                                "type": "string",
+                                "description": "Why this decomposition makes sense — which items are independent.",
+                            },
+                            "batches": {
+                                "type": "array",
+                                "description": "Sequential list of batches. All calls within a batch run simultaneously.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "batch_name": {"type": "string"},
+                                        "calls": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "tool_name": {"type": "string", "description": "Name of the tool to call."},
+                                                    "arguments": {"type": "object", "description": "Arguments matching the tool's schema."},
+                                                    "description": {"type": "string", "description": "What this specific call does."},
+                                                },
+                                                "required": ["tool_name", "arguments", "description"],
+                                            },
+                                        },
+                                    },
+                                    "required": ["batch_name", "calls"],
+                                },
+                            },
+                        },
+                        "required": ["reasoning", "batches"],
+                    },
+                },
+                "required": ["plan"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "repo_pr",
+            "description": "Propose a change to the Bond repo. Creates a feature branch, writes the specified files, commits, pushes, and opens a PR on GitHub. Use this to add tools, update prompts, or fix bugs.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch name e.g. feat/add-weather-tool",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "PR title",
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "PR description — what and why",
+                    },
+                    "files": {
+                        "type": "object",
+                        "description": "Relative paths to file contents: {path: content}",
+                        "additionalProperties": {"type": "string"},
+                    },
+                    "commit_message": {
+                        "type": "string",
+                        "description": "Git commit message",
+                    },
+                },
+                "required": ["branch", "title", "body", "files", "commit_message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "load_context",
+            "description": "Load prompt context for the current task. Pick the most specific relevant category from the manifest in your system prompt. Call this as your FIRST action on any non-trivial task.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Dot-separated category path e.g. engineering.git.commits or infrastructure.docker.sandbox",
+                    }
+                },
+                "required": ["category"],
             },
         },
     },
@@ -508,8 +620,9 @@ class CodeExecute(ToolCall):
     timeout: int = 30
 
 class FileRead(ToolCall):
-    """Read file content from the workspace."""
-    path: str
+    """Read one or more files from the workspace. Supports parallel reading."""
+    path: Optional[str] = Field(None, description="Path to a single file to read.")
+    paths: Optional[List[str]] = Field(None, description="Array of file paths to read in parallel.")
     line_start: Optional[int] = None
     line_end: Optional[int] = None
     outline: bool = False
@@ -564,6 +677,39 @@ class WorkPlan(ToolCall):
     notes: Optional[str] = None
     parent_plan_id: Optional[str] = None
 
+class ToolInvocation(BaseModel):
+    """Execution details for a single tool call."""
+    tool_name: str = Field(..., description="The name of the tool to call.")
+    arguments: Dict[str, Any] = Field(..., description="Arguments for the tool (matches its schema).")
+    model_override: Optional[str] = Field(None, description="Optional cheaper model to use for this execution.")
+    description: str = Field(..., description="Purpose of this specific call.")
+
+class ParallelBatch(BaseModel):
+    """A collection of tool calls to be executed simultaneously."""
+    batch_name: str
+    calls: List[ToolInvocation] = Field(..., min_length=1)
+
+class ParallelWorkPlan(BaseModel):
+    """An orchestration plan containing one or more batches of parallel tool calls."""
+    reasoning: str = Field(..., description="Architect's reasoning for this decomposition.")
+    batches: List[ParallelBatch] = Field(..., description="Sequential list of batches. Batch 2 runs only after Batch 1 finishes.")
+
+class ParallelOrchestrate(ToolCall):
+    """Execute multiple tool calls in parallel batches using a High-Power Architect / Low-Power Worker pattern."""
+    plan: ParallelWorkPlan
+
+class RepoPr(ToolCall):
+    """Propose a change to the Bond repo via PR."""
+    branch: str = Field(description="Branch name e.g. feat/add-weather-tool")
+    title: str = Field(description="PR title")
+    body: str = Field(description="PR description")
+    files: dict[str, str] = Field(description="Relative paths to file contents")
+    commit_message: str = Field(description="Git commit message")
+
+class LoadContext(ToolCall):
+    """Load prompt context for the current task. Pick the most specific relevant category from the manifest."""
+    category: str = Field(description="Dot-separated category path e.g. engineering.git.commits")
+
 # Mapping for Instructor
 INSTRUCTOR_TOOL_MAP = {
     "respond": Respond,
@@ -581,6 +727,9 @@ INSTRUCTOR_TOOL_MAP = {
     "browser": Browser,
     "email": Email,
     "work_plan": WorkPlan,
+    "parallel_orchestrate": ParallelOrchestrate,
+    "repo_pr": RepoPr,
+    "load_context": LoadContext,
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:

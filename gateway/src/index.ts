@@ -1,8 +1,4 @@
-/**
- * Bond Gateway entry point.
- */
-
-import { loadConfig } from "./config.js";
+import { loadConfig } from "./config/index.js";
 import { startGatewayServer } from "./server.js";
 
 const config = loadConfig();

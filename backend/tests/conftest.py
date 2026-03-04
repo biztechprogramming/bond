@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -14,6 +16,21 @@ from httpx import ASGITransport, AsyncClient
 _tmpdir = tempfile.mkdtemp(prefix="bond_test_")
 os.environ["BOND_HOME"] = _tmpdir
 os.environ["BOND_DATABASE_PATH"] = str(Path(_tmpdir) / "test.db")
+
+# Create a minimal bond.json so config loading doesn't fail when Path.exists is patched
+_bond_json = Path(_tmpdir) / "bond.json"
+_bond_json.write_text(json.dumps({}))
+
+# Path to all migration files, in order
+_MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
+_ALL_MIGRATIONS = sorted(_MIGRATIONS_DIR.glob("*.up.sql"))
+
+
+async def apply_all_migrations(db: aiosqlite.Connection) -> None:
+    """Apply every migration in order to the given aiosqlite connection."""
+    for sql_file in _ALL_MIGRATIONS:
+        sql = sql_file.read_text()
+        await db.executescript(sql)
 
 
 @pytest.fixture(autouse=True)

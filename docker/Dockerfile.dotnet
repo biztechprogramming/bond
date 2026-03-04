@@ -97,4 +97,8 @@ WORKDIR /bond
 
 EXPOSE 18791
 
-CMD ["python", "-m", "backend.app.worker", "--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]
+# ENTRYPOINT and CMD are inherited from bond-agent-worker:latest:
+#   ENTRYPOINT ["/agent-entrypoint.sh"]  — handles git clone/pull then execs worker
+#   CMD ["--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]
+# Do NOT override CMD here — adding args after the image name in docker run would
+# break if no ENTRYPOINT is set (--port would be treated as the executable).

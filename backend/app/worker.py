@@ -41,6 +41,7 @@ from backend.app.agent.cache_manager import (
     _advance_cache_breakpoint,
     _decay_in_loop_tool_results,
 )
+from backend.app.agent.persistence_client import PersistenceClient
 litellm.suppress_debug_info = True
 import logging as _logging
 _logging.getLogger("LiteLLM").setLevel(_logging.WARNING)
@@ -203,6 +204,7 @@ class WorkerState:
 
     def __init__(self) -> None:
         self.agent_db: aiosqlite.Connection | None = None
+        self.persistence: PersistenceClient | None = None
         self.config: dict[str, Any] = {}
         self.agent_id: str = "unknown"
         self.start_time: float = 0.0
@@ -249,29 +251,35 @@ async def _lifespan(application: FastAPI):
     await _shutdown()
 
 async def _worker_load_mcp_servers(manager):
-    """Simplified MCP loader for worker using aiosqlite."""
+    """Load MCP servers from SpacetimeDB via the Gateway API."""
     from backend.app.mcp import MCPServerConfig
+    if not _state.persistence or _state.persistence.mode != "api":
+        logger.warning("Cannot load MCP servers: persistence not in API mode")
+        return
     try:
-        # Load global servers (agent_id IS NULL) AND agent-specific servers
-        async with _state.agent_db.execute(
-            "SELECT * FROM mcp_servers WHERE enabled = 1 AND (agent_id IS NULL OR agent_id = ?)",
-            (_state.agent_id,)
-        ) as cursor:
-            async for row in cursor:
-                # aiosqlite rows are indexed or can be turned into dict
-                row_dict = dict(zip([column[0] for column in cursor.description], row))
-                config = MCPServerConfig(
-                    name=row_dict["name"],
-                    command=row_dict["command"],
-                    args=json.loads(row_dict["args"]),
-                    env=json.loads(row_dict["env"]),
-                    enabled=bool(row_dict["enabled"])
-                )
-                await manager.add_server(config)
+        gateway_url = _state.persistence.gateway_url.rstrip("/")
+        url = f"{gateway_url}/api/v1/mcp?agent_id={_state.agent_id}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            servers = resp.json()
+        for s in servers:
+            config = MCPServerConfig(
+                name=s["name"],
+                command=s["command"],
+                args=s.get("args", []),
+                env=s.get("env", {}),
+                enabled=s.get("enabled", True),
+            )
+            await manager.add_server(config)
+        logger.info("Loaded %d MCP server(s) from SpacetimeDB", len(servers))
     except Exception as e:
-        logger.debug(f"MCP servers table not found or error in agent_db: {e}")
+        logger.error("Failed to load MCP servers from Gateway: %s", e)
 
 app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
+
+# Module-level manifest cache (updated by /reload)
+_prompt_manifest_cache: str | None = None
 
 
 @app.get("/health")
@@ -295,23 +303,58 @@ async def interrupt(request: Request) -> dict:
     return {"acknowledged": True}
 
 
+@app.post("/reload")
+async def reload_prompts():
+    """Called by Gateway after main branch merge to refresh prompt manifest."""
+    global _prompt_manifest_cache
+    import subprocess as _sp
+    from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
+
+    # Pull latest from main
+    bond_root = Path("/bond")
+    try:
+        _sp.run(
+            ["git", "pull", "origin", "main", "--ff-only"],
+            cwd=bond_root, capture_output=True, timeout=30,
+        )
+    except Exception:
+        pass  # Non-fatal — manifest still regenerates from current state
+
+    prompts_dir = bond_root / "prompts"
+    if prompts_dir.exists():
+        _prompt_manifest_cache = _gen_manifest(prompts_dir)
+        count = _prompt_manifest_cache.count(",") + 1
+    else:
+        count = 0
+
+    return {"ok": True, "categories": count}
+
+
 
 
 def _discover_workspace() -> str | None:
-    """List contents of /workspace to orient the agent on what's mounted."""
+    """Set process cwd to /workspace (if mounted) and return a listing for the system prompt.
+
+    All file tools (file_read, file_edit, file_write, code_execute) share the same
+    working directory, so relative paths are consistent across every tool call.
+    """
     workspace = Path("/workspace")
     if not workspace.exists():
         return None
     try:
+        # Set process cwd so relative paths in file_read/file_edit/file_write
+        # resolve the same way as code_execute (which uses cwd=/workspace explicitly).
+        os.chdir(workspace)
         entries = sorted(p.name for p in workspace.iterdir() if not p.name.startswith("."))
         if not entries:
             return None
         listing = ", ".join(entries)
         return (
             "## Workspace\n"
-            "The /workspace directory contains: " + listing + "\n"
-            "Use these paths for file operations. Do not guess paths "
-            "-- if a path does not exist, check /workspace/ contents."
+            f"Working directory: {workspace}\n"
+            "Contents: " + listing + "\n"
+            "Use relative paths for file operations (e.g. DecorApps/Foo/Bar.cs). "
+            "All tools share this working directory."
         )
     except OSError:
         return None
@@ -329,6 +372,7 @@ async def turn(request: Request) -> StreamingResponse:
     message = body.get("message", "")
     history = body.get("history", [])
     conversation_id = body.get("conversation_id", "")
+    plan_id = body.get("plan_id", "")
 
     import asyncio
     event_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -336,8 +380,21 @@ async def turn(request: Request) -> StreamingResponse:
     async def run_loop():
         try:
             response_text, tool_calls_made = await _run_agent_loop(
-                message, history, conversation_id, event_queue=event_queue,
+                message, history, conversation_id, event_queue=event_queue, plan_id=plan_id,
             )
+            
+            # Persist assistant response
+            if _state.persistence:
+                try:
+                    await _state.persistence.save_message(
+                        session_id=conversation_id,
+                        role="assistant",
+                        content=response_text,
+                        agent_db=_state.agent_db,
+                    )
+                except Exception as e:
+                    logger.error("Failed to persist assistant message: %s", e)
+
             await event_queue.put(_sse_event("chunk", {"content": response_text}))
             await event_queue.put(_sse_event("done", {"response": response_text, "tool_calls_made": tool_calls_made}))
         except Exception as e:
@@ -366,6 +423,7 @@ async def _run_agent_loop(
     conversation_id: str,
     *,
     event_queue: Any = None,
+    plan_id: str = "",
 ) -> tuple[str, int]:
     """Run the agent tool-use loop locally.
 
@@ -430,29 +488,88 @@ async def _run_agent_loop(
     _has_active_plan = False
     _active_plan_id: str | None = None
     try:
-        from backend.app.agent.tools.work_plan import load_active_plan, format_recovery_context
-        active_plan = await load_active_plan(_state.agent_db, _state.agent_id)
+        from backend.app.agent.tools.work_plan import load_active_plan, format_plan_context, format_recovery_context
+        active_plan = await load_active_plan(_state.agent_db, _state.agent_id, conversation_id=conversation_id, plan_id=plan_id)
         if active_plan:
             _has_active_plan = True
             _active_plan_id = active_plan["id"]
-            recovery_ctx = format_recovery_context(active_plan)
-            # Prepend recovery context as a user message before the actual message
-            history = [{"role": "user", "content": recovery_ctx}] + history
-            logger.info("Crash recovery: injected context for plan %s", _active_plan_id)
+
+            # Always inject plan context with real IDs so the agent never hallucinates them.
+            # Use recovery format if the plan has in-progress items (resuming interrupted work),
+            # otherwise use the compact ID-focused format.
+            in_progress = [i for i in active_plan.get("items", []) if i["status"] == "in_progress"]
+            if in_progress:
+                plan_ctx = format_recovery_context(active_plan) + "\n\n" + format_plan_context(active_plan)
+            else:
+                plan_ctx = format_plan_context(active_plan)
+
+            # Inject as a system message prefix so the agent always has IDs in context
+            history = [{"role": "user", "content": plan_ctx}] + history
+            logger.info("Injected active plan context for plan %s (%d items)", _active_plan_id, len(active_plan.get("items", [])))
     except Exception as e:
-        logger.debug("Work plan recovery check skipped: %s", e)
+        logger.debug("Work plan context injection skipped: %s", e)
 
     # --- Context Distillation Pipeline ---
 
     # Stage 1: Select relevant fragments via utility model
     fragments = config.get("prompt_fragments", [])
     enabled_fragments = [f for f in fragments if f.get("enabled", True)]
-    selected_fragments = await _select_relevant_fragments(
-        enabled_fragments, user_message, history, config, utility_kwargs,
-    )
+    
+    # Concurrent Context Retrieval: Retrieve relevant fragments and memory search in parallel
+    async def _fetch_fragments():
+        return await _select_relevant_fragments(
+            enabled_fragments, user_message, history, config, utility_kwargs,
+        )
+
+    async def _fetch_memory():
+        # Quick search for related context
+        try:
+            from backend.app.agent.tools.native import handle_search_memory
+            res = await handle_search_memory(
+                {"query": user_message, "limit": 3},
+                {"agent_db": _state.agent_db}
+            )
+            return res.get("results", [])
+        except Exception:
+            return []
+
+    context_results = await asyncio.gather(_fetch_fragments(), _fetch_memory())
+    selected_fragments = context_results[0]
+    recent_memories = context_results[1]
+    
     fragment_stats = {"selected": len(selected_fragments), "total": len(enabled_fragments)}
     prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
+    
+    # Inject relevant memories directly into the system prompt prefix
+    if recent_memories:
+        mem_text = "\n".join([f"- {m['content']}" for m in recent_memories])
+        prompt_parts.append(f"## Relevant Memories\n{mem_text}")
+        
     full_system_prompt = "\n\n".join(prompt_parts)
+
+    # Inject prompt hierarchy: universal fragments + manifest into system prompt
+    from backend.app.agent.tools.dynamic_loader import generate_manifest, load_universal_fragments
+    import backend.app.worker as _worker_module
+
+    _prompts_dir = Path("/bond/prompts")
+    if not _prompts_dir.exists():
+        # dev fallback
+        _prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+
+    _manifest = _worker_module._prompt_manifest_cache
+    if _manifest is None:
+        _manifest = generate_manifest(_prompts_dir)
+        _worker_module._prompt_manifest_cache = _manifest
+
+    # Universal fragments are always-on guidelines — inject once into system prompt
+    # so the agent has them without burning a tool call. load_context only loads
+    # task-specific category chains on top of these.
+    _universal = load_universal_fragments(_prompts_dir)
+    if _universal:
+        full_system_prompt = full_system_prompt + "\n\n" + _universal
+
+    if _manifest:
+        full_system_prompt = full_system_prompt + "\n\n" + _manifest
 
     # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
     windowed_history = history
@@ -522,6 +639,18 @@ async def _run_agent_loop(
     if compressed_history:
         messages.extend(compressed_history)
     messages.append({"role": "user", "content": user_message})
+    
+    # Persist user message
+    if _state.persistence:
+        try:
+            await _state.persistence.save_message(
+                session_id=conversation_id,
+                role="user",
+                content=user_message,
+                agent_db=_state.agent_db,
+            )
+        except Exception as e:
+            logger.error("Failed to persist user message: %s", e)
 
     # Build tool definitions + registry with heuristic selection
     registry = build_native_registry()
@@ -599,13 +728,19 @@ async def _run_agent_loop(
     _cache_bp2_index = len(messages) - 1
 
     for _iteration in range(max_iterations):
-        # Check interrupt
+        # Check interrupt: if pending messages, inject them and continue.
+        # If no messages, this is a pure pause signal — break the loop.
         if _state.interrupt_event.is_set():
             _state.interrupt_event.clear()
-            # Inject pending messages
-            for msg in _state.pending_messages:
-                messages.append(msg)
-            _state.pending_messages.clear()
+            if _state.pending_messages:
+                for msg in _state.pending_messages:
+                    messages.append(msg)
+                _state.pending_messages.clear()
+            else:
+                logger.info("Agent loop paused by interrupt signal (no pending messages)")
+                if event_queue:
+                    await event_queue.put(_sse_event("status", {"state": "paused"}))
+                break
 
         # In-loop decay: compress tool results accumulated during this turn.
         # Keep the last 2 tool results verbatim; older ones get progressively decayed.
@@ -791,7 +926,24 @@ async def _run_agent_loop(
                         selected_tool_names.append(tool_name)
                         if tool_name in TOOL_MAP:
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
+                    
+                    start_ts = time.time()
                     result = await registry.execute(tool_name, tool_args, tool_context)
+                    duration = time.time() - start_ts
+                    
+                    # Persist tool log
+                    if _state.persistence:
+                        try:
+                            await _state.persistence.log_tool(
+                                session_id=conversation_id,
+                                tool_name=tool_name,
+                                input=tool_args,
+                                output=result,
+                                duration=duration,
+                                agent_db=_state.agent_db,
+                            )
+                        except Exception as e:
+                            logger.error("Failed to persist tool log: %s", e)
 
                 # Emit any SSE events from tool results (e.g., plan/item updates)
                 if isinstance(result, dict) and "_sse_event" in result and event_queue is not None:
@@ -1040,11 +1192,50 @@ async def _startup(config_path: str, data_dir: str) -> None:
 
     # Initialize agent DB
     _state.agent_db = await _init_agent_db(_state.data_dir)
-    logger.info("Agent worker initialized: agent_id=%s", _state.agent_id)
+    
+    # Initialize persistence client (auto-detects mode if not configured)
+    _state.persistence = PersistenceClient(agent_id=_state.agent_id)
+    await _state.persistence.init()
+    
+    # ── Parallel SpacetimeDB Schema Reflection ──
+    try:
+        if _state.persistence and _state.persistence.mode == "api":
+            logger.info("Starting parallel SpacetimeDB schema reflection...")
+            # We concurrently fetch tables and reducers to orient the agent faster
+            async def _fetch_schema(endpoint: str):
+                try:
+                    url = f"{_state.persistence.gateway_url}/api/v1/spacetimedb/{endpoint}"
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.get(url)
+                        return resp.json() if resp.status_code == 200 else None
+                except Exception:
+                    return None
+
+            schema_tasks = [
+                _fetch_schema("tables"),
+                _fetch_schema("reducers")
+            ]
+            schema_results = await asyncio.gather(*schema_tasks)
+            _state.spacetimedb_schema = {
+                "tables": schema_results[0],
+                "reducers": schema_results[1]
+            }
+            logger.info("SpacetimeDB schema reflection complete: %d tables, %d reducers", 
+                        len(_state.spacetimedb_schema["tables"] or []),
+                        len(_state.spacetimedb_schema["reducers"] or []))
+    except Exception as e:
+        logger.warning("Failed parallel schema reflection: %s", e)
+    
+    logger.info(
+        "Agent worker initialized: agent_id=%s persistence_mode=%s",
+        _state.agent_id, _state.persistence.mode,
+    )
 
 
 async def _shutdown() -> None:
     """Clean up on shutdown."""
+    if _state.persistence:
+        await _state.persistence.close()
     if _state.agent_db:
         await _state.agent_db.close()
         _state.agent_db = None

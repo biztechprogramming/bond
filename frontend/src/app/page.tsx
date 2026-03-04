@@ -5,6 +5,8 @@ import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from 
 import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
+import { useSpacetimeConnection, useConversations } from "@/hooks/useSpacetimeDB";
+import { connectToSpacetimeDB, getAgentName } from "@/lib/spacetimedb-client";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
   if (name === "file_write" || name === "file_read") {
@@ -37,7 +39,22 @@ export default function Home() {
     }
     return null;
   });
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  // Connect to SpacetimeDB on mount
+  useEffect(() => {
+    connectToSpacetimeDB();
+  }, []);
+
+  // Conversations from SpacetimeDB — auto-updates via subscription
+  const spacetimeConversations = useConversations();
+  const { connected: stdbConnected } = useSpacetimeConnection();
+  const conversations: ConversationSummary[] = spacetimeConversations.map((c) => ({
+    id: c.id,
+    title: c.title || null,
+    message_count: c.messageCount,
+    updated_at: new Date(Number(c.updatedAt)).toISOString(),
+    agent_id: c.agentId,
+    agent_name: getAgentName(c.agentId),
+  }));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -50,6 +67,12 @@ export default function Home() {
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
+
+  // Keep currentAgentNameRef in sync with selected agent
+  useEffect(() => {
+    const name = agents.find(a => a.id === selectedAgentId)?.display_name;
+    if (name) currentAgentNameRef.current = name;
+  }, [selectedAgentId, agents]);
 
   // Persist conversation ID
   useEffect(() => {
@@ -76,7 +99,7 @@ export default function Home() {
   const deleteMessage = async (msgId: string, index: number) => {
     if (msgId && conversationId) {
       try {
-        await fetch(`http://localhost:18790/api/v1/conversations/${conversationId}/messages/${msgId}`, {
+        await fetch(`http://localhost:18792/api/v1/conversations/${conversationId}/messages/${msgId}`, {
           method: "DELETE",
         });
       } catch { /* best effort */ }
@@ -111,7 +134,10 @@ export default function Home() {
         const storedConvId = localStorage.getItem("bond-conversation-id");
         if (!storedConvId) {
           const def = data.find(a => a.is_default);
-          if (def) setSelectedAgentId(def.id);
+          if (def) {
+            setSelectedAgentId(def.id);
+            currentAgentNameRef.current = def.display_name;
+          }
         }
       })
       .catch(() => { });
@@ -135,6 +161,10 @@ export default function Home() {
         const status = msg.agentStatus || "idle";
         setAgentStatus(status);
         if (msg.agentName) currentAgentNameRef.current = msg.agentName;
+        else {
+          const name = agents.find(a => a.id === selectedAgentId)?.display_name;
+          if (name) currentAgentNameRef.current = name;
+        }
         if (status !== "idle") {
           setLoading(true);
         }
@@ -190,7 +220,7 @@ export default function Home() {
           setConversationId(msg.conversationId);
         }
       } else if (msg.type === "conversations_list" && msg.conversations) {
-        setConversations(msg.conversations);
+        // Legacy: still handle for agent selection init until agents are in SpacetimeDB
         if (!initialAgentSetRef.current) {
           initialAgentSetRef.current = true;
           const storedConvId = localStorage.getItem("bond-conversation-id");
@@ -251,10 +281,26 @@ export default function Home() {
     wsRef.current.interrupt(conversationId);
   }, [conversationId]);
 
-  const handleNewConversation = () => {
+  const handleNewConversation = async () => {
     setMessages([]);
     setConversationId(null);
-    wsRef.current?.newConversation();
+    try {
+      const resp = await fetch("http://localhost:18792/api/v1/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (resp.ok) {
+        const conv = await resp.json();
+        setConversationId(conv.id);
+        wsRef.current?.newConversation(); // reset session — no history to load for a new conversation
+      } else {
+        // fallback — let the gateway assign an ID on first message
+        wsRef.current?.newConversation();
+      }
+    } catch {
+      wsRef.current?.newConversation();
+    }
   };
 
   const handleSwitchConversation = (id: string) => {

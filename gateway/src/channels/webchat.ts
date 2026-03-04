@@ -64,6 +64,9 @@ export class WebChatChannel {
       case "interrupt":
         await this.handleInterrupt(socket, session.id, msg);
         break;
+      case "pause":
+        await this.handlePause(socket, session.id, msg);
+        break;
       case "switch_conversation":
         await this.handleSwitchConversation(socket, session.id, msg);
         break;
@@ -120,7 +123,7 @@ export class WebChatChannel {
     }
 
     // Agent is idle — start a new turn with SSE streaming
-    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId, msg.agentId);
+    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId, msg.agentId, msg.planId);
   }
 
   private async handleInterrupt(
@@ -159,12 +162,50 @@ export class WebChatChannel {
     }
   }
 
+  private async handlePause(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const conversationId = msg.conversationId || session.conversationId;
+    if (!conversationId) return;
+
+    try {
+      const resolution = await this.backendClient.resolveAgent(conversationId);
+
+      if (resolution.mode === "container" && resolution.worker_url) {
+        const worker = this.workerPool.get(resolution.worker_url);
+        await worker.interrupt([]); // empty = pause signal; worker breaks loop when no pending messages
+      } else {
+        // Fallback: use interrupt for non-container agents
+        await this.backendClient.interrupt(conversationId);
+      }
+
+      this.send(socket, {
+        type: "status",
+        sessionId,
+        agentStatus: "idle",
+        conversationId,
+      });
+    } catch (err) {
+      this.send(socket, {
+        type: "error",
+        sessionId,
+        error: err instanceof Error ? err.message : "Failed to pause",
+      });
+    }
+  }
+
   private async startStreamingTurn(
     socket: WebSocket,
     sessionId: string,
     message: string | undefined,
     conversationId: string | undefined,
     agentId?: string,
+    planId?: string,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
@@ -178,7 +219,7 @@ export class WebChatChannel {
       );
 
       if (resolution.mode === "container" && resolution.worker_url) {
-        await this.startContainerTurn(socket, sessionId, message, resolution);
+        await this.startContainerTurn(socket, sessionId, message, resolution, planId);
       } else {
         await this.startHostTurn(socket, sessionId, message, resolution);
       }
@@ -312,6 +353,7 @@ export class WebChatChannel {
     sessionId: string,
     message: string | undefined,
     resolution: AgentResolution,
+    planId?: string,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
@@ -368,6 +410,7 @@ export class WebChatChannel {
       for await (const event of worker.turnStream({
         messages,
         conversation_id: conversationId,
+        plan_id: planId,
       })) {
         switch (event.event) {
           case "status":
@@ -635,10 +678,11 @@ export class WebChatChannel {
     }
   }
 
-  private broadcast(msg: OutgoingMessage): void {
+  public broadcast(msg: OutgoingMessage): void {
     const payload = JSON.stringify(msg);
+    console.log(`[gateway] Broadcasting message: type=${msg.type} sessionId=${msg.sessionId || 'all'}`);
     for (const socket of this.sessionManager.getAllSockets()) {
-      if (socket.readyState === socket.OPEN) {
+      if (socket.readyState === 1) { // 1 is OPEN
         socket.send(payload);
       }
     }

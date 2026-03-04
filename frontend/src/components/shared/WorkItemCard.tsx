@@ -25,6 +25,10 @@ function timeInStatus(item: WorkItem): string {
 export default function WorkItemCard({ item, expanded, onToggleExpand, onDragStart, onDragEnd, isDragging }: WorkItemCardProps) {
   const time = timeInStatus(item);
 
+  // Ensure notes and files_changed are treated as arrays safely
+  const notesCount = Array.isArray(item.notes) ? item.notes.length : 0;
+  const filesCount = Array.isArray(item.files_changed) ? item.files_changed.length : 0;
+
   return (
     <div
       draggable
@@ -41,11 +45,11 @@ export default function WorkItemCard({ item, expanded, onToggleExpand, onDragSta
       <div style={styles.cardTitle}>{item.title}</div>
       <div style={styles.cardMeta}>
         {time && <span>{time}</span>}
-        {item.notes.length > 0 && (
-          <span>{item.notes.length} note{item.notes.length !== 1 ? "s" : ""}</span>
+        {notesCount > 0 && (
+          <span>{notesCount} note{notesCount !== 1 ? "s" : ""}</span>
         )}
-        {item.files_changed.length > 0 && (
-          <span>{item.files_changed.length} file{item.files_changed.length !== 1 ? "s" : ""}</span>
+        {filesCount > 0 && (
+          <span>{filesCount} file{filesCount !== 1 ? "s" : ""}</span>
         )}
       </div>
       {expanded && <ItemDetail item={item} />}

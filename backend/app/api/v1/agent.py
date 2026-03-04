@@ -71,6 +71,14 @@ async def _get_or_create_conversation(
         {"id": conv_id, "agent_id": agent_id},
     )
     await db.commit()
+
+    # Sync to SpacetimeDB so it appears in the conversation list
+    try:
+        from backend.app.api.v1.conversations import _sync_conversation_to_spacetimedb
+        await _sync_conversation_to_spacetimedb(conv_id, agent_id, "webchat", "")
+    except Exception as e:
+        logger.warning("Failed to sync new conversation to SpacetimeDB: %s", e)
+
     return conv_id
 
 

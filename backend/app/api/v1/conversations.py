@@ -15,6 +15,28 @@ from backend.app.db.session import get_db
 
 logger = logging.getLogger("bond.api.conversations")
 
+
+async def _sync_conversation_to_spacetimedb(
+    conv_id: str,
+    agent_id: str,
+    channel: str,
+    title: str,
+) -> None:
+    """Fire-and-forget sync of a conversation to SpacetimeDB via the Gateway."""
+    try:
+        import httpx
+        from backend.app.config import get_settings
+        gw = f"http://localhost:{get_settings().gateway_port}/api/v1/sync/conversations"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(gw, json={
+                "id": conv_id,
+                "agentId": agent_id,
+                "channel": channel,
+                "title": title,
+            })
+    except Exception as e:
+        logger.warning("Failed to sync conversation %s to SpacetimeDB: %s", conv_id, e)
+
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
@@ -22,8 +44,9 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
 class ConversationCreate(BaseModel):
+    id: str | None = None
     agent_id: str | None = None
-    channel: str = "webchat"
+    channel: str | None = "webchat"
     title: str | None = None
 
 
@@ -73,7 +96,7 @@ async def create_conversation(
     if result.fetchone() is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    conv_id = str(ULID())
+    conv_id = body.id or str(ULID())
     await db.execute(
         text(
             "INSERT INTO conversations (id, agent_id, channel, title) "
@@ -87,6 +110,7 @@ async def create_conversation(
         },
     )
     await db.commit()
+    await _sync_conversation_to_spacetimedb(conv_id, agent_id, body.channel, body.title or "")
 
     return await _get_conversation(db, conv_id)
 
@@ -274,10 +298,11 @@ async def save_or_queue_message(
 
     # Auto-title from first user message if untitled
     title_result = await db.execute(
-        text("SELECT title FROM conversations WHERE id = :id"),
+        text("SELECT title, agent_id, channel FROM conversations WHERE id = :id"),
         {"id": conversation_id},
     )
     title_row = title_result.fetchone()
+    auto_title = title_row[0] if title_row else ""
     if title_row and not title_row[0]:
         auto_title = body.content.strip()[:80]
         if len(body.content.strip()) > 80:
@@ -285,6 +310,13 @@ async def save_or_queue_message(
         await db.execute(
             text("UPDATE conversations SET title = :title WHERE id = :id"),
             {"title": auto_title, "id": conversation_id},
+        )
+        # Sync updated title to SpacetimeDB
+        await _sync_conversation_to_spacetimedb(
+            conversation_id,
+            title_row[1] if title_row else "",
+            title_row[2] if title_row else "webchat",
+            auto_title,
         )
 
     # Original user message queuing logic

@@ -83,10 +83,33 @@ async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Read a file from the container filesystem (native open)."""
-    path_str = arguments.get("path", "")
+    """Read one or more files from the container filesystem (native open)."""
+    path_str = arguments.get("path")
+    paths_list = arguments.get("paths")
+
+    # Handle multiple paths in parallel
+    if paths_list and isinstance(paths_list, list):
+        tasks = []
+        for p in paths_list:
+            if not isinstance(p, str):
+                continue
+            # Create a localized arguments dict for each path
+            local_args = arguments.copy()
+            del local_args["paths"]
+            local_args["path"] = p
+            tasks.append(handle_file_read(local_args, context))
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        combined_results = []
+        for res in results:
+            if isinstance(res, Exception):
+                combined_results.append({"error": str(res)})
+            else:
+                combined_results.append(res)
+        return {"results": combined_results}
+
     if not path_str:
-        return {"error": "path is required"}
+        return {"error": "path or paths is required"}
 
     path = Path(path_str)
     if not path.exists():
@@ -690,4 +713,175 @@ async def handle_respond(
     return {
         "message": arguments.get("message", ""),
         "_terminal": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Repo PR — propose changes to the Bond repo
+# ---------------------------------------------------------------------------
+
+async def handle_repo_pr(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Create a branch, write files, commit, push, and open a PR."""
+    import subprocess
+    import os
+
+    branch = arguments.get("branch", "")
+    title = arguments.get("title", "")
+    body = arguments.get("body", "")
+    files = arguments.get("files", {})
+    commit_message = arguments.get("commit_message", "")
+
+    if not branch or not title or not files or not commit_message:
+        return {"error": "branch, title, files, and commit_message are all required"}
+
+    bond_root = Path("/bond")
+    if not (bond_root / ".git").exists():
+        return {"error": "/bond is not a git repository. This agent does not have repo write access."}
+
+    try:
+        # Return to main, pull latest
+        subprocess.run(["git", "checkout", "main"], cwd=bond_root, check=True, capture_output=True)
+        subprocess.run(["git", "pull", "origin", "main", "--ff-only"], cwd=bond_root, capture_output=True)
+
+        # Create branch
+        result = subprocess.run(["git", "checkout", "-b", branch], cwd=bond_root, capture_output=True)
+        if result.returncode != 0:
+            # Branch may already exist
+            subprocess.run(["git", "checkout", branch], cwd=bond_root, check=True, capture_output=True)
+
+        # Write files
+        for rel_path, content in files.items():
+            target = bond_root / rel_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+
+        # Stage and commit
+        subprocess.run(["git", "add", "-A"], cwd=bond_root, check=True, capture_output=True)
+        diff_result = subprocess.run(["git", "diff", "--cached", "--stat"], cwd=bond_root, capture_output=True)
+        if not diff_result.stdout.strip():
+            return {"status": "no_changes", "message": "Nothing to commit — files are identical to current branch."}
+
+        subprocess.run(["git", "commit", "-m", commit_message], cwd=bond_root, check=True, capture_output=True)
+
+        # Push
+        push_result = subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            cwd=bond_root, capture_output=True,
+        )
+        if push_result.returncode != 0:
+            stderr = push_result.stderr.decode()
+            return {"error": f"Push failed: {stderr[:300]}"}
+
+        # Create PR via GitHub API
+        github_token = os.getenv("GITHUB_TOKEN", "")
+        if not github_token:
+            return {"status": "pushed", "message": f"Branch {branch!r} pushed. Set GITHUB_TOKEN to auto-create PRs."}
+
+        import httpx
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.github.com/repos/biztechprogramming/bond/pulls",
+                headers={
+                    "Authorization": f"Bearer {github_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={"title": title, "body": body, "head": branch, "base": "main"},
+            )
+            if resp.status_code == 201:
+                pr_url = resp.json().get("html_url", "")
+                return {"status": "pr_created", "pr_url": pr_url}
+            elif resp.status_code == 422:
+                return {"status": "pushed", "message": f"Branch pushed. PR may already exist. ({resp.text[:200]})"}
+            else:
+                return {"status": "pushed", "message": f"Branch pushed but PR creation failed ({resp.status_code}): {resp.text[:200]}"}
+
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode() if e.stderr else ""
+        return {"error": f"Git error: {stderr or str(e)}"}
+    finally:
+        subprocess.run(["git", "checkout", "main"], cwd=bond_root, capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# Load Context (prompt hierarchy)
+# ---------------------------------------------------------------------------
+
+async def handle_load_context(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Load prompt context fragments for a given category."""
+    category = arguments.get("category", "")
+    if not category:
+        return {"error": "category is required"}
+
+    from backend.app.agent.tools.dynamic_loader import load_context_fragments
+
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    # Fallback: container path
+    if not prompts_dir.exists():
+        prompts_dir = Path("/bond/prompts")
+
+    result = load_context_fragments(category, prompts_dir)
+    if result.startswith("Error:"):
+        return {"error": result}
+    return {"context": result}
+
+
+# ---------------------------------------------------------------------------
+# Parallel Orchestration
+# ---------------------------------------------------------------------------
+
+async def handle_parallel_orchestrate(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute multiple tool calls in parallel batches."""
+    from backend.app.agent.tools.native_registry import build_native_registry
+
+    plan_data = arguments.get("plan", {})
+    batches = plan_data.get("batches", [])
+    if not batches:
+        return {"error": "No batches found in parallel plan."}
+
+    registry = build_native_registry()
+    batch_results = []
+
+    for i, batch in enumerate(batches):
+        batch_name = batch.get("batch_name", f"Batch {i+1}")
+        calls = batch.get("calls", [])
+        
+        logger.info("Executing parallel batch: %s (%d calls)", batch_name, len(calls))
+        
+        tasks = []
+        for call in calls:
+            tool_name = call.get("tool_name")
+            args = call.get("arguments", {})
+            
+            # TODO: Integrate model_override once litellm support is added to registry
+            if tool_name:
+                tasks.append(registry.execute(tool_name, args, context))
+
+        # Run all calls in the batch concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        processed_results = []
+        for res in results:
+            if isinstance(res, Exception):
+                processed_results.append({"error": str(res)})
+            else:
+                processed_results.append(res)
+        
+        batch_results.append({
+            "batch_name": batch_name,
+            "results": processed_results
+        })
+
+    return {
+        "status": "completed",
+        "batches_executed": len(batches),
+        "results": batch_results
     }

@@ -107,6 +107,18 @@ export class BackendClient {
     return (await res.json()) as ConversationDetail;
   }
 
+  async createConversation(id: string, agentId?: string, channel?: string, title?: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/v1/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, agent_id: agentId ?? null, channel: channel ?? "webchat", title: title ?? null }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+  }
+
   async listConversations(): Promise<ConversationSummary[]> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations`);
     if (!res.ok) {

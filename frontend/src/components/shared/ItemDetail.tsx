@@ -17,11 +17,19 @@ export default function ItemDetail({ item }: ItemDetailProps) {
           <span><strong style={{ color: "#6c8aff" }}>Created:</strong> {new Date(item.created_at).toLocaleString()}</span>
         </div>
       </div>
+      {(item as any).description && (
+        <div style={styles.detailSection}>
+          <div style={styles.detailLabel}>Description</div>
+          <div style={{ fontSize: "0.78rem", color: "#c0c0d8", whiteSpace: "pre-wrap" }}>{(item as any).description}</div>
+        </div>
+      )}
       {item.notes.length > 0 && (
         <div style={styles.detailSection}>
           <div style={styles.detailLabel}>Notes</div>
-          {item.notes.map((note, i) => (
-            <div key={i} style={styles.noteItem}>{note}</div>
+          {item.notes.map((note: any, i: number) => (
+            <div key={i} style={styles.noteItem}>
+              {typeof note === "object" && note !== null ? note.text ?? JSON.stringify(note) : String(note)}
+            </div>
           ))}
         </div>
       )}

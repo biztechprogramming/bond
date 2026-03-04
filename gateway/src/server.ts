@@ -7,10 +7,15 @@
 
 import { WebSocketServer } from "ws";
 import { createServer } from "http";
-import type { GatewayConfig } from "./config.js";
-import { SessionManager } from "./sessions/manager.js";
-import { BackendClient } from "./backend/client.js";
-import { WebChatChannel } from "./channels/webchat.js";
+import express from "express";
+import type { GatewayConfig } from "./config/index.js";
+import { SessionManager } from "./sessions/index.js";
+import { BackendClient } from "./backend/index.js";
+import { WebChatChannel } from "./channels/index.js";
+import { createPersistenceRouter } from "./persistence/index.js";
+import { createConversationsRouter } from "./conversations/index.js";
+import { createPlansRouter } from "./plans/index.js";
+import { createWebhookRouter } from "./webhooks.js";
 
 export interface GatewayServer {
   close(): void;
@@ -21,16 +26,74 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   const backendClient = new BackendClient(config.backendUrl);
   const webchat = new WebChatChannel(sessionManager, backendClient);
 
-  // HTTP server for health check + WS upgrade
-  const httpServer = createServer((req, res) => {
-    if (req.url === "/health") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ status: "ok", service: "bond-gateway" }));
-      return;
-    }
-    res.writeHead(404);
-    res.end();
+  const app = express();
+  app.use(express.json());
+
+  // CORS — allow frontend origin
+  app.use((_req: any, res: any, next: any) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (_req.method === "OPTIONS") return res.sendStatus(204);
+    next();
   });
+
+  // SpacetimeDB token endpoint for frontend auth
+  app.get("/api/v1/spacetimedb/token", (_req: any, res: any) => {
+    // Serve the CLI token so the browser can authenticate as the same identity
+    const token = process.env.SPACETIMEDB_TOKEN || "";
+    if (!token) {
+      return res.status(404).json({ error: "No SpacetimeDB token configured" });
+    }
+    res.json({ token });
+  });
+
+  // Persistence API for Agent Workers
+  app.use("/api/v1", createPersistenceRouter(config));
+
+  // Conversations API (backed by SpacetimeDB)
+  app.use("/api/v1", createConversationsRouter(config));
+
+  // Plans API (backed by SpacetimeDB)
+  app.use("/api/v1", createPlansRouter(config));
+
+  // GitHub webhook handler for repo update notifications
+  // Raw body capture middleware for signature verification
+  app.use("/webhooks/github", (req: any, _res: any, next: any) => {
+    let data: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => data.push(chunk));
+    req.on("end", () => {
+      (req as any).rawBody = Buffer.concat(data);
+      // Parse JSON body manually since express.json() may have already consumed it
+      try {
+        req.body = JSON.parse((req as any).rawBody.toString());
+      } catch {
+        // body will be parsed by express.json() fallback
+      }
+      next();
+    });
+  });
+
+  const webhookRouter = createWebhookRouter({
+    onMainMerge: async () => {
+      // Notify all known workers to reload
+      console.log("[webhook] TODO: notify connected workers to /reload");
+    },
+  });
+  app.use("/webhooks", webhookRouter);
+
+  // Global Broadcast API for internal services
+  app.post("/api/v1/broadcast", (req: any, res: any) => {
+    webchat.broadcast(req.body);
+    res.status(200).json({ status: "broadcasted" });
+  });
+
+  // HTTP server for health check + WS upgrade
+  app.get("/health", (req: any, res: any) => {
+    res.json({ status: "ok", service: "bond-gateway" });
+  });
+
+  const httpServer = createServer(app);
 
   const wss = new WebSocketServer({
     server: httpServer,

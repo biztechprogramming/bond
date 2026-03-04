@@ -48,7 +48,7 @@ export class GatewayWebSocket {
   private maxReconnectDelay = 30000;
 
   constructor(url?: string) {
-    this.url = url || `ws://localhost:18789/ws`;
+    this.url = url || `ws://localhost:18792/ws`;
   }
 
   connect(): void {
@@ -105,7 +105,7 @@ export class GatewayWebSocket {
     };
   }
 
-  send(content: string, conversationId?: string, agentId?: string): void {
+  send(content: string, conversationId?: string, agentId?: string, planId?: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.error("[ws] Not connected");
       return;
@@ -118,6 +118,7 @@ export class GatewayWebSocket {
         content,
         conversationId,
         agentId,
+        planId,
       })
     );
   }
@@ -147,6 +148,16 @@ export class GatewayWebSocket {
     this.ws.send(
       JSON.stringify({
         type: "interrupt",
+        conversationId,
+      })
+    );
+  }
+
+  pause(conversationId?: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "pause",
         conversationId,
       })
     );
