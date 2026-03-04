@@ -19,9 +19,23 @@ const spacetimedb = schema({
       model: t.string(),
       utilityModel: t.string(),
       tools: t.string(), // JSON array of enabled tool names
+      sandboxImage: t.string(),
+      maxIterations: t.u32(),
       isActive: t.bool(),
       isDefault: t.bool(),
       createdAt: t.u64(),
+    }
+  ),
+
+  agent_workspace_mounts: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agentId: t.string(),
+      hostPath: t.string(),
+      mountName: t.string(),
+      containerPath: t.string(),
+      readonly: t.bool(),
     }
   ),
 
@@ -85,6 +99,36 @@ const spacetimedb = schema({
       output: t.string(),
       duration: t.u32(),
       createdAt: t.u64(),
+    }
+  ),
+
+  // -- LLM Providers --
+  providers: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      displayName: t.string(),
+      litellmPrefix: t.string(),
+      apiBaseUrl: t.string().optional(),
+      modelsEndpoint: t.string().optional(),
+      modelsFetchMethod: t.string(), // 'anthropic_api', 'anthropic_scrape', 'google_api', 'openai_compat'
+      authType: t.string(), // 'bearer', 'x-api-key', 'query_param'
+      isEnabled: t.bool(),
+      config: t.string(), // JSON object
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
+  // -- Provider API Keys (encrypted) --
+  provider_api_keys: table(
+    { public: true },
+    {
+      providerId: t.string().primaryKey(),
+      encryptedValue: t.string(),
+      keyType: t.string(), // 'api_key', 'oauth_token'
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
     }
   ),
 
@@ -193,6 +237,8 @@ export const addAgent = spacetimedb.reducer(
     model: t.string(),
     utilityModel: t.string(),
     tools: t.string(),
+    sandboxImage: t.string(),
+    maxIterations: t.u32(),
     isDefault: t.bool(),
   },
   (ctx, agent) => {
@@ -201,6 +247,20 @@ export const addAgent = spacetimedb.reducer(
       isActive: true,
       createdAt: BigInt(Date.now()),
     });
+  }
+);
+
+export const addAgentMount = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    hostPath: t.string(),
+    mountName: t.string(),
+    containerPath: t.string(),
+    readonly: t.bool(),
+  },
+  (ctx, mount) => {
+    ctx.db.agent_workspace_mounts.insert(mount);
   }
 );
 
@@ -645,6 +705,104 @@ export const importWorkPlan = spacetimedb.reducer(
       });
     } else {
       ctx.db.workPlans.insert(plan);
+    }
+  }
+);
+
+// -- Providers --
+
+export const addProvider = spacetimedb.reducer(
+  {
+    id: t.string(),
+    displayName: t.string(),
+    litellmPrefix: t.string(),
+    apiBaseUrl: t.string().optional(),
+    modelsEndpoint: t.string().optional(),
+    modelsFetchMethod: t.string(),
+    authType: t.string(),
+    isEnabled: t.bool(),
+    config: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, provider) => {
+    ctx.db.providers.insert(provider);
+  }
+);
+
+export const updateProvider = spacetimedb.reducer(
+  {
+    id: t.string(),
+    displayName: t.string().optional(),
+    litellmPrefix: t.string().optional(),
+    apiBaseUrl: t.string().optional(),
+    modelsEndpoint: t.string().optional(),
+    modelsFetchMethod: t.string().optional(),
+    authType: t.string().optional(),
+    isEnabled: t.bool().optional(),
+    config: t.string().optional(),
+    updatedAt: t.u64(),
+  },
+  (ctx, updates) => {
+    const existing = ctx.db.providers.id.find(updates.id);
+    if (!existing) {
+      return;
+    }
+    // Merge only defined fields
+    const merged = { ...existing };
+    if (updates.displayName !== undefined) merged.displayName = updates.displayName;
+    if (updates.litellmPrefix !== undefined) merged.litellmPrefix = updates.litellmPrefix;
+    if (updates.apiBaseUrl !== undefined) merged.apiBaseUrl = updates.apiBaseUrl;
+    if (updates.modelsEndpoint !== undefined) merged.modelsEndpoint = updates.modelsEndpoint;
+    if (updates.modelsFetchMethod !== undefined) merged.modelsFetchMethod = updates.modelsFetchMethod;
+    if (updates.authType !== undefined) merged.authType = updates.authType;
+    if (updates.isEnabled !== undefined) merged.isEnabled = updates.isEnabled;
+    if (updates.config !== undefined) merged.config = updates.config;
+    merged.updatedAt = updates.updatedAt;
+    ctx.db.providers.id.update(merged);
+  }
+);
+
+export const deleteProvider = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.providers.id.find(id);
+    if (existing) {
+      ctx.db.providers.id.delete(id);
+    }
+  }
+);
+
+// -- Provider API Keys --
+
+export const setProviderApiKey = spacetimedb.reducer(
+  {
+    providerId: t.string(),
+    encryptedValue: t.string(),
+    keyType: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, key) => {
+    const existing = ctx.db.provider_api_keys.providerId.find(key.providerId);
+    if (existing) {
+      ctx.db.provider_api_keys.providerId.update({
+        ...existing,
+        ...key,
+        createdAt: key.createdAt === 0n ? existing.createdAt : key.createdAt,
+      });
+    } else {
+      ctx.db.provider_api_keys.insert(key);
+    }
+  }
+);
+
+export const deleteProviderApiKey = spacetimedb.reducer(
+  { providerId: t.string() },
+  (ctx, { providerId }) => {
+    const existing = ctx.db.provider_api_keys.providerId.find(providerId);
+    if (existing) {
+      ctx.db.provider_api_keys.providerId.delete(providerId);
     }
   }
 );

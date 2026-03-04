@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.config import get_settings
 from backend.app.db.session import get_db, get_session_factory, init_db
 from backend.app.jobs import JobScheduler
-from backend.app.jobs.sync_models import sync_models
+from backend.app.jobs.sync_models_stdb import sync_models_stdb
 from backend.app.mcp import mcp_manager, MCPServerConfig
 from backend.app.mediator import configure_logging
 from backend.app.api.v1.health import router as health_router
@@ -30,9 +30,9 @@ async def lifespan(app: FastAPI):
     configure_logging()
     await init_db()
 
-    # Background job scheduler
+    # Background job scheduler - using SpacetimeDB
     scheduler = JobScheduler(get_session_factory())
-    scheduler.register("sync_models", sync_models, interval_seconds=6 * 3600)
+    scheduler.register("sync_models", sync_models_stdb, interval_seconds=6 * 3600)
     await scheduler.start()
     app.state.scheduler = scheduler
 
