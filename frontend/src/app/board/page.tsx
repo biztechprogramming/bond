@@ -102,11 +102,18 @@ function BoardPage() {
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const currentAgentNameRef = useRef<string>("Agent");
+  const selectedAgentName = agents.find(a => a.id === selectedAgentId)?.display_name || currentAgentNameRef.current;
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
   const selectedPlanIdRef = useRef<string | null>(selectedPlanId);
   useEffect(() => { selectedPlanIdRef.current = selectedPlanId; }, [selectedPlanId]);
+
+  // Keep currentAgentNameRef in sync with selected agent
+  useEffect(() => {
+    const name = agents.find(a => a.id === selectedAgentId)?.display_name;
+    if (name) currentAgentNameRef.current = name;
+  }, [selectedAgentId, agents]);
 
   // Initialize SpacetimeDB connection
   useEffect(() => {
@@ -126,8 +133,11 @@ function BoardPage() {
       .then(r => r.json())
       .then((data: { id: string; display_name: string; is_default: boolean }[]) => {
         setAgents(data);
+        // Only fall back to default agent if the current plan doesn't own a specific agent
+        const currentPlan = getWorkPlans().find(p => p.id === selectedPlanIdRef.current);
+        const planAgentId = currentPlan?.agentId || (currentPlan as any)?.agent_id;
         const def = data.find(a => a.is_default);
-        if (def) setSelectedAgentId(def.id);
+        if (!planAgentId && def) setSelectedAgentId(def.id);
       })
       .catch(() => {});
   }, []);
@@ -483,6 +493,9 @@ function BoardPage() {
 
         {/* Chat Panel */}
         <div className="board-chat-panel" style={s.chatPanel}>
+          <div style={{ padding: "8px 12px 0", fontSize: "0.72rem", color: "#6c8aff", fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" as const }}>
+            {selectedAgentName}
+          </div>
           <ChatPanel
             messages={messages}
             input={input}
@@ -494,6 +507,7 @@ function BoardPage() {
             agentStatus={agentStatus}
             streamingContent={streamingContent}
             currentAgentName={currentAgentNameRef.current}
+            selectedAgentName={selectedAgentName}
             toolActivity={toolActivity}
             compact={true}
             emptyMessage="Send a message to start a task."

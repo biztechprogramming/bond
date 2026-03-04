@@ -68,6 +68,12 @@ export default function Home() {
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
 
+  // Keep currentAgentNameRef in sync with selected agent
+  useEffect(() => {
+    const name = agents.find(a => a.id === selectedAgentId)?.display_name;
+    if (name) currentAgentNameRef.current = name;
+  }, [selectedAgentId, agents]);
+
   // Persist conversation ID
   useEffect(() => {
     if (conversationId) {
@@ -128,7 +134,10 @@ export default function Home() {
         const storedConvId = localStorage.getItem("bond-conversation-id");
         if (!storedConvId) {
           const def = data.find(a => a.is_default);
-          if (def) setSelectedAgentId(def.id);
+          if (def) {
+            setSelectedAgentId(def.id);
+            currentAgentNameRef.current = def.display_name;
+          }
         }
       })
       .catch(() => { });
@@ -152,6 +161,10 @@ export default function Home() {
         const status = msg.agentStatus || "idle";
         setAgentStatus(status);
         if (msg.agentName) currentAgentNameRef.current = msg.agentName;
+        else {
+          const name = agents.find(a => a.id === selectedAgentId)?.display_name;
+          if (name) currentAgentNameRef.current = name;
+        }
         if (status !== "idle") {
           setLoading(true);
         }
