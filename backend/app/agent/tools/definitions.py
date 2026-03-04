@@ -455,6 +455,10 @@ TOOL_DEFINITIONS: list[dict] = [
                         "description": "Array of file paths modified (for update_item).",
                         "items": {"type": "string"},
                     },
+                    "description": {
+                        "type": "string",
+                        "description": "Execution context for add_item (REQUIRED) and update_item. Must specify: which codebase/repo (e.g. ~/bond, ~/inspections), relevant file paths, what to implement, approach, and acceptance criteria. This is the only context a different agent has when picking up this item.",
+                    },
                 },
                 "required": ["action"],
             },

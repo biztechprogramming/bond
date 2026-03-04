@@ -17,6 +17,7 @@ import DeleteConversationReducer from "../delete_conversation_reducer";
 import DeleteConversationMessageReducer from "../delete_conversation_message_reducer";
 import DeleteMcpServerReducer from "../delete_mcp_server_reducer";
 import DeleteSettingReducer from "../delete_setting_reducer";
+import DeleteWorkPlanReducer from "../delete_work_plan_reducer";
 import ImportConversationReducer from "../import_conversation_reducer";
 import ImportConversationMessageReducer from "../import_conversation_message_reducer";
 import ImportWorkItemReducer from "../import_work_item_reducer";
@@ -41,6 +42,7 @@ export type DeleteConversationParams = __Infer<typeof DeleteConversationReducer>
 export type DeleteConversationMessageParams = __Infer<typeof DeleteConversationMessageReducer>;
 export type DeleteMcpServerParams = __Infer<typeof DeleteMcpServerReducer>;
 export type DeleteSettingParams = __Infer<typeof DeleteSettingReducer>;
+export type DeleteWorkPlanParams = __Infer<typeof DeleteWorkPlanReducer>;
 export type ImportConversationParams = __Infer<typeof ImportConversationReducer>;
 export type ImportConversationMessageParams = __Infer<typeof ImportConversationMessageReducer>;
 export type ImportWorkItemParams = __Infer<typeof ImportWorkItemReducer>;

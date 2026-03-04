@@ -45,6 +45,7 @@ import DeleteConversationReducer from "./delete_conversation_reducer";
 import DeleteConversationMessageReducer from "./delete_conversation_message_reducer";
 import DeleteMcpServerReducer from "./delete_mcp_server_reducer";
 import DeleteSettingReducer from "./delete_setting_reducer";
+import DeleteWorkPlanReducer from "./delete_work_plan_reducer";
 import ImportConversationReducer from "./import_conversation_reducer";
 import ImportConversationMessageReducer from "./import_conversation_message_reducer";
 import ImportWorkItemReducer from "./import_work_item_reducer";
@@ -201,6 +202,7 @@ const reducersSchema = __reducers(
   __reducerSchema("delete_conversation_message", DeleteConversationMessageReducer),
   __reducerSchema("delete_mcp_server", DeleteMcpServerReducer),
   __reducerSchema("delete_setting", DeleteSettingReducer),
+  __reducerSchema("delete_work_plan", DeleteWorkPlanReducer),
   __reducerSchema("import_conversation", ImportConversationReducer),
   __reducerSchema("import_conversation_message", ImportConversationMessageReducer),
   __reducerSchema("import_work_item", ImportWorkItemReducer),

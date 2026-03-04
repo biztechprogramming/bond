@@ -155,6 +155,7 @@ const spacetimedb = schema({
       filesChanged: t.string(), // JSON array
       createdAt: t.u64(),
       updatedAt: t.u64(),
+      description: t.string().default(''), // execution context: codebase, file paths, approach
     }
   ),
 });
@@ -513,6 +514,19 @@ export const updateWorkPlanStatus = spacetimedb.reducer(
   }
 );
 
+export const deleteWorkPlan = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, args) => {
+    // Delete all items belonging to this plan
+    for (const item of ctx.db.workItems.iter()) {
+      if (item.planId === args.id) {
+        ctx.db.workItems.id.delete(item.id);
+      }
+    }
+    ctx.db.workPlans.id.delete(args.id);
+  }
+);
+
 // -- Work Items --
 
 export const addWorkItem = spacetimedb.reducer(
@@ -521,6 +535,7 @@ export const addWorkItem = spacetimedb.reducer(
     planId: t.string(),
     title: t.string(),
     ordinal: t.u32(),
+    description: t.string(),
   },
   (ctx, item) => {
     const now = BigInt(Date.now());
@@ -559,6 +574,7 @@ export const updateWorkItem = spacetimedb.reducer(
     status: t.string(),
     notes: t.string().optional(),
     filesChanged: t.string().optional(),
+    description: t.string().optional(),
   },
   (ctx, args) => {
     const item = ctx.db.workItems.id.find(args.id);
@@ -569,6 +585,7 @@ export const updateWorkItem = spacetimedb.reducer(
       status: args.status,
       notes: args.notes ?? item.notes,
       filesChanged: args.filesChanged ?? item.filesChanged,
+      description: args.description ?? item.description,
       updatedAt: now,
     });
     // Bump parent plan's updatedAt so sorting always reflects latest activity
@@ -586,6 +603,7 @@ export const importWorkItem = spacetimedb.reducer(
     title: t.string(),
     status: t.string(),
     ordinal: t.u32(),
+    description: t.string(),
     notes: t.string(),
     filesChanged: t.string(),
     createdAt: t.u64(),

@@ -36,6 +36,7 @@ class CreatePlanRequest(BaseModel):
 class AddItemRequest(BaseModel):
     title: str
     ordinal: int | None = None
+    description: str | None = None
 
 
 class UpdateItemRequest(BaseModel):
@@ -44,6 +45,7 @@ class UpdateItemRequest(BaseModel):
     notes: str | None = None
     context_snapshot: dict | None = None
     files_changed: list[str] | None = None
+    description: str | None = None
 
 
 class ItemStatusUpdate(BaseModel):
@@ -105,6 +107,8 @@ async def add_item(plan_id: str, body: AddItemRequest):
     payload: dict = {"title": body.title}
     if body.ordinal is not None:
         payload["ordinal"] = body.ordinal
+    if body.description is not None:
+        payload["description"] = body.description
     result = await _post(f"/plans/{plan_id}/items", payload)
     return {"status": "added", "item_id": result["item_id"], "plan_id": plan_id,
             "title": body.title, "ordinal": result.get("ordinal")}
@@ -121,8 +125,10 @@ async def update_item_full(plan_id: str, item_id: str, body: UpdateItemRequest):
         payload["notes"] = body.notes
     if body.files_changed is not None:
         payload["files_changed"] = body.files_changed
+    if body.description is not None:
+        payload["description"] = body.description
     if not payload:
-        raise HTTPException(status_code=400, detail="Provide at least one of: title, status, notes, files_changed")
+        raise HTTPException(status_code=400, detail="Provide at least one of: title, status, notes, files_changed, description")
     await _put(f"/plans/{plan_id}/items/{item_id}", payload)
     return {"status": "updated", "item_id": item_id}
 
@@ -145,8 +151,10 @@ async def update_item_flat(item_id: str, body: UpdateItemRequest):
         payload["notes"] = body.notes
     if body.files_changed is not None:
         payload["files_changed"] = body.files_changed
+    if body.description is not None:
+        payload["description"] = body.description
     if not payload:
-        raise HTTPException(status_code=400, detail="Provide at least one of: title, status, notes, files_changed")
+        raise HTTPException(status_code=400, detail="Provide at least one of: title, status, notes, files_changed, description")
     await _put(f"/items/{item_id}", payload)
     return {"status": "updated", "item_id": item_id}
 
@@ -181,7 +189,20 @@ async def get_plan(plan_id: str):
 
 
 @router.delete("/{plan_id}")
+async def delete_plan(plan_id: str):
+    """Permanently delete a plan and all its items."""
+    base = _gateway_url()
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.delete(f"{base}/plans/{plan_id}")
+        if resp.status_code >= 400:
+            detail = resp.json().get("error", resp.text) if resp.headers.get("content-type", "").startswith("application/json") else resp.text
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+        return resp.json()
+
+
+@router.post("/{plan_id}/cancel")
 async def cancel_plan(plan_id: str):
+    """Mark a plan as cancelled without deleting it."""
     result = await _post(f"/plans/{plan_id}/complete", {"status": "cancelled"})
     return result
 

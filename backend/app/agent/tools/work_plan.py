@@ -104,7 +104,8 @@ async def _handle_via_api(
                 if not title:
                     return {"error": "title is required for add_item"}
                 ordinal = arguments.get("ordinal")
-                body: dict[str, Any] = {"title": title}
+                description = arguments.get("description", "")
+                body: dict[str, Any] = {"title": title, "description": description}
                 if ordinal is not None:
                     body["ordinal"] = ordinal
                 resp = await client.post(f"{url}/{plan_id}/items", json=body)
@@ -132,6 +133,8 @@ async def _handle_via_api(
                     body["context_snapshot"] = arguments["context_snapshot"]
                 if "files_changed" in arguments:
                     body["files_changed"] = arguments["files_changed"]
+                if "description" in arguments:
+                    body["description"] = arguments["description"]
                 plan_id = arguments.get("plan_id", "")
                 # Use flat /items/:id endpoint — plan_id not needed by the reducer.
                 # Fall back to nested URL if plan_id is known (both routes work).
@@ -275,6 +278,8 @@ def format_recovery_context(plan: dict[str, Any]) -> str:
         lines.append("Completed:")
         for item in completed:
             lines.append(f"  - \u2705 {item['title']}")
+            if item.get("description"):
+                lines.append(f"    Context: {item['description'][:300]}")
             # Show last note if available
             if item.get("notes"):
                 last_note = item["notes"][-1] if isinstance(item["notes"], list) else None
@@ -286,6 +291,8 @@ def format_recovery_context(plan: dict[str, Any]) -> str:
         lines.append("In Progress:")
         for item in in_progress:
             lines.append(f"  - \U0001f504 {item['title']}")
+            if item.get("description"):
+                lines.append(f"    Context: {item['description'][:300]}")
             # Show context snapshot if available
             if item.get("context_snapshot"):
                 snapshot = item["context_snapshot"]
@@ -315,6 +322,8 @@ def format_recovery_context(plan: dict[str, Any]) -> str:
         for item in remaining:
             prefix = "\u2b1c" if item["status"] == "new" else "\U0001f6d1"
             lines.append(f"  - {prefix} {item['title']}")
+            if item.get("description"):
+                lines.append(f"    Context: {item['description'][:300]}")
         lines.append("")
 
     return "\n".join(lines)

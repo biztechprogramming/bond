@@ -116,6 +116,7 @@ export const WorkItems = __t.object("WorkItems", {
   filesChanged: __t.string(),
   createdAt: __t.u64(),
   updatedAt: __t.u64(),
+  description: __t.string(),
 });
 export type WorkItems = __Infer<typeof WorkItems>;
 

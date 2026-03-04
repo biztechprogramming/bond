@@ -142,7 +142,7 @@ export function createPlansRouter(config: GatewayConfig) {
    */
   router.post("/plans/:planId/items", async (req: any, res: any) => {
     const { planId } = req.params;
-    const { title, ordinal } = req.body;
+    const { title, ordinal, description = "" } = req.body;
     if (!title) return res.status(400).json({ error: "title is required" });
 
     const itemId = ulid();
@@ -152,13 +152,14 @@ export function createPlansRouter(config: GatewayConfig) {
         const existing = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`);
         ord = existing.length;
       }
-      // add_work_item: {id, planId, title, ordinal}
-      await callReducer(url, mod, "add_work_item", [itemId, planId, title, ord]);
+      // add_work_item: {id, planId, title, ordinal, description}
+      await callReducer(url, mod, "add_work_item", [itemId, planId, title, ord, description]);
       res.status(201).json({
         item_id: itemId,
         id: itemId,
         plan_id: planId,
         title,
+        description,
         status: "new",
         ordinal: ord,
       });
@@ -187,10 +188,10 @@ export function createPlansRouter(config: GatewayConfig) {
 
   async function updateItemHandler(req: any, res: any) {
     const { itemId } = req.params;
-    const { status, notes, files_changed, title } = req.body;
+    const { status, notes, files_changed, title, description } = req.body;
 
-    if (status === undefined && notes === undefined && files_changed === undefined && title === undefined) {
-      return res.status(400).json({ error: "Provide at least one of: title, status, notes, files_changed" });
+    if (status === undefined && notes === undefined && files_changed === undefined && title === undefined && description === undefined) {
+      return res.status(400).json({ error: "Provide at least one of: title, status, notes, files_changed, description" });
     }
 
     if (title !== undefined) {
@@ -201,7 +202,7 @@ export function createPlansRouter(config: GatewayConfig) {
         return res.status(500).json({ error: err.message });
       }
       // If only title was requested, return early
-      if (status === undefined && notes === undefined && files_changed === undefined) {
+      if (status === undefined && notes === undefined && files_changed === undefined && description === undefined) {
         return res.json({ item_id: itemId, updated: true });
       }
     }
@@ -220,9 +221,10 @@ export function createPlansRouter(config: GatewayConfig) {
     const resolvedFiles = files_changed !== undefined
       ? encodeOption(JSON.stringify(files_changed))
       : encodeOption(current.files_changed ?? null);
+    const resolvedDescription = description !== undefined ? description : (current.description ?? "");
 
-    // Reducer always requires exactly 4 positional args: [id, status, notes, filesChanged]
-    const reducerArgs = [itemId, resolvedStatus, resolvedNotes, resolvedFiles];
+    // Reducer positional args: [id, status, notes, filesChanged, description]
+    const reducerArgs = [itemId, resolvedStatus, resolvedNotes, resolvedFiles, encodeOption(resolvedDescription)];
 
     try {
       await callReducer(url, mod, "update_work_item", reducerArgs);
@@ -246,6 +248,21 @@ export function createPlansRouter(config: GatewayConfig) {
       res.json({ plan_id: planId, status });
     } catch (err: any) {
       console.error("[plans] complete plan failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * DELETE /plans/:planId
+   * Permanently delete a plan and all its items.
+   */
+  router.delete("/plans/:planId", async (req: any, res: any) => {
+    const { planId } = req.params;
+    try {
+      await callReducer(url, mod, "delete_work_plan", [planId]);
+      res.json({ plan_id: planId, deleted: true });
+    } catch (err: any) {
+      console.error("[plans] delete plan failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
