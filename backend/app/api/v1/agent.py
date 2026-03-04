@@ -370,16 +370,10 @@ async def resolve_agent(
             if not agent_id:
                 raise HTTPException(status_code=400, detail="Conversation not found and no agent_id provided")
         else:
-            # Explicit agent_id from user takes priority over conversation's stored agent
-            if not agent_id or agent_id == "default":
-                resolved_agent_id = row["agent_id"]
-            elif agent_id != row["agent_id"]:
-                # User switched agents — update the conversation record
-                await db.execute(
-                    text("UPDATE conversations SET agent_id = :aid WHERE id = :cid"),
-                    {"aid": agent_id, "cid": row["id"]},
-                )
-                await db.commit()
+            # Existing conversation: agent is LOCKED to whoever created it.
+            # Ignore any agent_id passed in — it may be stale from the frontend
+            # (e.g. user switching between conversations with different agents).
+            resolved_agent_id = row["agent_id"]
             resolved_conversation_id = row["id"]
     elif not agent_id:
         raise HTTPException(status_code=400, detail="Either conversation_id or agent_id is required")
