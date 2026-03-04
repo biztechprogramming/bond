@@ -128,6 +128,28 @@ export class BackendClient {
     return (await res.json()) as ConversationSummary[];
   }
 
+  async *conversationTurnStream(
+    conversationId: string,
+    message: string | undefined,
+    agentId?: string,
+    planId?: string,
+  ): AsyncGenerator<SSEEvent> {
+    const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/turn`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: message ?? null,
+        agent_id: agentId ?? null,
+        plan_id: planId ?? null,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+    yield* parseSSEStream(res);
+  }
+
   async deleteConversation(id: string): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${id}`, {
       method: "DELETE",
@@ -177,18 +199,7 @@ export class BackendClient {
     yield* parseSSEStream(res);
   }
 
-  async resolveAgent(conversationId?: string, agentId?: string): Promise<AgentResolution> {
-    const params = new URLSearchParams();
-    if (conversationId) params.set("conversation_id", conversationId);
-    if (agentId) params.set("agent_id", agentId);
 
-    const res = await fetch(`${this.baseUrl}/api/v1/agent/resolve?${params}`);
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Backend error ${res.status}: ${text}`);
-    }
-    return (await res.json()) as AgentResolution;
-  }
 
   async saveUserMessage(
     conversationId: string,

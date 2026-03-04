@@ -1,17 +1,27 @@
-"""Conversations API — CRUD for conversations and messages."""
+"""Conversations API — CRUD for conversations and messages.
+
+The authoritative routing entry point is POST /:id/turn — the gateway calls
+this and relays SSE events to the frontend. Agent resolution lives here, not
+in the gateway.
+"""
 
 from __future__ import annotations
 
+import json
 import logging
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
-from backend.app.agent.interrupts import set_interrupt, is_turn_active
+from backend.app.agent.interrupts import set_interrupt, is_turn_active, register_turn, unregister_turn
 from backend.app.db.session import get_db
+from backend.app.sandbox.manager import get_sandbox_manager
+from backend.app.core.crypto import decrypt_value, is_encrypted
 
 logger = logging.getLogger("bond.api.conversations")
 
@@ -382,6 +392,255 @@ async def interrupt_conversation(
 
     set_interrupt(conversation_id)
     return {"status": "interrupt_sent"}
+
+
+# -- Turn endpoint --
+
+
+class ConversationTurnRequest(BaseModel):
+    message: str | None = None
+    plan_id: str | None = None
+    agent_id: str | None = None  # only used when creating a brand-new conversation
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _stream_container_turn(
+    worker_url: str,
+    messages: list[dict],
+    conversation_id: str,
+    plan_id: str | None,
+    agent_id: str,
+    db: AsyncSession,
+):
+    """Proxy SSE from a container worker, handle memory promotion inline, save messages."""
+    response_content = ""
+    tool_calls_made = 0
+    event_type = ""
+
+    try:
+        register_turn(conversation_id)
+        yield _sse("status", {"state": "thinking", "conversation_id": conversation_id})
+
+        timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{worker_url}/turn",
+                json={"messages": messages, "conversation_id": conversation_id, "plan_id": plan_id},
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.startswith("event:"):
+                        event_type = line[len("event:"):].strip()
+                    elif line.startswith("data:") and event_type:
+                        try:
+                            data = json.loads(line[len("data:"):].strip())
+                        except json.JSONDecodeError:
+                            continue
+
+                        if event_type == "chunk":
+                            response_content += data.get("content", "")
+                            yield _sse("chunk", data)
+                        elif event_type == "status":
+                            yield _sse("status", data)
+                        elif event_type in ("tool_call", "plan_created", "item_created", "item_updated", "plan_completed"):
+                            yield _sse(event_type, data)
+                        elif event_type == "memory":
+                            # Promote inline — no gateway round-trip needed
+                            logger.info(
+                                "Memory promotion: agent=%s type=%s id=%s",
+                                agent_id, data.get("type"), data.get("memory_id"),
+                            )
+                        elif event_type == "done":
+                            response_content = data.get("response", response_content)
+                            tool_calls_made = data.get("tool_calls_made", 0)
+                        elif event_type == "error":
+                            yield _sse("error", data)
+
+        # Save assistant message
+        msg_id = str(ULID())
+        await db.execute(
+            text(
+                "INSERT INTO conversation_messages "
+                "(id, conversation_id, role, content, status) "
+                "VALUES (:id, :cid, 'assistant', :content, 'delivered')"
+            ),
+            {"id": msg_id, "cid": conversation_id, "content": response_content},
+        )
+        await db.execute(
+            text("UPDATE conversations SET message_count = message_count + 1 WHERE id = :id"),
+            {"id": conversation_id},
+        )
+        await db.commit()
+
+        logger.info(
+            "Container turn complete: conversation=%s tool_calls=%d response_len=%d",
+            conversation_id, tool_calls_made, len(response_content),
+        )
+        yield _sse("done", {
+            "message_id": msg_id,
+            "conversation_id": conversation_id,
+            "tool_calls_made": tool_calls_made,
+            "queued_count": 0,
+        })
+    except Exception as e:
+        logger.error("Container turn error: conversation=%s error=%s", conversation_id, e)
+        yield _sse("error", {"message": str(e)})
+    finally:
+        unregister_turn(conversation_id)
+
+
+@router.post("/{conversation_id}/turn")
+async def conversation_turn(
+    conversation_id: str,
+    req: ConversationTurnRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Start an agent turn for a conversation.
+
+    This is the single routing entry point. The gateway calls this and relays
+    SSE events to the frontend — no agent resolution in the gateway.
+
+    The conversation's agent is always used. The agent cannot be changed by
+    passing agent_id here (that only applies when creating a new conversation).
+    """
+    # Look up conversation
+    conv_result = await db.execute(
+        text("SELECT id, agent_id FROM conversations WHERE id = :id"),
+        {"id": conversation_id},
+    )
+    conv_row = conv_result.mappings().first()
+
+    if conv_row is None:
+        # Auto-create with the specified agent or default
+        agent_id = req.agent_id
+        if not agent_id:
+            default = await db.execute(text("SELECT id FROM agents WHERE is_default = 1 LIMIT 1"))
+            row = default.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="No default agent and no agent_id provided")
+            agent_id = row[0]
+        await db.execute(
+            text("INSERT INTO conversations (id, agent_id, channel) VALUES (:id, :aid, 'webchat')"),
+            {"id": conversation_id, "aid": agent_id},
+        )
+        await db.commit()
+        try:
+            await _sync_conversation_to_spacetimedb(conversation_id, agent_id, "webchat", "")
+        except Exception:
+            pass
+    else:
+        # Existing conversation — agent is locked, ignore req.agent_id
+        agent_id = conv_row["agent_id"]
+
+    # Save user message
+    if req.message:
+        msg_id = str(ULID())
+        await db.execute(
+            text(
+                "INSERT INTO conversation_messages "
+                "(id, conversation_id, role, content, status) "
+                "VALUES (:id, :cid, 'user', :content, 'delivered')"
+            ),
+            {"id": msg_id, "cid": conversation_id, "content": req.message},
+        )
+        await db.execute(
+            text("UPDATE conversations SET message_count = message_count + 1 WHERE id = :id"),
+            {"id": conversation_id},
+        )
+        await db.commit()
+
+    # Load history
+    history_result = await db.execute(
+        text(
+            "SELECT role, content FROM conversation_messages "
+            "WHERE conversation_id = :cid AND status = 'delivered' "
+            "ORDER BY created_at"
+        ),
+        {"cid": conversation_id},
+    )
+    messages = [{"role": r["role"], "content": r["content"]} for r in history_result.mappings().all()]
+
+    # Look up agent
+    agent_result = await db.execute(
+        text("SELECT id, name, display_name, sandbox_image, model, utility_model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
+        {"id": agent_id},
+    )
+    agent_row = agent_result.mappings().first()
+    if agent_row is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+
+    if agent_row["sandbox_image"]:
+        # Container agent — ensure running, proxy SSE
+        api_keys: dict[str, str] = {}
+        for kr in (await db.execute(text("SELECT provider_id, encrypted_value FROM provider_api_keys"))).fetchall():
+            try:
+                val = decrypt_value(kr[1])
+                if val:
+                    api_keys[kr[0]] = val
+            except Exception:
+                if not is_encrypted(kr[1]):
+                    api_keys[kr[0]] = kr[1]
+
+        alias_rows = (await db.execute(text("SELECT alias, provider_id FROM provider_aliases"))).fetchall()
+
+        mounts_result = await db.execute(
+            text("SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
+            {"id": agent_id},
+        )
+
+        frag_result = await db.execute(
+            text(
+                "SELECT pf.id, pf.name, pf.display_name, pf.description, pf.content, "
+                "pf.summary, pf.tier, pf.task_triggers, pf.token_estimate, apf.enabled, apf.rank "
+                "FROM agent_prompt_fragments apf JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
+                "WHERE apf.agent_id = :id AND pf.is_active = 1 ORDER BY apf.rank"
+            ),
+            {"id": agent_id},
+        )
+
+        agent_dict = {
+            "id": agent_row["id"],
+            "name": agent_row["name"],
+            "sandbox_image": agent_row["sandbox_image"],
+            "model": agent_row["model"],
+            "utility_model": agent_row["utility_model"],
+            "system_prompt": agent_row["system_prompt"],
+            "tools": json.loads(agent_row["tools"]),
+            "max_iterations": agent_row["max_iterations"],
+            "prompt_fragments": [dict(r) for r in frag_result.mappings().all()],
+            "workspace_mounts": [
+                {
+                    "host_path": m["host_path"],
+                    "mount_name": m["mount_name"],
+                    "container_path": m["container_path"] or f"/workspace/{m['mount_name']}",
+                    "readonly": bool(m["readonly"]),
+                }
+                for m in mounts_result.mappings().all()
+            ],
+            "api_keys": api_keys,
+            "provider_aliases": {r[0]: r[1] for r in alias_rows},
+        }
+
+        try:
+            info = await get_sandbox_manager().ensure_running(agent_dict)
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+
+        return StreamingResponse(
+            _stream_container_turn(info["worker_url"], messages, conversation_id, req.plan_id, agent_id, db),
+            media_type="text/event-stream",
+        )
+    else:
+        # Host-mode agent — use existing agent_turn loop
+        from backend.app.api.v1.agent import _stream_agent_turn
+        return StreamingResponse(
+            _stream_agent_turn(conversation_id, messages, agent_id, db),
+            media_type="text/event-stream",
+        )
 
 
 # -- Internal helpers --
