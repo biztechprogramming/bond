@@ -20,7 +20,7 @@ from backend.app.api.v1.settings import router as settings_router
 from backend.app.api.v1.conversations import router as conversations_router
 from backend.app.api.v1.memory import router as memory_router
 from backend.app.api.v1.prompts import router as prompts_router
-from backend.app.api.v1.plans import router as plans_router
+from backend.app.api.v1.plans import router as plans_router, items_router
 from backend.app.api.v1.mcp import router as mcp_router
 
 
@@ -90,4 +90,5 @@ app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(memory_router, prefix="/api/v1")
 app.include_router(prompts_router, prefix="/api/v1")
 app.include_router(plans_router, prefix="/api/v1")
+app.include_router(items_router, prefix="/api/v1")
 app.include_router(mcp_router, prefix="/api/v1")

@@ -17,6 +17,9 @@ logger = logging.getLogger("bond.api.plans")
 
 router = APIRouter(prefix="/plans", tags=["plans"])
 
+# Separate router for flat /items/:id routes (no plan_id in path)
+items_router = APIRouter(prefix="/items", tags=["items"])
+
 
 def _gateway_url() -> str:
     settings = get_settings()
@@ -140,6 +143,7 @@ async def update_item_status(plan_id: str, item_id: str, body: ItemStatusUpdate)
 
 
 @router.put("/items/{item_id}")
+@items_router.put("/{item_id}")
 async def update_item_flat(item_id: str, body: UpdateItemRequest):
     """Flat route — update an item without needing plan_id in the path."""
     payload: dict = {}

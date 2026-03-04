@@ -145,6 +145,7 @@ async def _handle_via_api(
                 resp = await client.put(item_url, json=body)
                 resp.raise_for_status()
                 result = resp.json()
+                result["success"] = True
                 result["_sse_event"] = {
                     "event": "item_updated",
                     "data": {"plan_id": plan_id, "item_id": item_id, "status": arguments.get("status")},
@@ -180,7 +181,11 @@ async def _handle_via_api(
 
     except httpx.HTTPStatusError as e:
         logger.warning("work_plan API error: %s %s", e.response.status_code, e.response.text[:200])
-        return {"error": f"API error: {e.response.status_code} {e.response.text[:200]}"}
+        return {
+            "success": False,
+            "error": f"API error {e.response.status_code}: {e.response.text[:300]}",
+            "IMPORTANT": "This action FAILED. Do NOT claim it succeeded. Do NOT proceed as if the item was updated. You must retry or report the failure.",
+        }
     except Exception as e:
         logger.warning("work_plan API call failed: %s", e)
         return {"error": f"API call failed: {e}"}
