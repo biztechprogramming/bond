@@ -333,20 +333,28 @@ async def reload_prompts():
 
 
 def _discover_workspace() -> str | None:
-    """List contents of /workspace to orient the agent on what's mounted."""
+    """Set process cwd to /workspace (if mounted) and return a listing for the system prompt.
+
+    All file tools (file_read, file_edit, file_write, code_execute) share the same
+    working directory, so relative paths are consistent across every tool call.
+    """
     workspace = Path("/workspace")
     if not workspace.exists():
         return None
     try:
+        # Set process cwd so relative paths in file_read/file_edit/file_write
+        # resolve the same way as code_execute (which uses cwd=/workspace explicitly).
+        os.chdir(workspace)
         entries = sorted(p.name for p in workspace.iterdir() if not p.name.startswith("."))
         if not entries:
             return None
         listing = ", ".join(entries)
         return (
             "## Workspace\n"
-            "The /workspace directory contains: " + listing + "\n"
-            "Use these paths for file operations. Do not guess paths "
-            "-- if a path does not exist, check /workspace/ contents."
+            f"Working directory: {workspace}\n"
+            "Contents: " + listing + "\n"
+            "Use relative paths for file operations (e.g. DecorApps/Foo/Bar.cs). "
+            "All tools share this working directory."
         )
     except OSError:
         return None
