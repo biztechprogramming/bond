@@ -77,6 +77,8 @@ async def _handle_via_api(
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
+            context = context or {}
+
             if action == "create_plan":
                 title = arguments.get("title", "")
                 if not title:
@@ -94,13 +96,15 @@ async def _handle_via_api(
                     "data": {"plan_id": result["plan_id"], "title": title, "agent_id": agent_id},
                 }
                 logger.info("work_plan create_plan (API) id=%s title=%s", result["plan_id"], title[:80])
+                # Store in context so batched add_item calls in the same turn can find it
+                context["_active_plan_id"] = result["plan_id"]
                 return result
 
             elif action == "add_item":
-                plan_id = arguments.get("plan_id", "")
+                plan_id = arguments.get("plan_id") or context.get("_active_plan_id", "")
                 title = arguments.get("title", "")
                 if not plan_id:
-                    return {"error": "plan_id is required for add_item"}
+                    return {"error": "plan_id is required for add_item (or call create_plan first in the same turn)"}
                 if not title:
                     return {"error": "title is required for add_item"}
                 ordinal = arguments.get("ordinal")
@@ -154,9 +158,9 @@ async def _handle_via_api(
                 return result
 
             elif action == "complete_plan":
-                plan_id = arguments.get("plan_id", "")
+                plan_id = arguments.get("plan_id") or context.get("_active_plan_id", "")
                 if not plan_id:
-                    return {"error": "plan_id is required for complete_plan"}
+                    return {"error": "plan_id is required for complete_plan (or call create_plan first in the same turn)"}
                 status = arguments.get("status", "completed")
                 resp = await client.post(f"{url}/{plan_id}/complete", json={"status": status})
                 resp.raise_for_status()
@@ -169,9 +173,9 @@ async def _handle_via_api(
                 return result
 
             elif action == "get_plan":
-                plan_id = arguments.get("plan_id", "")
+                plan_id = arguments.get("plan_id") or context.get("_active_plan_id", "")
                 if not plan_id:
-                    return {"error": "plan_id is required for get_plan"}
+                    return {"error": "plan_id is required for get_plan (or call create_plan first in the same turn)"}
                 resp = await client.get(f"{url}/{plan_id}")
                 resp.raise_for_status()
                 return resp.json()
