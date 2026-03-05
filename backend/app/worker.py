@@ -386,8 +386,8 @@ async def turn(request: Request) -> StreamingResponse:
             # Persist assistant response
             if _state.persistence:
                 try:
-                    await _state.persistence.save_message(
-                        session_id=conversation_id,
+                    await _state.persistence.save_conversation_message(
+                        conversation_id=conversation_id,
                         role="assistant",
                         content=response_text,
                         agent_db=_state.agent_db,
@@ -443,8 +443,6 @@ async def _run_agent_loop(
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
     provider_aliases: dict[str, str] = config.get("provider_aliases", {})
-
-    logger.error("DEBUG: injected_keys: ", injected_keys)
 
     def _resolve_provider(model_id: str) -> str:
         """Resolve model prefix to canonical provider ID using DB aliases."""
@@ -748,8 +746,8 @@ async def _run_agent_loop(
     # Persist user message
     if _state.persistence:
         try:
-            await _state.persistence.save_message(
-                session_id=conversation_id,
+            await _state.persistence.save_conversation_message(
+                conversation_id=conversation_id,
                 role="user",
                 content=user_message,
                 agent_db=_state.agent_db,

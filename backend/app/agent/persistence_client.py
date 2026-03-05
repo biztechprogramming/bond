@@ -217,6 +217,55 @@ class PersistenceClient:
         # In sqlite mode, we can't get provider API keys from SpacetimeDB
         return None
 
+    async def save_conversation_message(
+        self,
+        conversation_id: str,
+        role: str,
+        content: str,
+        *,
+        agent_db: Any | None = None,
+    ) -> dict | bool:
+        """Save a conversation message to conversationMessages table."""
+        if not self._initialized:
+            await self.init()
+        if self._mode == "api":
+            assert self._client is not None
+            payload = {
+                "conversationId": conversation_id,
+                "role": role,
+                "content": content,
+            }
+            resp = await self._client.post("/conversation-messages", json=payload)
+            if resp.status_code != 201:
+                raise RuntimeError(
+                    f"Gateway save_conversation_message failed ({resp.status_code}): {resp.text}"
+                )
+            return resp.json()
+        # In sqlite mode, save to local agent.db
+        if agent_db is None:
+            raise RuntimeError("sqlite mode requires agent_db to be provided")
+        import json
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc).isoformat()
+        await agent_db.execute(
+            """INSERT INTO conversation_messages (id, conversation_id, role, content, tool_calls, tool_call_id, token_count, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                _ulid(),
+                conversation_id,
+                role,
+                content,
+                "[]",  # tool_calls
+                "",    # tool_call_id
+                0,     # token_count
+                "delivered",
+                now,
+            ),
+        )
+        await agent_db.commit()
+        return True
+
     async def add_mcp_server(self, name: str, command: str, args: list, env: dict) -> dict | bool:
         """Register an MCP server via Gateway."""
         if not self._initialized:
