@@ -471,8 +471,11 @@ async def _run_agent_loop(
         # 1. Keys from provider_api_keys (injected at container launch)
         key = injected_keys.get(prov)
         if key:
-            logger.debug("Got API key for %s from injected_keys (length: %d)", prov, len(key))
+            logger.error("DEBUG: Got API key for %s from injected_keys (length: %d, starts with: %s)", 
+                       prov, len(key), key[:10] if len(key) > 10 else key)
             return key
+        else:
+            logger.error("DEBUG: No API key for %s in injected_keys", prov)
 
         # 2. SpacetimeDB via Gateway (encrypted API keys)
         try:
@@ -880,10 +883,10 @@ async def _run_agent_loop(
         # Log the API key info before calling LiteLLM
         if "api_key" in extra_kwargs:
             api_key = extra_kwargs["api_key"]
-            logger.debug("Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
+            logger.error("DEBUG: Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
                        model, len(api_key), api_key[:10] if len(api_key) > 10 else api_key)
         else:
-            logger.debug("Calling LiteLLM with model %s, no API key in extra_kwargs", model)
+            logger.error("DEBUG: Calling LiteLLM with model %s, no API key in extra_kwargs", model)
         
         response = await litellm.acompletion(
             model=model,
