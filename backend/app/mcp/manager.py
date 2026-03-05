@@ -231,25 +231,74 @@ class MCPManager:
     async def load_servers_from_db(self, db: AsyncSession, agent_id: Optional[str] = None):
         """Load and start all enabled MCP servers from the database."""
         try:
-            # If agent_id is provided, load global + agent-specific
-            if agent_id:
-                result = await db.execute(
-                    text("SELECT * FROM mcp_servers WHERE enabled = 1 AND (agent_id IS NULL OR agent_id = :agent_id)"),
-                    {"agent_id": agent_id}
-                )
-            else:
-                # Load only global servers
-                result = await db.execute(text("SELECT * FROM mcp_servers WHERE enabled = 1 AND agent_id IS NULL"))
-                
-            rows = result.mappings().all()
+            # Try SpacetimeDB first
+            from backend.app.core.spacetimedb import get_stdb
+            stdb = get_stdb()
+            
+            # Simple query - get all enabled servers
+            # We'll filter agent_id in Python if needed
+            sql = "SELECT * FROM mcp_servers WHERE enabled = true"
+            rows = await stdb.query(sql)
+            
+            # If we have rows from SpacetimeDB, use them
+            if rows:
+                # Filter by agent_id if specified
+                if agent_id is not None:
+                    # Include both global (agent_id is None/none) and agent-specific servers
+                    filtered_rows = []
+                    for row in rows:
+                        row_agent_id = row.get("agent_id")
+                        # Check if this is a global server or matches the agent_id
+                        if (isinstance(row_agent_id, dict) and "none" in row_agent_id) or row_agent_id == agent_id:
+                            filtered_rows.append(row)
+                    rows = filtered_rows
+                else:
+                    # Only global servers (agent_id is None/none)
+                    filtered_rows = []
+                    for row in rows:
+                        row_agent_id = row.get("agent_id")
+                        if isinstance(row_agent_id, dict) and "none" in row_agent_id:
+                            filtered_rows.append(row)
+                    rows = filtered_rows
+            
+            # If no rows in SpacetimeDB, fall back to SQLite (for backward compatibility)
+            if not rows and db:
+                try:
+                    # If agent_id is provided, load global + agent-specific
+                    if agent_id:
+                        result = await db.execute(
+                            text("SELECT * FROM mcp_servers WHERE enabled = 1 AND (agent_id IS NULL OR agent_id = :agent_id)"),
+                            {"agent_id": agent_id}
+                        )
+                    else:
+                        # Load only global servers
+                        result = await db.execute(text("SELECT * FROM mcp_servers WHERE enabled = 1 AND agent_id IS NULL"))
+                        
+                    rows = result.mappings().all()
+                except Exception as sqlite_error:
+                    # Table might not exist in SQLite (e.g., fresh install or migrated to SpacetimeDB)
+                    logger.debug(f"Could not load MCP servers from SQLite (table may not exist): {sqlite_error}")
+                    rows = []
+            
             for row in rows:
-                config = MCPServerConfig(
-                    name=row["name"],
-                    command=row["command"],
-                    args=json.loads(row["args"]),
-                    env=json.loads(row["env"]),
-                    enabled=bool(row["enabled"])
-                )
+                # Handle both dict (SpacetimeDB) and Row (SQLAlchemy) types
+                if isinstance(row, dict):
+                    config = MCPServerConfig(
+                        name=row["name"],
+                        command=row["command"],
+                        args=json.loads(row["args"]),
+                        env=json.loads(row["env"]),
+                        enabled=bool(row["enabled"])
+                    )
+                else:
+                    # SQLAlchemy Row object
+                    config = MCPServerConfig(
+                        name=row["name"],
+                        command=row["command"],
+                        args=json.loads(row["args"]),
+                        env=json.loads(row["env"]),
+                        enabled=bool(row["enabled"])
+                    )
                 if config.name not in self.connections:
                     await self.add_server(config)
         except Exception as e:
