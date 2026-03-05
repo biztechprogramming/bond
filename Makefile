@@ -92,3 +92,50 @@ coding-test-revert:
 	else \
 		echo "No previous coding test to revert."; \
 	fi
+
+# SpacetimeDB Docker Compose commands
+spacetimedb-up:
+	docker-compose -f docker-compose.spacetimedb.yml up -d
+
+spacetimedb-down:
+	docker-compose -f docker-compose.spacetimedb.yml down
+
+spacetimedb-logs:
+	docker-compose -f docker-compose.spacetimedb.yml logs -f
+
+spacetimedb-ps:
+	docker-compose -f docker-compose.spacetimedb.yml ps
+
+spacetimedb-restart:
+	docker-compose -f docker-compose.spacetimedb.yml restart
+
+spacetimedb-stop:
+	docker-compose -f docker-compose.spacetimedb.yml stop
+
+spacetimedb-start:
+	docker-compose -f docker-compose.spacetimedb.yml start
+
+# Simple version (without network)
+spacetimedb-simple-up:
+	docker-compose -f docker-compose.spacetimedb-simple.yml up -d
+
+spacetimedb-simple-down:
+	docker-compose -f docker-compose.spacetimedb-simple.yml down
+
+# Check SpacetimeDB health
+spacetimedb-health:
+	@curl -s http://localhost:18787/v1/health && echo "SpacetimeDB is healthy" || echo "SpacetimeDB is not responding"
+
+# Reset SpacetimeDB completely (WARNING: deletes all data)
+spacetimedb-reset: spacetimedb-down
+	@echo "WARNING: This will delete all SpacetimeDB data!"
+	@read -p "Are you sure? (y/N) " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		echo "Removing SpacetimeDB data..."; \
+		rm -rf ~/.bond/spacetimedb/data; \
+		mkdir -p ~/.bond/spacetimedb/data; \
+		echo "Data removed. Run 'make spacetimedb-up' to start fresh."; \
+	else \
+		echo "Reset cancelled."; \
+	fi

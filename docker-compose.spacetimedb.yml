@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  spacetimedb:
+    image: clockworklabs/spacetime:latest
+    container_name: bond-spacetimedb
+    restart: unless-stopped
+    ports:
+      - "18787:3000"
+    volumes:
+      - ~/.bond/spacetimedb/data:/var/lib/spacetimedb
+    command: start
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - bond-network
+
+networks:
+  bond-network:
+    name: bond-network
+    driver: bridge
