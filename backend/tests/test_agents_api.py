@@ -13,6 +13,14 @@ from httpx import ASGITransport, AsyncClient
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
 
 
+async def apply_all_migrations(db: aiosqlite.Connection) -> None:
+    """Apply every migration in order to the given aiosqlite connection."""
+    all_migrations = sorted(MIGRATIONS_DIR.glob("*.up.sql"))
+    for sql_file in all_migrations:
+        sql = sql_file.read_text()
+        await db.executescript(sql)
+
+
 async def _apply_sql(db: aiosqlite.Connection, sql_file: Path) -> None:
     sql = sql_file.read_text()
     await db.executescript(sql)
@@ -30,7 +38,6 @@ async def agents_client(_clear_settings_cache):
     db_path = Path(tmpdir) / "test.db"
     os.environ["BOND_DATABASE_PATH"] = str(db_path)
 
-    from tests.conftest import apply_all_migrations
     async with aiosqlite.connect(db_path) as db:
         await apply_all_migrations(db)
 

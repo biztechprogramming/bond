@@ -18,6 +18,8 @@ export default __t.row({
   model: __t.string(),
   utilityModel: __t.string().name("utility_model"),
   tools: __t.string(),
+  sandboxImage: __t.string().name("sandbox_image"),
+  maxIterations: __t.u32().name("max_iterations"),
   isActive: __t.bool().name("is_active"),
   isDefault: __t.bool().name("is_default"),
   createdAt: __t.u64().name("created_at"),

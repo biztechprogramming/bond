@@ -19,8 +19,34 @@ const spacetimedb = schema({
       model: t.string(),
       utilityModel: t.string(),
       tools: t.string(), // JSON array of enabled tool names
+      sandboxImage: t.string(),
+      maxIterations: t.u32(),
       isActive: t.bool(),
       isDefault: t.bool(),
+      createdAt: t.u64(),
+    }
+  ),
+
+  agent_workspace_mounts: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agentId: t.string(),
+      hostPath: t.string(),
+      mountName: t.string(),
+      containerPath: t.string(),
+      readonly: t.bool(),
+    }
+  ),
+
+  agent_channels: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agentId: t.string(),
+      channel: t.string(),
+      sandboxOverride: t.string(),
+      enabled: t.bool(),
       createdAt: t.u64(),
     }
   ),
@@ -88,6 +114,36 @@ const spacetimedb = schema({
     }
   ),
 
+  // -- LLM Providers --
+  providers: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      displayName: t.string(),
+      litellmPrefix: t.string(),
+      apiBaseUrl: t.string().optional(),
+      modelsEndpoint: t.string().optional(),
+      modelsFetchMethod: t.string(), // 'anthropic_api', 'anthropic_scrape', 'google_api', 'openai_compat'
+      authType: t.string(), // 'bearer', 'x-api-key', 'query_param'
+      isEnabled: t.bool(),
+      config: t.string(), // JSON object
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
+  // -- Provider API Keys (encrypted) --
+  provider_api_keys: table(
+    { public: true },
+    {
+      providerId: t.string().primaryKey(),
+      encryptedValue: t.string(),
+      keyType: t.string(), // 'api_key', 'oauth_token'
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
   // -- Model Catalog --
   llm_models: table(
     { public: true },
@@ -123,6 +179,7 @@ const spacetimedb = schema({
     {
       key: t.string().primaryKey(),
       value: t.string(),
+      keyType: t.string().default("api_key"),
       createdAt: t.u64(),
       updatedAt: t.u64(),
     }
@@ -135,10 +192,12 @@ const spacetimedb = schema({
       id: t.string().primaryKey(),
       agentId: t.string(),
       conversationId: t.string(),
+      parentPlanId: t.string().default(''),
       title: t.string(),
       status: t.string(), // 'active', 'completed', 'cancelled'
       createdAt: t.u64(),
       updatedAt: t.u64(),
+      completedAt: t.u64().optional(),
     }
   ),
 
@@ -151,8 +210,11 @@ const spacetimedb = schema({
       title: t.string(),
       status: t.string(), // 'new', 'in_progress', 'done', 'blocked'
       ordinal: t.u32(),
-      notes: t.string(), // JSON array of strings
-      filesChanged: t.string(), // JSON array
+      contextSnapshot: t.string().default('{}'), // JSON object
+      notes: t.string().default('[]'), // JSON array of strings
+      filesChanged: t.string().default('[]'), // JSON array
+      startedAt: t.u64().optional(),
+      completedAt: t.u64().optional(),
       createdAt: t.u64(),
       updatedAt: t.u64(),
       description: t.string().default(''), // execution context: codebase, file paths, approach
@@ -193,14 +255,30 @@ export const addAgent = spacetimedb.reducer(
     model: t.string(),
     utilityModel: t.string(),
     tools: t.string(),
+    sandboxImage: t.string(),
+    maxIterations: t.u32(),
+    isActive: t.bool(),
     isDefault: t.bool(),
   },
   (ctx, agent) => {
     ctx.db.agents.insert({
       ...agent,
-      isActive: true,
       createdAt: BigInt(Date.now()),
     });
+  }
+);
+
+export const addAgentMount = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    hostPath: t.string(),
+    mountName: t.string(),
+    containerPath: t.string(),
+    readonly: t.bool(),
+  },
+  (ctx, mount) => {
+    ctx.db.agent_workspace_mounts.insert(mount);
   }
 );
 
@@ -449,6 +527,7 @@ export const setSetting = spacetimedb.reducer(
   {
     key: t.string(),
     value: t.string(),
+    keyType: t.string().default("api_key"),
   },
   (ctx, args) => {
     const now = BigInt(Date.now());
@@ -485,6 +564,7 @@ export const createWorkPlan = spacetimedb.reducer(
     id: t.string(),
     agentId: t.string(),
     conversationId: t.string(),
+    parentPlanId: t.string().default(''),
     title: t.string(),
   },
   (ctx, plan) => {
@@ -494,6 +574,7 @@ export const createWorkPlan = spacetimedb.reducer(
       status: 'active',
       createdAt: now,
       updatedAt: now,
+      completedAt: undefined,
     });
   }
 );
@@ -506,10 +587,12 @@ export const updateWorkPlanStatus = spacetimedb.reducer(
   (ctx, args) => {
     const plan = ctx.db.workPlans.id.find(args.id);
     if (!plan) return;
+    const now = BigInt(Date.now());
     ctx.db.workPlans.id.update({
       ...plan,
       status: args.status,
-      updatedAt: BigInt(Date.now()),
+      updatedAt: now,
+      completedAt: args.status === 'completed' ? now : plan.completedAt,
     });
   }
 );
@@ -542,8 +625,11 @@ export const addWorkItem = spacetimedb.reducer(
     ctx.db.workItems.insert({
       ...item,
       status: 'new',
+      contextSnapshot: '{}',
       notes: '[]',
       filesChanged: '[]',
+      startedAt: undefined,
+      completedAt: undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -603,11 +689,14 @@ export const importWorkItem = spacetimedb.reducer(
     title: t.string(),
     status: t.string(),
     ordinal: t.u32(),
-    description: t.string(),
-    notes: t.string(),
-    filesChanged: t.string(),
+    contextSnapshot: t.string().default('{}'),
+    notes: t.string().default('[]'),
+    filesChanged: t.string().default('[]'),
+    startedAt: t.u64().optional(),
+    completedAt: t.u64().optional(),
     createdAt: t.u64(),
     updatedAt: t.u64(),
+    description: t.string().default(''),
   },
   (ctx, item) => {
     const existing = ctx.db.workItems.id.find(item.id);
@@ -630,10 +719,12 @@ export const importWorkPlan = spacetimedb.reducer(
     id: t.string(),
     agentId: t.string(),
     conversationId: t.string(),
+    parentPlanId: t.string().default(''),
     title: t.string(),
     status: t.string(),
     createdAt: t.u64(),
     updatedAt: t.u64(),
+    completedAt: t.u64().optional(),
   },
   (ctx, plan) => {
     const existing = ctx.db.workPlans.id.find(plan.id);
@@ -645,6 +736,104 @@ export const importWorkPlan = spacetimedb.reducer(
       });
     } else {
       ctx.db.workPlans.insert(plan);
+    }
+  }
+);
+
+// -- Providers --
+
+export const addProvider = spacetimedb.reducer(
+  {
+    id: t.string(),
+    displayName: t.string(),
+    litellmPrefix: t.string(),
+    apiBaseUrl: t.string().optional(),
+    modelsEndpoint: t.string().optional(),
+    modelsFetchMethod: t.string(),
+    authType: t.string(),
+    isEnabled: t.bool(),
+    config: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, provider) => {
+    ctx.db.providers.insert(provider);
+  }
+);
+
+export const updateProvider = spacetimedb.reducer(
+  {
+    id: t.string(),
+    displayName: t.string().optional(),
+    litellmPrefix: t.string().optional(),
+    apiBaseUrl: t.string().optional(),
+    modelsEndpoint: t.string().optional(),
+    modelsFetchMethod: t.string().optional(),
+    authType: t.string().optional(),
+    isEnabled: t.bool().optional(),
+    config: t.string().optional(),
+    updatedAt: t.u64(),
+  },
+  (ctx, updates) => {
+    const existing = ctx.db.providers.id.find(updates.id);
+    if (!existing) {
+      return;
+    }
+    // Merge only defined fields
+    const merged = { ...existing };
+    if (updates.displayName !== undefined) merged.displayName = updates.displayName;
+    if (updates.litellmPrefix !== undefined) merged.litellmPrefix = updates.litellmPrefix;
+    if (updates.apiBaseUrl !== undefined) merged.apiBaseUrl = updates.apiBaseUrl;
+    if (updates.modelsEndpoint !== undefined) merged.modelsEndpoint = updates.modelsEndpoint;
+    if (updates.modelsFetchMethod !== undefined) merged.modelsFetchMethod = updates.modelsFetchMethod;
+    if (updates.authType !== undefined) merged.authType = updates.authType;
+    if (updates.isEnabled !== undefined) merged.isEnabled = updates.isEnabled;
+    if (updates.config !== undefined) merged.config = updates.config;
+    merged.updatedAt = updates.updatedAt;
+    ctx.db.providers.id.update(merged);
+  }
+);
+
+export const deleteProvider = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.providers.id.find(id);
+    if (existing) {
+      ctx.db.providers.id.delete(id);
+    }
+  }
+);
+
+// -- Provider API Keys --
+
+export const setProviderApiKey = spacetimedb.reducer(
+  {
+    providerId: t.string(),
+    encryptedValue: t.string(),
+    keyType: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, key) => {
+    const existing = ctx.db.provider_api_keys.providerId.find(key.providerId);
+    if (existing) {
+      ctx.db.provider_api_keys.providerId.update({
+        ...existing,
+        ...key,
+        createdAt: key.createdAt === 0n ? existing.createdAt : key.createdAt,
+      });
+    } else {
+      ctx.db.provider_api_keys.insert(key);
+    }
+  }
+);
+
+export const deleteProviderApiKey = spacetimedb.reducer(
+  { providerId: t.string() },
+  (ctx, { providerId }) => {
+    const existing = ctx.db.provider_api_keys.providerId.find(providerId);
+    if (existing) {
+      ctx.db.provider_api_keys.providerId.delete(providerId);
     }
   }
 );

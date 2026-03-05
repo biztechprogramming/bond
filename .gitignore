@@ -34,3 +34,5 @@ gateway/pnpm-lock.yaml
 frontend/pnpm-lock.yaml
 data/
 tests/coding-runs/
+*.db
+data/agent-configs/

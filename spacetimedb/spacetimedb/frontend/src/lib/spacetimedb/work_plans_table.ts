@@ -14,8 +14,10 @@ export default __t.row({
   id: __t.string().primaryKey(),
   agentId: __t.string().name("agent_id"),
   conversationId: __t.string().name("conversation_id"),
+  parentPlanId: __t.string().name("parent_plan_id"),
   title: __t.string(),
   status: __t.string(),
   createdAt: __t.u64().name("created_at"),
   updatedAt: __t.u64().name("updated_at"),
+  completedAt: __t.option(__t.u64()).name("completed_at"),
 });

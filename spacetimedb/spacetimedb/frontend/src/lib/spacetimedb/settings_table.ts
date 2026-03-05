@@ -13,6 +13,7 @@ import {
 export default __t.row({
   key: __t.string().primaryKey(),
   value: __t.string(),
+  keyType: __t.string().name("key_type"),
   createdAt: __t.u64().name("created_at"),
   updatedAt: __t.u64().name("updated_at"),
 });

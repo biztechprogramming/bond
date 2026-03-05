@@ -18,4 +18,8 @@ export default {
   model: __t.string(),
   utilityModel: __t.string(),
   tools: __t.string(),
+  sandboxImage: __t.string(),
+  maxIterations: __t.u32(),
+  isActive: __t.bool(),
+  isDefault: __t.bool(),
 };

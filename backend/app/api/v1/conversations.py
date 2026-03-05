@@ -18,8 +18,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
-from backend.app.agent.interrupts import set_interrupt, is_turn_active, register_turn, unregister_turn
-from backend.app.db.session import get_db
+from backend.app.agent.interrupts import set_interrupt, is_turn_active
+from backend.app.api.v1.turn_stdb import _stream_container_turn_stdb
+from backend.app.core.spacetimedb import get_stdb
 from backend.app.sandbox.manager import get_sandbox_manager
 from backend.app.core.crypto import decrypt_value, is_encrypted
 
@@ -32,20 +33,9 @@ async def _sync_conversation_to_spacetimedb(
     channel: str,
     title: str,
 ) -> None:
-    """Fire-and-forget sync of a conversation to SpacetimeDB via the Gateway."""
-    try:
-        import httpx
-        from backend.app.config import get_settings
-        gw = f"http://localhost:{get_settings().gateway_port}/api/v1/sync/conversations"
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(gw, json={
-                "id": conv_id,
-                "agentId": agent_id,
-                "channel": channel,
-                "title": title,
-            })
-    except Exception as e:
-        logger.warning("Failed to sync conversation %s to SpacetimeDB: %s", conv_id, e)
+    """Call create_conversation reducer directly."""
+    stdb = get_stdb()
+    await stdb.call_reducer("create_conversation", [conv_id, agent_id, channel, title or ""])
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -78,70 +68,48 @@ class SaveAssistantMessageRequest(BaseModel):
 # -- Helpers --
 
 
-async def _get_default_agent_id(db: AsyncSession) -> str:
-    result = await db.execute(
-        text("SELECT id FROM agents WHERE is_default = 1 LIMIT 1")
-    )
-    row = result.fetchone()
-    if row is None:
-        raise HTTPException(status_code=500, detail="No default agent configured")
-    return row[0]
-
-
 # -- Endpoints --
 
 
 @router.post("")
 async def create_conversation(
-    body: ConversationCreate, db: AsyncSession = Depends(get_db)
+    body: ConversationCreate
 ):
+    stdb = get_stdb()
     agent_id = body.agent_id
     if not agent_id:
-        agent_id = await _get_default_agent_id(db)
+        default_agents = await stdb.query("SELECT id FROM agents WHERE isDefault = true LIMIT 1")
+        if not default_agents:
+            agent_id = "01JBOND0000000000000DEFAULT"
+        else:
+            agent_id = default_agents[0]["id"]
 
     # Verify agent exists
-    result = await db.execute(
-        text("SELECT id FROM agents WHERE id = :id"), {"id": agent_id}
-    )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    agent_rows = await stdb.query(f"SELECT id FROM agents WHERE id = '{agent_id}'")
+    if not agent_rows:
+        raise HTTPException(status_code=404, detail="Agent not found in SpacetimeDB")
 
     conv_id = body.id or str(ULID())
-    await db.execute(
-        text(
-            "INSERT INTO conversations (id, agent_id, channel, title) "
-            "VALUES (:id, :agent_id, :channel, :title)"
-        ),
-        {
-            "id": conv_id,
-            "agent_id": agent_id,
-            "channel": body.channel,
-            "title": body.title,
-        },
-    )
-    await db.commit()
-    await _sync_conversation_to_spacetimedb(conv_id, agent_id, body.channel, body.title or "")
+    await stdb.call_reducer("create_conversation", [conv_id, agent_id, body.channel or "webchat", body.title or ""])
 
-    return await _get_conversation(db, conv_id)
+    return {"id": conv_id, "agent_id": agent_id, "status": "created"}
 
 
 @router.get("")
-async def list_conversations(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        text(
-            "SELECT c.id, c.agent_id, c.channel, c.title, c.is_active, "
-            "c.message_count, c.created_at, c.updated_at, a.display_name as agent_name "
-            "FROM conversations c "
-            "LEFT JOIN agents a ON c.agent_id = a.id "
-            "ORDER BY c.updated_at DESC"
-        )
+async def list_conversations():
+    stdb = get_stdb()
+    rows = await stdb.query(
+        "SELECT id, agent_id, channel, title, is_active, message_count, created_at, updated_at FROM conversations"
     )
-    rows = result.mappings().all()
-    return [
+    # Perform join and sort in Python due to SpacetimeDB SQL limitations
+    agent_rows = await stdb.query("SELECT id, display_name FROM agents")
+    agents = {r["id"]: r["display_name"] for r in agent_rows}
+    
+    conversations = [
         {
             "id": r["id"],
             "agent_id": r["agent_id"],
-            "agent_name": r["agent_name"],
+            "agent_name": agents.get(r["agent_id"]),
             "channel": r["channel"],
             "title": r["title"],
             "is_active": bool(r["is_active"]),
@@ -151,15 +119,61 @@ async def list_conversations(db: AsyncSession = Depends(get_db)):
         }
         for r in rows
     ]
+    conversations.sort(key=lambda x: x["updated_at"], reverse=True)
+    return conversations
 
 
 @router.get("/{conversation_id}")
 async def get_conversation(
-    conversation_id: str, db: AsyncSession = Depends(get_db)
+    conversation_id: str
 ):
-    conv = await _get_conversation(db, conversation_id, include_messages=True)
-    if conv is None:
+    stdb = get_stdb()
+    convs = await stdb.query(
+        f"SELECT id, agent_id, channel, title, is_active, message_count, created_at, updated_at "
+        f"FROM conversations WHERE id = '{conversation_id}'"
+    )
+    if not convs:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    r = convs[0]
+    
+    agent_rows = await stdb.query(f"SELECT display_name FROM agents WHERE id = '{r['agent_id']}'")
+    agent_name = agent_rows[0]["display_name"] if agent_rows else None
+    
+    conv = {
+        "id": r["id"],
+        "agent_id": r["agent_id"],
+        "agent_name": agent_name,
+        "channel": r["channel"],
+        "title": r["title"],
+        "is_active": bool(r["is_active"]),
+        "message_count": r["message_count"],
+        "created_at": r["created_at"],
+        "updated_at": r["updated_at"],
+    }
+
+    messages_rows = await stdb.query(
+        f"SELECT id, role, content, toolCalls, toolCallId, tokenCount, status, createdAt "
+        f"FROM conversationMessages "
+        f"WHERE conversationId = '{conversation_id}'"
+    )
+    # Sort in Python
+    messages_rows.sort(key=lambda x: x["createdAt"])
+    
+    conv["messages"] = [
+        {
+            "id": mr["id"],
+            "role": mr["role"],
+            "content": mr["content"],
+            "tool_calls": mr["toolCalls"],
+            "tool_call_id": mr["toolCallId"],
+            "token_count": mr["tokenCount"],
+            "status": mr["status"],
+            "created_at": mr["createdAt"]
+        }
+        for mr in messages_rows
+    ]
+
     return conv
 
 
@@ -168,91 +182,42 @@ async def get_messages(
     conversation_id: str,
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
 ):
-    # Verify conversation exists
-    result = await db.execute(
-        text("SELECT id FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
+    stdb = get_stdb()
+    messages_result = await stdb.query(
+        f"SELECT id, role, content, tool_calls, tool_call_id, token_count, created_at "
+        f"FROM conversationMessages "
+        f"WHERE conversation_id = '{conversation_id}'"
     )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    messages_result = await db.execute(
-        text(
-            "SELECT id, role, content, tool_calls, tool_call_id, token_count, created_at "
-            "FROM conversation_messages "
-            "WHERE conversation_id = :conv_id "
-            "ORDER BY created_at "
-            "LIMIT :limit OFFSET :offset"
-        ),
-        {"conv_id": conversation_id, "limit": limit, "offset": offset},
-    )
-    rows = messages_result.mappings().all()
-    return [dict(r) for r in rows]
+    messages_result.sort(key=lambda x: x["created_at"])
+    return messages_result[offset : offset + limit]
 
 
 @router.put("/{conversation_id}")
 async def update_conversation(
     conversation_id: str,
     body: ConversationUpdate,
-    db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        text("SELECT id FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    await db.execute(
-        text("UPDATE conversations SET title = :title WHERE id = :id"),
-        {"id": conversation_id, "title": body.title},
-    )
-    await db.commit()
-    return await _get_conversation(db, conversation_id)
+    stdb = get_stdb()
+    await stdb.call_reducer("update_conversation", [conversation_id, body.title])
+    return {"status": "updated"}
 
 
 @router.delete("/{conversation_id}")
 async def delete_conversation(
-    conversation_id: str, db: AsyncSession = Depends(get_db)
+    conversation_id: str
 ):
-    result = await db.execute(
-        text("SELECT id FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    await db.execute(
-        text("DELETE FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    await db.commit()
+    stdb = get_stdb()
+    await stdb.call_reducer("delete_conversation", [conversation_id])
     return {"status": "deleted", "conversation_id": conversation_id}
 
 
 @router.delete("/{conversation_id}/messages/{message_id}")
 async def delete_message(
-    conversation_id: str, message_id: str, db: AsyncSession = Depends(get_db)
+    conversation_id: str, message_id: str
 ):
-    result = await db.execute(
-        text("SELECT id FROM conversation_messages WHERE id = :id AND conversation_id = :cid"),
-        {"id": message_id, "cid": conversation_id},
-    )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Message not found")
-
-    await db.execute(
-        text("DELETE FROM conversation_messages WHERE id = :id"),
-        {"id": message_id},
-    )
-    # Update message count
-    await db.execute(
-        text("UPDATE conversations SET message_count = message_count - 1 WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    await db.commit()
+    stdb = get_stdb()
+    await stdb.call_reducer("delete_conversation_message", [message_id, conversation_id])
     return {"status": "deleted", "message_id": message_id}
 
 
@@ -263,41 +228,19 @@ async def delete_message(
 async def save_or_queue_message(
     conversation_id: str,
     body: QueueMessageRequest,
-    db: AsyncSession = Depends(get_db),
 ):
     """Save a message to a conversation.
 
     - role='user': queued for the next agent turn (original behavior)
     - role='assistant': saved as delivered (used by gateway after container turns)
     """
-    result = await db.execute(
-        text("SELECT id FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
+    stdb = get_stdb()
 
     if body.role == "assistant":
         msg_id = str(ULID())
-        await db.execute(
-            text(
-                "INSERT INTO conversation_messages (id, conversation_id, role, content, status) "
-                "VALUES (:id, :conv_id, 'assistant', :content, 'delivered')"
-            ),
-            {
-                "id": msg_id,
-                "conv_id": conversation_id,
-                "content": body.content,
-            },
-        )
-        await db.execute(
-            text(
-                "UPDATE conversations SET message_count = message_count + 1, "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = :id"
-            ),
-            {"id": conversation_id},
-        )
-        await db.commit()
+        await stdb.call_reducer("add_conversation_message", [
+            msg_id, conversation_id, "assistant", body.content, "", "", 0, "delivered"
+        ])
         return {
             "message_id": msg_id,
             "conversation_id": conversation_id,
@@ -307,67 +250,26 @@ async def save_or_queue_message(
         raise HTTPException(status_code=400, detail="Role must be 'user' or 'assistant'")
 
     # Auto-title from first user message if untitled
-    title_result = await db.execute(
-        text("SELECT title, agent_id, channel FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    title_row = title_result.fetchone()
-    auto_title = title_row[0] if title_row else ""
-    if title_row and not title_row[0]:
+    convs = await stdb.query(f"SELECT title, agent_id, channel FROM conversations WHERE id = '{conversation_id}'")
+    if not convs:
+         raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    title_row = convs[0]
+    if not title_row.get("title"):
         auto_title = body.content.strip()[:80]
         if len(body.content.strip()) > 80:
             auto_title = auto_title.rsplit(" ", 1)[0] + "..."
-        await db.execute(
-            text("UPDATE conversations SET title = :title WHERE id = :id"),
-            {"title": auto_title, "id": conversation_id},
-        )
-        # Sync updated title to SpacetimeDB
-        await _sync_conversation_to_spacetimedb(
-            conversation_id,
-            title_row[1] if title_row else "",
-            title_row[2] if title_row else "webchat",
-            auto_title,
-        )
+        await stdb.call_reducer("update_conversation", [conversation_id, auto_title])
 
     # Original user message queuing logic
     msg_id = str(ULID())
-    await db.execute(
-        text(
-            "INSERT INTO conversation_messages (id, conversation_id, role, content, status) "
-            "VALUES (:id, :conv_id, :role, :content, 'queued')"
-        ),
-        {
-            "id": msg_id,
-            "conv_id": conversation_id,
-            "role": body.role,
-            "content": body.content,
-        },
-    )
-
-    # Get queue position
-    pos_result = await db.execute(
-        text(
-            "SELECT COUNT(*) FROM conversation_messages "
-            "WHERE conversation_id = :conv_id AND status = 'queued'"
-        ),
-        {"conv_id": conversation_id},
-    )
-    queue_position = pos_result.fetchone()[0]
-
-    # Update message count
-    await db.execute(
-        text(
-            "UPDATE conversations SET message_count = message_count + 1 "
-            "WHERE id = :id"
-        ),
-        {"id": conversation_id},
-    )
-    await db.commit()
+    await stdb.call_reducer("add_conversation_message", [
+        msg_id, conversation_id, "user", body.content, "", "", 0, "queued"
+    ])
 
     return {
         "message_id": msg_id,
         "status": "queued",
-        "queue_position": queue_position,
     }
 
 
@@ -376,17 +278,9 @@ async def save_or_queue_message(
 
 @router.post("/{conversation_id}/interrupt")
 async def interrupt_conversation(
-    conversation_id: str,
-    db: AsyncSession = Depends(get_db),
+    conversation_id: str
 ):
     """Signal the agent to interrupt and check for new messages."""
-    result = await db.execute(
-        text("SELECT id FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    if result.fetchone() is None:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
     if not is_turn_active(conversation_id):
         return {"status": "no_active_turn"}
 
@@ -404,7 +298,7 @@ class ConversationTurnRequest(BaseModel):
 
 
 def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+    return f"event: {event}\\ndata: {json.dumps(data)}\\n\\n"
 
 
 async def _stream_container_turn(
@@ -497,7 +391,6 @@ async def _stream_container_turn(
 async def conversation_turn(
     conversation_id: str,
     req: ConversationTurnRequest,
-    db: AsyncSession = Depends(get_db),
 ):
     """Start an agent turn for a conversation.
 
@@ -507,122 +400,170 @@ async def conversation_turn(
     The conversation's agent is always used. The agent cannot be changed by
     passing agent_id here (that only applies when creating a new conversation).
     """
-    # Look up conversation
-    conv_result = await db.execute(
-        text("SELECT id, agent_id FROM conversations WHERE id = :id"),
-        {"id": conversation_id},
-    )
-    conv_row = conv_result.mappings().first()
+    stdb = get_stdb()
+    
+    # Look up conversation in SpacetimeDB
+    conv_rows = await stdb.query(f"SELECT id, agent_id FROM conversations WHERE id = '{conversation_id}'")
+    conv_row = conv_rows[0] if conv_rows else None
 
     if conv_row is None:
-        # Auto-create with the specified agent or default
+        # Auto-create with the specified agent or default from SpacetimeDB
         agent_id = req.agent_id
         if not agent_id:
-            default = await db.execute(text("SELECT id FROM agents WHERE is_default = 1 LIMIT 1"))
-            row = default.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="No default agent and no agent_id provided")
-            agent_id = row[0]
-        await db.execute(
-            text("INSERT INTO conversations (id, agent_id, channel) VALUES (:id, :aid, 'webchat')"),
-            {"id": conversation_id, "aid": agent_id},
-        )
-        await db.commit()
-        try:
-            await _sync_conversation_to_spacetimedb(conversation_id, agent_id, "webchat", "")
-        except Exception:
-            pass
+            # Query SpacetimeDB for the default agent
+            default_agents = await stdb.query("SELECT id FROM agents WHERE is_default = true LIMIT 1")
+            if not default_agents:
+                # Last resort fallback if SpacetimeDB agents table is truly empty
+                agent_id = "01JBOND0000000000000DEFAULT"
+            else:
+                agent_id = default_agents[0]["id"]
+        
+        await stdb.call_reducer("create_conversation", [conversation_id, agent_id, "webchat", ""])
     else:
         # Existing conversation — agent is locked, ignore req.agent_id
         agent_id = conv_row["agent_id"]
 
-    # Save user message
+    # Save user message to SpacetimeDB
     if req.message:
         msg_id = str(ULID())
-        await db.execute(
-            text(
-                "INSERT INTO conversation_messages "
-                "(id, conversation_id, role, content, status) "
-                "VALUES (:id, :cid, 'user', :content, 'delivered')"
-            ),
-            {"id": msg_id, "cid": conversation_id, "content": req.message},
-        )
-        await db.execute(
-            text("UPDATE conversations SET message_count = message_count + 1 WHERE id = :id"),
-            {"id": conversation_id},
-        )
-        await db.commit()
-
-    # Load history
-    history_result = await db.execute(
-        text(
-            "SELECT role, content FROM conversation_messages "
-            "WHERE conversation_id = :cid AND status = 'delivered' "
-            "ORDER BY created_at"
-        ),
-        {"cid": conversation_id},
-    )
-    messages = [{"role": r["role"], "content": r["content"]} for r in history_result.mappings().all()]
-
-    # Look up agent
-    agent_result = await db.execute(
-        text("SELECT id, name, display_name, sandbox_image, model, utility_model, system_prompt, tools, max_iterations FROM agents WHERE id = :id"),
-        {"id": agent_id},
-    )
-    agent_row = agent_result.mappings().first()
-    if agent_row is None:
-        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
-
-    if agent_row["sandbox_image"]:
-        # Container agent — ensure running, proxy SSE
-        api_keys: dict[str, str] = {}
-        for kr in (await db.execute(text("SELECT provider_id, encrypted_value FROM provider_api_keys"))).fetchall():
+        saved = False
+        
+        # Try save_message (snake_case version of saveMessage)
+        try:
+            logger.info(f"Attempting to save user message via save_message reducer: {msg_id}")
+            success = await stdb.call_reducer("save_message", [
+                msg_id,
+                agent_id,
+                conversation_id,
+                "user",
+                req.message,
+                "{}" # metadata
+            ])
+            if success:
+                logger.info(f"Message saved via save_message: {msg_id}")
+                saved = True
+            else:
+                logger.warning(f"save_message returned false for: {msg_id}")
+        except Exception as e:
+            logger.warning(f"save_message failed: {e}")
+        
+        # If save_message fails, use add_conversation_message instead
+        if not saved:
             try:
-                val = decrypt_value(kr[1])
-                if val:
-                    api_keys[kr[0]] = val
-            except Exception:
-                if not is_encrypted(kr[1]):
-                    api_keys[kr[0]] = kr[1]
+                logger.info(f"Attempting to save user message via add_conversation_message: {msg_id}")
+                success = await stdb.call_reducer("add_conversation_message", [
+                    msg_id,
+                    conversation_id,
+                    "user",
+                    req.message,
+                    "",  # toolCalls
+                    "",  # toolCallId
+                    0,   # tokenCount
+                    "delivered"
+                ])
+                if success:
+                    logger.info(f"Message saved via add_conversation_message: {msg_id}")
+                    saved = True
+                else:
+                    logger.warning(f"add_conversation_message returned false for: {msg_id}")
+            except Exception as e:
+                logger.error(f"add_conversation_message also failed: {e}")
+        
+        if not saved:
+            logger.error(f"FAILED to save user message {msg_id} to SpacetimeDB!")
+        else:
+            logger.info(f"Successfully saved user message {msg_id}")
 
-        alias_rows = (await db.execute(text("SELECT alias, provider_id FROM provider_aliases"))).fetchall()
+    # Load history from SpacetimeDB
+    # Try conversation_messages first (migrated data), fall back to messages (new persistence)
+    messages_rows = []
+    try:
+        # Try both camelCase and snake_case table names
+        try:
+            messages_rows = await stdb.query(
+                f"SELECT role, content FROM conversationMessages WHERE conversationId = '{conversation_id}'"
+            )
+        except:
+            messages_rows = await stdb.query(
+                f"SELECT role, content FROM conversation_messages WHERE conversation_id = '{conversation_id}'"
+            )
+        # Sort in Python since we can't ORDER BY in SpacetimeDB without proper indexes
+        messages_rows.sort(key=lambda x: x.get("createdAt", 0) or x.get("created_at", 0))
+    except Exception as e:
+        # Fall back to messages table if conversation_messages doesn't exist or fails
+        logger.warning(f"Failed to query conversation_messages: {e}, trying messages table")
+        try:
+            messages_rows = await stdb.query(
+                f"SELECT role, content FROM messages WHERE sessionId = '{conversation_id}' OR session_id = '{conversation_id}'"
+            )
+            # Try to sort by createdAt if available, otherwise by insertion order
+            if messages_rows:
+                # Try both camelCase and snake_case column names
+                messages_rows.sort(key=lambda x: x.get("createdAt", 0) or x.get("created_at", 0))
+        except Exception as e2:
+            logger.error(f"Failed to query messages table: {e2}")
+            messages_rows = []
+    
+    # Critical: extract history and current message for the agent call
+    history = [{"role": r["role"], "content": r["content"]} for r in messages_rows]
+    
+    # If the user just sent a message, it's at the end of the history.
+    # The worker/loop expects history EXCLUDING the current message.
+    user_message = req.message or ""
+    if not user_message and history and history[-1]["role"] == "user":
+        user_message = history.pop()["content"]
+    elif history and history[-1]["role"] == "user":
+        # History already contains the message we just saved
+        history.pop()
 
-        mounts_result = await db.execute(
-            text("SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = :id"),
-            {"id": agent_id},
-        )
+    # Look up agent in SpacetimeDB
+    agent_rows = await stdb.query(f"SELECT * FROM agents WHERE id = '{agent_id}'")
+    agent_row = agent_rows[0] if agent_rows else None
+    if agent_row is None:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found in SpacetimeDB")
 
-        frag_result = await db.execute(
-            text(
-                "SELECT pf.id, pf.name, pf.display_name, pf.description, pf.content, "
-                "pf.summary, pf.tier, pf.task_triggers, pf.token_estimate, apf.enabled, apf.rank "
-                "FROM agent_prompt_fragments apf JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
-                "WHERE apf.agent_id = :id AND pf.is_active = 1 ORDER BY apf.rank"
-            ),
-            {"id": agent_id},
-        )
+    if agent_row.get("sandbox_image") or agent_row.get("sandboxImage"):
+        # Container agent — ensure running, proxy SSE
+        sandbox_image = agent_row.get("sandbox_image") or agent_row.get("sandboxImage")
+        
+        # Pull mounts from SpacetimeDB-ready formats
+        workspace_mounts = []
+        # Check for mounts table or field (try both case styles)
+        mounts_rows = await stdb.query(f"SELECT hostPath, mountName, containerPath, readonly FROM agent_workspace_mounts WHERE agentId = '{agent_id}'")
+        if not mounts_rows:
+            mounts_rows = await stdb.query(f"SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
+            
+        if mounts_rows:
+            workspace_mounts = [
+                {
+                    "host_path": m.get("hostPath") or m.get("host_path"),
+                    "mount_name": m.get("mountName") or m.get("mount_name"),
+                    "container_path": m.get("containerPath") or m.get("container_path") or f"/workspace/{m.get('mountName') or m.get('host_path')}",
+                    "readonly": bool(m.get("readonly")),
+                }
+                for m in mounts_rows
+            ]
+
+        # Decrypt API keys or load from vault
+        api_keys = {}
+        # TODO: wire up SpacetimeDB-backed settings/vault
+        
+        provider_aliases = {}
+        prompt_fragments = []
 
         agent_dict = {
             "id": agent_row["id"],
             "name": agent_row["name"],
-            "sandbox_image": agent_row["sandbox_image"],
+            "sandbox_image": sandbox_image,
             "model": agent_row["model"],
-            "utility_model": agent_row["utility_model"],
-            "system_prompt": agent_row["system_prompt"],
-            "tools": json.loads(agent_row["tools"]),
-            "max_iterations": agent_row["max_iterations"],
-            "prompt_fragments": [dict(r) for r in frag_result.mappings().all()],
-            "workspace_mounts": [
-                {
-                    "host_path": m["host_path"],
-                    "mount_name": m["mount_name"],
-                    "container_path": m["container_path"] or f"/workspace/{m['mount_name']}",
-                    "readonly": bool(m["readonly"]),
-                }
-                for m in mounts_result.mappings().all()
-            ],
+            "utility_model": agent_row.get("utility_model") or agent_row.get("utilityModel", "claude-sonnet-4-6"),
+            "system_prompt": agent_row.get("system_prompt") or agent_row.get("systemPrompt"),
+            "tools": json.loads(agent_row["tools"]) if isinstance(agent_row["tools"], str) else agent_row["tools"],
+            "max_iterations": int(agent_row.get("max_iterations") or agent_row.get("maxIterations") or 10),
+            "prompt_fragments": prompt_fragments,
+            "workspace_mounts": workspace_mounts,
             "api_keys": api_keys,
-            "provider_aliases": {r[0]: r[1] for r in alias_rows},
+            "provider_aliases": provider_aliases,
         }
 
         try:
@@ -631,16 +572,12 @@ async def conversation_turn(
             raise HTTPException(status_code=503, detail=str(e))
 
         return StreamingResponse(
-            _stream_container_turn(info["worker_url"], messages, conversation_id, req.plan_id, agent_id, db),
+            _stream_container_turn_stdb(info["worker_url"], history, conversation_id, req.plan_id, agent_id, user_message),
             media_type="text/event-stream",
         )
     else:
-        # Host-mode agent — use existing agent_turn loop
-        from backend.app.api.v1.agent import _stream_agent_turn
-        return StreamingResponse(
-            _stream_agent_turn(conversation_id, messages, agent_id, db),
-            media_type="text/event-stream",
-        )
+        # Host-mode agent not supported without SQLite yet in this refactor
+        raise HTTPException(status_code=501, detail="Host-mode agents not yet supported in SpacetimeDB mode")
 
 
 # -- Internal helpers --

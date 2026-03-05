@@ -30,7 +30,9 @@ RUN pip install --no-cache-dir \
     litellm \
     python-ulid \
     pydantic \
-    httpx
+    httpx \
+    mcp \
+    anyio
 
 # Copy entrypoint script
 COPY scripts/agent-entrypoint.sh /agent-entrypoint.sh

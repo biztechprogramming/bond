@@ -1,4 +1,4 @@
 {
-  "server": "maincloud",
+  "server": "http://localhost:18787",
   "module-path": "./spacetimedb"
 }

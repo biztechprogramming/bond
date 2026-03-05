@@ -35,7 +35,7 @@ describe("Routing", () => {
 
     backendClient = {
       resolveAgent: vi.fn(),
-      agentTurnStream: vi.fn(),
+      conversationTurnStream: vi.fn(),
       getConversation: vi.fn(),
       interrupt: vi.fn(),
       saveAssistantMessage: vi.fn(),
@@ -58,7 +58,7 @@ describe("Routing", () => {
       yield { event: "chunk", data: { content: "hello" } };
       yield { event: "done", data: { message_id: "msg-1", conversation_id: "conv-123", queued_count: 0 } };
     }
-    (backendClient.agentTurnStream as any).mockReturnValue(fakeStream());
+    (backendClient.conversationTurnStream as any).mockReturnValue(fakeStream());
 
     // Call the private method via type assertion
     await (channel as any).startStreamingTurn(socket, session.id, "hi", "conv-123");
@@ -67,7 +67,7 @@ describe("Routing", () => {
     const types = messages.map((m: any) => m.type);
     expect(types).toContain("chunk");
     expect(types).toContain("done");
-    expect(backendClient.agentTurnStream).toHaveBeenCalled();
+    expect(backendClient.conversationTurnStream).toHaveBeenCalled();
   });
 
   it("container mode uses worker stream", async () => {

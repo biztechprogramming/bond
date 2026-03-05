@@ -28,6 +28,7 @@ function buildConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
     frontendOrigin: "http://localhost:18788",
     spacetimedbUrl: "http://fake-spacetimedb:18787",
     spacetimedbModuleName: "bond-core",
+    spacetimedbToken: "fake-token-for-tests",
     ...overrides,
   };
 }

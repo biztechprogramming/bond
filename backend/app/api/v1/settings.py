@@ -245,53 +245,78 @@ async def update_embedding(body: EmbeddingUpdate, db: AsyncSession = Depends(get
 
 
 @router.get("/llm/providers")
-async def get_llm_providers(db: AsyncSession = Depends(get_db)):
+async def get_llm_providers():
     """Return the list of LLM providers from the providers table."""
-    result = await db.execute(text(
-        "SELECT id, display_name, is_enabled FROM providers ORDER BY display_name"
-    ))
-    return [
-        {"id": row[0], "name": row[1], "is_enabled": bool(row[2])}
-        for row in result.fetchall()
+    from backend.app.core.spacetimedb import get_stdb
+    client = get_stdb()
+    rows = await client.query("SELECT id, display_name, is_enabled FROM providers")
+    providers = [
+        {"id": row["id"], "name": row["display_name"], "is_enabled": bool(row["is_enabled"])}
+        for row in rows
     ]
+    providers.sort(key=lambda p: p["name"])
+    return providers
 
 
 @router.get("/llm/models")
-async def get_llm_models(db: AsyncSession = Depends(get_db)):
+async def get_llm_models():
     """Return available LLM models from the synced catalog.
 
     Returns litellm-compatible model IDs (prefix/slug) for use in agent config.
     """
-    result = await db.execute(text(
-        "SELECT p.litellm_prefix, m.model_slug, m.display_name, m.provider_id, m.category "
-        "FROM llm_models m JOIN providers p ON m.provider_id = p.id "
-        "WHERE m.is_available = 1 "
-        "ORDER BY p.display_name, m.display_name"
-    ))
-    return [
-        {
-            "id": f"{row[0]}/{row[1]}",  # litellm model ID
-            "name": row[2],
-            "provider": row[3],
-            "category": row[4],
-        }
-        for row in result.fetchall()
-    ]
+    from backend.app.core.spacetimedb import get_stdb
+    client = get_stdb()
+    
+    # SpacetimeDB doesn't support JOINs, so we need to fetch data separately
+    # First, get all enabled models
+    models = await client.query("""
+        SELECT model_id, display_name, provider, is_enabled
+        FROM llm_models
+        WHERE is_enabled = true
+        ORDER BY display_name
+    """)
+    
+    # Get all providers to map provider IDs to litellm_prefix
+    providers = await client.query("""
+        SELECT id, litellm_prefix, display_name
+        FROM providers
+        WHERE is_enabled = true
+    """)
+    
+    # Create a mapping from provider ID to litellm_prefix and display_name
+    provider_map = {p["id"]: p for p in providers}
+    
+    # Combine the data
+    result = []
+    for model in models:
+        provider_id = model["provider"]
+        if provider_id in provider_map:
+            provider = provider_map[provider_id]
+            result.append({
+                "id": f"{provider['litellm_prefix']}/{model['model_id']}",  # litellm model ID
+                "name": model["display_name"],
+                "provider": provider_id,
+                "category": "chat",  # TODO: add category column
+            })
+    
+    # Sort by provider display name, then model display name
+    result.sort(key=lambda x: (provider_map.get(x["provider"], {}).get("display_name", ""), x["name"]))
+    
+    return result
 
 
 @router.get("/llm/current")
-async def get_llm_current(db: AsyncSession = Depends(get_db)):
+async def get_llm_current():
     """Return current LLM provider, model, and which providers have API keys configured."""
+    from backend.app.core.spacetimedb import get_stdb
     settings = get_settings()
-
-    result = await db.execute(text(
-        "SELECT p.id, (pak.provider_id IS NOT NULL) as has_key "
-        "FROM providers p "
-        "LEFT JOIN provider_api_keys pak ON p.id = pak.provider_id "
-        "WHERE p.is_enabled = 1"
-    ))
-    keys_set = {row[0]: bool(row[1]) for row in result.fetchall()}
-
+    client = get_stdb()
+    # Fetch enabled providers
+    providers = await client.query("SELECT id FROM providers WHERE is_enabled = true")
+    # Fetch all provider API keys
+    keys = await client.query("SELECT provider_id FROM provider_api_keys")
+    key_set = {row["provider_id"] for row in keys}
+    keys_set = {row["id"]: row["id"] in key_set for row in providers}
     return {
         "provider": settings.llm_provider,
         "model": settings.llm_model,
@@ -303,15 +328,14 @@ async def get_llm_current(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{key:path}")
-async def get_setting(key: str, db: AsyncSession = Depends(get_db)):
+async def get_setting(key: str):
     """Return a single setting by key."""
-    result = await db.execute(
-        text("SELECT value FROM settings WHERE key = :key"), {"key": key}
-    )
-    row = result.fetchone()
-    if not row:
+    from backend.app.core.spacetimedb import get_stdb
+    client = get_stdb()
+    rows = await client.query(f"SELECT value FROM settings WHERE key = '{key}'")
+    if not rows:
         raise HTTPException(status_code=404, detail=f"Setting not found: {key}")
-    return {"key": key, "value": _read_value(key, row[0])}
+    return {"key": key, "value": _read_value(key, rows[0]["value"])}
 
 
 class SettingUpdate(BaseModel):
@@ -323,31 +347,28 @@ async def update_setting(
     key: str, body: SettingUpdate, request: Request, db: AsyncSession = Depends(get_db),
 ):
     """Create or update a single setting."""
+    from backend.app.core.spacetimedb import get_stdb
+    client = get_stdb()
+    
     # LLM API keys go to provider_api_keys, not settings
     if key.startswith("llm.api_key."):
         provider_id = key.replace("llm.api_key.", "")
-        # Verify provider exists
-        prov_row = (await db.execute(
-            text("SELECT id FROM providers WHERE id = :pid"), {"pid": provider_id}
-        )).fetchone()
-        if not prov_row:
+        # Verify provider exists in SpacetimeDB
+        prov_rows = await client.query(f"SELECT id FROM providers WHERE id = '{provider_id}'")
+        if not prov_rows:
             raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
 
         encrypted = encrypt_value(body.value)
         key_type = _detect_key_type(key, body.value)
 
-        await db.execute(
-            text(
-                "INSERT INTO provider_api_keys (provider_id, encrypted_value, key_type) "
-                "VALUES (:pid, :val, :kt) "
-                "ON CONFLICT(provider_id) DO UPDATE SET "
-                "encrypted_value = :val, key_type = :kt, updated_at = CURRENT_TIMESTAMP"
-            ),
-            {"pid": provider_id, "val": encrypted, "kt": key_type},
-        )
-        await db.commit()
+        # Call setProviderApiKey reducer (requires timestamps)
+        import time
+        now = int(time.time() * 1000)  # milliseconds
+        success = await client.call_reducer("set_provider_api_key", [provider_id, encrypted, key_type, now, now])
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to store API key")
 
-        # Trigger model catalog sync
+        # Trigger model catalog sync (scheduler is currently disabled)
         scheduler = getattr(request.app.state, "scheduler", None)
         if scheduler:
             asyncio.create_task(scheduler.trigger("sync_models"))
@@ -355,14 +376,9 @@ async def update_setting(
         return {"key": key, "value": _mask_value(body.value)}
 
     stored = _write_value(key, body.value)
-    await db.execute(
-        text(
-            "INSERT INTO settings (key, value) VALUES (:key, :value) "
-            "ON CONFLICT(key) DO UPDATE SET value = :value, "
-            "updated_at = CURRENT_TIMESTAMP"
-        ),
-        {"key": key, "value": stored},
-    )
-    await db.commit()
+    # Call setSetting reducer
+    success = await client.call_reducer("set_setting", [key, stored])
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to store setting")
 
     return {"key": key, "value": _read_value(key, stored)}

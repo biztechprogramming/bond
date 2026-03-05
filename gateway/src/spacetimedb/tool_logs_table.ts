@@ -11,7 +11,7 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  id: __t.string(),
+  id: __t.string().primaryKey(),
   agentId: __t.string().name("agent_id"),
   sessionId: __t.string().name("session_id"),
   toolName: __t.string().name("tool_name"),
