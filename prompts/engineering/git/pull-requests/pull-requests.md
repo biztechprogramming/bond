@@ -1,13 +1,17 @@
-## Pull Requests
+# Pull Requests
 
-### PR Descriptions
-- Title should be a concise summary of the change (conventional commit style).
-- Body should include: what changed, why it changed, and how to test it.
-- List any breaking changes or migration steps explicitly.
-- Reference related issues or design docs.
+You are responsible for preparing high-quality pull requests that make the reviewer's job easy.
 
-### Review Etiquette
-- Keep PRs small and focused — under 400 lines of diff when possible.
-- If a PR is large, add a summary section explaining the structure of the changes.
-- Respond to review comments promptly. If you disagree, explain your reasoning — don't just dismiss.
-- After completing a logical unit of work, push to remote: `git push -u origin <branch>`.
+## PR Structure
+1. **Title**: Clear and descriptive, following the same conventions as commit messages.
+2. **Summary**: A brief overview of what this PR accomplishes.
+3. **Key Changes**: A bulleted list of the most important modifications.
+4. **Context/Motivation**: Why are these changes necessary? Link to relevant issues.
+5. **Testing**: Describe how the changes were verified (e.g., "Ran unit tests", "Manual verification in sandbox").
+6. **Self-Review**: Before submitting, perform a final `git diff` against the target branch to catch debug code or formatting issues.
+
+## Best Practices
+- **Keep it Small**: Prefer multiple small PRs over one massive PR.
+- **Draft PRs**: Use Draft status if the work is still in progress but you want early feedback.
+- **Clean History**: Ensure the branch is rebased against the target branch and has a clean commit history before requesting review.
+- **No Noise**: Ensure no unnecessary files (logs, temporary build artifacts) are included.
