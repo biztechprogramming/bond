@@ -74,12 +74,13 @@ export function createPersistenceRouter(config: GatewayConfig) {
   router.get("/settings/:key", async (req: any, res: any) => {
     const { key } = req.params;
     try {
+      // Escape single quotes by doubling them (SQL standard)
+      const escapedKey = key.replace(/'/g, "''");
       const rows = await sqlQuery(
         spacetimedbUrl,
         spacetimedbModuleName,
-        "SELECT key, value, key_type FROM settings WHERE key = ?",
-        token,
-        [key]
+        `SELECT key, value, key_type FROM settings WHERE key = '${escapedKey}'`,
+        token
       );
       if (rows.length === 0) {
         res.status(404).json({ error: `Setting ${key} not found` });
@@ -103,12 +104,13 @@ export function createPersistenceRouter(config: GatewayConfig) {
   router.get("/provider-api-keys/:providerId", async (req: any, res: any) => {
     const { providerId } = req.params;
     try {
+      // Escape single quotes by doubling them (SQL standard)
+      const escapedProviderId = providerId.replace(/'/g, "''");
       const rows = await sqlQuery(
         spacetimedbUrl,
         spacetimedbModuleName,
-        "SELECT provider_id, encrypted_value, key_type FROM provider_api_keys WHERE provider_id = ?",
-        token,
-        [providerId]
+        `SELECT provider_id, encrypted_value, key_type FROM provider_api_keys WHERE provider_id = '${escapedProviderId}'`,
+        token
       );
       if (rows.length === 0) {
         res.status(404).json({ error: `API key for provider ${providerId} not found` });
