@@ -83,6 +83,31 @@ export function createPersistenceRouter(config: GatewayConfig) {
   });
 
   /**
+   * POST /conversation-messages
+   */
+  router.post("/conversation-messages", async (req: any, res: any) => {
+    const { conversationId, role, content } = req.body;
+    const id = ulid();
+
+    try {
+      await callReducer(spacetimedbUrl, spacetimedbModuleName, "add_conversation_message", [
+        id,
+        conversationId,
+        role,
+        content,
+        "", // tool_calls
+        "", // tool_call_id
+        0,  // token_count
+        "delivered"
+      ], token);
+      res.status(201).json({ id, status: "saved" });
+    } catch (err: any) {
+      console.error(`[persistence] conversation-messages failed:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /settings/:key
    */
   router.get("/settings/:key", async (req: any, res: any) => {

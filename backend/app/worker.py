@@ -386,8 +386,8 @@ async def turn(request: Request) -> StreamingResponse:
             # Persist assistant response
             if _state.persistence:
                 try:
-                    await _state.persistence.save_message(
-                        session_id=conversation_id,
+                    await _state.persistence.save_conversation_message(
+                        conversation_id=conversation_id,
                         role="assistant",
                         content=response_text,
                         agent_db=_state.agent_db,
@@ -746,8 +746,8 @@ async def _run_agent_loop(
     # Persist user message
     if _state.persistence:
         try:
-            await _state.persistence.save_message(
-                session_id=conversation_id,
+            await _state.persistence.save_conversation_message(
+                conversation_id=conversation_id,
                 role="user",
                 content=user_message,
                 agent_db=_state.agent_db,
