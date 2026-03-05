@@ -473,14 +473,36 @@ async def _run_agent_loop(
         # 2. SpacetimeDB via Gateway (encrypted API keys)
         try:
             if _state.persistence and _state.persistence.mode == "api":
+                # Try provider_api_keys table first
                 encrypted_key = await _state.persistence.get_provider_api_key(prov)
                 if encrypted_key:
                     # Decrypt the key using the crypto module
                     from backend.app.core.crypto import decrypt_value
                     decrypted = decrypt_value(encrypted_key)
                     if decrypted and decrypted != encrypted_key:  # Check if decryption worked
-                        logger.debug("Got API key for %s from SpacetimeDB", prov)
+                        logger.debug("Got API key for %s from SpacetimeDB provider_api_keys", prov)
                         return decrypted
+                
+                # Try settings table for LLM API keys (llm.api_key.{provider})
+                llm_setting_key = f"llm.api_key.{prov}"
+                encrypted_llm_key = await _state.persistence.get_setting(llm_setting_key)
+                if encrypted_llm_key:
+                    from backend.app.core.crypto import decrypt_value
+                    decrypted = decrypt_value(encrypted_llm_key)
+                    if decrypted and decrypted != encrypted_llm_key:
+                        logger.debug("Got API key for %s from SpacetimeDB settings (llm.api_key)", prov)
+                        return decrypted
+                
+                # Try settings table for embedding API keys (embedding.api_key.{provider})
+                # Note: Google provider uses gemini for embedding
+                if prov == "google":
+                    embedding_key = await _state.persistence.get_setting("embedding.api_key.gemini")
+                    if embedding_key:
+                        from backend.app.core.crypto import decrypt_value
+                        decrypted = decrypt_value(embedding_key)
+                        if decrypted and decrypted != embedding_key:
+                            logger.debug("Got embedding API key for google/gemini from SpacetimeDB settings")
+                            return decrypted
         except Exception as e:
             logger.debug("Could not read API key from SpacetimeDB for %s: %s", prov, e)
 
