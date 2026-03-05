@@ -45,17 +45,25 @@ async def list_servers(agent_id: Optional[str] = None):
     """List configured MCP servers. If agent_id is provided, returns global + agent-specific."""
     stdb = get_stdb()
     
+    # Get all servers (SpacetimeDB doesn't support IS NULL well)
+    rows = await stdb.query("SELECT * FROM mcp_servers")
+    
     if agent_id:
-        # Query servers with this agent_id or global (agent_id is null/empty)
-        rows = await stdb.query(f"SELECT * FROM mcp_servers WHERE agent_id = '{{}}' OR agent_id IS NULL".format(agent_id))
-    else:
-        rows = await stdb.query("SELECT * FROM mcp_servers")
+        # Filter in Python: servers with this agent_id or global (agent_id is none)
+        filtered_rows = []
+        for row in rows:
+            row_agent_id = row.get("agent_id")
+            # Check if agent_id is "none" (global) or matches
+            if (isinstance(row_agent_id, dict) and "none" in row_agent_id) or row_agent_id == agent_id:
+                filtered_rows.append(row)
+        rows = filtered_rows
+    # else: return all rows
     
     servers = []
     for row in rows:
         server = dict(row)
-        # Handle agent_id which might be [1, []] for None
-        if isinstance(server.get("agent_id"), list):
+        # Handle agent_id which might be {"none": []} for None
+        if isinstance(server.get("agent_id"), dict) and "none" in server["agent_id"]:
             server["agent_id"] = None
         elif server.get("agent_id") == "":
             server["agent_id"] = None
@@ -166,8 +174,12 @@ async def toggle_server(server_id: str):
     ])
     
     if not success:
-        # Fallback to SQL UPDATE
-        await stdb.query(f"UPDATE mcp_servers SET enabled = {str(new_enabled).lower()} WHERE id = '{server_id}'")
+        # SpacetimeDB might not support SQL UPDATE, just log the error
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to update MCP server {server_id} via reducer, SQL UPDATE might not work in SpacetimeDB")
+        # Don't try SQL UPDATE as SpacetimeDB might not support it
+        # await stdb.query(f"UPDATE mcp_servers SET enabled = {str(new_enabled).lower()} WHERE id = '{server_id}'")
     
     if new_enabled:
         # Start

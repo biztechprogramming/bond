@@ -96,12 +96,6 @@ const spacetimedb = schema({
       content: t.string(),
       metadata: t.string(),
       createdAt: t.u64(),
-    },
-    {
-      indexes: [
-        { columns: ['sessionId', 'createdAt'] }, // For querying messages by session in chronological order
-        { columns: ['agentId', 'createdAt'] },   // For querying all messages for an agent
-      ]
     }
   ),
 
