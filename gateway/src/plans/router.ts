@@ -110,7 +110,7 @@ export function createPlansRouter(config: GatewayConfig) {
    * Create a new plan.
    */
   router.post("/plans", async (req: any, res: any) => {
-    const { title, agent_id, conversation_id } = req.body;
+    const { title, agent_id, conversation_id, parent_plan_id } = req.body;
     if (!title) return res.status(400).json({ error: "title is required" });
     if (!agent_id) return res.status(400).json({ error: "agent_id is required" });
 
@@ -120,6 +120,7 @@ export function createPlansRouter(config: GatewayConfig) {
         planId,
         agent_id,
         conversation_id || "",
+        parent_plan_id || "",
         title,
       ], token);
       res.status(201).json({

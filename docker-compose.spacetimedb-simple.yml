@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  spacetimedb:
+    image: clockworklabs/spacetime:latest
+    container_name: bond-spacetimedb
+    restart: unless-stopped
+    ports:
+      - "18787:3000"
+    volumes:
+      - ~/.bond/spacetimedb/data:/var/lib/spacetimedb
+    command: start

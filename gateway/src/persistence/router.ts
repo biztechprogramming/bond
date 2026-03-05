@@ -28,21 +28,20 @@ export function createPersistenceRouter(config: GatewayConfig) {
   router.post("/messages", async (req: any, res: any) => {
     const { agentId, sessionId, role, content, metadata } = req.body;
     const id = ulid();
+    const timestamp = Date.now();
 
     try {
-      // Save to conversationMessages table (main conversation history)
-      await callReducer(spacetimedbUrl, spacetimedbModuleName, "add_conversation_message", [
+      // Save to messages table (persistence for worker)
+      await callReducer(spacetimedbUrl, spacetimedbModuleName, "save_message", [
         id,
-        sessionId, // conversationId
+        agentId,
+        sessionId,
         role,
         content,
-        "", // tool_calls
-        "", // tool_call_id
-        0,  // token_count
-        "delivered"
+        metadata ? JSON.stringify(metadata) : "{}"
       ], token);
 
-      res.status(201).json({ id, status: "saved" });
+      res.status(201).json({ id, status: "saved", timestamp });
     } catch (err: any) {
       console.error(`[persistence] save_message failed:`, err.message);
       res.status(500).json({ error: err.message });
