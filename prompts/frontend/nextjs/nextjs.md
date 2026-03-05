@@ -1,18 +1,26 @@
 # Next.js
 
-## When this applies
-Working with Bond's Next.js frontend (App Router).
+## Core Principles
+- **Server-First**: Leverage Server Components to reduce client-side JavaScript and improve SEO/performance.
+- **Streaming & Suspense**: Use `loading.tsx` and manual `<Suspense>` boundaries to stream UI parts as they become ready.
+- **Edge Compatibility**: Write middleware and route handlers to be compatible with the Edge Runtime where possible.
+- **Convention over Configuration**: Follow Next.js file-system routing and special file conventions (`layout`, `page`, `error`, `not-found`).
 
 ## Patterns / Gotchas
-- App Router is the default since Next.js 13 — Bond uses App Router exclusively, NOT Pages Router
-- `layout.tsx` does NOT re-render on navigation — state in layouts persists across page transitions. Don't put page-specific state in layouts
-- `page.tsx` is the only file that makes a route publicly accessible — `layout.tsx`, `loading.tsx`, `error.tsx` are conventions, not routes
-- `loading.tsx` wraps the page in Suspense automatically — equivalent to `<Suspense fallback={<Loading/>}><Page/></Suspense>`
-- `error.tsx` must be a Client Component (`'use client'`) — error boundaries require state
-- `not-found.tsx`: triggered by `notFound()` function, not 404 status — must be explicitly called in server components
-- Server Actions: `'use server'` at top of function or file — these are POST endpoints under the hood; they can be called from client components
-- `revalidatePath('/')` and `revalidateTag('tag')` — only work in Server Actions or Route Handlers, not in components
-- Parallel routes: `@modal/page.tsx` alongside `page.tsx` — for modals that work with browser back/forward
-- Intercepting routes: `(..)photo/[id]` — intercepts navigation to show modal, direct URL access shows full page
-- Metadata: `export const metadata` or `export function generateMetadata()` — only in `layout.tsx` or `page.tsx`, NOT in client components
-- `cookies()` and `headers()` are async in Next.js 15 — `const cookieStore = await cookies()` — breaking change from 14
+- **App Router Conventions**:
+  - `layout.tsx`: Persists state and does not re-render on navigation. Use for shared UI (nav, footer).
+  - `template.tsx`: Similar to layout but creates a new instance on every navigation. Use when you need to trigger entrance animations or reset state.
+  - `error.tsx`: Must be a Client Component. Use to catch unexpected runtime errors.
+  - `not-found.tsx`: Use `notFound()` from `next/navigation` to trigger this UI for missing resources.
+- **Server Actions**:
+  - Use `'use server'` for form submissions and data mutations.
+  - Handle errors gracefully and use `revalidatePath` or `revalidateTag` to update the cache after mutations.
+  - Use `useOptimistic` for immediate UI feedback during server actions.
+- **Data Fetching & Caching**:
+  - Next.js 15: `cookies()` and `headers()` are async. Always `await` them.
+  - Use `cache()` from `react` to memoize data fetching within a single request.
+  - Prefer `fetch` with `next: { tags: [...] }` for fine-grained cache invalidation.
+- **Routing & Metadata**:
+  - Use `generateMetadata` for dynamic SEO tags.
+  - Utilize Parallel Routes (`@slot`) and Intercepting Routes (`(..)`) for complex UI patterns like modals and dashboards.
+  - `useRouter`, `usePathname`, and `useSearchParams` are client-only hooks.

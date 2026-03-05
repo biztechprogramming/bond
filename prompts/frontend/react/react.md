@@ -1,18 +1,22 @@
 # React
 
-## When this applies
-Writing React components in Bond's frontend.
+## Core Principles
+- **Functional Components**: Use functional components with Hooks. Avoid Class components.
+- **Declarative UI**: Focus on describing *what* the UI should look like for a given state, not *how* to change it.
+- **Immutability**: Never mutate state directly. Use setter functions from `useState` or `useReducer`.
+- **Composition over Inheritance**: Use props and children to compose complex UIs from simple components.
 
 ## Patterns / Gotchas
-- React 19: `useFormState` is DEPRECATED — use `useActionState` instead (different import path too)
-- `useFormStatus` in React 19 has new properties: `data`, `method`, `action` — not just `pending`
-- `use()` hook (React 19): can unwrap promises and context in render — replaces many `useEffect` + `useState` patterns for data fetching
-- `key` prop on component forces complete remount — use for resetting form state, not just list rendering
-- `useEffect` cleanup: return function runs BEFORE the next effect, not on unmount only — common source of race conditions with async operations
-- `useRef` does NOT trigger re-render on change — if you need reactive ref behavior, use `useState` or `useSyncExternalStore`
-- `useMemo`/`useCallback` are hints, not guarantees — React can discard memoized values under memory pressure (React 19+)
-- `Suspense` boundaries: nested Suspense shows closest ancestor's fallback — test with intentional delays to verify boundary placement
-- Strict Mode in dev: components mount, unmount, remount — this is intentional to catch effect bugs. If your code breaks, your effects have side effects
-- Event handlers: `onClick={handleClick}` not `onClick={handleClick()}` — the second calls the function immediately during render
-- `children` prop: `React.Children.count()` handles fragments correctly, `Array.isArray(children)` does NOT
-- State updates are batched in React 18+ — even in `setTimeout`, promises, and native event handlers (not just React events like in 17)
+- **React 19 Hooks**:
+  - Use `useActionState` instead of the deprecated `useFormState` for form handling.
+  - Leverage `useFormStatus` to access `data`, `method`, and `action` in addition to `pending`.
+  - Use the `use()` hook to unwrap promises and context directly in render, reducing boilerplate.
+- **Effect Management**:
+  - `useEffect` is for synchronization with external systems, not for data fetching or state derivation.
+  - Always provide a cleanup function to prevent memory leaks and race conditions.
+  - Keep dependency arrays honest; use `useEvent` (or similar patterns) for stable event handlers.
+- **Performance Tuning**:
+  - Use `useMemo` and `useCallback` only when expensive calculations or reference stability are required for child optimization.
+  - Key prop: Use unique, stable IDs for list items. Use `key` to force a component remount when its identity changes.
+- **Ref Usage**: `useRef` is for imperative escapes (DOM access, timers). It does not trigger re-renders. Use `useState` if the UI needs to react to the change.
+- **Strict Mode**: Expect and handle double-mounting in development. It's designed to surface side-effect bugs in your render logic and effects.
