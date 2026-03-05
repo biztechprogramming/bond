@@ -743,17 +743,17 @@ async def _run_agent_loop(
         messages.extend(compressed_history)
     messages.append({"role": "user", "content": user_message})
     
-    # Persist user message
-    if _state.persistence:
-        try:
-            await _state.persistence.save_conversation_message(
-                conversation_id=conversation_id,
-                role="user",
-                content=user_message,
-                agent_db=_state.agent_db,
-            )
-        except Exception as e:
-            logger.error("Failed to persist user message: %s", e)
+    # # Persist user message
+    # if _state.persistence:
+    #     try:
+    #         await _state.persistence.save_conversation_message(
+    #             conversation_id=conversation_id,
+    #             role="user",
+    #             content=user_message,
+    #             agent_db=_state.agent_db,
+    #         )
+    #     except Exception as e:
+    #         logger.error("Failed to persist user message: %s", e)
 
     # Build tool definitions + registry with heuristic selection
     registry = build_native_registry()
