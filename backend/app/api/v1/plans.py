@@ -101,6 +101,7 @@ async def create_plan(body: CreatePlanRequest):
         "title": body.title,
         "agent_id": body.agent_id,
         "conversation_id": body.conversation_id or "",
+        "parent_plan_id": body.parent_plan_id or "",
     })
     return {"status": "created", "plan_id": result["plan_id"], "title": body.title}
 
