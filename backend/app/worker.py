@@ -507,14 +507,16 @@ async def _run_agent_loop(
                     else:
                         logger.error("DEBUG: Decryption failed or returned same value for %s", prov)
                 
-                # Try settings table for LLM API keys (llm.api_key.{provider})
-                llm_setting_key = f"llm.api_key.{prov}"
-                logger.error("DEBUG: Trying settings table with key: %s", llm_setting_key)
-                encrypted_llm_key = await _state.persistence.get_setting(llm_setting_key)
+                # Try provider_api_keys table for LLM API keys {provider}
+                logger.error("DEBUG: Trying provider_api_keys table with key: %s", prov)
+                encrypted_llm_key = await _state.persistence.get_provider_api_key(prov)
                 if not encrypted_llm_key and prov == "gemini":
                     # Try "google" as fallback for gemini models
-                    logger.error("DEBUG: No llm.api_key.gemini setting found, trying llm.api_key.google")
-                    encrypted_llm_key = await _state.persistence.get_setting("llm.api_key.google")
+                    logger.error("DEBUG: No llm.api_key.gemini setting found, trying google")
+                    encrypted_llm_key = await _state.persistence.get_provider_api_key("google")
+
+                    
+                logger.error("DEBUG: encrypted_llm_key: %s", encrypted_llm_key)
                 
                 if encrypted_llm_key:
                     logger.error("DEBUG: Got encrypted key for %s from settings table (encrypted length: %d)", prov, len(encrypted_llm_key))
