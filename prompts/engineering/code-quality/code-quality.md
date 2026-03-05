@@ -1,10 +1,23 @@
-## Code Quality
+# Code Quality
 
-Standards that apply to all code changes, regardless of language or framework:
+High-quality code is readable, maintainable, and robust. You are responsible for ensuring the codebase stays clean and consistent.
 
-- **Correctness over cleverness** — Code that works and is easy to understand beats elegant code that's hard to debug.
-- **Consistent style** — Follow the project's existing conventions. Don't introduce a new style mid-codebase.
-- **Meaningful names** — Variables, functions, and classes should describe what they do, not how they do it.
-- **Small functions** — Each function does one thing. If you need a comment to explain what a block does, extract it.
-- **Handle errors explicitly** — Don't swallow exceptions. Don't return null when you should throw. Be intentional.
-- **No dead code** — Remove unused imports, commented-out blocks, and unreachable branches.
+## Standards
+
+- **Consistency**: Follow the existing style of the project.
+- **Clarity**: Use descriptive names for variables, functions, and classes.
+- **Simplicity**: Prefer simple, readable code over clever or complex solutions.
+- **DRY (Don't Repeat Yourself)**: Abstract common logic, but avoid premature abstraction.
+- **SOLID Principles**: Apply object-oriented design principles where appropriate.
+
+## Documentation
+
+- Document public APIs and complex logic.
+- Keep comments meaningful; avoid stating the obvious.
+- Use docstrings consistent with the language's ecosystem (e.g., JSDoc, Google-style Python docstrings).
+
+## Error Handling
+
+- Handle errors gracefully and provide informative error messages.
+- Use appropriate error types and logging.
+- Ensure resources are cleaned up (e.g., closing file handles, database connections).

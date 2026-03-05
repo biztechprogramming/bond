@@ -1,0 +1,67 @@
+# Progress Log
+Run: sprint-1
+Task: C5 gateway, C6 context optimization, enterprise provider model, prompt caching
+Started: 2026-02-26
+
+## Codebase Patterns
+- **Migrations**: golang-migrate, files in `~/bond/migrations/`, MUST split complex DDL into separate files (FTS5 triggers choke SQLite driver)
+- **DB**: SQLite via `aiosqlite`, schema in migrations 000001-000019
+- **Backend tests**: `uv run python -m pytest backend/tests/` (pytest-asyncio not installed, async tests ERROR)
+- **Frontend**: Next.js + TypeScript, `npm run build` / `tsc --noEmit` for checks
+- **API routes**: `backend/app/api/v1/` — settings.py, agent.py, etc.
+- **Worker**: `backend/app/worker.py` — main agent loop, context pipeline, LLM calls via litellm
+- **Tool selection**: `backend/app/agent/tool_selection.py` — heuristic keyword + momentum, no LLM calls
+- **Native tools**: `backend/app/agent/tools/native.py` — file_read (10KB cap), code_execute (stdout truncation)
+- **Provider schema**: `providers` → `provider_aliases` + `provider_api_keys` + `llm_models`
+- **Vault**: `backend/app/core/vault.py` — get_api_key_with_type(), key_type detection (oauth_token vs api_key)
+- **Jobs**: `backend/app/jobs/scheduler.py` + `sync_models.py` — DB-driven, no hardcoded provider registry
+- **litellm model IDs**: `{litellm_prefix}/{model_slug}` e.g. `anthropic/claude-opus-4-6`
+- **Branch**: `feature/sprint-1-skeleton`
+
+---
+
+## 2026-03-03 15:15 - Parallel Orchestration with Instructor
+- Implemented `parallel_orchestrate` tool for High-Power Architect / Low-Power Worker pattern.
+- Updated `file_read` to support parallel multi-path reads via `paths` argument.
+- Native parallelization in `worker.py`:
+  - Concurrent SpacetimeDB schema reflection (tables/reducers) at startup.
+  - Parallelized context distillation (fragments + memory search).
+- Updated Instructor definitions with `ParallelOrchestrate` and enhanced `FileRead` schemas.
+- Verified with `test_parallel_read.py` and `test_parallel_orchestrate.py`.
+- **Learnings:** Architect-Worker pattern significantly reduces wall-clock time for complex analysis. Parallel schema reflection reduces startup latency by overlapping HTTP probes.
+
+---
+
+## 2026-02-27 15:05 - Context Efficiency Batch 2 + Prompt Fragments + Task Board Design
+- Fixed file dedup: now handles partial reads of fully-cached files, outline re-reads
+- Updated 4 prompt fragments: file-operations (large reads, outline first), progress-tracking (scope control), error-handling (read-only FS), sandbox-environment (read-only warning)
+- Added new tool-efficiency fragment (batch calls, stop exploring)
+- Created migration 000020 to push fragment updates to live knowledge.db
+- Fixed agent.db: now runs migration scripts on worker startup (no more hardcoded-only schema)
+- Designed Agent Task Board: work_plans/work_items with Kanban UI, crash recovery via context checkpointing, chat panel for user interjection, pause/resume, plan lineage
+- **Design approved** — ready for Phase 1 implementation
+- Files: worker.py, tool_result_filter.py, migration 000020, docs/design/AGENT_TASK_BOARD.md
+
+### Learnings
+- Migrations run against knowledge.db (host), NOT agent.db (container). agent.db had hardcoded schema only.
+- Fragment content changes need new migrations (can't re-run old ones). Now worker startup runs all migrations against agent.db too.
+- Anthropic cache minimum is 2048 tokens for Opus — skip cache_control on small conversations.
+---
+
+## 2026-02-27 - C6 Phase 3: Fragment Cache + Selective Decay
+- Fragment selection cache: hash-based, 5min TTL, conversation-aware invalidation
+- Selective decay: only apply progressive_decay to verbatim tail when over COMPRESSION_THRESHOLD
+- 4 new tests, all 49 related tests passing
+- **Learnings:** inline imports can shadow top-level imports causing UnboundLocalError
+- **Done**
+
+---
+
+## 2026-02-27 - Agent Decisiveness: System Prompt + Tool Description
+- Added "Work style — ACT FAST" section to system prompt with concrete rules
+- Updated work_plan tool description to REQUIRED for multi-step tasks
+- Root cause: agent had no guidance on exploration vs. action balance
+- **Learnings:** LLM agents need explicit numeric targets ("under 5 tool calls") not vague guidance
+- **Done**
+
+---

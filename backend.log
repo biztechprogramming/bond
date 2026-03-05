@@ -1,0 +1,39 @@
+INFO:     Will watch for changes in these directories: ['/home/andrew/bond']
+INFO:     Uvicorn running on http://127.0.0.1:18790 (Press CTRL+C to quit)
+INFO:     Started reloader process [76658] using WatchFiles
+INFO:     Started server process [76662]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:50848 - "GET /api/v1/prompts/fragments HTTP/1.1" 200 OK
+SpacetimeDB SQL failed (400): Unsupported: SELECT p.litellm_prefix, m.model_id, m.display_name, m.provider, m.is_enabled FROM llm_models AS m JOIN providers AS p ON m.provider = p.id WHERE m.is_enabled = true ORDER BY p.display_name, m.display_name
+INFO:     127.0.0.1:40930 - "GET /api/v1/settings/llm/models HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'backend/app/api/v1/settings.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [76662]
+INFO:     Started server process [84418]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'backend/app/api/v1/conversations.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [84418]
+WARNING:  WatchFiles detected changes in 'backend/app/api/v1/agents.py'. Reloading...
+INFO:     Started server process [85405]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [85405]
+WARNING:  WatchFiles detected changes in 'backend/app/api/v1/conversations.py'. Reloading...
+INFO:     Started server process [85608]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [85608]
+INFO:     Stopping reloader process [76658]
