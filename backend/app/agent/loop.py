@@ -189,7 +189,8 @@ async def agent_turn(
     try:
         from backend.app.mcp import mcp_manager
         # Load both global and agent-specific servers for this turn
-        await mcp_manager.load_servers_from_db(db, agent_id=agent["id"])
+        # NO SQLITE FALLBACK - use SpacetimeDB directly
+        await mcp_manager.load_servers_from_db(None, agent_id=agent["id"])
         await mcp_manager.refresh_tools(registry)
         
         # Add MCP tools to the agent_tools list

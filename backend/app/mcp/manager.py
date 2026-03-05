@@ -228,57 +228,39 @@ class MCPManager:
             
         return models
 
-    async def load_servers_from_db(self, db: AsyncSession, agent_id: Optional[str] = None):
-        """Load and start all enabled MCP servers from the database."""
+    async def load_servers_from_db(self, db: Optional[AsyncSession] = None, agent_id: Optional[str] = None):
+        """Load and start all enabled MCP servers from SpacetimeDB.
+        
+        Note: db parameter is kept for backward compatibility but is not used.
+        All data is now in SpacetimeDB - NO SQLITE FALLBACK!
+        """
         try:
-            # Try SpacetimeDB first
+            # Use SpacetimeDB - NO FALLBACK!
             from backend.app.core.spacetimedb import get_stdb
             stdb = get_stdb()
             
-            # Simple query - get all enabled servers
-            # We'll filter agent_id in Python if needed
+            # Get all enabled servers from SpacetimeDB
             sql = "SELECT * FROM mcp_servers WHERE enabled = true"
             rows = await stdb.query(sql)
             
-            # If we have rows from SpacetimeDB, use them
-            if rows:
-                # Filter by agent_id if specified
-                if agent_id is not None:
-                    # Include both global (agent_id is None/none) and agent-specific servers
-                    filtered_rows = []
-                    for row in rows:
-                        row_agent_id = row.get("agent_id")
-                        # Check if this is a global server or matches the agent_id
-                        if (isinstance(row_agent_id, dict) and "none" in row_agent_id) or row_agent_id == agent_id:
-                            filtered_rows.append(row)
-                    rows = filtered_rows
-                else:
-                    # Only global servers (agent_id is None/none)
-                    filtered_rows = []
-                    for row in rows:
-                        row_agent_id = row.get("agent_id")
-                        if isinstance(row_agent_id, dict) and "none" in row_agent_id:
-                            filtered_rows.append(row)
-                    rows = filtered_rows
-            
-            # If no rows in SpacetimeDB, fall back to SQLite (for backward compatibility)
-            if not rows and db:
-                try:
-                    # If agent_id is provided, load global + agent-specific
-                    if agent_id:
-                        result = await db.execute(
-                            text("SELECT * FROM mcp_servers WHERE enabled = 1 AND (agent_id IS NULL OR agent_id = :agent_id)"),
-                            {"agent_id": agent_id}
-                        )
-                    else:
-                        # Load only global servers
-                        result = await db.execute(text("SELECT * FROM mcp_servers WHERE enabled = 1 AND agent_id IS NULL"))
-                        
-                    rows = result.mappings().all()
-                except Exception as sqlite_error:
-                    # Table might not exist in SQLite (e.g., fresh install or migrated to SpacetimeDB)
-                    logger.debug(f"Could not load MCP servers from SQLite (table may not exist): {sqlite_error}")
-                    rows = []
+            # Filter by agent_id if specified
+            if agent_id is not None:
+                # Include both global (agent_id is None/none) and agent-specific servers
+                filtered_rows = []
+                for row in rows:
+                    row_agent_id = row.get("agent_id")
+                    # Check if this is a global server or matches the agent_id
+                    if (isinstance(row_agent_id, dict) and "none" in row_agent_id) or row_agent_id == agent_id:
+                        filtered_rows.append(row)
+                rows = filtered_rows
+            else:
+                # Only global servers (agent_id is None/none)
+                filtered_rows = []
+                for row in rows:
+                    row_agent_id = row.get("agent_id")
+                    if isinstance(row_agent_id, dict) and "none" in row_agent_id:
+                        filtered_rows.append(row)
+                rows = filtered_rows
             
             for row in rows:
                 # Handle both dict (SpacetimeDB) and Row (SQLAlchemy) types

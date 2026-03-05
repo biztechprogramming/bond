@@ -36,10 +36,10 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     app.state.scheduler = scheduler
 
-    # MCP Setup (Load enabled servers from DB)
+    # MCP Setup (Load enabled servers from SpacetimeDB)
     try:
-        async with get_session_factory()() as db:
-            await mcp_manager.load_servers_from_db(db)
+        # NO SQLITE FALLBACK - use SpacetimeDB directly
+        await mcp_manager.load_servers_from_db(None)
     except Exception as e:
         import logging
         logging.getLogger("bond.mcp").error(f"Failed to load MCP servers on startup: {e}")
