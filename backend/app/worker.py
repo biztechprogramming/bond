@@ -464,7 +464,7 @@ async def _run_agent_loop(
     async def _resolve_api_key(model_id: str) -> str | None:
         """Resolve API key: injected from host DB → SpacetimeDB → Vault → env var."""
         prov = _resolve_provider(model_id)
-        logger.debug("Resolving API key for provider: %s (model: %s)", prov, model_id)
+        logger.error("DEBUG: Resolving API key for provider: %s (model: %s)", prov, model_id)
 
         # 1. Keys from provider_api_keys (injected at container launch)
         key = injected_keys.get(prov)
@@ -475,7 +475,7 @@ async def _run_agent_loop(
         # 2. SpacetimeDB via Gateway (encrypted API keys)
         try:
             if _state.persistence and _state.persistence.mode == "api":
-                logger.debug("Trying to get API key for %s from SpacetimeDB (mode: api)", prov)
+                logger.error("DEBUG: Trying to get API key for %s from SpacetimeDB (mode: api)", prov)
                 
                 # Try provider_api_keys table first
                 encrypted_key = await _state.persistence.get_provider_api_key(prov)
@@ -491,7 +491,7 @@ async def _run_agent_loop(
                     if decrypted and decrypted != encrypted_key:  # Check if decryption worked
                         # Trim whitespace from the key
                         decrypted = decrypted.strip()
-                        logger.debug("Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
+                        logger.error("DEBUG: Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
                                    prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted)
                         return decrypted
                     else:
@@ -527,10 +527,10 @@ async def _run_agent_loop(
                             logger.debug("Got embedding API key for google/gemini from SpacetimeDB settings (length: %d)", len(decrypted))
                             return decrypted
             else:
-                logger.debug("Not trying SpacetimeDB (persistence: %s, mode: %s)", 
+                logger.error("DEBUG: Not trying SpacetimeDB (persistence: %s, mode: %s)", 
                            _state.persistence, _state.persistence.mode if _state.persistence else "none")
         except Exception as e:
-            logger.debug("Could not read API key from SpacetimeDB for %s: %s", prov, e, exc_info=True)
+            logger.error("DEBUG: Could not read API key from SpacetimeDB for %s: %s", prov, e, exc_info=True)
 
         # 3. Vault (mounted from host)
         try:
@@ -868,10 +868,10 @@ async def _run_agent_loop(
         # Log the API key info before calling LiteLLM
         if "api_key" in extra_kwargs:
             api_key = extra_kwargs["api_key"]
-            logger.debug("Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
+            logger.error("DEBUG: Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
                        model, len(api_key), api_key[:10] if len(api_key) > 10 else api_key)
         else:
-            logger.debug("Calling LiteLLM with model %s, no API key in extra_kwargs", model)
+            logger.error("DEBUG: Calling LiteLLM with model %s, no API key in extra_kwargs", model)
         
         response = await litellm.acompletion(
             model=model,
