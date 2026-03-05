@@ -481,36 +481,46 @@ async def _run_agent_loop(
                 
                 # Try provider_api_keys table first
                 encrypted_key = await _state.persistence.get_provider_api_key(prov)
+                if not encrypted_key and prov == "gemini":
+                    # Try "google" as fallback for gemini models
+                    logger.error("DEBUG: No key found for provider 'gemini', trying 'google' as fallback")
+                    encrypted_key = await _state.persistence.get_provider_api_key("google")
+                
                 if encrypted_key:
-                    logger.error("Got encrypted key for %s from provider_api_keys table (encrypted length: %d, starts with: %s)", 
+                    logger.error("DEBUG: Got encrypted key for %s from provider_api_keys table (encrypted length: %d, starts with: %s)", 
                                prov, len(encrypted_key), encrypted_key[:20])
                     # Decrypt the key using the crypto module
                     from backend.app.core.crypto import decrypt_value
                     decrypted = decrypt_value(encrypted_key)
-                    logger.error("Decrypted key for %s (length: %d, starts with: %s, is_encrypted: %s)", 
+                    logger.error("DEBUG: Decrypted key for %s (length: %d, starts with: %s, is_encrypted: %s)", 
                                prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted, 
                                encrypted_key.startswith("enc:"))
                     if decrypted and decrypted != encrypted_key:  # Check if decryption worked
                         # Trim whitespace from the key
                         decrypted = decrypted.strip()
-                        logger.error("Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
+                        logger.error("DEBUG: Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
                                    prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted)
                         return decrypted
                     else:
-                        logger.error("Decryption failed or returned same value for %s", prov)
+                        logger.error("DEBUG: Decryption failed or returned same value for %s", prov)
                 
                 # Try settings table for LLM API keys (llm.api_key.{provider})
                 llm_setting_key = f"llm.api_key.{prov}"
-                logger.debug("Trying settings table with key: %s", llm_setting_key)
+                logger.error("DEBUG: Trying settings table with key: %s", llm_setting_key)
                 encrypted_llm_key = await _state.persistence.get_setting(llm_setting_key)
+                if not encrypted_llm_key and prov == "gemini":
+                    # Try "google" as fallback for gemini models
+                    logger.error("DEBUG: No llm.api_key.gemini setting found, trying llm.api_key.google")
+                    encrypted_llm_key = await _state.persistence.get_setting("llm.api_key.google")
+                
                 if encrypted_llm_key:
-                    logger.debug("Got encrypted key for %s from settings table (encrypted length: %d)", prov, len(encrypted_llm_key))
+                    logger.error("DEBUG: Got encrypted key for %s from settings table (encrypted length: %d)", prov, len(encrypted_llm_key))
                     from backend.app.core.crypto import decrypt_value
                     decrypted = decrypt_value(encrypted_llm_key)
                     if decrypted and decrypted != encrypted_llm_key:
                         # Trim whitespace from the key
                         decrypted = decrypted.strip()
-                        logger.debug("Got API key for %s from SpacetimeDB settings (llm.api_key) (length: %d)", prov, len(decrypted))
+                        logger.error("DEBUG: Got API key for %s from SpacetimeDB settings (llm.api_key) (length: %d)", prov, len(decrypted))
                         return decrypted
                 
                 # Try settings table for embedding API keys (embedding.api_key.{provider})
