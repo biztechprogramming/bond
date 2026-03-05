@@ -157,18 +157,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS content_chunks_fts USING fts5(
 );
 
 -- Context distillation: cached summaries to avoid re-summarizing every turn
-CREATE TABLE IF NOT EXISTS context_summaries (
-    id TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL,
-    tier TEXT NOT NULL CHECK(tier IN ('topic', 'bulk')),
-    covers_from INTEGER NOT NULL,
-    covers_to INTEGER NOT NULL,
-    original_token_count INTEGER NOT NULL,
-    summary TEXT NOT NULL,
-    summary_token_count INTEGER NOT NULL,
-    utility_model TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 
 CREATE INDEX IF NOT EXISTS idx_cs_conv
     ON context_summaries(conversation_id, tier, covers_from);

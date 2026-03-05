@@ -7,11 +7,6 @@ orchestration while this module handles context window management.
 
 from __future__ import annotations
 
-import hashlib
-import json
-import logging
-import time
-from typing import Any
 
 import litellm
 
@@ -349,16 +344,6 @@ async def _select_relevant_fragments(
             logger.info("Budget enforcement: dropped fragment '%s' (%d tokens)",
                         dropped.get("name"), dropped.get("token_estimate", 0))
 
-    logger.info(
-        "Fragment selection: %d/%d fragments (core=%d, triggered=%d, llm=%d, ~%d tokens). Selected: %s",
-        len(selected), len(enabled), len(core), len(triggered), len(llm_picks),
-        sum(f.get("token_estimate", 0) for f in selected),
-        [f.get("name") for f in selected],
-    )
-
-    # Cache the result
-    _fragment_cache[cache_key] = (time.monotonic(), selected)
-    return selected
 
 
 # ---------------------------------------------------------------------------
