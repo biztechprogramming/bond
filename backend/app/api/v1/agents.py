@@ -166,6 +166,22 @@ async def list_agents():
             for m in mounts_rows
         ]
         
+        # Get channels
+        channels = []
+        try:
+            channels_rows = await stdb.query(f"SELECT channel, enabled, sandbox_override FROM agent_channels WHERE agent_id = '{agent_id}'")
+            channels = [
+                {
+                    "channel": c["channel"],
+                    "enabled": bool(c["enabled"]),
+                    "sandbox_override": c["sandbox_override"],
+                }
+                for c in channels_rows
+            ]
+        except:
+            # Table might not exist yet
+            pass
+        
         # Parse tools JSON
         tools = row["tools"]
         if isinstance(tools, str):
@@ -187,6 +203,7 @@ async def list_agents():
             "is_active": bool(row["is_active"]),
             "is_default": bool(row["is_default"]),
             "workspace_mounts": workspace_mounts,
+            "channels": channels,
             "created_at": row["created_at"],
         }
         agents.append(agent)

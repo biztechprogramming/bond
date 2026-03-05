@@ -162,13 +162,13 @@ export default function AgentsTab() {
         max_iterations: editing.max_iterations,
         auto_rag: editing.auto_rag,
         auto_rag_limit: editing.auto_rag_limit,
-        workspace_mounts: editing.workspace_mounts.map((m) => ({
+        workspace_mounts: editing.workspace_mounts?.map((m) => ({
           host_path: m.host_path,
           mount_name: m.mount_name,
           container_path: m.container_path || `/workspace/${m.mount_name}`,
           readonly: m.readonly,
-        })),
-        channels: editing.channels.map((c) => ({
+        })) || [],
+        channels: editing.channels?.map((c) => ({
           channel: c.channel,
           enabled: c.enabled,
           sandbox_override: c.sandbox_override,
@@ -330,7 +330,7 @@ export default function AgentsTab() {
                 <div style={styles.cardMeta}>{agent.model}</div>
                 <div style={styles.cardMeta}>{agent.tools.length} tools enabled</div>
                 <div style={styles.cardMeta}>
-                  Channels: {agent.channels.map((c) => c.channel).join(", ") || "none"}
+                  Channels: {agent.channels?.map((c) => c.channel).join(", ") || "none"}
                 </div>
               </div>
             ))}
@@ -486,7 +486,7 @@ export default function AgentsTab() {
                 Workspace Mounts{" "}
                 <button style={styles.smallButton} onClick={addMount}>+ Add</button>
               </label>
-              {editing.workspace_mounts.map((mount, i) => (
+              {editing.workspace_mounts?.map((mount, i) => (
                 <div key={i} style={{ marginBottom: "8px", display: "flex", flexDirection: "column", gap: "4px" }}>
                   <div style={styles.mountRow}>
                     <input
