@@ -140,6 +140,8 @@ async def _handle_via_api(
                 if "description" in arguments:
                     body["description"] = arguments["description"]
                 plan_id = arguments.get("plan_id", "")
+                if not plan_id:
+                    plan_id = context.get("_active_plan_id", "")
                 # Use flat /items/:id endpoint — plan_id not needed by the reducer.
                 # Fall back to nested URL if plan_id is known (both routes work).
                 item_url = (
