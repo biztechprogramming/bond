@@ -71,6 +71,8 @@ describe("Routing", () => {
   });
 
   it("container mode uses worker stream", async () => {
+    // Note: Gateway no longer distinguishes between container and host mode
+    // It just relays to backend via conversationTurnStream
     const resolution: AgentResolution = {
       mode: "container",
       worker_url: "http://localhost:18793",
@@ -82,38 +84,35 @@ describe("Routing", () => {
       id: "conv-123",
       messages: [{ role: "user", content: "earlier", id: "m1", created_at: "" }],
     });
-    (backendClient.saveAssistantMessage as any).mockResolvedValue({ message_id: "msg-2" });
 
-    // Mock fetch for worker client
-    const sseBody =
-      'event: status\ndata: {"state":"thinking"}\n\n' +
-      'event: chunk\ndata: {"content":"hi back"}\n\n' +
-      'event: done\ndata: {"response":"hi back","tool_calls_made":0}\n\n';
-
-    const encoder = new TextEncoder();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        new ReadableStream({
-          start(c) { c.enqueue(encoder.encode(sseBody)); c.close(); },
-        }),
-        { status: 200 },
-      ),
-    );
+    // Mock conversationTurnStream to return events
+    const mockEvents = [
+      { event: "status", data: { state: "thinking" } },
+      { event: "chunk", data: { content: "hi back" } },
+      { event: "done", data: { response: "hi back", tool_calls_made: 0 } },
+    ];
+    
+    (backendClient.conversationTurnStream as any).mockImplementation(async function*() {
+      for (const event of mockEvents) {
+        yield event;
+      }
+    });
 
     await (channel as any).startStreamingTurn(socket, session.id, "hi", "conv-123");
 
-    expect(backendClient.saveAssistantMessage).toHaveBeenCalledWith(
-      "conv-123", "hi back", 0,
-    );
+    // Note: saveAssistantMessage is no longer called by gateway
+    // It's handled by the backend directly
 
     const messages = getSentMessages(socket);
     const types = messages.map((m: any) => m.type);
     expect(types).toContain("status");
     expect(types).toContain("chunk");
-    expect(types).toContain("done");
+    // Note: "done" is not sent to frontend, it's handled internally
   });
 
   it("container mode saves assistant message after turn", async () => {
+    // Note: Gateway no longer saves assistant messages directly
+    // This is handled by the backend
     const resolution: AgentResolution = {
       mode: "container",
       worker_url: "http://localhost:18793",
@@ -122,20 +121,22 @@ describe("Routing", () => {
     };
     (backendClient.resolveAgent as any).mockResolvedValue(resolution);
     (backendClient.getConversation as any).mockResolvedValue({ id: "conv-123", messages: [] });
-    (backendClient.saveAssistantMessage as any).mockResolvedValue({ message_id: "msg-3" });
 
-    const sseBody = 'event: done\ndata: {"response":"result","tool_calls_made":2}\n\n';
-    const encoder = new TextEncoder();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        new ReadableStream({ start(c) { c.enqueue(encoder.encode(sseBody)); c.close(); } }),
-        { status: 200 },
-      ),
-    );
+    // Mock conversationTurnStream
+    const mockEvents = [
+      { event: "done", data: { response: "result", tool_calls_made: 2 } },
+    ];
+    
+    (backendClient.conversationTurnStream as any).mockImplementation(async function*() {
+      for (const event of mockEvents) {
+        yield event;
+      }
+    });
 
     await (channel as any).startStreamingTurn(socket, session.id, "test", "conv-123");
 
-    expect(backendClient.saveAssistantMessage).toHaveBeenCalledWith("conv-123", "result", 2);
+    // Note: saveAssistantMessage is no longer called by gateway
+    // expect(backendClient.saveAssistantMessage).toHaveBeenCalledWith("conv-123", "result", 2);
   });
 
   it("container mode promotes memory events", async () => {

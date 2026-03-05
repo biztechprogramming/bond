@@ -86,7 +86,7 @@ import WorkPlansRow from "./work_plans_table";
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
-const tablesSchema = __schema({
+const tablesSchema: any = __schema({
   agent_channels: __table({
     name: 'agent_channels',
     indexes: [
@@ -282,7 +282,7 @@ const proceduresSchema = __procedures(
 );
 
 /** The remote SpacetimeDB module schema, both runtime and type information. */
-const REMOTE_MODULE = {
+const REMOTE_MODULE: any = {
   versionInfo: {
     cliVersion: "2.0.2" as const,
   },
@@ -299,7 +299,7 @@ const REMOTE_MODULE = {
 export const tables: __QueryBuilder<typeof tablesSchema.schemaType> = __makeQueryBuilder(tablesSchema.schemaType);
 
 /** The reducers available in this remote SpacetimeDB module. */
-export const reducers = __convertToAccessorMap(reducersSchema.reducersType.reducers);
+export const reducers: any = __convertToAccessorMap(reducersSchema.reducersType.reducers);
 
 /** The context type returned in callbacks for all possible events. */
 export type EventContext = __EventContextInterface<typeof REMOTE_MODULE>;

@@ -134,6 +134,7 @@ export class BackendClient {
     agentId?: string,
     planId?: string,
   ): AsyncGenerator<SSEEvent> {
+    console.log(`[BACKEND-CLIENT] Calling backend: ${this.baseUrl}/api/v1/conversations/${conversationId}/turn`);
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/turn`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -143,10 +144,13 @@ export class BackendClient {
         plan_id: planId ?? null,
       }),
     });
+    console.log(`[BACKEND-CLIENT] Backend response status: ${res.status}, ok: ${res.ok}, headers: ${JSON.stringify(Object.fromEntries(res.headers.entries()))}`);
     if (!res.ok) {
       const text = await res.text();
+      console.error(`[BACKEND-CLIENT] Backend error ${res.status}: ${text}`);
       throw new Error(`Backend error ${res.status}: ${text}`);
     }
+    console.log(`[BACKEND-CLIENT] Starting to parse SSE stream`);
     yield* parseSSEStream(res);
   }
 

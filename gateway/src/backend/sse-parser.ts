@@ -27,6 +27,7 @@ export async function* parseSSEStream(
   response: Response,
   options?: SSEParserOptions,
 ): AsyncGenerator<SSEEvent> {
+  console.log(`[SSE-PARSER] Starting to parse SSE stream, has body: ${!!response.body}`);
   const reader = response.body?.getReader();
   if (!reader) throw new Error("No response body");
 
@@ -37,17 +38,34 @@ export async function* parseSSEStream(
   let dataLines: string[] = [];
 
   try {
+    let chunkCount = 0;
     while (true) {
       if (options?.signal?.aborted) {
+        console.log(`[SSE-PARSER] Signal aborted`);
         break;
       }
 
       const { done, value } = await reader.read();
-      if (done) break;
+      chunkCount++;
+      console.log(`[SSE-PARSER] Read chunk ${chunkCount}: done=${done}, hasValue=${!!value}, valueLength=${value?.length || 0}`);
+      if (done) {
+        console.log(`[SSE-PARSER] Stream done after ${chunkCount} chunks`);
+        break;
+      }
 
-      buffer += decoder.decode(value, { stream: true });
+      const decoded = decoder.decode(value, { stream: true });
+      // Show actual character codes for first few chars
+      const firstChars = decoded.substring(0, 20);
+      const charCodes = Array.from(firstChars).map(c => c.charCodeAt(0)).join(',');
+      console.log(`[SSE-PARSER] Decoded chunk (${decoded.length} chars), first 20 char codes: ${charCodes}`);
+      console.log(`[SSE-PARSER] Decoded chunk preview: ${decoded.substring(0, 50).replace(/\n/g, '\\n').replace(/\r/g, '\\r')}`);
+      buffer += decoded;
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
+      console.log(`[SSE-PARSER] Split into ${lines.length} lines, buffer remaining: ${buffer.length} chars`);
+      if (lines.length > 0) {
+        console.log(`[SSE-PARSER] First line: ${lines[0].substring(0, 50)}`);
+      }
 
       for (const line of lines) {
         if (line.startsWith("event: ")) {

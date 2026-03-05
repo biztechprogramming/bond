@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def _sse(event: str, data: dict) -> str:
     """Format an SSE event."""
-    return f"event: {event}\\ndata: {json.dumps(data)}\\n\\n"
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 async def _stream_container_turn_stdb(
     worker_url: str,
@@ -49,18 +49,18 @@ async def _stream_container_turn_stdb(
                 async for line in resp.aiter_lines():
                     if line.startswith("event:"):
                         event_type = line[len("event:"):].strip()
-                        logger.debug(f"[TURN_STDB] Received SSE event: {event_type}")
+                        logger.info(f"[TURN_STDB] Received SSE event: {event_type}")
                     elif line.startswith("data:") and event_type:
                         try:
                             data = json.loads(line[len("data:"):].strip())
                         except json.JSONDecodeError:
-                            logger.warning(f"[TURN_STDB] Failed to parse JSON data: {line}")
+                            logger.info(f"[TURN_STDB] Failed to parse JSON data: {line}")
                             continue
 
                         if event_type == "chunk":
                             chunk_content = data.get("content", "")
                             response_content += chunk_content
-                            logger.debug(f"[TURN_STDB] Received chunk: {chunk_content[:50]}...")
+                            logger.info(f"[TURN_STDB] Received chunk: {chunk_content[:50]}...")
                             yield _sse("chunk", data)
                         elif event_type == "status":
                             logger.info(f"[TURN_STDB] Worker status: {data}")
@@ -73,7 +73,7 @@ async def _stream_container_turn_stdb(
                             tool_calls_made = data.get("tool_calls_made", 0)
                             logger.info(f"[TURN_STDB] Worker done: tool_calls={tool_calls_made}, response_length={len(response_content)}")
                         elif event_type == "error":
-                            logger.error(f"[TURN_STDB] Worker error: {data}")
+                            logger.info(f"[TURN_STDB] Worker error: {data}")
                             yield _sse("error", data)
 
         # Save assistant message to SpacetimeDB
@@ -101,12 +101,14 @@ async def _stream_container_turn_stdb(
             raise
 
         logger.info(f"[TURN_STDB] Yielding final done event with message_id={msg_id}")
-        yield _sse("done", {
+        done_event = _sse("done", {
             "message_id": msg_id,
             "conversation_id": conversation_id,
             "tool_calls_made": tool_calls_made,
             "queued_count": 0,
         })
+        logger.info(f"[TURN_STDB] Done event content: {done_event[:100]}...")
+        yield done_event
     except Exception as e:
         logger.error(f"[TURN_STDB] Container turn error: conversation={conversation_id} error={e}", exc_info=True)
         yield _sse("error", {"message": str(e)})
