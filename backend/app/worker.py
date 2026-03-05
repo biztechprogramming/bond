@@ -1181,10 +1181,6 @@ async def _run_agent_loop(
                     "content": result_json,
                 })
         else:
-            messages.append({
-                "role": "assistant",
-                "content": llm_message.content or "",
-            })
             return llm_message.content or "", tool_calls_made
 
     # Hit max iterations — save work plan checkpoint if active
