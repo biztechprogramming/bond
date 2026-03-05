@@ -489,6 +489,8 @@ async def _run_agent_loop(
                                prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted, 
                                encrypted_key.startswith("enc:"))
                     if decrypted and decrypted != encrypted_key:  # Check if decryption worked
+                        # Trim whitespace from the key
+                        decrypted = decrypted.strip()
                         logger.debug("Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
                                    prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted)
                         return decrypted
@@ -504,6 +506,8 @@ async def _run_agent_loop(
                     from backend.app.core.crypto import decrypt_value
                     decrypted = decrypt_value(encrypted_llm_key)
                     if decrypted and decrypted != encrypted_llm_key:
+                        # Trim whitespace from the key
+                        decrypted = decrypted.strip()
                         logger.debug("Got API key for %s from SpacetimeDB settings (llm.api_key) (length: %d)", prov, len(decrypted))
                         return decrypted
                 
@@ -518,6 +522,8 @@ async def _run_agent_loop(
                         from backend.app.core.crypto import decrypt_value
                         decrypted = decrypt_value(embedding_key)
                         if decrypted and decrypted != embedding_key:
+                            # Trim whitespace from the key
+                            decrypted = decrypted.strip()
                             logger.debug("Got embedding API key for google/gemini from SpacetimeDB settings (length: %d)", len(decrypted))
                             return decrypted
             else:
@@ -859,6 +865,14 @@ async def _run_agent_loop(
             if isinstance(content, str):
                 messages[_budget_target_idx]["content"] = content + _budget_note
 
+        # Log the API key info before calling LiteLLM
+        if "api_key" in extra_kwargs:
+            api_key = extra_kwargs["api_key"]
+            logger.debug("Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
+                       model, len(api_key), api_key[:10] if len(api_key) > 10 else api_key)
+        else:
+            logger.debug("Calling LiteLLM with model %s, no API key in extra_kwargs", model)
+        
         response = await litellm.acompletion(
             model=model,
             messages=messages,
