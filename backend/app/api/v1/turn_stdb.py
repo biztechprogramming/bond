@@ -27,11 +27,13 @@ async def _stream_container_turn_stdb(
     event_type = ""
 
     try:
+        logger.info(f"[TURN_STDB] Starting container turn for conversation={conversation_id}, agent={agent_id}, worker={worker_url}")
         register_turn(conversation_id)
         yield _sse("status", {"state": "thinking", "conversation_id": conversation_id})
 
         timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
+            logger.info(f"[TURN_STDB] Calling worker at {worker_url}/turn")
             async with client.stream(
                 "POST",
                 f"{worker_url}/turn",
@@ -43,41 +45,62 @@ async def _stream_container_turn_stdb(
                 },
             ) as resp:
                 resp.raise_for_status()
+                logger.info(f"[TURN_STDB] Worker responded with status {resp.status_code}")
                 async for line in resp.aiter_lines():
                     if line.startswith("event:"):
                         event_type = line[len("event:"):].strip()
+                        logger.debug(f"[TURN_STDB] Received SSE event: {event_type}")
                     elif line.startswith("data:") and event_type:
                         try:
                             data = json.loads(line[len("data:"):].strip())
                         except json.JSONDecodeError:
+                            logger.warning(f"[TURN_STDB] Failed to parse JSON data: {line}")
                             continue
 
                         if event_type == "chunk":
-                            response_content += data.get("content", "")
+                            chunk_content = data.get("content", "")
+                            response_content += chunk_content
+                            logger.debug(f"[TURN_STDB] Received chunk: {chunk_content[:50]}...")
                             yield _sse("chunk", data)
                         elif event_type == "status":
+                            logger.info(f"[TURN_STDB] Worker status: {data}")
                             yield _sse("status", data)
                         elif event_type in ("tool_call", "plan_created", "item_created", "item_updated", "plan_completed"):
+                            logger.info(f"[TURN_STDB] {event_type}: {data}")
                             yield _sse(event_type, data)
                         elif event_type == "done":
                             response_content = data.get("response", response_content)
                             tool_calls_made = data.get("tool_calls_made", 0)
+                            logger.info(f"[TURN_STDB] Worker done: tool_calls={tool_calls_made}, response_length={len(response_content)}")
                         elif event_type == "error":
+                            logger.error(f"[TURN_STDB] Worker error: {data}")
                             yield _sse("error", data)
 
         # Save assistant message to SpacetimeDB
         msg_id = str(ULID())
-        await stdb.call_reducer("add_conversation_message", [
-            msg_id,
-            conversation_id,
-            "assistant",
-            response_content,
-            "", # tool_calls
-            "", # tool_call_id
-            0,  # token_count
-            "delivered"
-        ])
+        logger.info(f"[TURN_STDB] Saving assistant message to SpacetimeDB: id={msg_id}, conversation={conversation_id}, length={len(response_content)}")
+        logger.info(f"[TURN_STDB] Assistant message content (first 200 chars): {response_content[:200]}")
+        try:
+            success = await stdb.call_reducer("add_conversation_message", [
+                msg_id,
+                conversation_id,
+                "assistant",
+                response_content,
+                "", # tool_calls
+                "", # tool_call_id
+                0,  # token_count
+                "delivered"
+            ])
+            if success:
+                logger.info(f"[TURN_STDB] Successfully saved assistant message {msg_id} to SpacetimeDB")
+            else:
+                logger.error(f"[TURN_STDB] Failed to save assistant message {msg_id} to SpacetimeDB: reducer returned false")
+        except Exception as e:
+            logger.error(f"[TURN_STDB] Failed to save assistant message to SpacetimeDB: {e}", exc_info=True)
+            # Re-raise to trigger error handling
+            raise
 
+        logger.info(f"[TURN_STDB] Yielding final done event with message_id={msg_id}")
         yield _sse("done", {
             "message_id": msg_id,
             "conversation_id": conversation_id,
@@ -85,7 +108,8 @@ async def _stream_container_turn_stdb(
             "queued_count": 0,
         })
     except Exception as e:
-        logger.error("Container turn error: conversation=%s error=%s", conversation_id, e)
+        logger.error(f"[TURN_STDB] Container turn error: conversation={conversation_id} error={e}", exc_info=True)
         yield _sse("error", {"message": str(e)})
     finally:
+        logger.info(f"[TURN_STDB] Unregistering turn for conversation={conversation_id}")
         unregister_turn(conversation_id)

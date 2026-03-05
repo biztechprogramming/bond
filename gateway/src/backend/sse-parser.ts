@@ -52,16 +52,21 @@ export async function* parseSSEStream(
       for (const line of lines) {
         if (line.startsWith("event: ")) {
           currentEvent = line.slice(7).trim();
+          console.log(`[SSE-PARSER] Parsed event: ${currentEvent}`);
         } else if (line.startsWith("data: ")) {
-          dataLines.push(line.slice(6));
+          const dataLine = line.slice(6);
+          dataLines.push(dataLine);
+          console.log(`[SSE-PARSER] Parsed data line (${dataLine.length} chars): ${dataLine.substring(0, 100)}`);
         } else if (line === "") {
           // Empty line = end of event
           if (dataLines.length > 0) {
             const dataStr = dataLines.join("\n");
             try {
               const data = JSON.parse(dataStr) as Record<string, unknown>;
+              console.log(`[SSE-PARSER] Yielding event: ${currentEvent || "message"} with data keys: ${Object.keys(data)}`);
               yield { event: currentEvent || "message", data };
-            } catch {
+            } catch (e) {
+              console.error(`[SSE-PARSER] Failed to parse JSON: ${e}, data: ${dataStr.substring(0, 200)}`);
               // Skip malformed JSON data
             }
           }
