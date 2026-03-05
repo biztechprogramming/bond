@@ -220,6 +220,85 @@ const spacetimedb = schema({
       description: t.string().default(''), // execution context: codebase, file paths, approach
     }
   ),
+
+  // -- Prompt Fragments --
+  prompt_fragments: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      name: t.string(),
+      display_name: t.string(),
+      category: t.string(),
+      content: t.string(),
+      description: t.string().default(''),
+      is_active: t.bool().default(true),
+      is_system: t.bool().default(false),
+      summary: t.string().default(''),
+      tier: t.string().default('standard'),
+      task_triggers: t.string().default('[]'), // JSON array
+      token_estimate: t.u32().default(0),
+      created_at: t.u64(),
+      updated_at: t.u64(),
+    }
+  ),
+
+  // -- Prompt Fragment Versions --
+  prompt_fragment_versions: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      fragment_id: t.string(),
+      version: t.u32(),
+      content: t.string(),
+      change_reason: t.string().default(''),
+      changed_by: t.string().default('user'),
+      created_at: t.u64(),
+    }
+  ),
+
+  // -- Agent Prompt Fragment Attachments --
+  agent_prompt_fragments: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agent_id: t.string(),
+      fragment_id: t.string(),
+      rank: t.u32().default(0),
+      enabled: t.bool().default(true),
+      created_at: t.u64(),
+    }
+  ),
+
+  // -- Prompt Templates --
+  prompt_templates: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      name: t.string(),
+      display_name: t.string(),
+      category: t.string(),
+      content: t.string(),
+      variables: t.string().default('[]'), // JSON array
+      description: t.string().default(''),
+      is_active: t.bool().default(true),
+      created_at: t.u64(),
+      updated_at: t.u64(),
+    }
+  ),
+
+  // -- Prompt Template Versions --
+  prompt_template_versions: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      template_id: t.string(),
+      version: t.u32(),
+      content: t.string(),
+      change_reason: t.string().default(''),
+      changed_by: t.string().default('user'),
+      created_at: t.u64(),
+    }
+  ),
 });
 
 export default spacetimedb;
@@ -834,6 +913,175 @@ export const deleteProviderApiKey = spacetimedb.reducer(
     const existing = ctx.db.provider_api_keys.providerId.find(providerId);
     if (existing) {
       ctx.db.provider_api_keys.providerId.delete(providerId);
+    }
+  }
+);
+
+// -- Prompt Fragments --
+
+export const addPromptFragment = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    display_name: t.string(),
+    category: t.string(),
+    content: t.string(),
+    description: t.string().default(''),
+    is_active: t.bool().default(true),
+    is_system: t.bool().default(false),
+    summary: t.string().default(''),
+    tier: t.string().default('standard'),
+    task_triggers: t.string().default('[]'),
+    token_estimate: t.u32().default(0),
+    created_at: t.u64(),
+    updated_at: t.u64(),
+  },
+  (ctx, fragment) => {
+    const existing = ctx.db.prompt_fragments.id.find(fragment.id);
+    if (existing) {
+      ctx.db.prompt_fragments.id.update({
+        ...existing,
+        ...fragment,
+        created_at: fragment.created_at === 0n ? existing.created_at : fragment.created_at,
+      });
+    } else {
+      ctx.db.prompt_fragments.insert(fragment);
+    }
+  }
+);
+
+export const deletePromptFragment = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.prompt_fragments.id.find(id);
+    if (existing) {
+      ctx.db.prompt_fragments.id.delete(id);
+    }
+  }
+);
+
+// -- Prompt Fragment Versions --
+
+export const addPromptFragmentVersion = spacetimedb.reducer(
+  {
+    id: t.string(),
+    fragment_id: t.string(),
+    version: t.u32(),
+    content: t.string(),
+    change_reason: t.string().default(''),
+    changed_by: t.string().default('user'),
+    created_at: t.u64(),
+  },
+  (ctx, version) => {
+    const existing = ctx.db.prompt_fragment_versions.id.find(version.id);
+    if (existing) {
+      ctx.db.prompt_fragment_versions.id.update({
+        ...existing,
+        ...version,
+        created_at: version.created_at === 0n ? existing.created_at : version.created_at,
+      });
+    } else {
+      ctx.db.prompt_fragment_versions.insert(version);
+    }
+  }
+);
+
+// -- Agent Prompt Fragment Attachments --
+
+export const addAgentPromptFragment = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agent_id: t.string(),
+    fragment_id: t.string(),
+    rank: t.u32().default(0),
+    enabled: t.bool().default(true),
+    created_at: t.u64(),
+  },
+  (ctx, attachment) => {
+    const existing = ctx.db.agent_prompt_fragments.id.find(attachment.id);
+    if (existing) {
+      ctx.db.agent_prompt_fragments.id.update({
+        ...existing,
+        ...attachment,
+        created_at: attachment.created_at === 0n ? existing.created_at : attachment.created_at,
+      });
+    } else {
+      ctx.db.agent_prompt_fragments.insert(attachment);
+    }
+  }
+);
+
+export const deleteAgentPromptFragment = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.agent_prompt_fragments.id.find(id);
+    if (existing) {
+      ctx.db.agent_prompt_fragments.id.delete(id);
+    }
+  }
+);
+
+// -- Prompt Templates --
+
+export const addPromptTemplate = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    display_name: t.string(),
+    category: t.string(),
+    content: t.string(),
+    variables: t.string().default('[]'),
+    description: t.string().default(''),
+    is_active: t.bool().default(true),
+    created_at: t.u64(),
+    updated_at: t.u64(),
+  },
+  (ctx, template) => {
+    const existing = ctx.db.prompt_templates.id.find(template.id);
+    if (existing) {
+      ctx.db.prompt_templates.id.update({
+        ...existing,
+        ...template,
+        created_at: template.created_at === 0n ? existing.created_at : template.created_at,
+      });
+    } else {
+      ctx.db.prompt_templates.insert(template);
+    }
+  }
+);
+
+export const deletePromptTemplate = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.prompt_templates.id.find(id);
+    if (existing) {
+      ctx.db.prompt_templates.id.delete(id);
+    }
+  }
+);
+
+// -- Prompt Template Versions --
+
+export const addPromptTemplateVersion = spacetimedb.reducer(
+  {
+    id: t.string(),
+    template_id: t.string(),
+    version: t.u32(),
+    content: t.string(),
+    change_reason: t.string().default(''),
+    changed_by: t.string().default('user'),
+    created_at: t.u64(),
+  },
+  (ctx, version) => {
+    const existing = ctx.db.prompt_template_versions.id.find(version.id);
+    if (existing) {
+      ctx.db.prompt_template_versions.id.update({
+        ...existing,
+        ...version,
+        created_at: version.created_at === 0n ? existing.created_at : version.created_at,
+      });
+    } else {
+      ctx.db.prompt_template_versions.insert(version);
     }
   }
 );
