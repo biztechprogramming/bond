@@ -42,16 +42,6 @@ export function createPersistenceRouter(config: GatewayConfig) {
         "delivered"
       ], token);
 
-      // Also save to messages table for logging/debugging
-      await callReducer(spacetimedbUrl, spacetimedbModuleName, "save_message", [
-        id,
-        agentId || "",
-        sessionId,
-        role,
-        content,
-        JSON.stringify(metadata || {}),
-      ], token);
-
       res.status(201).json({ id, status: "saved" });
     } catch (err: any) {
       console.error(`[persistence] save_message failed:`, err.message);
