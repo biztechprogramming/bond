@@ -1,22 +1,27 @@
 # Python
 
-## When this applies
-Writing Python code in the Bond backend.
+Best practices for Python development, focusing on FastAPI and modern async patterns.
 
-## Bond-Specific
-- Bond uses `uv` for dependency management, NOT pip/poetry/pipenv
-- `pyproject.toml` is the single source of truth for dependencies
-- Install: `uv sync` or `uv sync --extra dev` for dev dependencies
-- Run scripts: `uv run python -m module` or `uv run --extra dev pytest`
-- Add dependency: `uv add package` (not `pip install`)
+## Standards
+- **Python 3.10+**: Use modern features like structural pattern matching and `|` for union types.
+- **Type Hinting**: Use strict type hints everywhere. Use `mypy` or `pyright` for static analysis.
+- **Pydantic v2**: Use for data validation and settings. Prefer `BaseModel` and `Field`.
+- **Async/Await**: Use `asyncio` for I/O-bound tasks. Avoid blocking the event loop with synchronous calls.
 
-## Patterns / Gotchas
-- `uv` resolves faster than pip but has different resolution strategy — if dependency conflicts, check `uv lock --check`
-- `uv run` creates/reuses a virtualenv automatically — do not activate venvs manually
-- Type hints: use `X | None` not `Optional[X]` (Python 3.10+ syntax, Bond uses 3.12)
-- `from __future__ import annotations` makes ALL type hints strings (lazy eval) — needed for forward references but breaks runtime type checking (Pydantic validators)
-- f-strings in logging: `logger.info(f"msg {var}")` evaluates even when log level is disabled — use `logger.info("msg %s", var)` for performance
-- `match/case` (Python 3.10+): does NOT use `__eq__` — it uses structural pattern matching, which means custom `__eq__` overrides are ignored
-- `dict | other_dict` merge (3.9+) creates a new dict — does NOT mutate either operand
-- `asyncio.run()` creates a new event loop — cannot be called from within an existing async context (use `await` instead)
-- `@dataclass(slots=True)` (3.10+): 15-20% faster attribute access but breaks multiple inheritance and `__dict__`
+## FastAPI Patterns
+- **Dependency Injection**: Use `Depends()` for shared logic (auth, DB sessions).
+- **Router Organization**: Use `APIRouter` to split the application into logical modules.
+- **Exception Handlers**: Use custom exception handlers to return consistent JSON error responses.
+- **Background Tasks**: Use FastAPI's `BackgroundTasks` for simple async work, or Celery for complex jobs.
+
+## Code Style
+- **PEP 8**: Follow standard Python style guidelines. Use `black` or `ruff` for formatting.
+- **Docstrings**: Use Google or NumPy style docstrings for public functions and classes.
+- **List Comprehensions**: Use for simple transformations; avoid nesting more than two levels deep.
+- **f-strings**: Use for all string formatting.
+
+## Testing
+- **Pytest**: Use as the primary testing framework.
+- **Fixtures**: Use fixtures for setup/teardown and dependency injection.
+- **Mocking**: Use `unittest.mock` or `pytest-mock` to isolate units.
+- **Coverage**: Aim for high coverage, but focus on critical business logic and edge cases.
