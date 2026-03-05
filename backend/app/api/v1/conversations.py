@@ -418,7 +418,7 @@ async def conversation_turn(
             if not default_agents:
                 # Last resort fallback if SpacetimeDB agents table is truly empty
                 agent_id = "01JBOND0000000000000DEFAULT"
-                logger.warning(f"[CONVERSATIONS] No default agent found, using fallback: {agent_id}")
+                logger.info(f"[CONVERSATIONS] No default agent found, using fallback: {agent_id}")
             else:
                 agent_id = default_agents[0]["id"]
                 logger.info(f"[CONVERSATIONS] Using default agent: {agent_id}")
@@ -450,9 +450,9 @@ async def conversation_turn(
                 logger.info(f"[CONVERSATIONS] Message saved via save_message: {msg_id}")
                 saved = True
             else:
-                logger.warning(f"[CONVERSATIONS] save_message returned false for: {msg_id}")
+                logger.error(f"[CONVERSATIONS] save_message returned false for: {msg_id}")
         except Exception as e:
-            logger.warning(f"[CONVERSATIONS] save_message failed: {e}")
+            logger.error(f"[CONVERSATIONS] save_message failed: {e}")
         
         # If save_message fails, use add_conversation_message instead
         if not saved:
@@ -472,7 +472,7 @@ async def conversation_turn(
                     logger.info(f"[CONVERSATIONS] Message saved via add_conversation_message: {msg_id}")
                     saved = True
                 else:
-                    logger.warning(f"[CONVERSATIONS] add_conversation_message returned false for: {msg_id}")
+                    logger.error(f"[CONVERSATIONS] add_conversation_message returned false for: {msg_id}")
             except Exception as e:
                 logger.error(f"[CONVERSATIONS] add_conversation_message also failed: {e}")
         
@@ -591,6 +591,7 @@ async def conversation_turn(
         return StreamingResponse(
             _stream_container_turn_stdb(info["worker_url"], history, conversation_id, req.plan_id, agent_id, user_message),
             media_type="text/event-stream",
+            background=None,  # Disable background tasks that might buffer response
         )
     else:
         # Host-mode agent not supported without SQLite yet in this refactor

@@ -206,9 +206,11 @@ export class WebChatChannel {
       let responseMessageId = "";
       let agentName = "";
 
+      console.log(`[GATEWAY-DEBUG] Starting SSE stream for conversation ${conversationId}`);
       for await (const event of this.backendClient.conversationTurnStream(
         conversationId, message, agentId, planId,
       )) {
+        console.log(`[GATEWAY-DEBUG] Inside SSE loop, event: ${event.event}`);
         console.log(`[GATEWAY-WEBCHAT] Received SSE event: ${event.event}`, event.data ? `data keys: ${Object.keys(event.data)}` : 'no data');
         switch (event.event) {
           case "status":
@@ -293,6 +295,7 @@ export class WebChatChannel {
       session.agentBusy = false;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[gateway] Turn complete: conversation=${conversationId} elapsed=${elapsed}s`);
+      console.log(`[GATEWAY-TEST] Testing if gateway logs are working`);
 
       this.send(socket, {
         type: "done", sessionId, conversationId,
