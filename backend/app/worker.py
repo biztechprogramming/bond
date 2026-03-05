@@ -480,22 +480,22 @@ async def _run_agent_loop(
                 # Try provider_api_keys table first
                 encrypted_key = await _state.persistence.get_provider_api_key(prov)
                 if encrypted_key:
-                    logger.debug("Got encrypted key for %s from provider_api_keys table (encrypted length: %d, starts with: %s)", 
+                    logger.error("Got encrypted key for %s from provider_api_keys table (encrypted length: %d, starts with: %s)", 
                                prov, len(encrypted_key), encrypted_key[:20])
                     # Decrypt the key using the crypto module
                     from backend.app.core.crypto import decrypt_value
                     decrypted = decrypt_value(encrypted_key)
-                    logger.debug("Decrypted key for %s (length: %d, starts with: %s, is_encrypted: %s)", 
+                    logger.error("Decrypted key for %s (length: %d, starts with: %s, is_encrypted: %s)", 
                                prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted, 
                                encrypted_key.startswith("enc:"))
                     if decrypted and decrypted != encrypted_key:  # Check if decryption worked
                         # Trim whitespace from the key
                         decrypted = decrypted.strip()
-                        logger.error("DEBUG: Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
+                        logger.error("Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
                                    prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted)
                         return decrypted
                     else:
-                        logger.debug("Decryption failed or returned same value for %s", prov)
+                        logger.error("Decryption failed or returned same value for %s", prov)
                 
                 # Try settings table for LLM API keys (llm.api_key.{provider})
                 llm_setting_key = f"llm.api_key.{prov}"
@@ -527,10 +527,10 @@ async def _run_agent_loop(
                             logger.debug("Got embedding API key for google/gemini from SpacetimeDB settings (length: %d)", len(decrypted))
                             return decrypted
             else:
-                logger.error("DEBUG: Not trying SpacetimeDB (persistence: %s, mode: %s)", 
+                logger.debug("Not trying SpacetimeDB (persistence: %s, mode: %s)", 
                            _state.persistence, _state.persistence.mode if _state.persistence else "none")
         except Exception as e:
-            logger.error("DEBUG: Could not read API key from SpacetimeDB for %s: %s", prov, e, exc_info=True)
+            logger.debug("Could not read API key from SpacetimeDB for %s: %s", prov, e, exc_info=True)
 
         # 3. Vault (mounted from host)
         try:
@@ -868,10 +868,10 @@ async def _run_agent_loop(
         # Log the API key info before calling LiteLLM
         if "api_key" in extra_kwargs:
             api_key = extra_kwargs["api_key"]
-            logger.error("DEBUG: Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
+            logger.debug("Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
                        model, len(api_key), api_key[:10] if len(api_key) > 10 else api_key)
         else:
-            logger.error("DEBUG: Calling LiteLLM with model %s, no API key in extra_kwargs", model)
+            logger.debug("Calling LiteLLM with model %s, no API key in extra_kwargs", model)
         
         response = await litellm.acompletion(
             model=model,
