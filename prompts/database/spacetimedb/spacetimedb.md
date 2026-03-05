@@ -1,40 +1,21 @@
-# SpacetimeDB
+# SpacetimeDB Best Practices
 
-## When this applies
-Working with SpacetimeDB modules, the Bond gateway, or any SpacetimeDB client code.
+## Architecture Principles
+- **Reducer-Centric**: All state mutations must happen within Reducers. Reducers are atomic transactions.
+- **Deterministic Logic**: Reducers must be deterministic. Avoid using random numbers, external API calls, or non-deterministic time logic inside a Reducer.
+- **Relational Model**: Treat SpacetimeDB as a relational database. Use tables and indices efficiently.
 
-## Bond Architecture
-- Module source: `spacetimedb/spacetimedb/src/index.ts`
-- Publish: `cd spacetimedb && spacetime publish --server http://localhost:18787 bond-core-v2`
-- Gateway is the ONLY writer to SpacetimeDB — workers never call SpacetimeDB directly
-- `context_summaries` and `context_compression_log` stay in SQLite (not SpacetimeDB)
+## Development Workflow
+- **Schema Evolution**: Use the CLI to publish modules. Be aware that changing table structures requires careful management of existing data.
+- **Bindings**: Always regenerate client-side bindings after updating and publishing a module to ensure type safety.
+- **Testing**: Test Reducers in isolation. Since they are the only way to modify state, ensuring their correctness is paramount.
 
-## CRITICAL: Bindings copy step (always required after spacetime publish)
-```bash
-cd ~/bond/spacetimedb/spacetimedb
-spacetime generate bond-core-v2 --lang typescript --out-dir ./frontend/src/lib/spacetimedb
-cp -r ./frontend/src/lib/spacetimedb/. ~/bond/frontend/src/lib/spacetimedb/
-```
-The generate out-dir and the real frontend are DIFFERENT paths. Missing the copy causes BSATN RangeErrors at runtime with no useful error message.
+## Performance & Scaling
+- **Indices**: Define indices on columns used in filters within Reducers or client-side queries.
+- **Transaction Scope**: Keep Reducers small and focused. Long-running Reducers block other operations on the same module.
+- **Data Locality**: Design your schema to minimize the number of table lookups required within a single Reducer call.
 
-## HTTP API (use this, not WS SDK in Node)
-- WS SDK is unreliable on Node 18 — reducer calls silently vanish with no error callback
-- Use HTTP API: `POST /v1/database/{name}/call/{reducer}`
-- Reducer args are positional JSON arrays, NOT named objects: `[arg1, arg2, arg3]`
-- Auth header: `Authorization: Basic <hex-encoded-identity>:<hex-encoded-token>`
-
-## Core Concepts (non-obvious)
-- Each reducer call is a transaction — returning an error aborts ALL changes in that call
-- Tables are private by default; public tables are read-only to clients (writes only via reducers)
-- Identity-based auth: each client gets an `Identity`, no JWT/token scopes needed
-- `ctx.timestamp` is server-injected; clients cannot forge timestamps
-- No direct SQL writes — SQL is read-only; all mutations go through reducers
-
-## SDK Package Change (v1.4+)
-- `@clockworklabs/spacetimedb-sdk` is DEPRECATED
-- Use `spacetimedb` package instead
-- Connection builder pattern: `DbConnection.builder().withUri().withModuleName().build()`
-
-## Never touch
-- `connectToSpacetimeDB` default URI `ws://localhost:18788/stdb/` — do not change
-- Pre-existing TS2742 errors in `src/spacetimedb/index.ts` — do not fix, they're harmless
+## Security & Identity
+- **Identity-Based Access**: Use the caller's `Identity` within Reducers to implement row-level security or permission checks.
+- **Private Tables**: Keep tables private unless they absolutely need to be readable by all clients. Use Reducers as the controlled interface for data access.
+- **Validation**: Validate all input arguments at the start of a Reducer. Do not trust client-provided data.
