@@ -461,8 +461,8 @@ async def _run_agent_loop(
         # Default to anthropic for backward compatibility
         return "anthropic"
 
-    def _resolve_api_key(model_id: str) -> str | None:
-        """Resolve API key: injected from host DB → Vault → env var."""
+    async def _resolve_api_key(model_id: str) -> str | None:
+        """Resolve API key: injected from host DB → SpacetimeDB → Vault → env var."""
         prov = _resolve_provider(model_id)
 
         # 1. Keys from provider_api_keys (injected at container launch)
@@ -470,7 +470,21 @@ async def _run_agent_loop(
         if key:
             return key
 
-        # 2. Vault (mounted from host)
+        # 2. SpacetimeDB via Gateway (encrypted API keys)
+        try:
+            if _state.persistence and _state.persistence.mode == "api":
+                encrypted_key = await _state.persistence.get_provider_api_key(prov)
+                if encrypted_key:
+                    # Decrypt the key using the crypto module
+                    from backend.app.core.crypto import decrypt_value
+                    decrypted = decrypt_value(encrypted_key)
+                    if decrypted and decrypted != encrypted_key:  # Check if decryption worked
+                        logger.debug("Got API key for %s from SpacetimeDB", prov)
+                        return decrypted
+        except Exception as e:
+            logger.debug("Could not read API key from SpacetimeDB for %s: %s", prov, e)
+
+        # 3. Vault (mounted from host)
         try:
             from backend.app.core.vault import Vault
             vault = Vault()
@@ -480,7 +494,7 @@ async def _run_agent_loop(
         except Exception as e:
             logger.debug("Could not read API key from vault for %s: %s", prov, e)
 
-        # 3. Environment variable
+        # 4. Environment variable
         env_key = os.environ.get(f"{prov.upper()}_API_KEY")
         if env_key:
             return env_key
@@ -493,14 +507,14 @@ async def _run_agent_loop(
 
     # Primary model kwargs
     extra_kwargs: dict = {}
-    primary_key = _resolve_api_key(model)
+    primary_key = await _resolve_api_key(model)
     if primary_key:
         extra_kwargs["api_key"] = primary_key
 
     # Utility model kwargs (may be a different provider)
     utility_model = config.get("utility_model", "claude-sonnet-4-6")
     utility_kwargs: dict = {}
-    utility_key = _resolve_api_key(utility_model)
+    utility_key = await _resolve_api_key(utility_model)
     if utility_key:
         utility_kwargs["api_key"] = utility_key
 

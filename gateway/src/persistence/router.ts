@@ -69,6 +69,64 @@ export function createPersistenceRouter(config: GatewayConfig) {
   });
 
   /**
+   * GET /settings/:key
+   */
+  router.get("/settings/:key", async (req: any, res: any) => {
+    const { key } = req.params;
+    try {
+      const rows = await sqlQuery(
+        spacetimedbUrl,
+        spacetimedbModuleName,
+        "SELECT key, value, key_type FROM settings WHERE key = ?",
+        token,
+        [key]
+      );
+      if (rows.length === 0) {
+        res.status(404).json({ error: `Setting ${key} not found` });
+        return;
+      }
+      const row = rows[0];
+      res.json({
+        key: row.key,
+        value: row.value,
+        keyType: row.key_type,
+      });
+    } catch (err: any) {
+      console.error(`[persistence] GET /settings/${key} failed:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /provider-api-keys/:providerId
+   */
+  router.get("/provider-api-keys/:providerId", async (req: any, res: any) => {
+    const { providerId } = req.params;
+    try {
+      const rows = await sqlQuery(
+        spacetimedbUrl,
+        spacetimedbModuleName,
+        "SELECT provider_id, encrypted_value, key_type FROM provider_api_keys WHERE provider_id = ?",
+        token,
+        [providerId]
+      );
+      if (rows.length === 0) {
+        res.status(404).json({ error: `API key for provider ${providerId} not found` });
+        return;
+      }
+      const row = rows[0];
+      res.json({
+        providerId: row.provider_id,
+        encryptedValue: row.encrypted_value,
+        keyType: row.key_type,
+      });
+    } catch (err: any) {
+      console.error(`[persistence] GET /provider-api-keys/${providerId} failed:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * POST /settings
    */
   router.post("/settings", async (req: any, res: any) => {

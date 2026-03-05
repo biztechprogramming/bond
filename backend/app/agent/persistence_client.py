@@ -185,6 +185,38 @@ class PersistenceClient:
             return resp.json()
         return False
 
+    async def get_setting(self, key: str) -> str | None:
+        """Get a global setting from Gateway/SpacetimeDB."""
+        if not self._initialized:
+            await self.init()
+        if self._mode == "api":
+            assert self._client is not None
+            resp = await self._client.get(f"/settings/{key}")
+            if resp.status_code == 404:
+                return None
+            if resp.status_code != 200:
+                raise RuntimeError(f"Gateway get_setting failed: {resp.text}")
+            data = resp.json()
+            return data.get("value")
+        # In sqlite mode, we can't get global settings
+        return None
+
+    async def get_provider_api_key(self, provider_id: str) -> str | None:
+        """Get an encrypted API key for a provider from Gateway/SpacetimeDB."""
+        if not self._initialized:
+            await self.init()
+        if self._mode == "api":
+            assert self._client is not None
+            resp = await self._client.get(f"/provider-api-keys/{provider_id}")
+            if resp.status_code == 404:
+                return None
+            if resp.status_code != 200:
+                raise RuntimeError(f"Gateway get_provider_api_key failed: {resp.text}")
+            data = resp.json()
+            return data.get("encryptedValue")
+        # In sqlite mode, we can't get provider API keys from SpacetimeDB
+        return None
+
     async def add_mcp_server(self, name: str, command: str, args: list, env: dict) -> dict | bool:
         """Register an MCP server via Gateway."""
         if not self._initialized:
