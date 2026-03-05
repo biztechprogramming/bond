@@ -1,19 +1,28 @@
 # PostgreSQL
 
-## When this applies
-Working with PostgreSQL databases.
+## Performance & Scaling
+- **Connection Pooling**: Mandatory for production. Use PgBouncer or application-level pools (e.g., Hikari, TypeORM pool).
+- **Indexing Strategy**:
+  - Use **Partial Indexes** for selective queries: `CREATE INDEX ... WHERE status = 'active'`.
+  - Use **GIN/GIST** for full-text search and JSONB.
+  - Use **Covering Indexes** (`INCLUDE` clause) to allow Index-Only scans.
+- **Vacuuming**: Monitor bloat. Autovacuum is usually sufficient but may need tuning for high-write tables.
 
-## Patterns / Gotchas
-- Connection pooling is mandatory in production — each PG connection uses ~10MB RSS; use PgBouncer or connection pool library
-- `serial` / `bigserial` is legacy — use `GENERATED ALWAYS AS IDENTITY` instead (SQL standard, prevents accidental manual inserts)
-- `TRUNCATE` takes an ACCESS EXCLUSIVE lock on the table — use `DELETE FROM` in concurrent environments
-- `EXPLAIN ANALYZE` actually executes the query — do NOT use on destructive DML in production
-- CTEs (WITH clauses) were optimization barriers before PG12 — since PG12 the planner can inline them
-- `jsonb` operators: `->>` returns text, `->` returns jsonb — mixing these up causes silent type mismatches
-- `COALESCE(nullable_col, 'default')` evaluates ALL arguments — don't put expensive subqueries in fallback position
-- Partial indexes: `CREATE INDEX idx ON orders(status) WHERE status = 'pending'` — dramatically faster for selective queries
-- `pg_stat_statements` requires shared_preload_libraries restart — can't enable at runtime
-- Advisory locks (`pg_advisory_lock`) are session-level by default — use `pg_advisory_xact_lock` for transaction-scoped
-- `NOW()` returns the same value within a transaction — use `clock_timestamp()` for actual current time in loops
-- Enum types cannot have values removed — only added with `ALTER TYPE ... ADD VALUE`
-- `text` and `varchar` have identical performance in PostgreSQL — no reason to use varchar(n) unless you need a length constraint
+## Schema Design
+- **Identity Columns**: Use `GENERATED ALWAYS AS IDENTITY` instead of `serial`.
+- **Data Types**:
+  - Use `text` instead of `varchar(n)` unless a hard limit is required.
+  - Use `timestamptz` for all timestamps to handle time zones correctly.
+  - Use `jsonb` for semi-structured data; avoid plain `json`.
+- **Constraints**: Use `CHECK` constraints for domain-level validation (e.g., `price > 0`).
+
+## Querying & DML
+- **Locking**: `TRUNCATE` and `ALTER TABLE` take heavy locks. Use `DELETE` or concurrent index creation where possible.
+- **CTEs**: Since PG12, CTEs are inlined. Use them for readability without fear of performance barriers.
+- **Upserts**: Use `INSERT ... ON CONFLICT (key) DO UPDATE SET ...` for atomic upserts.
+- **Explain Analyze**: Use it to debug, but remember it executes the query. Use `EXPLAIN (ANALYZE, BUFFERS)` for detailed I/O stats.
+
+## Pitfalls
+- **Transaction Snapshots**: `NOW()` is stable within a transaction. Use `clock_timestamp()` if you need real-time progress.
+- **Enum Limitations**: You can add values to Enums but not remove them easily. Consider a lookup table for high-churn categories.
+- **Count(*)**: Slow on large tables. Use `reltuples` from `pg_class` for approximations if exact counts aren't needed.
