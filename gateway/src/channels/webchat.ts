@@ -209,9 +209,11 @@ export class WebChatChannel {
       for await (const event of this.backendClient.conversationTurnStream(
         conversationId, message, agentId, planId,
       )) {
+        console.log(`[GATEWAY-WEBCHAT] Received SSE event: ${event.event}`, event.data ? `data keys: ${Object.keys(event.data)}` : 'no data');
         switch (event.event) {
           case "status":
             if (!agentName && event.data.agent_name) agentName = event.data.agent_name as string;
+            console.log(`[GATEWAY-WEBCHAT] Sending status: ${event.data.state}`);
             this.send(socket, {
               type: "status",
               sessionId,
@@ -221,10 +223,12 @@ export class WebChatChannel {
             break;
 
           case "chunk":
+            const chunkContent = event.data.content as string;
+            console.log(`[GATEWAY-WEBCHAT] Sending chunk: ${chunkContent.length} chars, first 50: ${chunkContent.substring(0, 50)}`);
             this.send(socket, {
               type: "chunk",
               sessionId,
-              content: event.data.content as string,
+              content: chunkContent,
               agentName,
               conversationId,
             });
@@ -270,6 +274,7 @@ export class WebChatChannel {
 
           case "done":
             responseMessageId = (event.data.message_id as string) || "";
+            console.log(`[GATEWAY-WEBCHAT] Received done event, message_id: ${responseMessageId}, conversationId: ${conversationId}`);
             if (conversationId) {
               this.sessionManager.setConversationId(sessionId, conversationId);
               session.conversationId = conversationId;

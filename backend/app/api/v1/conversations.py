@@ -402,11 +402,14 @@ async def conversation_turn(
     """
     stdb = get_stdb()
     
+    logger.info(f"[CONVERSATIONS] Starting turn for conversation={conversation_id}, message={req.message[:50] if req.message else 'None'}...")
+    
     # Look up conversation in SpacetimeDB
     conv_rows = await stdb.query(f"SELECT id, agent_id FROM conversations WHERE id = '{conversation_id}'")
     conv_row = conv_rows[0] if conv_rows else None
 
     if conv_row is None:
+        logger.info(f"[CONVERSATIONS] Conversation {conversation_id} not found, creating new one")
         # Auto-create with the specified agent or default from SpacetimeDB
         agent_id = req.agent_id
         if not agent_id:
@@ -415,13 +418,17 @@ async def conversation_turn(
             if not default_agents:
                 # Last resort fallback if SpacetimeDB agents table is truly empty
                 agent_id = "01JBOND0000000000000DEFAULT"
+                logger.warning(f"[CONVERSATIONS] No default agent found, using fallback: {agent_id}")
             else:
                 agent_id = default_agents[0]["id"]
+                logger.info(f"[CONVERSATIONS] Using default agent: {agent_id}")
         
         await stdb.call_reducer("create_conversation", [conversation_id, agent_id, "webchat", ""])
+        logger.info(f"[CONVERSATIONS] Created new conversation {conversation_id} with agent {agent_id}")
     else:
         # Existing conversation — agent is locked, ignore req.agent_id
         agent_id = conv_row["agent_id"]
+        logger.info(f"[CONVERSATIONS] Found existing conversation {conversation_id} with agent {agent_id}")
 
     # Save user message to SpacetimeDB
     if req.message:
@@ -430,7 +437,7 @@ async def conversation_turn(
         
         # Try save_message (snake_case version of saveMessage)
         try:
-            logger.info(f"Attempting to save user message via save_message reducer: {msg_id}")
+            logger.info(f"[CONVERSATIONS] Attempting to save user message via save_message reducer: {msg_id}")
             success = await stdb.call_reducer("save_message", [
                 msg_id,
                 agent_id,
@@ -440,17 +447,17 @@ async def conversation_turn(
                 "{}" # metadata
             ])
             if success:
-                logger.info(f"Message saved via save_message: {msg_id}")
+                logger.info(f"[CONVERSATIONS] Message saved via save_message: {msg_id}")
                 saved = True
             else:
-                logger.warning(f"save_message returned false for: {msg_id}")
+                logger.warning(f"[CONVERSATIONS] save_message returned false for: {msg_id}")
         except Exception as e:
-            logger.warning(f"save_message failed: {e}")
+            logger.warning(f"[CONVERSATIONS] save_message failed: {e}")
         
         # If save_message fails, use add_conversation_message instead
         if not saved:
             try:
-                logger.info(f"Attempting to save user message via add_conversation_message: {msg_id}")
+                logger.info(f"[CONVERSATIONS] Attempting to save user message via add_conversation_message: {msg_id}")
                 success = await stdb.call_reducer("add_conversation_message", [
                     msg_id,
                     conversation_id,
@@ -462,17 +469,17 @@ async def conversation_turn(
                     "delivered"
                 ])
                 if success:
-                    logger.info(f"Message saved via add_conversation_message: {msg_id}")
+                    logger.info(f"[CONVERSATIONS] Message saved via add_conversation_message: {msg_id}")
                     saved = True
                 else:
-                    logger.warning(f"add_conversation_message returned false for: {msg_id}")
+                    logger.warning(f"[CONVERSATIONS] add_conversation_message returned false for: {msg_id}")
             except Exception as e:
-                logger.error(f"add_conversation_message also failed: {e}")
+                logger.error(f"[CONVERSATIONS] add_conversation_message also failed: {e}")
         
         if not saved:
-            logger.error(f"FAILED to save user message {msg_id} to SpacetimeDB!")
+            logger.error(f"[CONVERSATIONS] FAILED to save user message {msg_id} to SpacetimeDB!")
         else:
-            logger.info(f"Successfully saved user message {msg_id}")
+            logger.info(f"[CONVERSATIONS] Successfully saved user message {msg_id}")
 
     # Load history from SpacetimeDB
     # Try conversation_messages first (migrated data), fall back to messages (new persistence)
@@ -517,14 +524,17 @@ async def conversation_turn(
         history.pop()
 
     # Look up agent in SpacetimeDB
+    logger.info(f"[CONVERSATIONS] Looking up agent {agent_id} in SpacetimeDB")
     agent_rows = await stdb.query(f"SELECT * FROM agents WHERE id = '{agent_id}'")
     agent_row = agent_rows[0] if agent_rows else None
     if agent_row is None:
+        logger.error(f"[CONVERSATIONS] Agent {agent_id} not found in SpacetimeDB")
         raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found in SpacetimeDB")
 
     if agent_row.get("sandbox_image") or agent_row.get("sandboxImage"):
         # Container agent — ensure running, proxy SSE
         sandbox_image = agent_row.get("sandbox_image") or agent_row.get("sandboxImage")
+        logger.info(f"[CONVERSATIONS] Agent {agent_id} uses container image: {sandbox_image}")
         
         # Pull mounts from SpacetimeDB-ready formats
         workspace_mounts = []
@@ -543,6 +553,9 @@ async def conversation_turn(
                 }
                 for m in mounts_rows
             ]
+            logger.info(f"[CONVERSATIONS] Agent has {len(workspace_mounts)} workspace mounts")
+        else:
+            logger.info(f"[CONVERSATIONS] Agent has no workspace mounts")
 
         # Decrypt API keys or load from vault
         api_keys = {}
@@ -566,11 +579,15 @@ async def conversation_turn(
             "provider_aliases": provider_aliases,
         }
 
+        logger.info(f"[CONVERSATIONS] Ensuring container is running for agent {agent_id}")
         try:
             info = await get_sandbox_manager().ensure_running(agent_dict)
+            logger.info(f"[CONVERSATIONS] Container running at worker_url: {info['worker_url']}")
         except RuntimeError as e:
+            logger.error(f"[CONVERSATIONS] Failed to start container: {e}")
             raise HTTPException(status_code=503, detail=str(e))
 
+        logger.info(f"[CONVERSATIONS] Returning StreamingResponse for conversation {conversation_id}")
         return StreamingResponse(
             _stream_container_turn_stdb(info["worker_url"], history, conversation_id, req.plan_id, agent_id, user_message),
             media_type="text/event-stream",
