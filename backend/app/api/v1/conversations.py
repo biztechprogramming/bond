@@ -426,35 +426,80 @@ async def conversation_turn(
     # Save user message to SpacetimeDB
     if req.message:
         msg_id = str(ULID())
-        # Call the worker-style 'saveMessage' reducer (which populates the 'messages' table)
-        await stdb.call_reducer("saveMessage", [
-            msg_id,
-            agent_id,
-            conversation_id,
-            "user",
-            req.message,
-            "{}" # metadata
-        ])
+        saved = False
+        
+        # Try save_message (snake_case version of saveMessage)
+        try:
+            logger.info(f"Attempting to save user message via save_message reducer: {msg_id}")
+            success = await stdb.call_reducer("save_message", [
+                msg_id,
+                agent_id,
+                conversation_id,
+                "user",
+                req.message,
+                "{}" # metadata
+            ])
+            if success:
+                logger.info(f"Message saved via save_message: {msg_id}")
+                saved = True
+            else:
+                logger.warning(f"save_message returned false for: {msg_id}")
+        except Exception as e:
+            logger.warning(f"save_message failed: {e}")
+        
+        # If save_message fails, use add_conversation_message instead
+        if not saved:
+            try:
+                logger.info(f"Attempting to save user message via add_conversation_message: {msg_id}")
+                success = await stdb.call_reducer("add_conversation_message", [
+                    msg_id,
+                    conversation_id,
+                    "user",
+                    req.message,
+                    "",  # toolCalls
+                    "",  # toolCallId
+                    0,   # tokenCount
+                    "delivered"
+                ])
+                if success:
+                    logger.info(f"Message saved via add_conversation_message: {msg_id}")
+                    saved = True
+                else:
+                    logger.warning(f"add_conversation_message returned false for: {msg_id}")
+            except Exception as e:
+                logger.error(f"add_conversation_message also failed: {e}")
+        
+        if not saved:
+            logger.error(f"FAILED to save user message {msg_id} to SpacetimeDB!")
+        else:
+            logger.info(f"Successfully saved user message {msg_id}")
 
     # Load history from SpacetimeDB
     # Try conversation_messages first (migrated data), fall back to messages (new persistence)
     messages_rows = []
     try:
-        messages_rows = await stdb.query(
-            f"SELECT role, content FROM conversationMessages WHERE conversationId = '{conversation_id}'"
-        )
-        # Sort in Python since we can't ORDER BY in SpacetimeDB without proper indexes
-        messages_rows.sort(key=lambda x: x.get("createdAt", 0))
-    except Exception as e:
-        # Fall back to messages table if conversationMessages doesn't exist or fails
-        logger.warning(f"Failed to query conversationMessages: {e}, trying messages table")
+        # Try both camelCase and snake_case table names
         try:
             messages_rows = await stdb.query(
-                f"SELECT role, content FROM messages WHERE sessionId = '{conversation_id}'"
+                f"SELECT role, content FROM conversationMessages WHERE conversationId = '{conversation_id}'"
+            )
+        except:
+            messages_rows = await stdb.query(
+                f"SELECT role, content FROM conversation_messages WHERE conversation_id = '{conversation_id}'"
+            )
+        # Sort in Python since we can't ORDER BY in SpacetimeDB without proper indexes
+        messages_rows.sort(key=lambda x: x.get("createdAt", 0) or x.get("created_at", 0))
+    except Exception as e:
+        # Fall back to messages table if conversation_messages doesn't exist or fails
+        logger.warning(f"Failed to query conversation_messages: {e}, trying messages table")
+        try:
+            messages_rows = await stdb.query(
+                f"SELECT role, content FROM messages WHERE sessionId = '{conversation_id}' OR session_id = '{conversation_id}'"
             )
             # Try to sort by createdAt if available, otherwise by insertion order
-            if messages_rows and "createdAt" in messages_rows[0]:
-                messages_rows.sort(key=lambda x: x.get("createdAt", 0))
+            if messages_rows:
+                # Try both camelCase and snake_case column names
+                messages_rows.sort(key=lambda x: x.get("createdAt", 0) or x.get("created_at", 0))
         except Exception as e2:
             logger.error(f"Failed to query messages table: {e2}")
             messages_rows = []

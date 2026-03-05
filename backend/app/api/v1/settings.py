@@ -266,21 +266,43 @@ async def get_llm_models():
     """
     from backend.app.core.spacetimedb import get_stdb
     client = get_stdb()
-    rows = await client.query("""
-        SELECT p.litellm_prefix, m.model_id, m.display_name, m.provider, m.is_enabled
-        FROM llm_models m JOIN providers p ON m.provider = p.id
-        WHERE m.is_enabled = true
-        ORDER BY p.display_name, m.display_name
+    
+    # SpacetimeDB doesn't support JOINs, so we need to fetch data separately
+    # First, get all enabled models
+    models = await client.query("""
+        SELECT model_id, display_name, provider, is_enabled
+        FROM llm_models
+        WHERE is_enabled = true
+        ORDER BY display_name
     """)
-    return [
-        {
-            "id": f"{row['litellm_prefix']}/{row['model_id']}",  # litellm model ID
-            "name": row["display_name"],
-            "provider": row["provider"],
-            "category": "chat",  # TODO: add category column
-        }
-        for row in rows
-    ]
+    
+    # Get all providers to map provider IDs to litellm_prefix
+    providers = await client.query("""
+        SELECT id, litellm_prefix, display_name
+        FROM providers
+        WHERE is_enabled = true
+    """)
+    
+    # Create a mapping from provider ID to litellm_prefix and display_name
+    provider_map = {p["id"]: p for p in providers}
+    
+    # Combine the data
+    result = []
+    for model in models:
+        provider_id = model["provider"]
+        if provider_id in provider_map:
+            provider = provider_map[provider_id]
+            result.append({
+                "id": f"{provider['litellm_prefix']}/{model['model_id']}",  # litellm model ID
+                "name": model["display_name"],
+                "provider": provider_id,
+                "category": "chat",  # TODO: add category column
+            })
+    
+    # Sort by provider display name, then model display name
+    result.sort(key=lambda x: (provider_map.get(x["provider"], {}).get("display_name", ""), x["name"]))
+    
+    return result
 
 
 @router.get("/llm/current")

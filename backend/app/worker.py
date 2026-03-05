@@ -446,8 +446,20 @@ async def _run_agent_loop(
 
     def _resolve_provider(model_id: str) -> str:
         """Resolve model prefix to canonical provider ID using DB aliases."""
-        prefix = model_id.split("/")[0] if "/" in model_id else "anthropic"
-        return provider_aliases.get(prefix, prefix)
+        # First, check if model_id has provider/model format
+        if "/" in model_id:
+            prefix = model_id.split("/")[0]
+            return provider_aliases.get(prefix, prefix)
+        
+        # Check if model_id starts with any known alias
+        # Common patterns: gemini-..., claude-..., gpt-..., o1-..., o3-..., o4-...
+        model_lower = model_id.lower()
+        for alias in provider_aliases:
+            if model_lower.startswith(alias.lower() + "-"):
+                return provider_aliases.get(alias, alias)
+        
+        # Default to anthropic for backward compatibility
+        return "anthropic"
 
     def _resolve_api_key(model_id: str) -> str | None:
         """Resolve API key: injected from host DB → Vault → env var."""
@@ -469,7 +481,15 @@ async def _run_agent_loop(
             logger.debug("Could not read API key from vault for %s: %s", prov, e)
 
         # 3. Environment variable
-        return os.environ.get(f"{prov.upper()}_API_KEY")
+        env_key = os.environ.get(f"{prov.upper()}_API_KEY")
+        if env_key:
+            return env_key
+        
+        # Special case: Google provider can use GEMINI_API_KEY
+        if prov == "google":
+            return os.environ.get("GEMINI_API_KEY")
+        
+        return None
 
     # Primary model kwargs
     extra_kwargs: dict = {}
