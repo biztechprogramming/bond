@@ -13,4 +13,5 @@ import {
 export default {
   key: __t.string(),
   value: __t.string(),
+  keyType: __t.string(),
 };

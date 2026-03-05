@@ -10,6 +10,26 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AgentChannels = __t.object("AgentChannels", {
+  id: __t.string(),
+  agentId: __t.string(),
+  channel: __t.string(),
+  sandboxOverride: __t.string(),
+  enabled: __t.bool(),
+  createdAt: __t.u64(),
+});
+export type AgentChannels = __Infer<typeof AgentChannels>;
+
+export const AgentWorkspaceMounts = __t.object("AgentWorkspaceMounts", {
+  id: __t.string(),
+  agentId: __t.string(),
+  hostPath: __t.string(),
+  mountName: __t.string(),
+  containerPath: __t.string(),
+  readonly: __t.bool(),
+});
+export type AgentWorkspaceMounts = __Infer<typeof AgentWorkspaceMounts>;
+
 export const Agents = __t.object("Agents", {
   id: __t.string(),
   name: __t.string(),
@@ -18,11 +38,41 @@ export const Agents = __t.object("Agents", {
   model: __t.string(),
   utilityModel: __t.string(),
   tools: __t.string(),
+  sandboxImage: __t.string(),
+  maxIterations: __t.u32(),
   isActive: __t.bool(),
   isDefault: __t.bool(),
   createdAt: __t.u64(),
 });
 export type Agents = __Infer<typeof Agents>;
+
+export const ConversationMessages = __t.object("ConversationMessages", {
+  id: __t.string(),
+  conversationId: __t.string(),
+  role: __t.string(),
+  content: __t.string(),
+  toolCalls: __t.string(),
+  toolCallId: __t.string(),
+  tokenCount: __t.u32(),
+  status: __t.string(),
+  createdAt: __t.u64(),
+});
+export type ConversationMessages = __Infer<typeof ConversationMessages>;
+
+export const Conversations = __t.object("Conversations", {
+  id: __t.string(),
+  agentId: __t.string(),
+  channel: __t.string(),
+  title: __t.string(),
+  isActive: __t.bool(),
+  messageCount: __t.u32(),
+  rollingSummary: __t.string(),
+  summaryCoversto: __t.u32(),
+  recentToolsUsed: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type Conversations = __Infer<typeof Conversations>;
 
 export const LlmModels = __t.object("LlmModels", {
   id: __t.string(),
@@ -33,6 +83,19 @@ export const LlmModels = __t.object("LlmModels", {
   isEnabled: __t.bool(),
 });
 export type LlmModels = __Infer<typeof LlmModels>;
+
+export const McpServers = __t.object("McpServers", {
+  id: __t.string(),
+  name: __t.string(),
+  command: __t.string(),
+  args: __t.string(),
+  env: __t.string(),
+  enabled: __t.bool(),
+  agentId: __t.option(__t.string()),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type McpServers = __Infer<typeof McpServers>;
 
 export const Messages = __t.object("Messages", {
   id: __t.string(),
@@ -45,6 +108,39 @@ export const Messages = __t.object("Messages", {
 });
 export type Messages = __Infer<typeof Messages>;
 
+export const ProviderApiKeys = __t.object("ProviderApiKeys", {
+  providerId: __t.string(),
+  encryptedValue: __t.string(),
+  keyType: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type ProviderApiKeys = __Infer<typeof ProviderApiKeys>;
+
+export const Providers = __t.object("Providers", {
+  id: __t.string(),
+  displayName: __t.string(),
+  litellmPrefix: __t.string(),
+  apiBaseUrl: __t.option(__t.string()),
+  modelsEndpoint: __t.option(__t.string()),
+  modelsFetchMethod: __t.string(),
+  authType: __t.string(),
+  isEnabled: __t.bool(),
+  config: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type Providers = __Infer<typeof Providers>;
+
+export const Settings = __t.object("Settings", {
+  key: __t.string(),
+  value: __t.string(),
+  keyType: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type Settings = __Infer<typeof Settings>;
+
 export const ToolLogs = __t.object("ToolLogs", {
   id: __t.string(),
   agentId: __t.string(),
@@ -56,4 +152,34 @@ export const ToolLogs = __t.object("ToolLogs", {
   createdAt: __t.u64(),
 });
 export type ToolLogs = __Infer<typeof ToolLogs>;
+
+export const WorkItems = __t.object("WorkItems", {
+  id: __t.string(),
+  planId: __t.string(),
+  title: __t.string(),
+  status: __t.string(),
+  ordinal: __t.u32(),
+  contextSnapshot: __t.string(),
+  notes: __t.string(),
+  filesChanged: __t.string(),
+  startedAt: __t.option(__t.u64()),
+  completedAt: __t.option(__t.u64()),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+  description: __t.string(),
+});
+export type WorkItems = __Infer<typeof WorkItems>;
+
+export const WorkPlans = __t.object("WorkPlans", {
+  id: __t.string(),
+  agentId: __t.string(),
+  conversationId: __t.string(),
+  parentPlanId: __t.string(),
+  title: __t.string(),
+  status: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+  completedAt: __t.option(__t.u64()),
+});
+export type WorkPlans = __Infer<typeof WorkPlans>;
 

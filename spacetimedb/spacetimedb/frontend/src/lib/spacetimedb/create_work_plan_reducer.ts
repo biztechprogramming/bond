@@ -14,5 +14,6 @@ export default {
   id: __t.string(),
   agentId: __t.string(),
   conversationId: __t.string(),
+  parentPlanId: __t.string(),
   title: __t.string(),
 };

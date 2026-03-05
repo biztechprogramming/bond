@@ -35,15 +35,19 @@ import {
 
 // Import all reducer arg schemas
 import AddAgentReducer from "./add_agent_reducer";
+import AddAgentMountReducer from "./add_agent_mount_reducer";
 import AddConversationMessageReducer from "./add_conversation_message_reducer";
 import AddMcpServerReducer from "./add_mcp_server_reducer";
 import AddModelReducer from "./add_model_reducer";
+import AddProviderReducer from "./add_provider_reducer";
 import AddWorkItemReducer from "./add_work_item_reducer";
 import CreateConversationReducer from "./create_conversation_reducer";
 import CreateWorkPlanReducer from "./create_work_plan_reducer";
 import DeleteConversationReducer from "./delete_conversation_reducer";
 import DeleteConversationMessageReducer from "./delete_conversation_message_reducer";
 import DeleteMcpServerReducer from "./delete_mcp_server_reducer";
+import DeleteProviderReducer from "./delete_provider_reducer";
+import DeleteProviderApiKeyReducer from "./delete_provider_api_key_reducer";
 import DeleteSettingReducer from "./delete_setting_reducer";
 import DeleteWorkPlanReducer from "./delete_work_plan_reducer";
 import ImportConversationReducer from "./import_conversation_reducer";
@@ -53,21 +57,27 @@ import ImportWorkPlanReducer from "./import_work_plan_reducer";
 import LogToolReducer from "./log_tool_reducer";
 import RenameWorkItemReducer from "./rename_work_item_reducer";
 import SaveMessageReducer from "./save_message_reducer";
+import SetProviderApiKeyReducer from "./set_provider_api_key_reducer";
 import SetSettingReducer from "./set_setting_reducer";
 import UpdateConversationReducer from "./update_conversation_reducer";
 import UpdateMcpServerReducer from "./update_mcp_server_reducer";
+import UpdateProviderReducer from "./update_provider_reducer";
 import UpdateWorkItemReducer from "./update_work_item_reducer";
 import UpdateWorkPlanStatusReducer from "./update_work_plan_status_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
+import AgentChannelsRow from "./agent_channels_table";
+import AgentWorkspaceMountsRow from "./agent_workspace_mounts_table";
 import AgentsRow from "./agents_table";
 import ConversationMessagesRow from "./conversation_messages_table";
 import ConversationsRow from "./conversations_table";
 import LlmModelsRow from "./llm_models_table";
 import McpServersRow from "./mcp_servers_table";
 import MessagesRow from "./messages_table";
+import ProviderApiKeysRow from "./provider_api_keys_table";
+import ProvidersRow from "./providers_table";
 import SettingsRow from "./settings_table";
 import ToolLogsRow from "./tool_logs_table";
 import WorkItemsRow from "./work_items_table";
@@ -77,6 +87,28 @@ import WorkPlansRow from "./work_plans_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
+  agent_channels: __table({
+    name: 'agent_channels',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'agent_channels_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AgentChannelsRow),
+  agent_workspace_mounts: __table({
+    name: 'agent_workspace_mounts',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'agent_workspace_mounts_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AgentWorkspaceMountsRow),
   agents: __table({
     name: 'agents',
     indexes: [
@@ -143,6 +175,28 @@ const tablesSchema = __schema({
       { name: 'messages_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, MessagesRow),
+  provider_api_keys: __table({
+    name: 'provider_api_keys',
+    indexes: [
+      { name: 'providerId', algorithm: 'btree', columns: [
+        'providerId',
+      ] },
+    ],
+    constraints: [
+      { name: 'provider_api_keys_provider_id_key', constraint: 'unique', columns: ['providerId'] },
+    ],
+  }, ProviderApiKeysRow),
+  providers: __table({
+    name: 'providers',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'providers_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ProvidersRow),
   settings: __table({
     name: 'settings',
     indexes: [
@@ -192,15 +246,19 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("add_agent", AddAgentReducer),
+  __reducerSchema("add_agent_mount", AddAgentMountReducer),
   __reducerSchema("add_conversation_message", AddConversationMessageReducer),
   __reducerSchema("add_mcp_server", AddMcpServerReducer),
   __reducerSchema("add_model", AddModelReducer),
+  __reducerSchema("add_provider", AddProviderReducer),
   __reducerSchema("add_work_item", AddWorkItemReducer),
   __reducerSchema("create_conversation", CreateConversationReducer),
   __reducerSchema("create_work_plan", CreateWorkPlanReducer),
   __reducerSchema("delete_conversation", DeleteConversationReducer),
   __reducerSchema("delete_conversation_message", DeleteConversationMessageReducer),
   __reducerSchema("delete_mcp_server", DeleteMcpServerReducer),
+  __reducerSchema("delete_provider", DeleteProviderReducer),
+  __reducerSchema("delete_provider_api_key", DeleteProviderApiKeyReducer),
   __reducerSchema("delete_setting", DeleteSettingReducer),
   __reducerSchema("delete_work_plan", DeleteWorkPlanReducer),
   __reducerSchema("import_conversation", ImportConversationReducer),
@@ -210,9 +268,11 @@ const reducersSchema = __reducers(
   __reducerSchema("log_tool", LogToolReducer),
   __reducerSchema("rename_work_item", RenameWorkItemReducer),
   __reducerSchema("save_message", SaveMessageReducer),
+  __reducerSchema("set_provider_api_key", SetProviderApiKeyReducer),
   __reducerSchema("set_setting", SetSettingReducer),
   __reducerSchema("update_conversation", UpdateConversationReducer),
   __reducerSchema("update_mcp_server", UpdateMcpServerReducer),
+  __reducerSchema("update_provider", UpdateProviderReducer),
   __reducerSchema("update_work_item", UpdateWorkItemReducer),
   __reducerSchema("update_work_plan_status", UpdateWorkPlanStatusReducer),
 );

@@ -39,6 +39,18 @@ const spacetimedb = schema({
     }
   ),
 
+  agent_channels: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agentId: t.string(),
+      channel: t.string(),
+      sandboxOverride: t.string(),
+      enabled: t.bool(),
+      createdAt: t.u64(),
+    }
+  ),
+
   // -- Conversations --
   conversations: table(
     { public: true },
@@ -84,6 +96,12 @@ const spacetimedb = schema({
       content: t.string(),
       metadata: t.string(),
       createdAt: t.u64(),
+    },
+    {
+      indexes: [
+        { columns: ['sessionId', 'createdAt'] }, // For querying messages by session in chronological order
+        { columns: ['agentId', 'createdAt'] },   // For querying all messages for an agent
+      ]
     }
   ),
 
@@ -167,6 +185,7 @@ const spacetimedb = schema({
     {
       key: t.string().primaryKey(),
       value: t.string(),
+      keyType: t.string().default("api_key"),
       createdAt: t.u64(),
       updatedAt: t.u64(),
     }
@@ -179,10 +198,12 @@ const spacetimedb = schema({
       id: t.string().primaryKey(),
       agentId: t.string(),
       conversationId: t.string(),
+      parentPlanId: t.string().default(''),
       title: t.string(),
       status: t.string(), // 'active', 'completed', 'cancelled'
       createdAt: t.u64(),
       updatedAt: t.u64(),
+      completedAt: t.u64().optional(),
     }
   ),
 
@@ -195,8 +216,11 @@ const spacetimedb = schema({
       title: t.string(),
       status: t.string(), // 'new', 'in_progress', 'done', 'blocked'
       ordinal: t.u32(),
-      notes: t.string(), // JSON array of strings
-      filesChanged: t.string(), // JSON array
+      contextSnapshot: t.string().default('{}'), // JSON object
+      notes: t.string().default('[]'), // JSON array of strings
+      filesChanged: t.string().default('[]'), // JSON array
+      startedAt: t.u64().optional(),
+      completedAt: t.u64().optional(),
       createdAt: t.u64(),
       updatedAt: t.u64(),
       description: t.string().default(''), // execution context: codebase, file paths, approach
@@ -239,12 +263,12 @@ export const addAgent = spacetimedb.reducer(
     tools: t.string(),
     sandboxImage: t.string(),
     maxIterations: t.u32(),
+    isActive: t.bool(),
     isDefault: t.bool(),
   },
   (ctx, agent) => {
     ctx.db.agents.insert({
       ...agent,
-      isActive: true,
       createdAt: BigInt(Date.now()),
     });
   }
@@ -509,6 +533,7 @@ export const setSetting = spacetimedb.reducer(
   {
     key: t.string(),
     value: t.string(),
+    keyType: t.string().default("api_key"),
   },
   (ctx, args) => {
     const now = BigInt(Date.now());
@@ -545,6 +570,7 @@ export const createWorkPlan = spacetimedb.reducer(
     id: t.string(),
     agentId: t.string(),
     conversationId: t.string(),
+    parentPlanId: t.string().default(''),
     title: t.string(),
   },
   (ctx, plan) => {
@@ -554,6 +580,7 @@ export const createWorkPlan = spacetimedb.reducer(
       status: 'active',
       createdAt: now,
       updatedAt: now,
+      completedAt: undefined,
     });
   }
 );
@@ -566,10 +593,12 @@ export const updateWorkPlanStatus = spacetimedb.reducer(
   (ctx, args) => {
     const plan = ctx.db.workPlans.id.find(args.id);
     if (!plan) return;
+    const now = BigInt(Date.now());
     ctx.db.workPlans.id.update({
       ...plan,
       status: args.status,
-      updatedAt: BigInt(Date.now()),
+      updatedAt: now,
+      completedAt: args.status === 'completed' ? now : plan.completedAt,
     });
   }
 );
@@ -602,8 +631,11 @@ export const addWorkItem = spacetimedb.reducer(
     ctx.db.workItems.insert({
       ...item,
       status: 'new',
+      contextSnapshot: '{}',
       notes: '[]',
       filesChanged: '[]',
+      startedAt: undefined,
+      completedAt: undefined,
       createdAt: now,
       updatedAt: now,
     });
@@ -663,11 +695,14 @@ export const importWorkItem = spacetimedb.reducer(
     title: t.string(),
     status: t.string(),
     ordinal: t.u32(),
-    description: t.string(),
-    notes: t.string(),
-    filesChanged: t.string(),
+    contextSnapshot: t.string().default('{}'),
+    notes: t.string().default('[]'),
+    filesChanged: t.string().default('[]'),
+    startedAt: t.u64().optional(),
+    completedAt: t.u64().optional(),
     createdAt: t.u64(),
     updatedAt: t.u64(),
+    description: t.string().default(''),
   },
   (ctx, item) => {
     const existing = ctx.db.workItems.id.find(item.id);
@@ -690,10 +725,12 @@ export const importWorkPlan = spacetimedb.reducer(
     id: t.string(),
     agentId: t.string(),
     conversationId: t.string(),
+    parentPlanId: t.string().default(''),
     title: t.string(),
     status: t.string(),
     createdAt: t.u64(),
     updatedAt: t.u64(),
+    completedAt: t.u64().optional(),
   },
   (ctx, plan) => {
     const existing = ctx.db.workPlans.id.find(plan.id);

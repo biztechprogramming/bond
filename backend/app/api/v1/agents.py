@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import time
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -68,10 +69,73 @@ class AgentUpdate(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────
 
 
-# This function is no longer used after migrating to SpacetimeDB
-# async def _get_agent_with_relations(db: AsyncSession, agent_id: str) -> dict | None:
-#     """Fetch an agent with its workspace mounts and channels."""
-#     # Removed for SpacetimeDB migration
+async def _get_agent_by_id(agent_id: str) -> dict:
+    """Fetch an agent with its workspace mounts and channels from SpacetimeDB."""
+    stdb = get_stdb()
+    
+    # Get agent
+    rows = await stdb.query(f"SELECT * FROM agents WHERE id = '{agent_id}'")
+    if not rows:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    row = rows[0]
+    
+    # Get workspace mounts
+    mounts_rows = await stdb.query(f"SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
+    workspace_mounts = [
+        {
+            "host_path": m["host_path"],
+            "mount_name": m["mount_name"],
+            "container_path": m["container_path"] or f"/workspace/{m['mount_name']}",
+            "readonly": bool(m["readonly"]),
+        }
+        for m in mounts_rows
+    ]
+    
+    # Get channels (if table exists)
+    channels = []
+    try:
+        channels_rows = await stdb.query(f"SELECT channel, enabled, sandbox_override FROM agent_channels WHERE agent_id = '{agent_id}'")
+        channels = [
+            {
+                "channel": c["channel"],
+                "enabled": bool(c["enabled"]),
+                "sandbox_override": c["sandbox_override"],
+            }
+            for c in channels_rows
+        ]
+    except:
+        # Table might not exist yet
+        pass
+    
+    # Parse tools JSON
+    tools = row["tools"]
+    if isinstance(tools, str):
+        try:
+            tools = json.loads(tools)
+        except json.JSONDecodeError:
+            tools = []
+    
+    agent = {
+        "id": agent_id,
+        "name": row["name"],
+        "display_name": row["display_name"],
+        "system_prompt": row["system_prompt"],
+        "model": row["model"],
+        "utility_model": row["utility_model"] or "claude-sonnet-4-6",
+        "tools": tools,
+        "sandbox_image": row["sandbox_image"],
+        "max_iterations": int(row["max_iterations"] or 10),
+        "auto_rag": bool(row.get("auto_rag", True)),
+        "auto_rag_limit": int(row.get("auto_rag_limit", 5)),
+        "is_active": bool(row["is_active"]),
+        "is_default": bool(row["is_default"]),
+        "workspace_mounts": workspace_mounts,
+        "channels": channels,
+        "created_at": row["created_at"],
+    }
+    
+    return agent
 
 
 # ── Endpoints ─────────────────────────────────────────────────
@@ -192,77 +256,74 @@ async def browse_directories(path: str = "/", show_hidden: bool = False):
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str):
     """Get a single agent with mounts and channels."""
-    stdb = get_stdb()
-    
-    # Query agent from SpacetimeDB
-    rows = await stdb.query(f"SELECT id, name, display_name, system_prompt, model, utility_model, tools, sandbox_image, max_iterations, is_active, is_default, created_at FROM agents WHERE id = '{agent_id}'")
-    if not rows:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    
-    row = rows[0]
-    
-    # Get workspace mounts
-    mounts_rows = await stdb.query(f"SELECT host_path, mount_name, container_path, readonly FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
-    workspace_mounts = [
-        {
-            "host_path": m["host_path"],
-            "mount_name": m["mount_name"],
-            "container_path": m["container_path"] or f"/workspace/{m['mount_name']}",
-            "readonly": bool(m["readonly"]),
-        }
-        for m in mounts_rows
-    ]
-    
-    # Get channels (if table exists)
-    channels = []
-    try:
-        channels_rows = await stdb.query(f"SELECT channel, enabled, sandbox_override FROM agent_channels WHERE agent_id = '{agent_id}'")
-        channels = [
-            {
-                "channel": c["channel"],
-                "enabled": bool(c["enabled"]),
-                "sandbox_override": c["sandbox_override"],
-            }
-            for c in channels_rows
-        ]
-    except:
-        # Table might not exist yet
-        pass
-    
-    # Parse tools JSON
-    tools = row["tools"]
-    if isinstance(tools, str):
-        try:
-            tools = json.loads(tools)
-        except json.JSONDecodeError:
-            tools = []
-    
-    agent = {
-        "id": agent_id,
-        "name": row["name"],
-        "display_name": row["display_name"],
-        "system_prompt": row["system_prompt"],
-        "model": row["model"],
-        "utility_model": row["utility_model"] or "claude-sonnet-4-6",
-        "tools": tools,
-        "sandbox_image": row["sandbox_image"],
-        "max_iterations": int(row["max_iterations"] or 10),
-        "is_active": bool(row["is_active"]),
-        "is_default": bool(row["is_default"]),
-        "workspace_mounts": workspace_mounts,
-        "channels": channels,
-        "created_at": row["created_at"],
-    }
-    
-    return agent
+    return await _get_agent_by_id(agent_id)
 
 
 @router.post("")
 async def create_agent(body: AgentCreate):
     """Create a new agent with mounts and channels."""
-    # TODO: Implement SpacetimeDB version
-    # For now, return NotImplemented since we're migrating
-    raise HTTPException(status_code=501, detail="Create agent not yet implemented for SpacetimeDB")
+    stdb = get_stdb()
+    agent_id = str(ULID())
+    created_at = int(time.time() * 1000)
+    
+    # Check if agent with this name already exists
+    existing = await stdb.query(f"SELECT id FROM agents WHERE name = '{body.name}'")
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Agent with name '{body.name}' already exists")
+    
+    # Insert agent
+    tools_json = json.dumps(body.tools or [])
+    await stdb.query(f"""
+        INSERT INTO agents (
+            id, name, display_name, system_prompt, model, utility_model,
+            tools, sandbox_image, max_iterations, is_active, is_default, created_at
+        ) VALUES (
+            '{agent_id}',
+            '{body.name}',
+            '{body.display_name}',
+            '{body.system_prompt}',
+            '{body.model}',
+            '{body.utility_model}',
+            '{tools_json}',
+            '{body.sandbox_image or ""}',
+            {body.max_iterations},
+            true,
+            false,
+            {created_at}
+        )
+    """)
+    
+    # Insert workspace mounts
+    for mount in body.workspace_mounts:
+        mount_id = str(ULID())
+        await stdb.query(f"""
+            INSERT INTO agent_workspace_mounts (
+                id, agent_id, host_path, mount_name, container_path, readonly
+            ) VALUES (
+                '{mount_id}',
+                '{agent_id}',
+                '{mount.host_path}',
+                '{mount.mount_name}',
+                '{mount.container_path or f"/workspace/{mount.mount_name}"}',
+                {str(mount.readonly).lower()}
+            )
+        """)
+    
+    # Insert channels
+    for channel in body.channels:
+        # Use SQL INSERT - no reducer for channels yet
+        await stdb.query(f"""
+            INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
+            VALUES (
+                '{agent_id}',
+                '{channel.channel}',
+                {str(channel.enabled).lower()},
+                '{channel.sandbox_override or ""}'
+            )
+        """)
+    
+    # Return the created agent
+    return await _get_agent_by_id(agent_id)
 
 
 @router.put("/{agent_id}")

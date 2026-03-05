@@ -437,10 +437,27 @@ async def conversation_turn(
         ])
 
     # Load history from SpacetimeDB
-    # sessionId is the column name in messages table for conversation ID
-    messages_rows = await stdb.query(
-        f"SELECT role, content FROM messages WHERE sessionId = '{conversation_id}' ORDER BY id ASC"
-    )
+    # Try conversation_messages first (migrated data), fall back to messages (new persistence)
+    messages_rows = []
+    try:
+        messages_rows = await stdb.query(
+            f"SELECT role, content FROM conversationMessages WHERE conversationId = '{conversation_id}'"
+        )
+        # Sort in Python since we can't ORDER BY in SpacetimeDB without proper indexes
+        messages_rows.sort(key=lambda x: x.get("createdAt", 0))
+    except Exception as e:
+        # Fall back to messages table if conversationMessages doesn't exist or fails
+        logger.warning(f"Failed to query conversationMessages: {e}, trying messages table")
+        try:
+            messages_rows = await stdb.query(
+                f"SELECT role, content FROM messages WHERE sessionId = '{conversation_id}'"
+            )
+            # Try to sort by createdAt if available, otherwise by insertion order
+            if messages_rows and "createdAt" in messages_rows[0]:
+                messages_rows.sort(key=lambda x: x.get("createdAt", 0))
+        except Exception as e2:
+            logger.error(f"Failed to query messages table: {e2}")
+            messages_rows = []
     
     # Critical: extract history and current message for the agent call
     history = [{"role": r["role"], "content": r["content"]} for r in messages_rows]
