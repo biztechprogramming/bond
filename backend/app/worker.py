@@ -444,6 +444,8 @@ async def _run_agent_loop(
     injected_keys: dict[str, str] = config.get("api_keys", {})
     provider_aliases: dict[str, str] = config.get("provider_aliases", {})
 
+    logger.error("DEBUG: injected_keys: ", injected_keys)
+
     def _resolve_provider(model_id: str) -> str:
         """Resolve model prefix to canonical provider ID using DB aliases."""
         # First, check if model_id has provider/model format
