@@ -5,9 +5,12 @@ import httpx
 
 from backend.app.core.spacetimedb import get_stdb
 from backend.app.agent.interrupts import register_turn, unregister_turn
-from backend.app.core.sse import _sse
 
 logger = logging.getLogger(__name__)
+
+def _sse(event: str, data: dict) -> str:
+    """Format an SSE event."""
+    return f"event: {event}\\ndata: {json.dumps(data)}\\n\\n"
 
 async def _stream_container_turn_stdb(
     worker_url: str,
