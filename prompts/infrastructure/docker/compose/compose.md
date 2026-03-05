@@ -1,18 +1,30 @@
-# Docker Compose
+# Docker Compose Best Practices
 
-## When this applies
-Working with Docker Compose for multi-service development.
+Guidelines for defining and managing multi-container applications with Docker Compose.
 
-## Patterns / Gotchas
-- `depends_on` only waits for container START, not readiness — use `depends_on.condition: service_healthy` with healthcheck for actual readiness
-- `extra_hosts: ["host.docker.internal:host-gateway"]` — required on Linux for containers to reach host services (Bond agents need this)
-- Network aliases: services are reachable by service name within the compose network — `http://gateway:18789` from another container
-- `build.context` vs `build.dockerfile`: context is the directory sent to daemon, dockerfile is the path relative to context
-- Volume mount gotcha: `-v ./local:/container` in compose v2 uses relative paths — v1 required absolute paths
-- Environment precedence: `environment:` in compose > `.env` file > `env_file:` directive — confusing when values conflict
-- `restart: unless-stopped` vs `restart: always`: `unless-stopped` respects manual `docker stop`, `always` restarts even after manual stop
-- `docker compose up -d --build`: `--build` forces image rebuild — without it, stale images are reused even if Dockerfile changed
-- Port mapping: `"18789:18789"` (quotes required when port starts with `0`) — `ports` exposes to host, `expose` only within compose network
-- Compose profiles: `profiles: ["debug"]` — service only starts with `docker compose --profile debug up`; useful for optional services
-- `docker compose down` removes containers and default network — `down -v` also removes named volumes (DATA LOSS)
-- Secrets in compose: `secrets:` top-level key with file reference — mounts at `/run/secrets/` in container, more secure than environment variables
+## Configuration & Structure
+- **Declarative Services**: Every dependency (DB, Cache, Queue) should be defined as a service in the `docker-compose.yml`.
+- **Environment Variables**: Use an `.env` file for local defaults, but allow overrides via system environment variables. Use `env_file` for grouping related variables.
+- **Profiles**: Use `profiles` to group services that aren't always needed (e.g., `debug`, `tools`, `testing`).
+
+## Reliability
+- **Dependency Management**: Use `depends_on` with `condition: service_healthy` to ensure services start in the correct order and are actually ready.
+- **Healthchecks**: Always define `healthcheck` for stateful services (databases, APIs) so dependent services can wait for readiness.
+- **Restart Policies**: Use `restart: unless-stopped` for production-like services and `no` or `on-failure` for one-off tasks.
+
+## Networking & Volumes
+- **Named Networks**: Use custom named networks instead of the default network for better isolation and DNS resolution.
+- **Network Aliases**: Use service names as hostnames for internal communication (e.g., `http://api:8080`).
+- **Volume Persistence**:
+    - Use named volumes for database data to ensure persistence across container restarts.
+    - Use bind mounts (`./src:/app/src`) only for development to enable hot-reloading.
+- **Cleanup**: Be careful with `docker compose down -v` as it deletes all named volumes defined in the file (Permanent Data Loss).
+
+## Performance & Optimization
+- **Build Caching**: Use `cache_from` in CI environments to speed up builds by pulling previous image layers.
+- **Resource Constraints**: Define `deploy.resources.limits` to prevent service interference, even in local development.
+- **Port Mapping**: Only expose ports to the host (`ports`) that need to be accessed externally. Use `expose` for internal-only communication.
+
+## Bond-Specific Patterns
+- **Host Access**: Ensure `extra_hosts: ["host.docker.internal:host-gateway"]` is present for Linux environments needing to reach the Bond gateway.
+- **Consistent Naming**: Use `container_name` sparingly to avoid conflicts when running multiple instances of the same project.
