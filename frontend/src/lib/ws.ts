@@ -81,21 +81,9 @@ export class GatewayWebSocket {
       }
     };
 
-    this.ws.onclose = () => {
-      console.log("[ws] Disconnected from gateway");
-      if (this.shouldReconnect) {
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
-        console.log(`[ws] Reconnecting in ${delay}ms...`);
-        this.reconnectTimer = setTimeout(() => {
-          this.reconnectAttempts++;
-          this._connect();
-        }, delay);
-      }
-    };
 
-    this.ws.onerror = (err) => {
-      console.error("[ws] WebSocket error:", err);
-    };
+
+
   }
 
   onMessage(handler: MessageHandler): () => void {
