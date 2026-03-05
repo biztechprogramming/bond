@@ -383,17 +383,17 @@ async def turn(request: Request) -> StreamingResponse:
                 message, history, conversation_id, event_queue=event_queue, plan_id=plan_id,
             )
             
-            # # Persist assistant response
-            # if _state.persistence:
-            #     try:
-            #         await _state.persistence.save_conversation_message(
-            #             conversation_id=conversation_id,
-            #             role="assistant",
-            #             content=response_text,
-            #             agent_db=_state.agent_db,
-            #         )
-            #     except Exception as e:
-            #         logger.error("Failed to persist assistant message: %s", e)
+            # Persist assistant response
+            if _state.persistence:
+                try:
+                    await _state.persistence.save_message(
+                        session_id=conversation_id,
+                        role="assistant",
+                        content=response_text,
+                        agent_db=_state.agent_db,
+                    )
+                except Exception as e:
+                    logger.error("Failed to persist assistant message: %s", e)
 
             await event_queue.put(_sse_event("chunk", {"content": response_text}))
             await event_queue.put(_sse_event("done", {"response": response_text, "tool_calls_made": tool_calls_made}))
@@ -743,17 +743,17 @@ async def _run_agent_loop(
         messages.extend(compressed_history)
     messages.append({"role": "user", "content": user_message})
     
-    # # Persist user message
-    # if _state.persistence:
-    #     try:
-    #         await _state.persistence.save_conversation_message(
-    #             conversation_id=conversation_id,
-    #             role="user",
-    #             content=user_message,
-    #             agent_db=_state.agent_db,
-    #         )
-    #     except Exception as e:
-    #         logger.error("Failed to persist user message: %s", e)
+    # Persist user message
+    if _state.persistence:
+        try:
+            await _state.persistence.save_conversation_message(
+                conversation_id=conversation_id,
+                role="user",
+                content=user_message,
+                agent_db=_state.agent_db,
+            )
+        except Exception as e:
+            logger.error("Failed to persist user message: %s", e)
 
     # Build tool definitions + registry with heuristic selection
     registry = build_native_registry()
@@ -1181,6 +1181,10 @@ async def _run_agent_loop(
                     "content": result_json,
                 })
         else:
+            messages.append({
+                "role": "assistant",
+                "content": llm_message.content or "",
+            })
             return llm_message.content or "", tool_calls_made
 
     # Hit max iterations — save work plan checkpoint if active
