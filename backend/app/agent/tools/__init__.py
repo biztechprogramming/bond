@@ -79,8 +79,7 @@ def build_registry() -> ToolRegistry:
     from .notify import handle_notify
     from .subordinate import handle_call_subordinate
     from .skills import handle_skills
-    from .work_plan import handle_work_plan
-
+    
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
     registry.register("search_memory", handle_search_memory)
@@ -99,5 +98,4 @@ def build_registry() -> ToolRegistry:
     registry.register("cron", handle_cron)
     registry.register("notify", handle_notify)
     registry.register("skills", handle_skills)
-    registry.register("work_plan", handle_work_plan)
     return registry
