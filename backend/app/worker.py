@@ -823,12 +823,18 @@ async def _run_agent_loop(
     # Initialize to after history + user message (the last pre-turn message).
     _cache_bp2_index = len(messages) - 1
 
-    # ── Utility model routing for info-gathering iterations ──
-    # When the previous iteration only called read-only/info-gathering tools,
-    # the next LLM call uses the cheaper utility model instead of the primary.
+    # ── Speculative utility model routing ──
+    # When the previous iteration only called info-gathering tools, we
+    # speculatively route the next iteration to the cheaper utility model.
+    # If the utility model's response contains a consequential tool call
+    # (file_write, file_edit, respond, memory_save), we discard its response
+    # and replay the same call with the primary model.
     INFO_GATHERING_TOOLS = frozenset({
-        "file_read", "search_memory", "code_execute",
+        "file_read", "search_memory",
         "web_search", "web_read", "work_plan",
+    })
+    CONSEQUENTIAL_TOOLS = frozenset({
+        "file_write", "file_edit", "code_execute", "respond", "memory_save",
     })
     _last_iteration_tool_names: list[str] = []  # tools called in previous iteration
 
@@ -869,7 +875,7 @@ async def _run_agent_loop(
         _is_iter_anthropic = _resolve_provider(_iter_model) == "anthropic"
         if _use_utility:
             logger.info(
-                "Using utility model (%s) for info-gathering iteration %d (prev tools: %s)",
+                "Speculative utility model (%s) for iteration %d (prev tools: %s) — will replay to primary if consequential",
                 utility_model, _iteration, _last_iteration_tool_names,
             )
 
@@ -995,6 +1001,72 @@ async def _run_agent_loop(
         # Successful completion — reset adaptive tokens
         current_tier = 0
         continuation_attempts = 0
+
+        # ── Speculative replay: if utility model wants to do something
+        # consequential, discard its response and replay with primary ──
+        _needs_replay = False
+        if _use_utility:
+            if llm_message.tool_calls:
+                _speculative_tool_names = [tc.function.name for tc in llm_message.tool_calls]
+                _needs_replay = any(t in CONSEQUENTIAL_TOOLS for t in _speculative_tool_names)
+            else:
+                # No tool calls = final text response — always consequential
+                _needs_replay = True
+                _speculative_tool_names = ["(final_response)"]
+
+        if _needs_replay:
+            logger.info(
+                "Utility model proposed consequential action %s — replaying iteration %d with primary model",
+                _speculative_tool_names,
+                _iteration,
+            )
+            # Strip the budget note we injected (if any) before replaying
+            if _budget_note and _budget_target_idx >= 0:
+                content = messages[_budget_target_idx].get("content", "")
+                if isinstance(content, str) and content.endswith(_budget_note):
+                    messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
+
+            # Replay with primary model
+            _replay_messages = messages
+            if not _is_anthropic_model:
+                # Primary is non-Anthropic — strip cache_control if present
+                _replay_messages = copy.deepcopy(messages)
+                for msg in _replay_messages:
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict):
+                                block.pop("cache_control", None)
+
+            response = await litellm.acompletion(
+                model=model,
+                messages=_replay_messages,
+                tools=tool_defs if tool_defs else None,
+                temperature=0.7,
+                max_tokens=current_max_tokens,
+                **extra_kwargs,
+            )
+
+            if not response.choices:
+                logger.warning("Primary replay returned empty choices — continuing with utility response")
+            else:
+                choice = response.choices[0]
+                llm_message = choice.message
+
+                usage = getattr(response, "usage", None)
+                cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+                cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+                input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                output_tokens = getattr(usage, "completion_tokens", 0) or 0
+                logger.info(
+                    "Primary replay response: has_tool_calls=%s finish_reason=%s "
+                    "input=%d output=%d cache_read=%d cache_write=%d",
+                    bool(llm_message.tool_calls), choice.finish_reason,
+                    input_tokens, output_tokens, cache_read, cache_write,
+                )
+
+            # Mark this iteration as no longer utility-routed
+            _use_utility = False
 
         if llm_message.tool_calls:
             # Track tool names for utility model routing on next iteration
