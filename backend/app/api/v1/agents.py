@@ -8,7 +8,7 @@ import logging
 import subprocess
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from ulid import ULID
 
@@ -354,8 +354,8 @@ async def create_agent(body: AgentCreate):
 async def update_agent(
     agent_id: str,
     body: AgentUpdate,
-    stdb: SpacetimeDB = Depends(get_stdb)
 ):
+    stdb = get_stdb()
     # Check if agent exists
     existing = await stdb.query(f"SELECT id FROM agents WHERE id = '{agent_id}'")
     if not existing:
@@ -410,11 +410,39 @@ async def update_agent(
         # Delete existing mounts
         await stdb.query(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
         
-        # Add new mounts
+        # Re-insert mounts with correct schema
         for mount in body.workspace_mounts:
+            mount_id = str(ULID())
+            container = mount.container_path or f"/workspace/{mount.mount_name}"
             await stdb.query(f"""
-                INSERT INTO agent_workspace_mounts (agent_id, source_path, container_path)
-                VALUES ('{agent_id}', '{_escape_sql(mount.host_path)}', '{_escape_sql(mount.container_path)}')
+                INSERT INTO agent_workspace_mounts (
+                    id, agent_id, host_path, mount_name, container_path, readonly
+                ) VALUES (
+                    '{mount_id}',
+                    '{agent_id}',
+                    '{_escape_sql(mount.host_path)}',
+                    '{_escape_sql(mount.mount_name)}',
+                    '{_escape_sql(container)}',
+                    {str(mount.readonly).lower()}
+                )
+            """)
+
+    # Update channels if provided
+    if body.channels is not None:
+        try:
+            await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
+        except Exception:
+            pass  # Table might not exist
+
+        for channel in body.channels:
+            await stdb.query(f"""
+                INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
+                VALUES (
+                    '{agent_id}',
+                    '{_escape_sql(channel.channel)}',
+                    {str(channel.enabled).lower()},
+                    '{_escape_sql(channel.sandbox_override or "")}'
+                )
             """)
 
     return await _get_agent_by_id(agent_id)
