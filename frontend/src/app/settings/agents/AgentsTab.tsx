@@ -141,7 +141,11 @@ export default function AgentsTab() {
   };
 
   const startEdit = (agent: Agent) => {
-    setEditing({ ...agent });
+    setEditing({
+      ...agent,
+      auto_rag: agent.auto_rag ?? true,
+      auto_rag_limit: agent.auto_rag_limit ?? 5,
+    });
     loadAgentFragments(agent.id);
     setPendingFragmentIds(new Set());
     setIsNew(false);
