@@ -1,287 +1,57 @@
-from __future__ import annotations
-import asyncio
 import json
 import logging
 import os
-from contextlib import AsyncExitStack
-from typing import Dict, List, Optional, Any, TYPE_CHECKING, Union, Type
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from pydantic import BaseModel, Field, create_model
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+import asyncio
+from typing import Dict, List, Optional
+from pydantic import BaseModel
 
-if TYPE_CHECKING:
-    from app.agent.tools import ToolRegistry
-
-logger = logging.getLogger("bond.mcp")
+logger = logging.getLogger("bond.mcp.manager")
 
 class MCPServerConfig(BaseModel):
-    name: str
-    command: str
-    args: List[str] = []
-    env: Dict[str, str] = {}
+    name: string
+    command: string
+    args: list[string] = []
+    env: dict[string, string] = {}
     enabled: bool = True
 
-class MCPConnection:
-    """Manages a single MCP server connection."""
-    def __init__(self, config: MCPServerConfig):
-        self.config = config
-        self.params = StdioServerParameters(
-            command=config.command,
-            args=config.args,
-            env={**os.environ, **config.env}
-        )
-        self.session: Optional[ClientSession] = None
-        self._exit_stack = AsyncExitStack()
-        self._lock = asyncio.Lock()
-
-    async def start(self):
-        async with self._lock:
-            if self.session:
-                return
-            logger.info(f"Starting MCP server: {self.config.name}")
-            try:
-                read, write = await self._exit_stack.enter_async_context(stdio_client(self.params))
-                self.session = await self._exit_stack.enter_async_context(ClientSession(read, write))
-                await self.session.initialize()
-            except Exception as e:
-                logger.error(f"Failed to start MCP server {self.config.name}: {e}")
-                await self._exit_stack.aclose()
-                raise
-
-    async def stop(self):
-        async with self._lock:
-            if self.session:
-                logger.info(f"Stopping MCP server: {self.config.name}")
-                # mcp sessions/stdio clients can be very picky about cleanup
-                # especially with anyio's cancel scopes. 
-                # We try a clean close but don't let it crash the manager.
-                try:
-                    await asyncio.wait_for(self._exit_stack.aclose(), timeout=2.0)
-                except (asyncio.TimeoutError, Exception) as e:
-                    logger.debug(f"Non-critical cleanup error for {self.config.name}: {e}")
-                
-                self.session = None
-                self._exit_stack = AsyncExitStack()
-
 class MCPManager:
-    """Manages multiple MCP connections and tool integration."""
     def __init__(self):
-        self.connections: Dict[str, MCPConnection] = {}
-        self._dynamic_definitions: Dict[str, dict] = {} # tool_name -> json_schema
-        self._bond_to_class_map: Dict[str, str] = {} # ClassName -> bond_tool_name
+        self.servers: Dict[string, MCPServerConfig] = {}
+        self._load_servers()
+
+    def _load_servers(self):
+        # Placeholder for loading from SpacetimeDB or config
+        pass
 
     async def add_server(self, config: MCPServerConfig):
-        # Prevent duplicate servers with same name
-        if config.name in self.connections:
-            await self.connections[config.name].stop()
-            
-        conn = MCPConnection(config)
-        self.connections[config.name] = conn
-        await conn.start()
+        self.servers[config.name] = config
+        logger.info(f"Added MCP server: {config.name}")
 
-    async def stop_all(self):
-        for conn in self.connections.values():
-            await conn.stop()
+    async def sync_from_claude(self):
+        """Import MCP servers from Claude config."""
+        config_path = "/.claude/mcp-config.json"
+        if not os.path.exists(config_path):
+            logger.warning(f"Claude config not found at {config_path}")
+            return
 
-    async def refresh_tools(self, registry: ToolRegistry):
-        """Fetch tools from all servers and register them."""
-        self._dynamic_definitions.clear()
-        for server_name, conn in self.connections.items():
-            if not conn.session:
-                continue
-            
-            try:
-                result = await conn.session.list_tools()
-                for mcp_tool in result.tools:
-                    # Prefix tool name to avoid collisions
-                    bond_tool_name = f"mcp_{server_name}_{mcp_tool.name}"
-                    
-                    # Store definition for LLM
-                    self._dynamic_definitions[bond_tool_name] = {
-                        "type": "function",
-                        "function": {
-                            "name": bond_tool_name,
-                            "description": mcp_tool.description or f"MCP tool {mcp_tool.name}",
-                            "parameters": mcp_tool.inputSchema
-                        }
-                    }
-
-                    # Register handler
-                    registry.register(
-                        bond_tool_name, 
-                        self._create_handler(server_name, mcp_tool.name)
-                    )
-                    # Cache the mapping for easy retrieval during Instructor response processing
-                    class_name = "".join(x.capitalize() for x in bond_tool_name.replace("-", "_").split("_"))
-                    self._bond_to_class_map[class_name] = bond_tool_name
-                    self._dynamic_definitions[bond_tool_name]["class_name"] = class_name
-                    
-                    logger.info(f"Registered MCP tool: {bond_tool_name}")
-            except Exception as e:
-                logger.error(f"Failed to refresh tools for {server_name}: {e}")
-
-    def _create_handler(self, server_name: str, mcp_tool_name: str):
-        async def handler(arguments: dict, context: dict) -> dict:
-            conn = self.connections.get(server_name)
-            if not conn or not conn.session:
-                return {"error": f"MCP server '{server_name}' is not connected."}
-            
-            try:
-                result = await conn.session.call_tool(mcp_tool_name, arguments)
-                # MCP results can be complex (content list), we'll simplify for now
-                # Result can contain text, image, or resource content
-                output = []
-                for content in result.content:
-                    if hasattr(content, 'text') and content.text:
-                        output.append(content.text)
-                    elif hasattr(content, 'data') and content.data:
-                        output.append(f"[Data content: {len(content.data)} bytes]")
-                    elif hasattr(content, 'uri') and content.uri:
-                        output.append(f"[Resource: {content.uri}]")
-                
-                return {"result": "\n".join(output) if output else "Tool executed successfully (no output)."}
-            except Exception as e:
-                return {"error": f"MCP tool call failed: {str(e)}"}
-        
-        return handler
-
-    def _create_handler_from_name(self, bond_tool_name: str):
-        """Reconstruct a handler from a bond_tool_name (used by worker registry)."""
-        # bond_tool_name = f"mcp_{server_name}_{mcp_tool_name}"
-        if not bond_tool_name.startswith("mcp_"):
-            raise ValueError(f"Invalid MCP tool name: {bond_tool_name}")
-        
-        # This is a bit brittle if server names have underscores, but let's try
-        # Better: find the longest matching server name
-        for server_name in self.connections:
-            prefix = f"mcp_{server_name}_"
-            if bond_tool_name.startswith(prefix):
-                mcp_tool_name = bond_tool_name[len(prefix):]
-                return self._create_handler(server_name, mcp_tool_name)
-        
-        raise ValueError(f"Server not found for tool: {bond_tool_name}")
-
-    def get_definitions(self, tool_names: list[str]) -> list[dict]:
-        return [self._dynamic_definitions[name] for name in tool_names if name in self._dynamic_definitions]
-
-    def resolve_tool_name(self, class_name: str) -> str:
-        """Resolve a Pydantic class name back to its bond_tool_name."""
-        # Check the bond_to_class_map first (contains PascalCase class name -> snake_case bond name)
-        if class_name in self._bond_to_class_map:
-            return self._bond_to_class_map[class_name]
-        
-        # Static tools like 'Respond' or 'FileRead' are in the map too if they use this manager
-        # But they don't. So we fall back to regex for native tools.
-        import re
-        return re.sub(r'(?<!^)(?=[A-Z])', '_', class_name).lower()
-
-    def get_pydantic_models(self, tool_names: list[str]) -> list[Type[BaseModel]]:
-        """Generate Pydantic models for requested MCP tools."""
-        models: list[Type[BaseModel]] = []
-        for name in tool_names:
-            if name not in self._dynamic_definitions:
-                continue
-            
-            # If we already have a Pydantic model in our INSTRUCTOR_TOOL_MAP, don't recreate
-            # Actually MCP tools are always prefixed so they won't be in the map.
-            
-            schema = self._dynamic_definitions[name]["function"]["parameters"]
-            
-            # Simple dynamic model generation using pydantic.create_model
-            # Note: This is a basic implementation. Complex nested schemas might need recursion.
-            fields = {}
-            for prop_name, prop_info in schema.get("properties", {}).items():
-                prop_type = prop_info.get("type")
-                description = prop_info.get("description", "")
-                
-                field_type: Any = Any
-                if prop_type == "string":
-                    field_type = str
-                elif prop_type == "integer":
-                    field_type = int
-                elif prop_type == "number":
-                    field_type = float
-                elif prop_type == "boolean":
-                    field_type = bool
-                elif prop_type == "array":
-                    field_type = list
-                elif prop_type == "object":
-                    field_type = dict
-
-                if prop_name in schema.get("required", []):
-                    fields[prop_name] = (field_type, Field(..., description=description))
-                else:
-                    fields[prop_name] = (Optional[field_type], Field(None, description=description))
-
-            # Create the model class
-            class_name = self._dynamic_definitions[name]["class_name"]
-            from pydantic import BaseModel
-            try:
-                model = create_model(class_name, __base__=BaseModel, **fields)
-                model.__doc__ = self._dynamic_definitions[name]["function"]["description"]
-                models.append(model)
-            except Exception as e:
-                logger.error(f"Failed to create Pydantic model for {name}: {e}")
-                continue
-            
-        return models
-
-    async def load_servers_from_db(self, db: Optional[AsyncSession] = None, agent_id: Optional[str] = None):
-        """Load and start all enabled MCP servers from SpacetimeDB.
-        
-        Note: db parameter is kept for backward compatibility but is not used.
-        All data is now in SpacetimeDB - NO SQLITE FALLBACK!
-        """
         try:
-            # Use SpacetimeDB - NO FALLBACK!
-            from backend.app.core.spacetimedb import get_stdb
-            stdb = get_stdb()
+            with open(config_path, "r") as f:
+                config = json.load(f)
             
-            # Get all enabled servers from SpacetimeDB
-            sql = "SELECT * FROM mcp_servers WHERE enabled = true"
-            rows = await stdb.query(sql)
-            
-            # Filter by agent_id if specified
-            if agent_id is not None:
-                # Include both global (agent_id is None/none) and agent-specific servers
-                filtered_rows = []
-                for row in rows:
-                    row_agent_id = row.get("agent_id")
-                    # Check if this is a global server or matches the agent_id
-                    if (isinstance(row_agent_id, dict) and "none" in row_agent_id) or row_agent_id == agent_id:
-                        filtered_rows.append(row)
-                rows = filtered_rows
-            else:
-                # Only global servers (agent_id is None/none)
-                filtered_rows = []
-                for row in rows:
-                    row_agent_id = row.get("agent_id")
-                    if isinstance(row_agent_id, dict) and "none" in row_agent_id:
-                        filtered_rows.append(row)
-                rows = filtered_rows
-            
-            for row in rows:
-                # Handle both dict (SpacetimeDB) and Row (SQLAlchemy) types
-                if isinstance(row, dict):
-                    config = MCPServerConfig(
-                        name=row["name"],
-                        command=row["command"],
-                        args=json.loads(row["args"]),
-                        env=json.loads(row["env"]),
-                        enabled=bool(row["enabled"])
-                    )
-                else:
-                    # SQLAlchemy Row object
-                    config = MCPServerConfig(
-                        name=row["name"],
-                        command=row["command"],
-                        args=json.loads(row["args"]),
-                        env=json.loads(row["env"]),
-                        enabled=bool(row["enabled"])
-                    )
-                if config.name not in self.connections:
-                    await self.add_server(config)
+            mcp_servers = config.get("mcpServers", {})
+            for name, server_info in mcp_servers.items():
+                bond_config = MCPServerConfig(
+                    name=name,
+                    command=server_info.get("command", ""),
+                    args=server_info.get("args", []),
+                    env=server_info.get("env", {}),
+                    enabled=True
+                )
+                await self.add_server(bond_config)
+                logger.info(f"Imported MCP server from Claude: {name}")
+                
         except Exception as e:
-            logger.error(f"Failed to load MCP servers from DB: {e}")
+            logger.error(f"Failed to sync from Claude: {e}")
+
+    async def get_servers(self) -> List[MCPServerConfig]:
+        return list(self.servers.values())
