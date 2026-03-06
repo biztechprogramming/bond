@@ -3,11 +3,13 @@
 import React, { useEffect, useState, useCallback } from "react";
 import AgentsTab from "./agents/AgentsTab";
 import PromptsTab from "./prompts/PromptsTab";
+import MCPTab from "./mcp/MCPTab";
 
 const API_BASE = "http://localhost:18790/api/v1/settings";
 
 const TABS = [
   { id: "agents", label: "Agents" },
+  { id: "mcp", label: "MCP" },
   { id: "prompts", label: "Prompts" },
   { id: "llm", label: "LLM" },
   { id: "embedding", label: "Embedding" },
@@ -16,7 +18,7 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-// ── Embedding interfaces ──
+// ── Embedding interfaces ──────────────────────────────────────────────────
 
 interface EmbeddingModel {
   model_name: string;
@@ -43,7 +45,7 @@ interface LlmCurrent {
   keys_set: Record<string, boolean>;
 }
 
-// ── Main Settings Page ──
+// ── Main Settings Page ──────────────────────────────────────────────────────
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("agents");
@@ -95,265 +97,239 @@ export default function SettingsPage() {
       setSelectedModel(cur.model);
       setSelectedDimension(cur.dimension);
       setSelectedMode(cur.execution_mode);
-      setAllSettings(await settingsRes.json());
+      const settings = await settingsRes.json();
+      setAllSettings(settings);
       setLlmCurrent(await llmCurrentRes.json());
-    } catch { /* API not available */ }
+    } catch (err) {
+      console.error("Failed to fetch settings", err);
+    }
   }, []);
 
-  useEffect(() => { fetchSettings(); }, [fetchSettings]);
-
-  const activeModel = models.find((m) => m.model_name === selectedModel);
-
   useEffect(() => {
-    if (!current || !activeModel) { setWarning(""); return; }
-    const cur = models.find((m) => m.model_name === current.model);
-    setWarning(cur && cur.family !== activeModel.family
-      ? `Switching from ${cur.family} to ${activeModel.family} requires re-embedding.`
-      : "");
-  }, [selectedModel, current, activeModel, models]);
-
-  useEffect(() => {
-    if (activeModel && !activeModel.supported_dimensions.includes(selectedDimension))
-      setSelectedDimension(activeModel.supported_dimensions[activeModel.supported_dimensions.length - 1]);
-  }, [selectedModel, activeModel, selectedDimension]);
-
-  const availableModes = () => {
-    if (!activeModel) return [];
-    const m: string[] = [];
-    if (activeModel.supports_local) m.push("local");
-    if (activeModel.supports_api) m.push("api");
-    if (activeModel.supports_local && activeModel.supports_api) m.push("auto");
-    return m;
-  };
-
-  useEffect(() => {
-    const m = availableModes();
-    if (m.length > 0 && !m.includes(selectedMode)) setSelectedMode(m[0]);
-  }, [selectedModel, activeModel]);
+    fetchSettings();
+  }, [fetchSettings]);
 
   const saveEmbedding = async () => {
-    setSaving(true); setSaveMsg("");
+    setSaving(true);
+    setSaveMsg("");
     try {
-      const res = await fetch(`${API_BASE}/embedding`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: selectedModel, dimension: selectedDimension, execution_mode: selectedMode }),
+      const res = await fetch(`${API_BASE}/embedding/current`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: selectedModel,
+          dimension: selectedDimension,
+          execution_mode: selectedMode,
+        }),
       });
-      const data = await res.json();
-      setSaveMsg(!res.ok ? `Error: ${data.detail}` : data.warning ? `Saved. Warning: ${data.warning}` : "Saved.");
-      if (res.ok) await fetchSettings();
-    } catch { setSaveMsg("Failed to save."); }
-    setSaving(false);
+      if (!res.ok) throw new Error("Failed to save");
+      setSaveMsg("Settings saved!");
+      fetchSettings();
+    } catch (err) {
+      setSaveMsg("Error saving settings.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSaveMsg(""), 3000);
+    }
   };
 
-  const saveKey = async (fullKey: string, value: string, clearFn: (v: string) => void) => {
-    if (!value.trim()) return;
+  const saveKeys = async () => {
+    setSaving(true);
     setKeySaveMsg("");
     try {
-      const res = await fetch(`${API_BASE}/${fullKey}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: value.trim() }),
+      const keys = {
+        VOYAGE_API_KEY: voyageKey,
+        GEMINI_API_KEY: geminiKey,
+        ANTHROPIC_API_KEY: anthropicKey,
+        OPENAI_API_KEY: openaiKey,
+        GOOGLE_API_KEY: googleKey,
+      };
+      // Filter out empty keys
+      const toSave = Object.fromEntries(
+        Object.entries(keys).filter(([_, v]) => v.trim() !== "")
+      );
+      if (Object.keys(toSave).length === 0) return;
+
+      const res = await fetch(API_BASE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(toSave),
       });
-      if (res.ok) { setKeySaveMsg(`Saved.`); clearFn(""); await fetchSettings(); }
-      else setKeySaveMsg("Failed.");
-    } catch { setKeySaveMsg("Failed."); }
+      if (!res.ok) throw new Error("Failed to save keys");
+      setKeySaveMsg("Keys saved!");
+      setVoyageKey("");
+      setGeminiKey("");
+      setAnthropicKey("");
+      setOpenaiKey("");
+      setGoogleKey("");
+      fetchSettings();
+    } catch (err) {
+      setKeySaveMsg("Error saving keys.");
+    } finally {
+      setSaving(false);
+      setTimeout(() => setKeySaveMsg(""), 3000);
+    }
   };
 
-  const masked = (key: string) => allSettings[key] || "";
-
-  // ── Render ──
-
   return (
-    <div style={s.container}>
-      <header style={s.header}>
-        <a href="/" style={s.backLink}>&larr; Chat</a>
-        <h1 style={s.title}>Settings</h1>
+    <div className="flex flex-col h-full bg-gray-50 overflow-hidden">
+      <header className="bg-white border-b border-gray-200 px-6 py-4">
+        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
       </header>
 
-      {/* Tab bar */}
-      <div style={s.tabBar}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            style={activeTab === tab.id ? { ...s.tab, ...s.tabActive } : s.tab}
-            onClick={() => switchTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar */}
+        <aside className="w-64 bg-white border-r border-gray-200 overflow-y-auto">
+          <nav className="p-4 space-y-1">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => switchTab(tab.id)}
+                className={`w-full text-left px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                  activeTab === tab.id
+                    ? "bg-blue-50 text-blue-700"
+                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        </aside>
 
-      {/* Tab content */}
-      <div style={s.content}>
-        {activeTab === "agents" && <AgentsTab />}
+        {/* Content */}
+        <main className="flex-1 overflow-y-auto p-8">
+          <div className="max-w-4xl mx-auto">
+            {activeTab === "agents" && <AgentsTab />}
+            {activeTab === "mcp" && <MCPTab />}
+            {activeTab === "prompts" && <PromptsTab />}
 
-        {activeTab === "prompts" && <PromptsTab />}
-
-        {activeTab === "llm" && (
-          <section style={s.section}>
-            <h2 style={s.sectionTitle}>LLM Configuration</h2>
-            <div style={s.field}>
-              <label style={s.label}>Provider</label>
-              <div style={s.readOnly}>{llmCurrent?.provider || "anthropic"} (from bond.json)</div>
-            </div>
-            <div style={s.field}>
-              <label style={s.label}>Model</label>
-              <div style={s.readOnly}>{llmCurrent?.model || "claude-sonnet-4-20250514"} (from bond.json)</div>
-            </div>
-            {llmCurrent && (
-              <div style={{ ...s.modelDetails, marginTop: "12px" }}>
-                {Object.entries(llmCurrent.keys_set).map(([p, set]) => (
-                  <span key={p}>{p}: {set ? "✅" : "❌"}</span>
-                ))}
+            {activeTab === "llm" && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-semibold">LLM Configuration</h2>
+                  <p className="text-sm text-gray-500">View current model and provider.</p>
+                </div>
+                {llmCurrent && (
+                  <div className="bg-white shadow sm:rounded-lg p-6 border border-gray-200">
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2">
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Provider</dt>
+                        <dd className="mt-1 text-sm text-gray-900 capitalize">{llmCurrent.provider}</dd>
+                      </div>
+                      <div>
+                        <dt className="text-sm font-medium text-gray-500">Model</dt>
+                        <dd className="mt-1 text-sm text-gray-900">{llmCurrent.model}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                )}
               </div>
             )}
-            <div style={{ ...s.field, marginTop: "20px" }}>
-              <label style={s.label}>Turn Timeout (minutes)</label>
-              <p style={{ color: "#5a5a6e", fontSize: "0.8rem", margin: "0 0 8px 0" }}>
-                Maximum time an agent can work on a single turn before the request times out. Increase for complex tasks with many tool calls.
-              </p>
-              <div style={s.keyRow}>
-                <input
-                  type="number"
-                  style={{ ...s.input, width: "100px" }}
-                  defaultValue={allSettings["agent.turn_timeout_minutes"] || "30"}
-                  min={1}
-                  max={120}
-                  onBlur={async (e) => {
-                    const val = e.target.value.trim();
-                    if (!val || parseInt(val) < 1) return;
-                    try {
-                      const res = await fetch(`${API_BASE}/agent.turn_timeout_minutes`, {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ value: val }),
-                      });
-                      if (res.ok) { setSaveMsg("Turn timeout saved."); await fetchSettings(); }
-                      else setSaveMsg("Failed to save.");
-                    } catch { setSaveMsg("Failed to save."); }
-                  }}
-                />
-                <span style={{ color: "#8888a0", fontSize: "0.9rem", alignSelf: "center" }}>minutes</span>
-              </div>
-            </div>
-          </section>
-        )}
 
-        {activeTab === "embedding" && (
-          <section style={s.section}>
-            <h2 style={s.sectionTitle}>Embedding Model</h2>
-            {warning && <div style={s.warning}>{warning}</div>}
-            <div style={s.field}>
-              <label style={s.label}>Model</label>
-              <select style={s.select} value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
-                {models.map((m) => <option key={m.model_name} value={m.model_name}>{m.model_name} ({m.family})</option>)}
-              </select>
-            </div>
-            {activeModel && (
-              <div style={s.modelDetails}>
-                <span>Family: {activeModel.family}</span>
-                <span>Provider: {activeModel.provider}</span>
-                <span>Local: {activeModel.supports_local ? "Yes" : "No"}</span>
-                <span>API: {activeModel.supports_api ? "Yes" : "No"}</span>
-                <span>Max dim: {activeModel.max_dimension}</span>
+            {activeTab === "embedding" && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-semibold">Embedding Model</h2>
+                  <p className="text-sm text-gray-500">Configure the model used for search and RAG.</p>
+                </div>
+
+                <div className="bg-white shadow sm:rounded-lg p-6 border border-gray-200 space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Model</label>
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => {
+                        const m = models.find((m) => m.model_name === e.target.value);
+                        if (m) {
+                          setSelectedModel(m.model_name);
+                          setSelectedDimension(m.max_dimension);
+                        }
+                      }}
+                      className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                    >
+                      {models.map((m) => (
+                        <option key={m.model_name} value={m.model_name}>
+                          {m.model_name} ({m.provider})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Dimension</label>
+                    <select
+                      value={selectedDimension}
+                      onChange={(e) => setSelectedDimension(Number(e.target.value))}
+                      className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                    >
+                      {models
+                        .find((m) => m.model_name === selectedModel)
+                        ?.supported_dimensions.map((d) => (
+                          <option key={d} value={d}>
+                            {d}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
+                    {saveMsg && <span className="text-sm text-green-600">{saveMsg}</span>}
+                    <button
+                      onClick={saveEmbedding}
+                      disabled={saving}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
+                    >
+                      {saving ? "Saving..." : "Save Changes"}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
-            <div style={s.field}>
-              <label style={s.label}>Dimension</label>
-              <select style={s.select} value={selectedDimension} onChange={(e) => setSelectedDimension(Number(e.target.value))}>
-                {activeModel?.supported_dimensions.map((d) => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <div style={s.field}>
-              <label style={s.label}>Execution Mode</label>
-              <div style={s.radioGroup}>
-                {availableModes().map((mode) => (
-                  <label key={mode} style={s.radioLabel}>
-                    <input type="radio" name="exec_mode" value={mode} checked={selectedMode === mode} onChange={() => setSelectedMode(mode)} style={s.radio} />
-                    {mode}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <button style={{ ...s.button, opacity: saving ? 0.5 : 1 }} onClick={saveEmbedding} disabled={saving}>
-              {saving ? "Saving..." : "Save Embedding Settings"}
-            </button>
-            {saveMsg && <div style={{ ...s.msg, color: saveMsg.startsWith("Error") ? "#ff6c8a" : "#6cffa0" }}>{saveMsg}</div>}
-          </section>
-        )}
 
-        {activeTab === "api-keys" && (
-          <section style={s.section}>
-            <h2 style={s.sectionTitle}>API Keys</h2>
-            <p style={{ color: "#8888a0", fontSize: "0.85rem", marginBottom: "20px" }}>All keys are encrypted at rest.</p>
+            {activeTab === "api-keys" && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-semibold">API Keys</h2>
+                  <p className="text-sm text-gray-500">Securely manage your provider credentials.</p>
+                </div>
 
-            <h3 style={{ color: "#e0e0e8", fontSize: "0.95rem", marginBottom: "12px" }}>LLM Providers</h3>
-            {[
-              { label: "Anthropic", key: "llm.api_key.anthropic", state: anthropicKey, set: setAnthropicKey, placeholder: "sk-ant-..." },
-              { label: "OpenAI", key: "llm.api_key.openai", state: openaiKey, set: setOpenaiKey, placeholder: "sk-..." },
-              { label: "Google", key: "llm.api_key.google", state: googleKey, set: setGoogleKey, placeholder: "Google API key" },
-            ].map(({ label, key, state, set, placeholder }) => (
-              <div key={key} style={s.field}>
-                <label style={s.label}>
-                  {label} {masked(key) && <span style={s.masked}>Current: {masked(key)}</span>}
-                </label>
-                <div style={s.keyRow}>
-                  <input type="password" style={s.input} value={state} onChange={(e) => set(e.target.value)} placeholder={placeholder} />
-                  <button style={s.button} onClick={() => saveKey(key, state, set)}>Save</button>
+                <div className="bg-white shadow sm:rounded-lg p-6 border border-gray-200 space-y-4">
+                  {[
+                    { label: "Anthropic API Key", value: anthropicKey, setter: setAnthropicKey, id: "ANTHROPIC_API_KEY" },
+                    { label: "OpenAI API Key", value: openaiKey, setter: setOpenaiKey, id: "OPENAI_API_KEY" },
+                    { label: "Voyage API Key", value: voyageKey, setter: setVoyageKey, id: "VOYAGE_API_KEY" },
+                    { label: "Gemini API Key", value: geminiKey, setter: setGeminiKey, id: "GEMINI_API_KEY" },
+                    { label: "Google Search API Key", value: googleKey, setter: setGoogleKey, id: "GOOGLE_API_KEY" },
+                  ].map((field) => (
+                    <div key={field.id}>
+                      <label className="block text-sm font-medium text-gray-700">{field.label}</label>
+                      <input
+                        type="password"
+                        placeholder={llmCurrent?.keys_set[field.id] ? "••••••••••••••••" : "Not set"}
+                        value={field.value}
+                        onChange={(e) => field.setter(e.target.value)}
+                        className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                      />
+                    </div>
+                  ))}
+
+                  <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
+                    {keySaveMsg && <span className="text-sm text-green-600">{keySaveMsg}</span>}
+                    <button
+                      onClick={saveKeys}
+                      disabled={saving}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
+                    >
+                      {saving ? "Saving..." : "Save Keys"}
+                    </button>
+                  </div>
                 </div>
               </div>
-            ))}
-
-            <h3 style={{ color: "#e0e0e8", fontSize: "0.95rem", margin: "24px 0 12px" }}>Embedding Providers</h3>
-            {[
-              { label: "Voyage AI", key: "embedding.api_key.voyage", state: voyageKey, set: setVoyageKey, placeholder: "Voyage API key" },
-              { label: "Gemini", key: "embedding.api_key.gemini", state: geminiKey, set: setGeminiKey, placeholder: "Gemini API key" },
-            ].map(({ label, key, state, set, placeholder }) => (
-              <div key={key} style={s.field}>
-                <label style={s.label}>
-                  {label} {masked(key) && <span style={s.masked}>Current: {masked(key)}</span>}
-                </label>
-                <div style={s.keyRow}>
-                  <input type="password" style={s.input} value={state} onChange={(e) => set(e.target.value)} placeholder={placeholder} />
-                  <button style={s.button} onClick={() => saveKey(key, state, set)}>Save</button>
-                </div>
-              </div>
-            ))}
-
-            {keySaveMsg && <div style={{ ...s.msg, color: "#6cffa0" }}>{keySaveMsg}</div>}
-          </section>
-        )}
+            )}
+          </div>
+        </main>
       </div>
     </div>
   );
 }
-
-const s: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%" },
-  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottom: "1px solid #1e1e2e" },
-  backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
-  title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
-  tabBar: { display: "flex", borderBottom: "1px solid #1e1e2e", padding: "0 24px" },
-  tab: {
-    background: "none", border: "none", borderBottomWidth: "2px", borderBottomStyle: "solid" as const, borderBottomColor: "transparent",
-    color: "#8888a0", padding: "12px 20px", fontSize: "0.9rem", fontWeight: 500,
-    cursor: "pointer", transition: "color 0.2s, border-color 0.2s",
-  },
-  tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
-  content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0 },
-  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", border: "1px solid #1e1e2e" },
-  sectionTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 20px 0" },
-  field: { marginBottom: "16px" },
-  label: { display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500 },
-  select: { width: "100%", backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.95rem", outline: "none" },
-  input: { flex: 1, backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.95rem", outline: "none" },
-  modelDetails: { display: "flex", gap: "16px", flexWrap: "wrap" as const, fontSize: "0.8rem", color: "#8888a0", marginBottom: "16px", padding: "8px 12px", backgroundColor: "#1e1e2e", borderRadius: "8px" },
-  radioGroup: { display: "flex", gap: "20px" },
-  radioLabel: { display: "flex", alignItems: "center", gap: "6px", color: "#e0e0e8", fontSize: "0.95rem", cursor: "pointer" },
-  radio: { accentColor: "#6c8aff" },
-  button: { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer" },
-  keyRow: { display: "flex", gap: "8px" },
-  masked: { color: "#6c8aff", fontSize: "0.8rem", marginLeft: "8px" },
-  warning: { backgroundColor: "#2a2a1a", border: "1px solid #aa8800", borderRadius: "8px", padding: "12px 16px", color: "#ffcc44", fontSize: "0.85rem", marginBottom: "16px" },
-  msg: { marginTop: "12px", fontSize: "0.85rem" },
-  readOnly: { color: "#8888a0", fontSize: "0.95rem", padding: "10px 12px", backgroundColor: "#1e1e2e", borderRadius: "8px" },
-};
