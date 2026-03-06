@@ -934,6 +934,10 @@ async def _run_agent_loop(
             if isinstance(content, str) and content.endswith(_budget_note):
                 messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
 
+        if not response.choices:
+            logger.warning("LLM returned empty choices array — retrying iteration")
+            continue
+
         choice = response.choices[0]
         llm_message = choice.message
 
