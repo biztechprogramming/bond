@@ -6,6 +6,7 @@ executes tool calls in a loop until a text response or max iterations.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -334,13 +335,61 @@ async def agent_turn(
         if message.tool_calls:
             messages.append(message.model_dump())
 
-            for tool_call in message.tool_calls:
-                tool_name = tool_call.function.name
-                try:
-                    tool_args = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError:
-                    tool_args = {}
+            # ── Parallel execution of independent tool calls ──
+            # Tools that only read state can run concurrently.
+            # Side-effecting or terminal tools must run sequentially.
+            PARALLELIZABLE_TOOLS = frozenset({
+                "file_read", "search_memory", "code_execute",
+                "web_search", "web_read",
+            })
 
+            # Parse all tool calls upfront
+            parsed_calls = []
+            for tc in message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+                parsed_calls.append((tc, tc.function.name, args))
+
+            # Separate into parallel-safe and sequential groups
+            parallel_batch = []
+            sequential_batch = []
+            for tc, name, args in parsed_calls:
+                if name in PARALLELIZABLE_TOOLS and name in all_enabled_tools:
+                    parallel_batch.append((tc, name, args))
+                else:
+                    sequential_batch.append((tc, name, args))
+
+            # Execute parallel batch concurrently
+            if parallel_batch:
+                async def _exec_one(tc, name, args):
+                    logger.info("Tool call [%d] (parallel): %s(%s)", iteration, name, list(args.keys()))
+                    return tc, await registry.execute(name, args, tool_context)
+
+                parallel_results = await asyncio.gather(
+                    *[_exec_one(tc, name, args) for tc, name, args in parallel_batch],
+                    return_exceptions=True,
+                )
+                for item in parallel_results:
+                    if isinstance(item, Exception):
+                        # Find the matching tool call for error reporting
+                        tc = parallel_batch[parallel_results.index(item)][0]
+                        result = {"error": f"Parallel execution failed: {item}"}
+                    else:
+                        tc, result = item
+
+                    if result.get("_terminal"):
+                        return result.get("message", "")
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(result),
+                    })
+
+            # Execute sequential batch in order
+            for tool_call, tool_name, tool_args in sequential_batch:
                 logger.info("Tool call [%d]: %s(%s)", iteration, tool_name, list(tool_args.keys()))
 
                 if tool_name not in all_enabled_tools:
