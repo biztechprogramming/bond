@@ -7,6 +7,7 @@ import json
 import logging
 import subprocess
 import time
+from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -19,9 +20,7 @@ logger = logging.getLogger("bond.api.agents")
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
-
-# ── Pydantic models ──────────────────────────────────────────
-
+# ── Pydantic models ──────────────────────────────────────────────────────────
 
 class WorkspaceMount(BaseModel):
     host_path: str
@@ -29,12 +28,10 @@ class WorkspaceMount(BaseModel):
     container_path: str = ""
     readonly: bool = False
 
-
 class ChannelConfig(BaseModel):
     channel: str
     enabled: bool = True
     sandbox_override: str | None = None
-
 
 class AgentCreate(BaseModel):
     name: str
@@ -49,7 +46,10 @@ class AgentCreate(BaseModel):
     auto_rag_limit: int = 5
     workspace_mounts: list[WorkspaceMount] = []
     channels: list[ChannelConfig] = []
-
+    tool_access_mode: str = "allow"
+    channel_access_mode: str = "allow"
+    mcp_access_mode: str = "allow"
+    mcp_servers: list[str] = []
 
 class AgentUpdate(BaseModel):
     name: str | None = None
@@ -64,10 +64,12 @@ class AgentUpdate(BaseModel):
     auto_rag_limit: int | None = None
     workspace_mounts: list[WorkspaceMount] | None = None
     channels: list[ChannelConfig] | None = None
+    tool_access_mode: str | None = None
+    channel_access_mode: str | None = None
+    mcp_access_mode: str | None = None
+    mcp_servers: list[str] | None = None
 
-
-# ── Helpers ───────────────────────────────────────────────────
-
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 async def _get_agent_by_id(agent_id: str) -> dict:
     """Fetch an agent with its workspace mounts and channels from SpacetimeDB."""
@@ -115,6 +117,14 @@ async def _get_agent_by_id(agent_id: str) -> dict:
             tools = json.loads(tools)
         except json.JSONDecodeError:
             tools = []
+            
+    # Parse mcp_servers JSON
+    mcp_servers = row.get("mcp_servers", "[]")
+    if isinstance(mcp_servers, str):
+        try:
+            mcp_servers = json.loads(mcp_servers)
+        except json.JSONDecodeError:
+            mcp_servers = []
     
     agent = {
         "id": agent_id,
@@ -124,6 +134,7 @@ async def _get_agent_by_id(agent_id: str) -> dict:
         "model": row["model"],
         "utility_model": row["utility_model"] or "claude-sonnet-4-6",
         "tools": tools,
+        "mcp_servers": mcp_servers,
         "sandbox_image": row["sandbox_image"],
         "max_iterations": int(row["max_iterations"] or 10),
         "auto_rag": bool(row.get("auto_rag", True)),
@@ -132,11 +143,13 @@ async def _get_agent_by_id(agent_id: str) -> dict:
         "is_default": bool(row["is_default"]),
         "workspace_mounts": workspace_mounts,
         "channels": channels,
+        "tool_access_mode": row.get("tool_access_mode", "allow"),
+        "channel_access_mode": row.get("channel_access_mode", "allow"),
+        "mcp_access_mode": row.get("mcp_access_mode", "allow"),
         "created_at": row["created_at"],
     }
     
     return agent
-
 
 def _escape_sql(value):
     """Escape single quotes for SQL."""
@@ -144,16 +157,14 @@ def _escape_sql(value):
         return ''
     return str(value).replace("'", "''")
 
-
-# ── Endpoints ─────────────────────────────────────────────────
-
+# ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("")
 async def list_agents():
     """List all agents with workspace mounts and channels."""
     stdb = get_stdb()
-    # Query agents from SpacetimeDB (SpacetimeDB doesn't support ORDER BY)
-    rows = await stdb.query("SELECT id, name, display_name, system_prompt, model, utility_model, tools, sandbox_image, max_iterations, is_active, is_default, created_at FROM agents")
+    # Query agents from SpacetimeDB
+    rows = await stdb.query("SELECT id, name, display_name, system_prompt, model, utility_model, tools, mcp_servers, sandbox_image, max_iterations, is_active, is_default, created_at, tool_access_mode, channel_access_mode, mcp_access_mode FROM agents")
     
     # Sort in Python: default agents first, then by name
     rows = sorted(rows, key=lambda x: (not x["is_default"], x["name"].lower()))
@@ -186,7 +197,6 @@ async def list_agents():
                 for c in channels_rows
             ]
         except:
-            # Table might not exist yet
             pass
         
         # Parse tools JSON
@@ -197,6 +207,14 @@ async def list_agents():
             except json.JSONDecodeError:
                 tools = []
         
+        # Parse mcp_servers JSON
+        mcp_servers = row.get("mcp_servers", "[]")
+        if isinstance(mcp_servers, str):
+            try:
+                mcp_servers = json.loads(mcp_servers)
+            except json.JSONDecodeError:
+                mcp_servers = []
+        
         agent = {
             "id": agent_id,
             "name": row["name"],
@@ -205,27 +223,29 @@ async def list_agents():
             "model": row["model"],
             "utility_model": row["utility_model"] or "claude-sonnet-4-6",
             "tools": tools,
+            "mcp_servers": mcp_servers,
             "sandbox_image": row["sandbox_image"],
             "max_iterations": int(row["max_iterations"] or 10),
             "is_active": bool(row["is_active"]),
             "is_default": bool(row["is_default"]),
             "workspace_mounts": workspace_mounts,
             "channels": channels,
+            "tool_access_mode": row.get("tool_access_mode", "allow"),
+            "channel_access_mode": row.get("channel_access_mode", "allow"),
+            "mcp_access_mode": row.get("mcp_access_mode", "allow"),
             "created_at": row["created_at"],
         }
         agents.append(agent)
     
     return agents
 
-
 @router.get("/tools")
 async def list_tools():
-    """List all 14 available tools with name + description."""
+    """List all available tools with name + description."""
     return [
         {"name": name, "description": desc}
         for name, desc in TOOL_SUMMARIES.items()
     ]
-
 
 @router.get("/sandbox-images")
 async def list_sandbox_images():
@@ -246,7 +266,6 @@ async def list_sandbox_images():
         return images
     except Exception:
         return []
-
 
 @router.get("/browse-dirs")
 async def browse_directories(path: str = "/", show_hidden: bool = False):
@@ -276,12 +295,10 @@ async def browse_directories(path: str = "/", show_hidden: bool = False):
         "directories": dirs,
     }
 
-
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str):
     """Get a single agent with mounts and channels."""
     return await _get_agent_by_id(agent_id)
-
 
 @router.post("")
 async def create_agent(body: AgentCreate):
@@ -295,158 +312,125 @@ async def create_agent(body: AgentCreate):
     if existing:
         raise HTTPException(status_code=400, detail=f"Agent with name '{body.name}' already exists")
     
-    # Insert agent
-    tools_json = json.dumps(body.tools or [])
-    await stdb.query(f"""
-        INSERT INTO agents (
-            id, name, display_name, system_prompt, model, utility_model,
-            tools, sandbox_image, max_iterations, is_active, is_default, created_at
-        ) VALUES (
-            '{agent_id}',
-            '{body.name}',
-            '{body.display_name}',
-            '{body.system_prompt}',
-            '{body.model}',
-            '{body.utility_model}',
-            '{tools_json}',
-            '{body.sandbox_image or ""}',
-            {body.max_iterations},
-            true,
-            false,
-            {created_at}
-        )
-    """)
+    # Prepare SQL
+    tools_json = json.dumps(body.tools)
+    mcp_servers_json = json.dumps(body.mcp_servers)
     
-    # Insert workspace mounts
+    query = f"""
+    INSERT INTO agents (
+        id, name, display_name, system_prompt, model, utility_model, 
+        tools, mcp_servers, sandbox_image, max_iterations, auto_rag, auto_rag_limit,
+        is_active, is_default, created_at,
+        tool_access_mode, channel_access_mode, mcp_access_mode
+    ) VALUES (
+        '{agent_id}', 
+        '{_escape_sql(body.name)}', 
+        '{_escape_sql(body.display_name)}', 
+        '{_escape_sql(body.system_prompt)}', 
+        '{_escape_sql(body.model)}', 
+        '{_escape_sql(body.utility_model)}', 
+        '{_escape_sql(tools_json)}', 
+        '{_escape_sql(mcp_servers_json)}', 
+        '{_escape_sql(body.sandbox_image)}', 
+        {body.max_iterations}, 
+        {1 if body.auto_rag else 0}, 
+        {body.auto_rag_limit},
+        1, 0, {created_at},
+        '{_escape_sql(body.tool_access_mode)}',
+        '{_escape_sql(body.channel_access_mode)}',
+        '{_escape_sql(body.mcp_access_mode)}'
+    )
+    """
+    await stdb.execute(query)
+    
+    # Add workspace mounts
     for mount in body.workspace_mounts:
-        mount_id = str(ULID())
-        await stdb.query(f"""
-            INSERT INTO agent_workspace_mounts (
-                id, agent_id, host_path, mount_name, container_path, readonly
-            ) VALUES (
-                '{mount_id}',
-                '{agent_id}',
-                '{mount.host_path}',
-                '{mount.mount_name}',
-                '{mount.container_path or f"/workspace/{mount.mount_name}"}',
-                {str(mount.readonly).lower()}
-            )
-        """)
-    
-    # Insert channels
+        mount_query = f"""
+        INSERT INTO agent_workspace_mounts (agent_id, host_path, mount_name, container_path, readonly)
+        VALUES ('{agent_id}', '{_escape_sql(mount.host_path)}', '{_escape_sql(mount.mount_name)}', '{_escape_sql(mount.container_path)}', {1 if mount.readonly else 0})
+        """
+        await stdb.execute(mount_query)
+        
+    # Add channels
     for channel in body.channels:
-        # Use SQL INSERT - no reducer for channels yet
-        await stdb.query(f"""
-            INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
-            VALUES (
-                '{agent_id}',
-                '{channel.channel}',
-                {str(channel.enabled).lower()},
-                '{channel.sandbox_override or ""}'
-            )
-        """)
-    
-    # Return the created agent
+        channel_query = f"""
+        INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
+        VALUES ('{agent_id}', '{_escape_sql(channel.channel)}', {1 if channel.enabled else 0}, '{_escape_sql(channel.sandbox_override)}')
+        """
+        await stdb.execute(channel_query)
+        
     return await _get_agent_by_id(agent_id)
 
-
-@router.put("/{agent_id}")
+@router.patch("/{agent_id}")
 async def update_agent(agent_id: str, body: AgentUpdate):
-    """Update an existing agent."""
+    """Update an agent."""
     stdb = get_stdb()
     
     # Check if agent exists
-    existing = await stdb.query(f"SELECT id FROM agents WHERE id = '{agent_id}'")
+    existing = await stdb.query(f"SELECT * FROM agents WHERE id = '{agent_id}'")
     if not existing:
         raise HTTPException(status_code=404, detail="Agent not found")
     
-    # Build UPDATE statement
+    # Build update query
     updates = []
     if body.name is not None:
-        # Check if new name is already taken by another agent
-        name_check = await stdb.query(f"SELECT id FROM agents WHERE name = '{_escape_sql(body.name)}' AND id != '{agent_id}'")
-        if name_check:
-            raise HTTPException(status_code=400, detail=f"Agent with name '{body.name}' already exists")
         updates.append(f"name = '{_escape_sql(body.name)}'")
-    
     if body.display_name is not None:
         updates.append(f"display_name = '{_escape_sql(body.display_name)}'")
-    
     if body.system_prompt is not None:
         updates.append(f"system_prompt = '{_escape_sql(body.system_prompt)}'")
-    
     if body.model is not None:
         updates.append(f"model = '{_escape_sql(body.model)}'")
-    
     if body.utility_model is not None:
         updates.append(f"utility_model = '{_escape_sql(body.utility_model)}'")
-    
     if body.tools is not None:
-        tools_json = json.dumps(body.tools)
-        updates.append(f"tools = '{_escape_sql(tools_json)}'")
-    
+        updates.append(f"tools = '{_escape_sql(json.dumps(body.tools))}'")
+    if body.mcp_servers is not None:
+        updates.append(f"mcp_servers = '{_escape_sql(json.dumps(body.mcp_servers))}'")
     if body.sandbox_image is not None:
         updates.append(f"sandbox_image = '{_escape_sql(body.sandbox_image)}'")
-    
     if body.max_iterations is not None:
         updates.append(f"max_iterations = {body.max_iterations}")
-    
     if body.auto_rag is not None:
-        updates.append(f"auto_rag = {str(body.auto_rag).lower()}")
-    
+        updates.append(f"auto_rag = {1 if body.auto_rag else 0}")
     if body.auto_rag_limit is not None:
         updates.append(f"auto_rag_limit = {body.auto_rag_limit}")
-    
-    # Update agent if there are changes
+    if body.tool_access_mode is not None:
+        updates.append(f"tool_access_mode = '{_escape_sql(body.tool_access_mode)}'")
+    if body.channel_access_mode is not None:
+        updates.append(f"channel_access_mode = '{_escape_sql(body.channel_access_mode)}'")
+    if body.mcp_access_mode is not None:
+        updates.append(f"mcp_access_mode = '{_escape_sql(body.mcp_access_mode)}'")
+        
     if updates:
-        updates.append(f"updated_at = {int(time.time() * 1000)}")
-        set_clause = ", ".join(updates)
-        await stdb.query(f"UPDATE agents SET {set_clause} WHERE id = '{agent_id}'")
-    
+        query = f"UPDATE agents SET {', '.join(updates)} WHERE id = '{agent_id}'"
+        await stdb.execute(query)
+        
     # Update workspace mounts if provided
     if body.workspace_mounts is not None:
-        # Delete existing mounts
-        await stdb.query(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
-        
-        # Insert new mounts
+        # Delete existing
+        await stdb.execute(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
+        # Add new
         for mount in body.workspace_mounts:
-            mount_id = str(ULID())
-            await stdb.query(f"""
-                INSERT INTO agent_workspace_mounts (
-                    id, agent_id, host_path, mount_name, container_path, readonly
-                ) VALUES (
-                    '{mount_id}',
-                    '{agent_id}',
-                    '{mount.host_path}',
-                    '{mount.mount_name}',
-                    '{mount.container_path or f"/workspace/{mount.mount_name}"}',
-                    {str(mount.readonly).lower()}
-                )
-            """)
-    
+            mount_query = f"""
+            INSERT INTO agent_workspace_mounts (agent_id, host_path, mount_name, container_path, readonly)
+            VALUES ('{agent_id}', '{_escape_sql(mount.host_path)}', '{_escape_sql(mount.mount_name)}', '{_escape_sql(mount.container_path)}', {1 if mount.readonly else 0})
+            """
+            await stdb.execute(mount_query)
+            
     # Update channels if provided
     if body.channels is not None:
-        # Delete existing channels
-        try:
-            await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
-        except:
-            pass  # Table might not exist
-        
-        # Insert new channels
+        # Delete existing
+        await stdb.execute(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
+        # Add new
         for channel in body.channels:
-            await stdb.query(f"""
-                INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
-                VALUES (
-                    '{agent_id}',
-                    '{channel.channel}',
-                    {str(channel.enabled).lower()},
-                    '{channel.sandbox_override or ""}'
-                )
-            """)
-    
-    # Return the updated agent
+            channel_query = f"""
+            INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
+            VALUES ('{agent_id}', '{_escape_sql(channel.channel)}', {1 if channel.enabled else 0}, '{_escape_sql(channel.sandbox_override)}')
+            """
+            await stdb.execute(channel_query)
+            
     return await _get_agent_by_id(agent_id)
-
 
 @router.delete("/{agent_id}")
 async def delete_agent(agent_id: str):
@@ -454,41 +438,18 @@ async def delete_agent(agent_id: str):
     stdb = get_stdb()
     
     # Check if agent exists
-    existing = await stdb.query(f"SELECT id, is_default FROM agents WHERE id = '{agent_id}'")
+    existing = await stdb.query(f"SELECT is_default FROM agents WHERE id = '{agent_id}'")
     if not existing:
         raise HTTPException(status_code=404, detail="Agent not found")
     
-    # Don't allow deleting the default agent
-    if existing[0]["is_default"]:
+    if bool(existing[0]["is_default"]):
         raise HTTPException(status_code=400, detail="Cannot delete the default agent")
     
-    # Delete in transaction-like order (foreign keys might not be enforced)
-    try:
-        await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
-    except:
-        pass  # Table might not exist
+    # Delete agent
+    await stdb.execute(f"DELETE FROM agents WHERE id = '{agent_id}'")
+    # Delete mounts
+    await stdb.execute(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
+    # Delete channels
+    await stdb.execute(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
     
-    await stdb.query(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
-    await stdb.query(f"DELETE FROM agents WHERE id = '{agent_id}'")
-    
-    return {"success": True, "message": f"Agent {agent_id} deleted"}
-
-
-@router.post("/{agent_id}/default")
-async def set_default_agent(agent_id: str):
-    """Set an agent as the default."""
-    stdb = get_stdb()
-    
-    # Check if agent exists
-    existing = await stdb.query(f"SELECT id FROM agents WHERE id = '{agent_id}'")
-    if not existing:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    
-    # First, unset any existing default
-    await stdb.query("UPDATE agents SET is_default = false WHERE is_default = true")
-    
-    # Set this agent as default
-    await stdb.query(f"UPDATE agents SET is_default = true WHERE id = '{agent_id}'")
-    
-    # Return the updated agent
-    return await _get_agent_by_id(agent_id)
+    return {"status": "deleted"}
