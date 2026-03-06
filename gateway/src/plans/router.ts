@@ -228,7 +228,7 @@ export function createPlansRouter(config: GatewayConfig) {
     const reducerArgs = [itemId, resolvedStatus, resolvedNotes, resolvedFiles, encodeOption(resolvedDescription)];
 
     try {
-      await callReducer(url, mod, "update_work_item", reducerArgs);
+      await callReducer(url, mod, "update_work_item", reducerArgs, token);
       res.json({ item_id: itemId, updated: true });
     } catch (err: any) {
       console.error("[plans] update item failed:", err.message);
