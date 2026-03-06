@@ -361,7 +361,6 @@ async def update_agent(agent_id: str, body: AgentUpdate):
         raise HTTPException(status_code=404, detail="Agent not found")
     
     # Build UPDATE statement
-    updates = []
     if body.name is not None:
         # Check if new name is already taken by another agent
         name_check = await stdb.query(f"SELECT id FROM agents WHERE name = '{_escape_sql(body.name)}' AND id != '{agent_id}'")
@@ -398,10 +397,6 @@ async def update_agent(agent_id: str, body: AgentUpdate):
         updates.append(f"auto_rag_limit = {body.auto_rag_limit}")
     
     # Update agent if there are changes
-    if updates:
-        updates.append(f"updated_at = {int(time.time() * 1000)}")
-        set_clause = ", ".join(updates)
-        await stdb.query(f"UPDATE agents SET {set_clause} WHERE id = '{agent_id}'")
     
     # Update workspace mounts if provided
     if body.workspace_mounts is not None:
@@ -424,25 +419,6 @@ async def update_agent(agent_id: str, body: AgentUpdate):
                 )
             """)
     
-    # Update channels if provided
-    if body.channels is not None:
-        # Delete existing channels
-        try:
-            await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
-        except:
-            pass  # Table might not exist
-        
-        # Insert new channels
-        for channel in body.channels:
-            await stdb.query(f"""
-                INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
-                VALUES (
-                    '{agent_id}',
-                    '{channel.channel}',
-                    {str(channel.enabled).lower()},
-                    '{channel.sandbox_override or ""}'
-                )
-            """)
     
     # Return the updated agent
     return await _get_agent_by_id(agent_id)
