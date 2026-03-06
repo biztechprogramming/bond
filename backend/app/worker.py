@@ -42,6 +42,11 @@ from backend.app.agent.cache_manager import (
     _advance_cache_breakpoint,
     _decay_in_loop_tool_results,
 )
+from backend.app.agent.parallel_worker import (
+    ParallelWorkerPool,
+    classify_tool_call,
+    format_parallel_summary,
+)
 from backend.app.agent.persistence_client import PersistenceClient
 litellm.suppress_debug_info = True
 import logging as _logging
@@ -1078,6 +1083,53 @@ async def _run_agent_loop(
                 last_assistant = llm_message.content
             messages.append(llm_message.model_dump())
 
+            # ── Parallel pre-execution: classify & batch parallel-safe calls ──
+            _parallel_precomputed: dict[str, tuple[dict, float]] = {}  # tool_call.id -> (result, duration)
+            if len(llm_message.tool_calls) > 1:
+                _parallel_candidates = []
+                _all_parsed_args: dict[str, dict] = {}
+                for _tc in llm_message.tool_calls:
+                    _tc_name = _tc.function.name
+                    try:
+                        _tc_args = json.loads(_tc.function.arguments)
+                    except json.JSONDecodeError:
+                        _tc_args = {}
+                    _all_parsed_args[_tc.id] = _tc_args
+                    if _tc_name in agent_tools and classify_tool_call(_tc_name, _tc_args) == "parallel":
+                        _parallel_candidates.append(_tc)
+
+                if len(_parallel_candidates) >= 2:
+                    logger.info(
+                        "Parallel pre-execution: %d/%d calls are parallel-safe",
+                        len(_parallel_candidates), len(llm_message.tool_calls),
+                    )
+                    pool = ParallelWorkerPool(
+                        registry=registry,
+                        utility_model=utility_model,
+                        utility_kwargs=utility_kwargs,
+                        context=tool_context,
+                        max_workers=10,
+                        timeout_per_worker=30.0,
+                    )
+                    _par_calls = [
+                        {"tool_call_id": tc.id, "tool_name": tc.function.name, "arguments": _all_parsed_args[tc.id]}
+                        for tc in _parallel_candidates
+                    ]
+                    _par_results, _ = await pool.execute(_par_calls)
+                    for _pr in _par_results:
+                        _tcid = _pr.get("tool_call_id")
+                        if _tcid:
+                            _parallel_precomputed[_tcid] = (_pr["result"], _pr.get("elapsed", 0))
+                    logger.info(format_parallel_summary(_par_results))
+
+                    # Emit parallel execution SSE event
+                    if event_queue is not None:
+                        await event_queue.put(_sse_event("status", {
+                            "state": "parallel_execution",
+                            "parallel_count": len(_parallel_candidates),
+                            "total_count": len(llm_message.tool_calls),
+                        }))
+
             for tool_call in llm_message.tool_calls:
                 tool_name = tool_call.function.name
                 try:
@@ -1145,9 +1197,14 @@ async def _run_agent_loop(
                         if tool_name in TOOL_MAP:
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
                     
-                    start_ts = time.time()
-                    result = await registry.execute(tool_name, tool_args, tool_context)
-                    duration = time.time() - start_ts
+                    # Use precomputed parallel result if available
+                    if tool_call.id in _parallel_precomputed:
+                        result, duration = _parallel_precomputed[tool_call.id]
+                        logger.info("Using precomputed parallel result for %s (%.2fs)", tool_name, duration)
+                    else:
+                        start_ts = time.time()
+                        result = await registry.execute(tool_name, tool_args, tool_context)
+                        duration = time.time() - start_ts
                     
                     # Persist tool log
                     if _state.persistence:
