@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -822,6 +823,15 @@ async def _run_agent_loop(
     # Initialize to after history + user message (the last pre-turn message).
     _cache_bp2_index = len(messages) - 1
 
+    # ── Utility model routing for info-gathering iterations ──
+    # When the previous iteration only called read-only/info-gathering tools,
+    # the next LLM call uses the cheaper utility model instead of the primary.
+    INFO_GATHERING_TOOLS = frozenset({
+        "file_read", "search_memory", "code_execute",
+        "web_search", "web_read", "work_plan",
+    })
+    _last_iteration_tool_names: list[str] = []  # tools called in previous iteration
+
     for _iteration in range(max_iterations):
         # Check interrupt: if pending messages, inject them and continue.
         # If no messages, this is a pure pause signal — break the loop.
@@ -846,17 +856,34 @@ async def _run_agent_loop(
         current_max_tokens = TOKEN_TIERS[current_tier]
         context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
 
+        # Decide whether to use utility model for this iteration.
+        # If the previous iteration ONLY called info-gathering tools,
+        # the agent is still collecting context — use the cheaper utility model.
+        _use_utility = (
+            _iteration > 0
+            and _last_iteration_tool_names
+            and all(t in INFO_GATHERING_TOOLS for t in _last_iteration_tool_names)
+        )
+        _iter_model = utility_model if _use_utility else model
+        _iter_kwargs = utility_kwargs if _use_utility else extra_kwargs
+        _is_iter_anthropic = _resolve_provider(_iter_model) == "anthropic"
+        if _use_utility:
+            logger.info(
+                "Using utility model (%s) for info-gathering iteration %d (prev tools: %s)",
+                utility_model, _iteration, _last_iteration_tool_names,
+            )
+
         # Advance prompt cache breakpoint 2 before each call (Anthropic only).
-        # Runs on every iteration (including 0) so the first call benefits from
-        # caching the system prompt + history + user message prefix.
-        if _is_anthropic_model:
+        # Only advance when the current iteration model is Anthropic —
+        # skip when routing to a non-Anthropic utility model.
+        if _is_iter_anthropic:
             _cache_bp2_index = _advance_cache_breakpoint(messages, _cache_bp2_index)
 
         logger.info(
             "LLM request: model=%s tools=%d max_tokens=%d tier=%d context_tokens=~%d msgs=%d cache=%s tool_names=%s",
-            model, len(tool_defs), current_max_tokens, current_tier,
+            _iter_model, len(tool_defs), current_max_tokens, current_tier,
             context_tokens, len(messages),
-            "anthropic" if _is_anthropic_model else "none",
+            "anthropic" if _is_iter_anthropic else "none",
             [t["function"]["name"] for t in tool_defs],
         )
 
@@ -873,20 +900,32 @@ async def _run_agent_loop(
                 messages[_budget_target_idx]["content"] = content + _budget_note
 
         # Log the API key info before calling LiteLLM
-        if "api_key" in extra_kwargs:
-            api_key = extra_kwargs["api_key"]
-            logger.error("DEBUG: Calling LiteLLM with model %s, API key length: %d, starts with: %s", 
-                       model, len(api_key), api_key[:10] if len(api_key) > 10 else api_key)
+        if "api_key" in _iter_kwargs:
+            _dbg_key = _iter_kwargs["api_key"]
+            logger.debug("Calling LiteLLM with model %s, API key length: %d", 
+                       _iter_model, len(_dbg_key))
         else:
-            logger.error("DEBUG: Calling LiteLLM with model %s, no API key in extra_kwargs", model)
-        
+            logger.debug("Calling LiteLLM with model %s, no API key in kwargs", _iter_model)
+
+        # When routing to a non-Anthropic utility model, strip Anthropic-specific
+        # cache_control markers from messages to avoid provider errors.
+        _call_messages = messages
+        if _use_utility and not _is_iter_anthropic and _is_anthropic_model:
+            _call_messages = copy.deepcopy(messages)
+            for msg in _call_messages:
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict):
+                            block.pop("cache_control", None)
+
         response = await litellm.acompletion(
-            model=model,
-            messages=messages,
+            model=_iter_model,
+            messages=_call_messages,
             tools=tool_defs if tool_defs else None,
             temperature=0.7,
             max_tokens=current_max_tokens,
-            **extra_kwargs,
+            **_iter_kwargs,
         )
 
         # Strip budget note from the tool result after the LLM call
@@ -958,6 +997,10 @@ async def _run_agent_loop(
         continuation_attempts = 0
 
         if llm_message.tool_calls:
+            # Track tool names for utility model routing on next iteration
+            _last_iteration_tool_names = [
+                tc.function.name for tc in llm_message.tool_calls
+            ]
             # Update last_assistant for tool result filter context
             if llm_message.content:
                 last_assistant = llm_message.content
