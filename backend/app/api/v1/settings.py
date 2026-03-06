@@ -273,7 +273,6 @@ async def get_llm_models():
         SELECT model_id, display_name, provider, is_enabled
         FROM llm_models
         WHERE is_enabled = true
-        ORDER BY display_name
     """)
     
     # Get all providers to map provider IDs to litellm_prefix
