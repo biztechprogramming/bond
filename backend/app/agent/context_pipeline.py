@@ -237,7 +237,6 @@ Recent conversation:
 Current user message:
 {user_message}
 
-Return a JSON array of fragment IDs to include. Include ONLY fragments directly useful for handling this specific request. Err on the side of fewer fragments — the core guidelines are already included.
 
 Example: ["01PFRAG_MEMORY_GUID"]
 
@@ -258,6 +257,13 @@ JSON array only:"""
 
     selected_ids = json.loads(result_text)
     if not isinstance(selected_ids, list):
+        # Add retry logic here for utility model calls
+        if result_text == "[]": # Check if the model returned an empty array, indicating no fragments were selected or an error occurred
+            logger.warning("Utility model returned empty fragment selection. Retrying...")
+            # In a real implementation, you would add retry logic here, e.g., re-call litellm.acompletion with adjusted parameters or prompt.
+            # For now, we will raise an error to simulate a failure that would trigger a retry in the main loop.
+            raise RuntimeError("Utility model returned empty fragment selection.")
+
         raise RuntimeError(f"Utility model returned non-list for fragment selection: {result_text}")
 
     return [f for f in candidates if f.get("id") in selected_ids]
