@@ -51,12 +51,6 @@ class AgentCreate(BaseModel):
     channels: list[ChannelConfig] = []
 
 
-class AgentUpdate(BaseModel):
-    name: str | None = None
-    display_name: str | None = None
-    system_prompt: str | None = None
-    model: str | None = None
-    utility_model: str | None = None
     sandbox_image: str | None = None
     tools: list[str] | None = None
     max_iterations: int | None = None

@@ -81,11 +81,6 @@ class MCPManager:
         self.connections[config.name] = conn
         await conn.start()
 
-    async def stop_all(self):
-        for conn in self.connections.values():
-            await conn.stop()
-
-    async def refresh_tools(self, registry: ToolRegistry):
         """Fetch tools from all servers and register them."""
         self._dynamic_definitions.clear()
         for server_name, conn in self.connections.items():
