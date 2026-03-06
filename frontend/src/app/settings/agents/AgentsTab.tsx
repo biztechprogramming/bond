@@ -61,7 +61,8 @@ export default function AgentsTab() {
   const [allFragments, setAllFragments] = useState<{ id: string; name: string; display_name: string; category: string; is_active: number }[]>([]);
   const [agentFragments, setAgentFragments] = useState<{ id: string; display_name: string; category: string; enabled: number; rank: number; fragment_id?: string }[]>([]);
   const [pendingFragmentIds, setPendingFragmentIds] = useState<Set<string>>(new Set());
-  const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
+  const [availableModelsRaw, setAvailableModelsRaw] = useState<{ id: string; name: string }[]>([]);
+  const availableModels = availableModelsRaw.filter((m, i, arr) => arr.findIndex((x) => x.id === m.id) === i);
 
   const fetchData = useCallback(async () => {
     try {
@@ -79,7 +80,7 @@ export default function AgentsTab() {
       } catch { /* prompts API not available */ }
       try {
         const modelsRes = await fetch("http://localhost:18790/api/v1/settings/llm/models");
-        if (modelsRes.ok) setAvailableModels(await modelsRes.json());
+        if (modelsRes.ok) setAvailableModelsRaw(await modelsRes.json());
       } catch { /* models API not available */ }
     } catch {
       // API not available
