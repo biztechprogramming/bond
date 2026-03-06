@@ -27,6 +27,35 @@ _MAX_READ_BYTES = 10_000
 # Default working directory for code execution (overridable for tests)
 _CODE_EXEC_CWD = "/workspace"
 
+# Fallback roots for relative path resolution.  When the process cwd is
+# /workspace (set by _discover_workspace in worker.py) and the agent passes a
+# relative path that doesn't exist under /workspace, we try these directories
+# in order.  This handles the common case where the agent references repo files
+# like "backend/app/worker.py" which live under /bond, not /workspace.
+_FALLBACK_ROOTS = [Path("/bond"), Path("/workspace")]
+
+
+def _resolve_path(path_str: str) -> Path:
+    """Resolve a path string, falling back to known roots for relative paths.
+
+    Absolute paths are returned as-is.  Relative paths are first resolved
+    against cwd (the default Path behaviour).  If the result doesn't exist,
+    each directory in _FALLBACK_ROOTS is tried in order.
+    """
+    p = Path(path_str)
+    if p.is_absolute():
+        return p
+    # Default resolution (against cwd)
+    if p.exists():
+        return p
+    # Try fallback roots
+    for root in _FALLBACK_ROOTS:
+        candidate = root / path_str
+        if candidate.exists():
+            return candidate
+    # Nothing found — return the original (caller will report "not found")
+    return p
+
 # Memory types eligible for promotion to shared memory
 _PROMOTABLE_TYPES = frozenset({"preference", "fact", "instruction", "entity", "person"})
 
@@ -111,7 +140,7 @@ async def handle_file_read(
     if not path_str:
         return {"error": "path or paths is required"}
 
-    path = Path(path_str)
+    path = _resolve_path(path_str)
     if not path.exists():
         return {"error": f"File not found: {path_str}"}
     if not path.is_file():
@@ -176,7 +205,9 @@ async def handle_file_write(
     if not path_str:
         return {"error": "path is required"}
 
-    path = Path(path_str)
+    # For writes, resolve existing paths (edits to existing files) but let
+    # new files be created relative to cwd as before.
+    path = _resolve_path(path_str)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(file_content)
@@ -197,7 +228,7 @@ async def handle_file_edit(
     if not edits or not isinstance(edits, list):
         return {"error": "edits is required and must be a non-empty array"}
 
-    path = Path(path_str)
+    path = _resolve_path(path_str)
     if not path.exists():
         return {"error": f"File not found: {path_str}"}
     if not path.is_file():
