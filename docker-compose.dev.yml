@@ -14,6 +14,7 @@ services:
     environment:
       - BOND_HOME=/home/bond/.bond
       - PYTHONPATH=/app
+      - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}
 
   gateway:
     build:
@@ -27,6 +28,7 @@ services:
       - bond-data:/home/bond/.bond
     environment:
       - BOND_BACKEND_URL=http://backend:18790
+      - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}
 
   frontend:
     build:

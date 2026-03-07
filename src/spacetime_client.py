@@ -16,6 +16,8 @@ Usage:
 
 import logging
 import os
+from pathlib import Path
+import re
 from typing import Optional
 
 from .backends.base import StorageBackend
@@ -23,6 +25,24 @@ from .backends.sqlite_backend import SQLiteBackend
 from .backends.spacetimedb_backend import SpacetimeDBBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_spacetimedb_token() -> str:
+    """Resolve the SpacetimeDB token from env var or ~/.config/spacetime/cli.toml."""
+    token = os.environ.get("SPACETIMEDB_TOKEN", "")
+    if token:
+        return token
+    # Fallback: read from CLI config (matches gateway/src/config/index.ts)
+    try:
+        toml_path = Path.home() / ".config" / "spacetime" / "cli.toml"
+        content = toml_path.read_text()
+        match = re.search(r'spacetimedb_token\s*=\s*"([^"]+)"', content)
+        if match:
+            logger.info("Resolved SpacetimeDB token from %s", toml_path)
+            return match.group(1)
+    except (OSError, IOError):
+        pass
+    return ""
 
 # Module-level singleton to avoid re-creating on every call
 _client: Optional[StorageBackend] = None
@@ -48,7 +68,7 @@ def get_client(force_new: bool = False) -> StorageBackend:
     if _client is not None and not force_new:
         return _client
 
-    token = os.environ.get("SPACETIMEDB_TOKEN")
+    token = _resolve_spacetimedb_token()
 
     if token:
         try:
