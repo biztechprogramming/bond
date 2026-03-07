@@ -12,6 +12,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - BOND_HOME=/home/bond/.bond
+      - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}
     restart: unless-stopped
 
 volumes:

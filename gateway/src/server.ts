@@ -41,7 +41,8 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   // SpacetimeDB token endpoint for frontend auth
   app.get("/api/v1/spacetimedb/token", (_req: any, res: any) => {
     // Serve the CLI token so the browser can authenticate as the same identity
-    const token = process.env.SPACETIMEDB_TOKEN || "";
+    // Uses the same resolved token as the persistence router (env var OR cli.toml)
+    const token = config.spacetimedbToken;
     if (!token) {
       return res.status(404).json({ error: "No SpacetimeDB token configured" });
     }

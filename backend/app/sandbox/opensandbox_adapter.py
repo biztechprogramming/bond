@@ -167,8 +167,12 @@ class OpenSandboxAdapter:
         if volumes:
             create_body["volumes"] = volumes
 
-        # Environment variables
-        env = agent.get("env", {})
+        # Environment variables — merge agent-specific env with system env
+        env = dict(agent.get("env", {}))
+        # Auto-inject SPACETIMEDB_TOKEN so sandbox containers can use work_plan
+        spacetimedb_token = os.environ.get("SPACETIMEDB_TOKEN", "")
+        if spacetimedb_token and "SPACETIMEDB_TOKEN" not in env:
+            env["SPACETIMEDB_TOKEN"] = spacetimedb_token
         if env:
             create_body["env"] = env
 
