@@ -32,7 +32,8 @@ RUN pip install --no-cache-dir \
     pydantic \
     httpx \
     mcp \
-    anyio
+    anyio \
+    langfuse
 
 # Copy entrypoint script
 COPY scripts/agent-entrypoint.sh /agent-entrypoint.sh

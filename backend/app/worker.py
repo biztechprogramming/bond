@@ -643,7 +643,10 @@ async def _run_agent_loop(
     full_system_prompt = "\n\n".join(prompt_parts)
 
     # Inject prompt hierarchy: universal fragments + manifest into system prompt
-    from backend.app.agent.tools.dynamic_loader import generate_manifest, load_universal_fragments
+    from backend.app.agent.tools.dynamic_loader import (
+        generate_manifest,
+        load_universal_fragments_with_meta,
+    )
     import backend.app.worker as _worker_module
 
     _prompts_dir = Path("/bond/prompts")
@@ -659,7 +662,7 @@ async def _run_agent_loop(
     # Universal fragments are always-on guidelines — inject once into system prompt
     # so the agent has them without burning a tool call. load_context only loads
     # task-specific category chains on top of these.
-    _universal = load_universal_fragments(_prompts_dir)
+    _universal, _universal_meta = load_universal_fragments_with_meta(_prompts_dir)
     if _universal:
         full_system_prompt = full_system_prompt + "\n\n" + _universal
 
@@ -843,6 +846,52 @@ async def _run_agent_loop(
     })
     _last_iteration_tool_names: list[str] = []  # tools called in previous iteration
 
+    # ── Langfuse metadata for observability ──
+    # Build once before the loop. Updated if load_context adds fragments mid-turn.
+    _langfuse_meta: dict[str, Any] = {}
+    if os.environ.get("LANGFUSE_PUBLIC_KEY"):
+        _audit_fragments: list[dict] = []
+
+        # DB-managed fragments (from _select_relevant_fragments)
+        for frag in selected_fragments:
+            _audit_fragments.append({
+                "source": "db",
+                "id": frag.get("id", ""),
+                "name": frag.get("name", ""),
+                "tier": frag.get("tier", "standard"),
+                "reason": frag.get("_selection_reason", "unknown"),
+                "tokens": frag.get("token_estimate", 0),
+            })
+
+        # Universal fragments (from load_universal_fragments_with_meta)
+        for meta in _universal_meta:
+            _audit_fragments.append(meta)
+
+        # Manifest
+        if _manifest:
+            _audit_fragments.append({
+                "source": "manifest",
+                "name": "prompt_manifest",
+                "tokenEstimate": _estimate_tokens(_manifest),
+            })
+
+        _langfuse_meta = {
+            "trace_name": f"agent-turn-{_state.agent_id}",
+            "session_id": conversation_id,
+            "tags": [
+                f"agent:{_state.agent_id}",
+                f"fragments:{len(_audit_fragments)}",
+            ],
+            "fragments_injected": _audit_fragments,
+            "fragment_count": len(_audit_fragments),
+            "fragment_names": [f.get("name", "") for f in _audit_fragments],
+            "fragment_total_tokens": sum(f.get("tokens", f.get("tokenEstimate", 0)) for f in _audit_fragments),
+            "system_prompt_tokens": _estimate_tokens(full_system_prompt),
+            "system_prompt_hash": hashlib.sha256(full_system_prompt.encode()).hexdigest()[:16],
+            "had_history_compression": compression_stats.get("original_tokens", 0) > COMPRESSION_THRESHOLD,
+            "had_sliding_window": len(history) != len(windowed_history) if history else False,
+        }
+
     for _iteration in range(max_iterations):
         # Check interrupt: if pending messages, inject them and continue.
         # If no messages, this is a pure pause signal — break the loop.
@@ -936,6 +985,7 @@ async def _run_agent_loop(
             tools=tool_defs if tool_defs else None,
             temperature=0.7,
             max_tokens=current_max_tokens,
+            metadata=_langfuse_meta if _langfuse_meta else None,
             **_iter_kwargs,
         )
 
@@ -1055,6 +1105,7 @@ async def _run_agent_loop(
                 tools=tool_defs if tool_defs else None,
                 temperature=0.7,
                 max_tokens=current_max_tokens,
+                metadata=_langfuse_meta if _langfuse_meta else None,
                 **extra_kwargs,
             )
 
@@ -1466,6 +1517,23 @@ async def _startup(config_path: str, data_dir: str) -> None:
         _state.config = {}
 
     _state.agent_id = _state.config.get("agent_id", "default")
+
+    # ── Langfuse Observability ──
+    # Enable if LANGFUSE_PUBLIC_KEY is set. LiteLLM's built-in callback
+    # automatically logs all acompletion() calls to Langfuse.
+    if os.environ.get("LANGFUSE_PUBLIC_KEY"):
+        litellm.success_callback = litellm.success_callback or []
+        litellm.failure_callback = litellm.failure_callback or []
+        if "langfuse" not in litellm.success_callback:
+            litellm.success_callback.append("langfuse")
+        if "langfuse" not in litellm.failure_callback:
+            litellm.failure_callback.append("langfuse")
+        logger.info(
+            "Langfuse observability enabled (host=%s)",
+            os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+        )
+    else:
+        logger.debug("Langfuse not configured (LANGFUSE_PUBLIC_KEY not set)")
 
     # Point BOND_HOME to the mounted vault key location for decryption
     if not os.environ.get("BOND_HOME"):

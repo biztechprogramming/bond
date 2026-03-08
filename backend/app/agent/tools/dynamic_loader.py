@@ -112,6 +112,34 @@ def load_universal_fragments(prompts_dir: Path) -> str:
     return "\n\n---\n\n".join(fragments)
 
 
+def load_universal_fragments_with_meta(prompts_dir: Path) -> tuple[str, list[dict]]:
+    """Load universal fragments and return (content_string, metadata_list).
+
+    Each metadata entry contains source, path, name, and token estimate
+    for audit/observability purposes. Content is NOT included in metadata.
+    """
+    universal_dir = prompts_dir / "universal"
+    if not universal_dir.exists():
+        return "", []
+
+    fragments: list[str] = []
+    meta: list[dict] = []
+    for f in sorted(universal_dir.glob("*.md")):
+        try:
+            content = f.read_text().strip()
+            fragments.append(content)
+            meta.append({
+                "source": "universal",
+                "path": str(f.relative_to(prompts_dir)),
+                "name": f.stem,
+                "tokenEstimate": len(content) // 4,  # rough estimate
+            })
+        except Exception as e:
+            logger.warning("Failed to read universal fragment %s: %s", f, e)
+
+    return "\n\n---\n\n".join(fragments), meta
+
+
 def load_dynamic_tools(prompts_dir: Path) -> dict:
     """Scan prompts dir for dynamic tool definitions (future extension).
 
