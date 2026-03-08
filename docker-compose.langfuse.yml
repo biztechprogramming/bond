@@ -124,7 +124,17 @@ services:
     environment:
       <<: *langfuse-env
       NEXTAUTH_SECRET: bond-langfuse-secret-change-in-prod
-      AUTH_DISABLE_SIGNUP: "false"
+      AUTH_DISABLE_SIGNUP: "true"
+      # Auto-init: user, org, project, and API keys created on first boot
+      LANGFUSE_INIT_USER_EMAIL: admin@bond.local
+      LANGFUSE_INIT_USER_NAME: Bond Admin
+      LANGFUSE_INIT_USER_PASSWORD: bond-langfuse-admin
+      LANGFUSE_INIT_ORG_ID: bond-org
+      LANGFUSE_INIT_ORG_NAME: Bond
+      LANGFUSE_INIT_PROJECT_ID: bond-project
+      LANGFUSE_INIT_PROJECT_NAME: Bond
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-bond-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-bond-local
 
 volumes:
   langfuse-db-data:
