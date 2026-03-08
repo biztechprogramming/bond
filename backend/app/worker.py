@@ -1522,6 +1522,20 @@ async def _startup(config_path: str, data_dir: str) -> None:
     # Enable if LANGFUSE_PUBLIC_KEY is set. LiteLLM's built-in callback
     # automatically logs all acompletion() calls to Langfuse.
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
+        # Patch: litellm passes sdk_integration to Langfuse() but langfuse v3
+        # doesn't accept it. Monkeypatch to strip the unsupported kwarg.
+        try:
+            from litellm.integrations.langfuse.langfuse import LangFuseLogger
+            _orig_safe_init = LangFuseLogger.safe_init_langfuse_client
+
+            def _patched_safe_init(self, parameters: dict):
+                parameters.pop("sdk_integration", None)
+                return _orig_safe_init(self, parameters)
+
+            LangFuseLogger.safe_init_langfuse_client = _patched_safe_init
+        except Exception as e:
+            logger.debug("Langfuse monkeypatch skipped: %s", e)
+
         litellm.success_callback = litellm.success_callback or []
         litellm.failure_callback = litellm.failure_callback or []
         if "langfuse" not in litellm.success_callback:
