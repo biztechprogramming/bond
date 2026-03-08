@@ -27,10 +27,10 @@ services:
       langfuse-db:
         condition: service_healthy
     ports:
-      - "18793:3000"
+      - "18786:3000"
     environment:
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
-      NEXTAUTH_URL: http://localhost:18793
+      NEXTAUTH_URL: http://localhost:18786
       NEXTAUTH_SECRET: bond-langfuse-secret-change-in-prod
       SALT: bond-langfuse-salt-change-in-prod
       TELEMETRY_ENABLED: "false"

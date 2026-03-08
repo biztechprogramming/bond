@@ -399,6 +399,12 @@ class SandboxManager:
         except Exception:
             pass
 
+        # Forward SpacetimeDB token so sandbox can use work_plan, memory, etc.
+        from backend.app.core.spacetimedb import _resolve_token
+        stdb_token = _resolve_token()
+        if stdb_token:
+            cmd.extend(["-e", f"SPACETIMEDB_TOKEN={stdb_token}"])
+
         # --- Mounts (Task 2) ---
 
         # Bond repo: named volume per agent (read-write clone)

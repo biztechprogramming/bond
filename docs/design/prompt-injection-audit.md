@@ -117,10 +117,10 @@ services:
     depends_on:
       - langfuse-db
     ports:
-      - "18793:3000"
+      - "18786:3000"
     environment:
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
-      NEXTAUTH_URL: http://localhost:18793
+      NEXTAUTH_URL: http://localhost:18786
       NEXTAUTH_SECRET: bond-langfuse-secret-change-me
       SALT: bond-langfuse-salt-change-me
       TELEMETRY_ENABLED: "false"
@@ -133,7 +133,7 @@ volumes:
 
 Runs alongside SpacetimeDB: `docker compose -f docker-compose.langfuse.yml up -d`
 
-Langfuse UI at `http://localhost:18793`.
+Langfuse UI at `http://localhost:18786`.
 
 After first login, create a project and get the API keys (public key + secret key).
 
@@ -145,7 +145,7 @@ After first login, create a project and get the API keys (public key + secret ke
 | Frontend | 18788 |
 | Gateway WS | 18789 |
 | Backend API | 18790 |
-| **Langfuse UI** | **18793** |
+| **Langfuse UI** | **18786** |
 | Langfuse Postgres | 5436 (internal) |
 
 ---
@@ -171,7 +171,7 @@ litellm.failure_callback = ["langfuse"]
 ```bash
 LANGFUSE_PUBLIC_KEY=pk-lf-...      # from Langfuse project settings
 LANGFUSE_SECRET_KEY=sk-lf-...      # from Langfuse project settings
-LANGFUSE_HOST=http://host.docker.internal:18793   # worker runs in Docker
+LANGFUSE_HOST=http://host.docker.internal:18786   # worker runs in Docker
 ```
 
 That's it for basic integration. Every `litellm.acompletion()` call now automatically logs to Langfuse with:
@@ -406,12 +406,12 @@ No gateway changes. No new endpoints. No new DB. No frontend work. Langfuse is t
 # 1. Start Langfuse
 docker compose -f docker-compose.langfuse.yml up -d
 
-# 2. Open http://localhost:18793, create account + project
+# 2. Open http://localhost:18786, create account + project
 
 # 3. Copy API keys from project settings, add to worker env:
 #    LANGFUSE_PUBLIC_KEY=pk-lf-...
 #    LANGFUSE_SECRET_KEY=sk-lf-...
-#    LANGFUSE_HOST=http://host.docker.internal:18793
+#    LANGFUSE_HOST=http://host.docker.internal:18786
 
 # 4. Deploy worker with callback enabled — traces start flowing
 ```

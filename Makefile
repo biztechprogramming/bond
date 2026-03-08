@@ -97,7 +97,7 @@ coding-test-revert:
 # Langfuse (LLM observability) Docker Compose commands
 langfuse-up:
 	docker compose -f docker-compose.langfuse.yml up -d
-	@echo "Langfuse UI: http://localhost:18793"
+	@echo "Langfuse UI: http://localhost:18786"
 
 langfuse-down:
 	docker compose -f docker-compose.langfuse.yml down
@@ -118,7 +118,7 @@ langfuse-start:
 	docker compose -f docker-compose.langfuse.yml start
 
 langfuse-health:
-	@curl -s http://localhost:18793/api/public/health 2>/dev/null && echo " Langfuse is healthy" || echo "Langfuse is not responding"
+	@curl -s http://localhost:18786/api/public/health 2>/dev/null && echo " Langfuse is healthy" || echo "Langfuse is not responding"
 
 langfuse-reset: langfuse-down
 	@echo "WARNING: This will delete all Langfuse data (traces, scores, etc.)!"
