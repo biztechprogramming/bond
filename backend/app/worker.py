@@ -1523,16 +1523,19 @@ async def _startup(config_path: str, data_dir: str) -> None:
     # automatically logs all acompletion() calls to Langfuse.
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
         # Patch: litellm passes sdk_integration to Langfuse() but langfuse v3
-        # doesn't accept it. Monkeypatch to strip the unsupported kwarg.
+        # dropped that parameter. Monkeypatch the Langfuse class itself to
+        # accept and ignore the kwarg — catches all code paths (LangFuseLogger,
+        # LangfusePromptManagement, etc.)
         try:
-            from litellm.integrations.langfuse.langfuse import LangFuseLogger
-            _orig_safe_init = LangFuseLogger.safe_init_langfuse_client
+            from langfuse._client.client import Langfuse as _LangfuseClient
+            _orig_init = _LangfuseClient.__init__
 
-            def _patched_safe_init(self, parameters: dict):
-                parameters.pop("sdk_integration", None)
-                return _orig_safe_init(self, parameters)
+            def _patched_init(self, *args, **kwargs):
+                kwargs.pop("sdk_integration", None)
+                return _orig_init(self, *args, **kwargs)
 
-            LangFuseLogger.safe_init_langfuse_client = _patched_safe_init
+            _LangfuseClient.__init__ = _patched_init
+            logger.debug("Patched Langfuse.__init__ to accept sdk_integration")
         except Exception as e:
             logger.debug("Langfuse monkeypatch skipped: %s", e)
 
