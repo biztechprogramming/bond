@@ -1,0 +1,144 @@
+# Langfuse v3 — LLM observability for Bond
+# Based on https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
+# Slimmed down for single-node self-hosting.
+#
+# Usage: docker compose -f docker-compose.langfuse.yml up -d
+# UI: http://localhost:18786
+
+services:
+  langfuse-db:
+    image: postgres:16
+    container_name: bond-langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - langfuse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: bond-langfuse-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    container_name: bond-langfuse-minio
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+
+  langfuse-redis:
+    image: redis:7
+    container_name: bond-langfuse-redis
+    restart: unless-stopped
+    command: --requirepass langfuseredis --maxmemory-policy noeviction
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuseredis", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: bond-langfuse-worker
+    restart: unless-stopped
+    depends_on: &langfuse-deps
+      langfuse-db:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse:langfuse@langfuse-clickhouse:9000/langfuse
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: 6379
+      REDIS_AUTH: langfuseredis
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "events/"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "media/"
+      SALT: bond-langfuse-salt-change-in-prod
+      TELEMETRY_ENABLED: "false"
+      NEXTAUTH_URL: http://localhost:18786
+
+  langfuse:
+    image: langfuse/langfuse:3
+    container_name: bond-langfuse
+    restart: unless-stopped
+    depends_on: *langfuse-deps
+    ports:
+      - "18786:3000"
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: bond-langfuse-secret-change-in-prod
+      AUTH_DISABLE_SIGNUP: "true"
+      # Auto-init: user, org, project, and API keys created on first boot
+      LANGFUSE_INIT_USER_EMAIL: admin@bond.local
+      LANGFUSE_INIT_USER_NAME: Bond Admin
+      LANGFUSE_INIT_USER_PASSWORD: bond-langfuse-admin
+      LANGFUSE_INIT_ORG_ID: bond-org
+      LANGFUSE_INIT_ORG_NAME: Bond
+      LANGFUSE_INIT_PROJECT_ID: bond-project
+      LANGFUSE_INIT_PROJECT_NAME: Bond
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-bond-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-bond-local
+
+volumes:
+  langfuse-db-data:
+  langfuse-clickhouse-data:
+  langfuse-clickhouse-logs:
+  langfuse-minio-data:
+  langfuse-redis-data:

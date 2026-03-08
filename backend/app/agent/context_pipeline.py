@@ -335,7 +335,16 @@ async def _select_relevant_fragments(
         except Exception as e:
             logger.warning("LLM fragment selection failed, proceeding without: %s", e)
 
-    # --- Assemble selected fragments ---
+    # --- Assemble selected fragments with selection reasons ---
+    # Tag each fragment with why it was selected (for audit/observability).
+    # Uses _selection_reason key — internal metadata, not sent to the LLM.
+    for f in core:
+        f["_selection_reason"] = "core_always"
+    for f in triggered:
+        f["_selection_reason"] = "keyword_trigger"
+    for f in llm_picks:
+        f["_selection_reason"] = "llm_selected"
+
     selected = core + triggered + llm_picks
 
     # --- Layer 4: Budget enforcement — drop lowest-rank non-core if over budget ---

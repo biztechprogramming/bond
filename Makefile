@@ -1,4 +1,5 @@
-.PHONY: dev backend gateway frontend setup install test lint clean
+.PHONY: dev backend gateway frontend setup install test lint clean \
+	langfuse-up langfuse-down langfuse-logs langfuse-ps langfuse-restart langfuse-stop langfuse-start langfuse-health langfuse-reset
 
 # Start all services for development
 dev:
@@ -91,6 +92,43 @@ coding-test-revert:
 		echo "Done."; \
 	else \
 		echo "No previous coding test to revert."; \
+	fi
+
+# Langfuse (LLM observability) Docker Compose commands
+langfuse-up:
+	docker compose -f docker-compose.langfuse.yml up -d
+	@echo "Langfuse UI: http://localhost:18786"
+
+langfuse-down:
+	docker compose -f docker-compose.langfuse.yml down
+
+langfuse-logs:
+	docker compose -f docker-compose.langfuse.yml logs -f
+
+langfuse-ps:
+	docker compose -f docker-compose.langfuse.yml ps
+
+langfuse-restart:
+	docker compose -f docker-compose.langfuse.yml restart
+
+langfuse-stop:
+	docker compose -f docker-compose.langfuse.yml stop
+
+langfuse-start:
+	docker compose -f docker-compose.langfuse.yml start
+
+langfuse-health:
+	@curl -s http://localhost:18786/api/public/health 2>/dev/null && echo " Langfuse is healthy" || echo "Langfuse is not responding"
+
+langfuse-reset: langfuse-down
+	@echo "WARNING: This will delete all Langfuse data (traces, scores, etc.)!"
+	@read -p "Are you sure? (y/N) " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		docker volume rm bond_langfuse-db-data 2>/dev/null || true; \
+		echo "Data removed. Run 'make langfuse-up' to start fresh."; \
+	else \
+		echo "Reset cancelled."; \
 	fi
 
 # SpacetimeDB Docker Compose commands
