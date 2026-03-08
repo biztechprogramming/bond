@@ -875,17 +875,36 @@ async def _run_agent_loop(
                 "tokenEstimate": _estimate_tokens(_manifest),
             })
 
+        # Build fragment names and metadata summary
+        _fragment_names = [f.get("name", "") for f in _audit_fragments]
+        _fragment_total_tokens = sum(f.get("tokens", f.get("tokenEstimate", 0)) for f in _audit_fragments)
+
         _langfuse_meta = {
             "trace_name": f"agent-turn-{_state.agent_id}",
             "session_id": conversation_id,
             "tags": [
                 f"agent:{_state.agent_id}",
                 f"fragments:{len(_audit_fragments)}",
-            ],
+            ] + [f"prompt:{n}" for n in _fragment_names],
+
+            # trace_metadata puts data on the TRACE level (visible without
+            # clicking into a generation). Keys prefixed with trace_ are
+            # hoisted by litellm's langfuse callback.
+            "trace_metadata": {
+                "fragment_count": len(_audit_fragments),
+                "fragment_names": _fragment_names,
+                "fragment_total_tokens": _fragment_total_tokens,
+                "system_prompt_tokens": _estimate_tokens(full_system_prompt),
+                "system_prompt_hash": hashlib.sha256(full_system_prompt.encode()).hexdigest()[:16],
+                "had_history_compression": compression_stats.get("original_tokens", 0) > COMPRESSION_THRESHOLD,
+                "had_sliding_window": len(history) != len(windowed_history) if history else False,
+            },
+
+            # Full detail stays on the generation level
             "fragments_injected": _audit_fragments,
             "fragment_count": len(_audit_fragments),
-            "fragment_names": [f.get("name", "") for f in _audit_fragments],
-            "fragment_total_tokens": sum(f.get("tokens", f.get("tokenEstimate", 0)) for f in _audit_fragments),
+            "fragment_names": _fragment_names,
+            "fragment_total_tokens": _fragment_total_tokens,
             "system_prompt_tokens": _estimate_tokens(full_system_prompt),
             "system_prompt_hash": hashlib.sha256(full_system_prompt.encode()).hexdigest()[:16],
             "had_history_compression": compression_stats.get("original_tokens", 0) > COMPRESSION_THRESHOLD,
