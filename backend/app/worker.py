@@ -881,7 +881,7 @@ async def _run_agent_loop(
             "tags": [
                 f"agent:{_state.agent_id}",
                 f"fragments:{len(_audit_fragments)}",
-            ],
+            ] + [f"prompt:{f.get('name', '')}" for f in _audit_fragments],
             "fragments_injected": _audit_fragments,
             "fragment_count": len(_audit_fragments),
             "fragment_names": [f.get("name", "") for f in _audit_fragments],
