@@ -24,7 +24,7 @@ import httpx
 # ---------------------------------------------------------------------------
 
 GATEWAY_URL = os.environ.get("BOND_GATEWAY_URL", "http://host.docker.internal:18792")
-SPACETIMEDB_URL = os.environ.get("BOND_SPACETIMEDB_URL", "http://localhost:18787")
+SPACETIMEDB_URL = os.environ.get("BOND_SPACETIMEDB_URL", "http://host.docker.internal:18787")
 SPACETIMEDB_MODULE = os.environ.get("BOND_SPACETIMEDB_MODULE", "bond-core-v2")
 
 
@@ -96,11 +96,10 @@ class TestLayer2_SpacetimeDBDirect(unittest.TestCase):
     def test_spacetimedb_is_reachable(self):
         """SpacetimeDB HTTP API should respond."""
         try:
-            resp = httpx.get(f"{SPACETIMEDB_URL}/database/ping", timeout=5.0)
-            # SpacetimeDB may not have a /ping endpoint, but we should get a response
-            # Even a 404 means the server is up
+            resp = httpx.get(f"{SPACETIMEDB_URL}/identity", timeout=5.0)
+            # Even a 404 or 401 means the server is up
             self.assertIn(
-                resp.status_code, [200, 404, 400],
+                resp.status_code, [200, 401, 404, 400],
                 f"SpacetimeDB not reachable at {SPACETIMEDB_URL}: {resp.status_code}"
             )
         except httpx.ConnectError:
@@ -114,7 +113,7 @@ class TestLayer2_SpacetimeDBDirect(unittest.TestCase):
             "Authorization": f"Bearer {self.token}",
         }
         try:
-            resp = httpx.post(url, headers=headers, content="SELECT 1", timeout=10.0)
+            resp = httpx.post(url, headers=headers, content="SELECT * FROM work_plans LIMIT 1", timeout=10.0)
             self.assertEqual(
                 resp.status_code, 200,
                 f"SQL query failed ({resp.status_code}): {resp.text}"
