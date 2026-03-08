@@ -33,7 +33,7 @@ RUN pip install --no-cache-dir \
     httpx \
     mcp \
     anyio \
-    langfuse
+    "langfuse>=2.0,<3.0"
 
 # Copy entrypoint script
 COPY scripts/agent-entrypoint.sh /agent-entrypoint.sh
@@ -51,27 +51,6 @@ ENV PYTHONPATH=/bond
 ENV LANGFUSE_PUBLIC_KEY=pk-lf-bond-local
 ENV LANGFUSE_SECRET_KEY=sk-lf-bond-local
 ENV LANGFUSE_HOST=http://host.docker.internal:18786
-
-# Patch: litellm passes sdk_integration to Langfuse() but langfuse v3
-# removed that kwarg. This sitecustomize.py patches Langfuse.__init__
-# before litellm auto-detects the env vars and tries to init a client.
-RUN python3 -c "\
-import sysconfig, pathlib; \
-p = pathlib.Path(sysconfig.get_paths()['purelib']) / 'sitecustomize.py'; \
-p.write_text( \
-'import importlib\n' \
-'try:\n' \
-'    mod = importlib.import_module(\"langfuse._client.client\")\n' \
-'    _L = getattr(mod, \"Langfuse\", None)\n' \
-'    if _L:\n' \
-'        _orig = _L.__init__\n' \
-'        def _p(self, *a, **kw):\n' \
-'            kw.pop(\"sdk_integration\", None)\n' \
-'            return _orig(self, *a, **kw)\n' \
-'        _L.__init__ = _p\n' \
-'except Exception:\n' \
-'    pass\n' \
-)"
 
 WORKDIR /bond
 
