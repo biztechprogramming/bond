@@ -48,8 +48,11 @@ else
 fi
 
 # 3. Initialize SpacetimeDB Module (TypeScript)
+# The module lives at ./spacetimedb/spacetimedb/ (nested — outer dir is the
+# workspace, inner dir has package.json and src/).
 MODULE_DIR="./spacetimedb"
-if [ ! -f "$MODULE_DIR/package.json" ]; then
+MODULE_PKG="$MODULE_DIR/spacetimedb/package.json"
+if [ ! -f "$MODULE_PKG" ] && [ ! -f "$MODULE_DIR/spacetime.json" ]; then
     echo "Initializing SpacetimeDB TypeScript module in $MODULE_DIR..."
     mkdir -p "$MODULE_DIR"
     
