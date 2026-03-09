@@ -412,9 +412,36 @@ async def update_agent(
         
         # Add new mounts
         for mount in body.workspace_mounts:
+            mount_id = str(ULID())
             await stdb.query(f"""
-                INSERT INTO agent_workspace_mounts (agent_id, source_path, container_path)
-                VALUES ('{agent_id}', '{_escape_sql(mount.host_path)}', '{_escape_sql(mount.container_path)}')
+                INSERT INTO agent_workspace_mounts (
+                    id, agent_id, host_path, mount_name, container_path, readonly
+                ) VALUES (
+                    '{mount_id}',
+                    '{agent_id}',
+                    '{_escape_sql(mount.host_path)}',
+                    '{_escape_sql(mount.mount_name)}',
+                    '{_escape_sql(mount.container_path or f"/workspace/{mount.mount_name}")}',
+                    {str(mount.readonly).lower()}
+                )
+            """)
+
+    # Update channels if provided
+    if body.channels is not None:
+        try:
+            await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
+        except Exception:
+            pass  # Table might not exist
+        
+        for channel in body.channels:
+            await stdb.query(f"""
+                INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
+                VALUES (
+                    '{agent_id}',
+                    '{_escape_sql(channel.channel)}',
+                    {str(channel.enabled).lower()},
+                    '{_escape_sql(channel.sandbox_override or "")}'
+                )
             """)
 
     return await _get_agent_by_id(agent_id)
