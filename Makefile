@@ -1,4 +1,4 @@
-.PHONY: dev backend gateway frontend setup install test lint clean \
+.PHONY: dev backend gateway frontend setup install test lint clean images \
 	langfuse-up langfuse-down langfuse-logs langfuse-ps langfuse-restart langfuse-stop langfuse-start langfuse-health langfuse-reset
 
 # Start all services for development
@@ -67,6 +67,14 @@ migrate-version:
 # Install golang-migrate with SQLite support (requires Go)
 install-migrate:
 	go install -tags 'sqlite3' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# Build all agent container images
+images:
+	@echo "Building agent container images..."
+	docker build -f Dockerfile.agent -t bond-agent-worker:latest .
+	docker build -f docker/Dockerfile.python -t bond-agent-python:latest .
+	docker build -f docker/Dockerfile.dotnet -t bond-agent-dotnet:latest .
+	@echo "All agent images built."
 
 # Clean generated files
 clean:
