@@ -35,7 +35,15 @@ RUN curl -fsSL https://bun.sh/install | bash \
 RUN npm install -g \
     pnpm \
     typescript \
-    tsx
+    tsx \
+    tslab
+
+# Install Jupyter for code interpreter support (opt-in via BOND_CODE_INTERPRETER=1)
+RUN pip install --no-cache-dir --break-system-packages \
+    jupyter \
+    ipykernel \
+    && python3 -m ipykernel install --name python --display-name "Python" \
+    && tslab install
 
 # Install delta for better git diffs
 RUN ARCH=$(dpkg --print-architecture) \

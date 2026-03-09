@@ -36,7 +36,12 @@ RUN pip install --no-cache-dir \
     pyright \
     ipython \
     httpx \
-    rich
+    rich \
+    jupyter \
+    ipykernel
+
+# Install Jupyter kernel for code interpreter (opt-in via BOND_CODE_INTERPRETER=1)
+RUN python3 -m ipykernel install --name python --display-name "Python"
 
 # Install Playwright
 RUN pip install playwright \
