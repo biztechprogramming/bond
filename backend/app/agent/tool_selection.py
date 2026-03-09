@@ -48,9 +48,14 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "command", "terminal", "shell", "pip", "npm", "make", "docker",
         "curl",
     ],
+    "project_search": [
+        "find", "locate", "search for", "where is", "look for", "find the",
+        "find me", "looking for", "design doc", "doc ", "document",
+        "which file", "what file", "where's the", "can you find",
+    ],
     "shell_find": [
-        "find ", "locate file", "search for file", "where is", "*.py", "*.ts",
-        "*.js", "*.md", "*.json", "*.yaml", "*.yml", "file named",
+        "*.py", "*.ts", "*.js", "*.md", "*.json", "*.yaml", "*.yml",
+        "file named", "glob", "find -name", "-type f", "-type d",
     ],
     "shell_ls": [
         "ls ", "list files", "list directory", "what files", "directory contents",
