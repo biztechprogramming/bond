@@ -898,6 +898,10 @@ async def _run_agent_loop(
         for meta in _tier1_meta:
             _audit_fragments.append(meta)
 
+        # Tier 3 fragments (from semantic router)
+        for meta in _tier3_meta:
+            _audit_fragments.append(meta)
+
         # Category manifest
         if _category_manifest:
             _audit_fragments.append({
@@ -1664,6 +1668,46 @@ async def _run_agent_loop(
                             _new_phase.name,
                             [f.path for f in _lc_frags],
                         )
+
+                        # Update Langfuse metadata with Tier 2 fragments
+                        if _langfuse_meta:
+                            _lc_meta = [
+                                {
+                                    "source": "lifecycle-tier2",
+                                    "path": f.path,
+                                    "name": Path(f.path).stem,
+                                    "phase": _new_phase.name,
+                                    "tokenEstimate": f.token_estimate,
+                                }
+                                for f in _lc_frags
+                            ]
+                            # Rebuild audit list: remove old tier2, add new
+                            _audit_fragments = [
+                                f for f in _audit_fragments
+                                if f.get("source") != "lifecycle-tier2"
+                            ] + _lc_meta
+                            _fragment_names = [f.get("name", "") for f in _audit_fragments]
+                            _fragment_total_tokens = sum(
+                                f.get("tokens", f.get("tokenEstimate", 0))
+                                for f in _audit_fragments
+                            )
+                            _langfuse_meta.update({
+                                "fragments_injected": _audit_fragments,
+                                "fragment_count": len(_audit_fragments),
+                                "fragment_names": _fragment_names,
+                                "fragment_total_tokens": _fragment_total_tokens,
+                                "tags": [
+                                    f"agent:{_state.agent_id}",
+                                    f"fragments:{len(_audit_fragments)}",
+                                    f"phase:{_new_phase.name}",
+                                ] + [f"prompt:{n}" for n in _fragment_names],
+                            })
+                            _langfuse_meta["trace_metadata"].update({
+                                "fragment_count": len(_audit_fragments),
+                                "fragment_names": _fragment_names,
+                                "fragment_total_tokens": _fragment_total_tokens,
+                                "lifecycle_phase": _new_phase.name,
+                            })
                     else:
                         _lifecycle_injected = False
                 else:
