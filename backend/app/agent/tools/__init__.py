@@ -83,6 +83,7 @@ def build_registry() -> ToolRegistry:
     from .shell_utils import (
         handle_shell_find, handle_shell_ls, handle_shell_grep,
         handle_git_info, handle_shell_wc, handle_shell_head, handle_shell_tree,
+        handle_project_search,
     )
 
     registry = ToolRegistry()
@@ -113,4 +114,5 @@ def build_registry() -> ToolRegistry:
     registry.register("shell_wc", handle_shell_wc)
     registry.register("shell_head", handle_shell_head)
     registry.register("shell_tree", handle_shell_tree)
+    registry.register("project_search", handle_project_search)
     return registry

@@ -575,7 +575,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "shell_find",
-            "description": "Find files by name, pattern, or type. Replaces 'find' commands in code_execute. Auto-excludes .venv, node_modules, __pycache__, .git.",
+            "description": "Find files by name glob, regex, or type. Case-insensitive by default. Use project_search for natural-language queries — use shell_find when you need specific glob or regex patterns. Auto-excludes .venv, node_modules, __pycache__, .git.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -586,7 +586,11 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "name": {
                         "type": "string",
-                        "description": "File name or glob pattern (e.g. '*.py', 'test_*.ts').",
+                        "description": "File name glob pattern (case-insensitive). E.g. '*.py', '*027*', 'test_*.ts'.",
+                    },
+                    "regex": {
+                        "type": "string",
+                        "description": "POSIX extended regex to match against the full path (case-insensitive). E.g. '.*/0?27.*\\.md$'. Use instead of name for complex patterns.",
                     },
                     "type": {
                         "type": "string",
@@ -790,6 +794,49 @@ TOOL_DEFINITIONS: list[dict] = [
                         "default": False,
                     },
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "project_search",
+            "description": (
+                "Smart project search: finds files by combining filename matching, content search, "
+                "and path matching in one call. Use this FIRST when looking for a file, document, or "
+                "code reference — it tries multiple strategies automatically. Example: "
+                "project_search(query='design doc 27') finds docs/design/027-fragment-selection-roadmap.md "
+                "even though the filename doesn't contain 'design doc'. Falls back to content search "
+                "if filename matching fails. Prefer this over manual shell_find/shell_grep for discovery."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What you're looking for. Can be a name, number, topic, or natural language description.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search (default: /workspace).",
+                        "default": "/workspace",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Filter by type: f=file, d=directory.",
+                        "enum": ["f", "d"],
+                    },
+                    "include": {
+                        "type": "string",
+                        "description": "File extension filter (e.g. '*.md', '*.py').",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum results per category (default: 30).",
+                        "default": 30,
+                    },
+                },
+                "required": ["query"],
             },
         },
     },

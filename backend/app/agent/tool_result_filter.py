@@ -35,6 +35,7 @@ SKIP_TOOLS = frozenset({
     "shell_head",
     "shell_wc",
     "git_info",
+    "project_search",
 })
 
 # Max output size from the filter (chars)

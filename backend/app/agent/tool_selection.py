@@ -20,7 +20,7 @@ ALWAYS_INCLUDE = {"respond", "load_context"}
 # These are tiny schemas that replace expensive code_execute calls.
 SHELL_UTILITY_TOOLS = frozenset({
     "shell_find", "shell_ls", "shell_grep", "git_info",
-    "shell_wc", "shell_head", "shell_tree",
+    "shell_wc", "shell_head", "shell_tree", "project_search",
 })
 
 # Maximum *non-utility* tools to send per turn

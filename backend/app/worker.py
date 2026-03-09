@@ -452,7 +452,7 @@ async def _run_agent_loop(
     # that should always be available. No reason to gate behind agent config.
     _SHELL_UTILITY_TOOLS = [
         "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree",
+        "shell_wc", "shell_head", "shell_tree", "project_search",
     ]
     for _util_tool in _SHELL_UTILITY_TOOLS:
         if _util_tool not in agent_tools:
@@ -871,7 +871,7 @@ async def _run_agent_loop(
         "file_read", "search_memory",
         "web_search", "web_read", "work_plan",
         "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree",
+        "shell_wc", "shell_head", "shell_tree", "project_search",
     })
     CONSEQUENTIAL_TOOLS = frozenset({
         "file_write", "file_edit", "code_execute", "respond", "memory_save",

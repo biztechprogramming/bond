@@ -25,6 +25,7 @@ ALWAYS_PARALLEL_SAFE = frozenset({
     "web_read",
     "search_memory",
     "load_context",
+    "project_search",
 })
 
 # Tools that are always consequential (must run sequentially via primary model)
