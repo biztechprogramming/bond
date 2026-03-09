@@ -319,7 +319,7 @@ export default function AgentsTab() {
                 value={editing.model}
                 onChange={(e) => setEditing({ ...editing, model: e.target.value })}
               >
-                {(availableModels.length > 0 ? availableModels : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
+                {(availableModels.length > 0 ? availableModels.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i) : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
                 {editing.model && !availableModels.find(m => m.id === editing.model) && (
@@ -334,7 +334,7 @@ export default function AgentsTab() {
                 value={editing.utility_model}
                 onChange={(e) => setEditing({ ...editing, utility_model: e.target.value })}
               >
-                {(availableModels.length > 0 ? availableModels : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
+                {(availableModels.length > 0 ? availableModels.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i) : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
                 {editing.utility_model && !availableModels.find(m => m.id === editing.utility_model) && (
