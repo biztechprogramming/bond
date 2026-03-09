@@ -16,7 +16,14 @@ logger = logging.getLogger(__name__)
 # Always included regardless of heuristics
 ALWAYS_INCLUDE = {"respond", "load_context"}
 
-# Maximum tools to send per turn
+# Shell utility tools — always included alongside coding tools, exempt from cap.
+# These are tiny schemas that replace expensive code_execute calls.
+SHELL_UTILITY_TOOLS = frozenset({
+    "shell_find", "shell_ls", "shell_grep", "git_info",
+    "shell_wc", "shell_head", "shell_tree",
+})
+
+# Maximum *non-utility* tools to send per turn
 MAX_TOOLS_PER_TURN = 8
 
 # Keyword → tool mapping. Keywords are checked case-insensitively against
@@ -195,19 +202,10 @@ def select_tools(
         logger.debug("No tools matched for message, using respond only")
         return [t for t in selected if t in enabled_tools]
 
-    # Coding tasks often need both read + write + execute + utility tools
+    # Coding tasks often need both read + write + execute
     coding_tools = {"file_read", "file_write", "file_edit", "code_execute"}
-    shell_utility_tools = {"shell_find", "shell_ls", "shell_grep", "git_info", "shell_head", "shell_tree"}
     if coding_tools & selected:
-        # If any coding tool matched, include all enabled coding tools + shell utils
         selected.update(coding_tools & set(enabled_tools))
-        selected.update(shell_utility_tools & set(enabled_tools))
-    # If any shell utility tool matched, include the related ones
-    if shell_utility_tools & selected:
-        selected.update(shell_utility_tools & set(enabled_tools))
-        # Also include file_read since they're often used together
-        if "file_read" in enabled_tools:
-            selected.add("file_read")
 
     # Memory operations: if any memory tool matched, include search too
     memory_tools = {"search_memory", "memory_save", "memory_update", "memory_delete"}
@@ -215,19 +213,40 @@ def select_tools(
         if "search_memory" in enabled_tools:
             selected.add("search_memory")
 
-    # Cap at MAX_TOOLS_PER_TURN
-    if len(selected) > MAX_TOOLS_PER_TURN:
+    # Separate utility tools from regular tools for capping.
+    # Shell utility tools are exempt from the cap — they're tiny schemas
+    # that exist to REPLACE expensive code_execute calls.
+    enabled_utility = SHELL_UTILITY_TOOLS & set(enabled_tools)
+    regular_selected = selected - SHELL_UTILITY_TOOLS
+    utility_selected = selected & SHELL_UTILITY_TOOLS
+
+    # Cap only non-utility tools at MAX_TOOLS_PER_TURN
+    if len(regular_selected) > MAX_TOOLS_PER_TURN:
         # Prioritize: always_include > keyword_matched > momentum
-        prioritized = list(ALWAYS_INCLUDE & selected)
-        prioritized += [t for t in keyword_matched if t not in prioritized]
-        prioritized += [t for t in selected if t not in prioritized]
-        selected = set(prioritized[:MAX_TOOLS_PER_TURN])
+        prioritized = list(ALWAYS_INCLUDE & regular_selected)
+        prioritized += [t for t in keyword_matched if t not in prioritized and t not in SHELL_UTILITY_TOOLS]
+        prioritized += [t for t in regular_selected if t not in prioritized]
+        regular_selected = set(prioritized[:MAX_TOOLS_PER_TURN])
+
+    # Always include ALL shell utility tools when any coding/file tool is in play.
+    # They cost almost nothing in schema tokens and save full model calls.
+    has_coding_context = bool(
+        (coding_tools | {"shell_find", "shell_grep", "shell_ls", "git_info"}) & regular_selected
+    )
+    if has_coding_context:
+        utility_selected = enabled_utility
+    # Also include them if any utility tool was keyword-matched
+    elif utility_selected:
+        utility_selected = enabled_utility
+
+    selected = regular_selected | utility_selected
 
     result = [t for t in selected if t in enabled_tools]
     logger.info(
-        "Tool selection: %d/%d tools selected (keyword=%d, momentum=%d)",
+        "Tool selection: %d/%d tools selected (keyword=%d, utility=%d, momentum=%d)",
         len(result), len(enabled_tools),
-        len(keyword_matched), len(selected) - len(keyword_matched) - len(ALWAYS_INCLUDE & selected),
+        len(keyword_matched), len(utility_selected),
+        len(selected) - len(keyword_matched) - len(utility_selected) - len(ALWAYS_INCLUDE & selected),
     )
     return result
 
