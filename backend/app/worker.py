@@ -961,8 +961,16 @@ async def _run_agent_loop(
         }
 
     # ── Phase 4B/4C: Cost tracking helper ──
-    _cost_alert_threshold = float(os.environ.get("LLM_COST_ALERT_THRESHOLD", "0.25"))
-    _iteration_alert_threshold = int(os.environ.get("LLM_ITERATION_ALERT_THRESHOLD", "20"))
+    _raw_cost_thresh = os.environ.get("LLM_COST_ALERT_THRESHOLD")
+    _raw_iter_thresh = os.environ.get("LLM_ITERATION_ALERT_THRESHOLD")
+    try:
+        _cost_alert_threshold = float(_raw_cost_thresh) if isinstance(_raw_cost_thresh, str) else 0.25
+    except (TypeError, ValueError):
+        _cost_alert_threshold = 0.25
+    try:
+        _iteration_alert_threshold = int(_raw_iter_thresh) if isinstance(_raw_iter_thresh, str) else 20
+    except (TypeError, ValueError):
+        _iteration_alert_threshold = 20
 
     def _emit_cost_summary():
         """Log per-session cost summary (Phase 4B) and check for cost alerts (Phase 4C)."""
@@ -986,7 +994,11 @@ async def _run_agent_loop(
         )
 
         # Phase 4C: Cost alerting
-        if _est_total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold:
+        try:
+            _cost_exceeded = _est_total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold
+        except TypeError:
+            _cost_exceeded = False
+        if _cost_exceeded:
             logger.warning(
                 "COST ALERT: session %s exceeded thresholds (cost=$%.4f > $%.2f or iterations=%d > %d)",
                 conversation_id, _est_total, _cost_alert_threshold,
