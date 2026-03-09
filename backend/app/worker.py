@@ -26,6 +26,17 @@ import aiosqlite
 import litellm
 
 from backend.app.agent.context_decay import apply_progressive_decay
+from backend.app.agent.lifecycle import (
+    LifecycleState,
+    Phase,
+    detect_phase,
+    format_lifecycle_injection,
+    format_precommit_injection,
+    is_git_commit_command,
+    is_git_push_command,
+    is_pr_create_command,
+    load_lifecycle_fragments,
+)
 from backend.app.agent.tool_selection import select_tools, compact_tool_schema
 from backend.app.agent.tool_result_filter import filter_tool_result, rule_based_prune
 from backend.app.agent.context_pipeline import (
@@ -830,6 +841,11 @@ async def _run_agent_loop(
     })
     _last_iteration_tool_names: list[str] = []  # tools called in previous iteration
 
+    # ── Lifecycle phase tracking (Doc 024 — Tier 2 injection) ──
+    _lifecycle_phase = Phase.IDLE
+    _lifecycle_injected = False  # whether Tier 2 content is in the system prompt
+    _lifecycle_turn_number = 0  # logical turn counter for lifecycle detection
+
     # ── Langfuse metadata for observability ──
     # Build once before the loop. Updated if load_context adds fragments mid-turn.
     _langfuse_meta: dict[str, Any] = {}
@@ -1235,6 +1251,39 @@ async def _run_agent_loop(
                         "tool_calls_made": tool_calls_made,
                     }))
 
+                # ── Pre-execution lifecycle hook (Doc 024) ──
+                # Inject phase-specific guidance right before consequential
+                # git operations so the agent sees it in the same context
+                # window as the tool result.
+                if is_git_commit_command(tool_name, tool_args):
+                    _commit_frags = load_lifecycle_fragments(Phase.COMMITTING, _prompts_dir)
+                    if _commit_frags:
+                        _precommit_text = format_precommit_injection(_commit_frags)
+                        messages.append({
+                            "role": "user",
+                            "content": f"SYSTEM: {_precommit_text}",
+                        })
+                        logger.info(
+                            "Pre-commit hook: injected %d fragments (%s)",
+                            len(_commit_frags),
+                            [f.path for f in _commit_frags],
+                        )
+                elif is_pr_create_command(tool_name, tool_args):
+                    _review_frags = load_lifecycle_fragments(Phase.REVIEWING, _prompts_dir)
+                    if _review_frags:
+                        _review_text = "\n\n---\n\n".join(
+                            f.content for f in _review_frags if f.content
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": f"SYSTEM: ## Before Creating This PR\n{_review_text}",
+                        })
+                        logger.info(
+                            "Pre-PR hook: injected %d fragments (%s)",
+                            len(_review_frags),
+                            [f.path for f in _review_frags],
+                        )
+
                 if tool_name not in agent_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled."}
                 else:
@@ -1393,6 +1442,71 @@ async def _run_agent_loop(
                     "tool_call_id": tool_call.id,
                     "content": result_json,
                 })
+
+            # ── Between-turn lifecycle injection (Doc 024) ──
+            # After processing all tool calls for this iteration, detect the
+            # lifecycle phase and inject Tier 2 fragments into the system prompt
+            # for the next iteration. This ensures the agent sees phase-specific
+            # guidance (e.g. testing rules during implementation, git rules during
+            # committing) on the NEXT LLM call.
+            _lifecycle_turn_number += 1
+            _tool_call_strings = [
+                f"{tc.function.name}:{tc.function.arguments}"
+                for tc in llm_message.tool_calls
+            ]
+            _lc_state = LifecycleState(
+                turn_number=_lifecycle_turn_number,
+                last_tool_calls=_tool_call_strings,
+                has_work_plan=_has_active_plan,
+                work_plan_status="in_progress" if _has_active_plan else None,
+            )
+            _new_phase = detect_phase(_lc_state)
+
+            if _new_phase != _lifecycle_phase:
+                _lifecycle_phase = _new_phase
+                logger.info("Lifecycle phase changed to: %s", _lifecycle_phase.name)
+
+                # Remove previous lifecycle injection from system prompt
+                # (it's appended at the end, so we strip it)
+                sys_content = messages[0].get("content", "")
+                if isinstance(sys_content, list):
+                    # Anthropic cached format — modify text block
+                    for block in sys_content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text = block["text"]
+                            marker = "\n\n## Current Phase: "
+                            if marker in text:
+                                block["text"] = text[:text.index(marker)]
+                            break
+                elif isinstance(sys_content, str):
+                    marker = "\n\n## Current Phase: "
+                    if marker in sys_content:
+                        sys_content = sys_content[:sys_content.index(marker)]
+                        messages[0]["content"] = sys_content
+
+                # Inject new lifecycle fragments if not idle
+                if _new_phase != Phase.IDLE:
+                    _lc_frags = load_lifecycle_fragments(_new_phase, _prompts_dir)
+                    _lc_injection = format_lifecycle_injection(_new_phase, _lc_frags)
+                    if _lc_injection:
+                        if isinstance(messages[0].get("content"), list):
+                            for block in messages[0]["content"]:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    block["text"] += _lc_injection
+                                    break
+                        else:
+                            messages[0]["content"] += _lc_injection
+                        _lifecycle_injected = True
+                        logger.info(
+                            "Lifecycle injection: phase=%s fragments=%s",
+                            _new_phase.name,
+                            [f.path for f in _lc_frags],
+                        )
+                    else:
+                        _lifecycle_injected = False
+                else:
+                    _lifecycle_injected = False
+
         else:
             return llm_message.content or "", tool_calls_made
 
