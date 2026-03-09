@@ -865,23 +865,37 @@ async def _run_agent_loop(
     # Initialize to after history + user message (the last pre-turn message).
     _cache_bp2_index = len(messages) - 1
 
-    # ── Speculative utility model routing ──
-    # When the previous iteration only called info-gathering tools, we
-    # speculatively route the next iteration to the cheaper utility model.
-    # If the utility model's response contains a consequential tool call
-    # (file_write, file_edit, respond, memory_save), we discard its response
-    # and replay the same call with the primary model.
+    # Info-gathering tools — used for batching nudge detection (Phase 1B)
+    # and early termination tracking (Phase 2B)
     INFO_GATHERING_TOOLS = frozenset({
         "file_read", "search_memory",
         "web_search", "web_read", "work_plan",
-        # Shell utility tools — always info-gathering, always cheap
         "shell_find", "shell_ls", "shell_grep", "git_info",
         "shell_wc", "shell_head", "shell_tree",
     })
     CONSEQUENTIAL_TOOLS = frozenset({
         "file_write", "file_edit", "code_execute", "respond", "memory_save",
     })
-    _last_iteration_tool_names: list[str] = []  # tools called in previous iteration
+
+    # ── Phase 1B: Batching nudge tracking ──
+    _consecutive_single_info_iterations = 0
+
+    # ── Phase 2A: Adaptive iteration budget ──
+    _adaptive_budget_set = False
+
+    # ── Phase 2B: Early termination for read-only tasks ──
+    _has_made_consequential_call = False
+
+    # ── Phase 4B: Per-session cost tracking ──
+    _cost_tracking = {
+        "primary_calls": 0,
+        "filter_calls": 0,
+        "compression_calls": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "iterations_used": 0,
+        "iteration_budget": max_iterations,
+    }
 
     # ── Lifecycle phase tracking (Doc 024 — Tier 2 injection) ──
     _lifecycle_phase = Phase.IDLE
@@ -946,6 +960,41 @@ async def _run_agent_loop(
             "had_sliding_window": len(history) != len(windowed_history) if history else False,
         }
 
+    # ── Phase 4B/4C: Cost tracking helper ──
+    _cost_alert_threshold = float(os.environ.get("LLM_COST_ALERT_THRESHOLD", "0.25"))
+    _iteration_alert_threshold = int(os.environ.get("LLM_ITERATION_ALERT_THRESHOLD", "20"))
+
+    def _emit_cost_summary():
+        """Log per-session cost summary (Phase 4B) and check for cost alerts (Phase 4C)."""
+        # Rough cost estimate: Opus input=$15/M, output=$75/M; cached reads are cheaper
+        _est_input_cost = _cost_tracking["total_input_tokens"] * 15.0 / 1_000_000
+        _est_output_cost = _cost_tracking["total_output_tokens"] * 75.0 / 1_000_000
+        _est_total = _est_input_cost + _est_output_cost
+
+        logger.info(
+            "Cost summary: calls=%d (primary=%d, filter=%d, compression=%d) "
+            "tokens_in=%d tokens_out=%d est_cost=$%.4f iterations=%d/%d",
+            _cost_tracking["primary_calls"] + _cost_tracking["filter_calls"] + _cost_tracking["compression_calls"],
+            _cost_tracking["primary_calls"],
+            _cost_tracking["filter_calls"],
+            _cost_tracking["compression_calls"],
+            _cost_tracking["total_input_tokens"],
+            _cost_tracking["total_output_tokens"],
+            _est_total,
+            _cost_tracking["iterations_used"],
+            _cost_tracking["iteration_budget"],
+        )
+
+        # Phase 4C: Cost alerting
+        if _est_total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold:
+            logger.warning(
+                "COST ALERT: session %s exceeded thresholds (cost=$%.4f > $%.2f or iterations=%d > %d)",
+                conversation_id, _est_total, _cost_alert_threshold,
+                _cost_tracking["iterations_used"], _iteration_alert_threshold,
+            )
+            if _langfuse_meta:
+                _langfuse_meta.setdefault("tags", []).append("cost:high")
+
     for _iteration in range(max_iterations):
         # Check interrupt: if pending messages, inject them and continue.
         # If no messages, this is a pure pause signal — break the loop.
@@ -961,49 +1010,60 @@ async def _run_agent_loop(
                     await event_queue.put(_sse_event("status", {"state": "paused"}))
                 break
 
-        # In-loop decay: compress tool results accumulated during this turn.
-        # Keep the last 2 tool results verbatim; older ones get progressively decayed.
-        # frozen_up_to prevents modifying messages before the cache breakpoint.
-        if _iteration > 0 and _iteration % 3 == 0:
+        # ── Phase 3B: Improved in-loop tool result decay ──
+        # Run every 2 iterations (was 3). After iteration 8, decay to one-line
+        # summaries for results older than last 3. After 15, last 2 only.
+        if _iteration > 0 and _iteration % 2 == 0:
             messages = _decay_in_loop_tool_results(messages, _preturn_msg_count, frozen_up_to=_cache_bp2_index)
+        if _iteration >= 8:
+            # Aggressive decay: keep only last 3 tool results verbatim
+            _aggressive_keep = 3 if _iteration < 15 else 2
+            _in_loop = messages[_preturn_msg_count:]
+            _tool_indices = [i for i, m in enumerate(_in_loop) if m.get("role") == "tool"]
+            if len(_tool_indices) > _aggressive_keep:
+                _decay_cutoff = _tool_indices[-_aggressive_keep]
+                for _di in range(len(_in_loop)):
+                    if _di < _decay_cutoff and _in_loop[_di].get("role") == "tool":
+                        _tc = _in_loop[_di].get("content", "")
+                        if isinstance(_tc, str) and len(_tc) > 100:
+                            try:
+                                _parsed = json.loads(_tc)
+                                if isinstance(_parsed, dict):
+                                    _summary = "; ".join(
+                                        f"{k}: {str(v)[:50]}" for k, v in list(_parsed.items())[:3]
+                                    )
+                                    _in_loop[_di] = {**_in_loop[_di], "content": f"[Decayed] {_summary}"}
+                            except (json.JSONDecodeError, TypeError):
+                                _in_loop[_di] = {**_in_loop[_di], "content": _tc[:80] + "...[decayed]"}
+                messages = messages[:_preturn_msg_count] + _in_loop
 
         current_max_tokens = TOKEN_TIERS[current_tier]
         context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
 
-        # Decide whether to use utility model for this iteration.
-        # If the previous iteration ONLY called info-gathering tools,
-        # the agent is still collecting context — use the cheaper utility model.
-        _use_utility = (
-            _iteration > 0
-            and _last_iteration_tool_names
-            and all(t in INFO_GATHERING_TOOLS for t in _last_iteration_tool_names)
-        )
-        _iter_model = utility_model if _use_utility else model
-        _iter_kwargs = utility_kwargs if _use_utility else extra_kwargs
-        _is_iter_anthropic = _resolve_provider(_iter_model) == "anthropic"
-        if _use_utility:
-            logger.info(
-                "Speculative utility model (%s) for iteration %d (prev tools: %s) — will replay to primary if consequential",
-                utility_model, _iteration, _last_iteration_tool_names,
-            )
+        # All iterations use the primary model (Phase 1A: removed speculative utility routing)
+        _iter_model = model
+        _iter_kwargs = extra_kwargs
 
         # Advance prompt cache breakpoint 2 before each call (Anthropic only).
-        # Only advance when the current iteration model is Anthropic —
-        # skip when routing to a non-Anthropic utility model.
-        if _is_iter_anthropic:
+        if _is_anthropic_model:
             _cache_bp2_index = _advance_cache_breakpoint(messages, _cache_bp2_index)
 
+        # ── Phase 4A: Distinguished Langfuse trace naming ──
+        _iter_langfuse_meta = dict(_langfuse_meta) if _langfuse_meta else {}
+        if _iter_langfuse_meta:
+            _iter_langfuse_meta["trace_name"] = f"agent-turn-{_state.agent_id}-iter-{_iteration}"
+            _iter_langfuse_meta.setdefault("tags", [])
+            if "call_type:primary" not in _iter_langfuse_meta["tags"]:
+                _iter_langfuse_meta["tags"].append("call_type:primary")
+
         logger.info(
-            "LLM request: model=%s tools=%d max_tokens=%d tier=%d context_tokens=~%d msgs=%d cache=%s tool_names=%s",
+            "LLM request: model=%s tools=%d max_tokens=%d tier=%d context_tokens=~%d msgs=%d cache=%s",
             _iter_model, len(tool_defs), current_max_tokens, current_tier,
             context_tokens, len(messages),
-            "anthropic" if _is_iter_anthropic else "none",
-            [t["function"]["name"] for t in tool_defs],
+            "anthropic" if _is_anthropic_model else "none",
         )
 
         # Token budget injection: append brief context to the last tool result
-        # so the agent can self-regulate. Only appended to the latest (non-cached)
-        # message, so it doesn't affect cache stability. ~15 tokens overhead.
         _budget_note = ""
         _budget_target_idx = -1
         if _iteration > 0 and messages and messages[-1].get("role") == "tool":
@@ -1013,26 +1073,37 @@ async def _run_agent_loop(
             if isinstance(content, str):
                 messages[_budget_target_idx]["content"] = content + _budget_note
 
+        # ── Phase 2A: Wrap-up nudge at 80% of budget ──
+        if _iteration > 0 and _iteration >= int(max_iterations * 0.8):
+            messages.append({
+                "role": "user",
+                "content": "SYSTEM: You're approaching your iteration limit. Wrap up or synthesize what you have.",
+            })
+
+        # ── Phase 2B: Early termination nudges for read-only tasks ──
+        if not _has_made_consequential_call:
+            if _iteration == 10:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "SYSTEM: You've gathered substantial context over 10 iterations without making "
+                        "any changes. Synthesize your findings and respond to the user now. "
+                        "Do not read more files."
+                    ),
+                })
+            elif _iteration >= 15:
+                # Force respond-only tool set
+                from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
+                tool_defs = [compact_tool_schema(_FULL_TOOL_MAP["respond"])] if "respond" in _FULL_TOOL_MAP else tool_defs
+                logger.info("Phase 2B: forced respond-only tool set at iteration %d", _iteration)
+
         # Log the API key info before calling LiteLLM
         if "api_key" in _iter_kwargs:
             _dbg_key = _iter_kwargs["api_key"]
-            logger.debug("Calling LiteLLM with model %s, API key length: %d", 
+            logger.debug("Calling LiteLLM with model %s, API key length: %d",
                        _iter_model, len(_dbg_key))
         else:
             logger.debug("Calling LiteLLM with model %s, no API key in kwargs", _iter_model)
-
-        # When routing to a non-Anthropic utility model, strip Anthropic-specific
-        # cache_control markers from messages to avoid provider errors.
-        _call_messages = messages
-        if _use_utility and not _is_iter_anthropic and _is_anthropic_model:
-            _call_messages = copy.deepcopy(messages)
-            for msg in _call_messages:
-                content = msg.get("content")
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict):
-                            block.pop("cache_control", None)
-
         # ── LLM call with retry on empty responses (rate limiting) ──
         _retry_max = int(os.environ.get("LLM_RETRY_MAX_ATTEMPTS", "10"))
         _retry_max_wait = float(os.environ.get("LLM_RETRY_MAX_WAIT_SECONDS", "180"))
@@ -1041,11 +1112,11 @@ async def _run_agent_loop(
         for _retry_attempt in range(_retry_max):
             response = await litellm.acompletion(
                 model=_iter_model,
-                messages=_call_messages,
+                messages=messages,
                 tools=tool_defs if tool_defs else None,
                 temperature=0.7,
                 max_tokens=current_max_tokens,
-                metadata=_langfuse_meta if _langfuse_meta else None,
+                metadata=_iter_langfuse_meta if _iter_langfuse_meta else None,
                 **_iter_kwargs,
             )
 
@@ -1119,6 +1190,7 @@ async def _run_agent_loop(
                     "Aborting after %d continuation attempts — response keeps exceeding token limit",
                     continuation_attempts,
                 )
+                _emit_cost_summary()
                 return (
                     "I hit the output token limit multiple times even at the highest setting. "
                     "This usually happens with very large file writes. Try asking me to write "
@@ -1151,99 +1223,74 @@ async def _run_agent_loop(
         current_tier = 0
         continuation_attempts = 0
 
-        # ── Speculative replay: if utility model wants to do something
-        # consequential, discard its response and replay with primary ──
-        _needs_replay = False
-        if _use_utility:
-            if llm_message.tool_calls:
-                _speculative_tool_names = [tc.function.name for tc in llm_message.tool_calls]
-                _needs_replay = any(t in CONSEQUENTIAL_TOOLS for t in _speculative_tool_names)
+        # ── Phase 4B: Track cost per iteration ──
+        _cost_tracking["primary_calls"] += 1
+        _cost_tracking["total_input_tokens"] += input_tokens
+        _cost_tracking["total_output_tokens"] += output_tokens
+        _cost_tracking["iterations_used"] = _iteration + 1
 
-                # Also replay if the utility model is repeating tool calls it
-                # already made — this is a sign the cheap model is looping and
-                # needs the primary model to make a real decision.
-                if not _needs_replay and len(recent_tool_calls) >= 2:
-                    for tc in llm_message.tool_calls:
-                        try:
-                            _tc_args = json.loads(tc.function.arguments)
-                        except json.JSONDecodeError:
-                            _tc_args = {}
-                        _tc_sig = hashlib.md5(
-                            f"{tc.function.name}:{json.dumps(_tc_args)[:200]}".encode()
-                        ).hexdigest()[:8]
-                        _sig_tuple = (tc.function.name, _tc_sig)
-                        if _sig_tuple in recent_tool_calls:
-                            _needs_replay = True
-                            logger.info(
-                                "Utility model repeating previous call %s — escalating to primary",
-                                tc.function.name,
-                            )
-                            break
-            else:
-                # No tool calls = final text response — always consequential
-                _needs_replay = True
-                _speculative_tool_names = ["(final_response)"]
-
-        if _needs_replay:
-            logger.info(
-                "Utility model proposed consequential action %s — replaying iteration %d with primary model",
-                _speculative_tool_names,
-                _iteration,
-            )
-            # Strip the budget note we injected (if any) before replaying
-            if _budget_note and _budget_target_idx >= 0:
-                content = messages[_budget_target_idx].get("content", "")
-                if isinstance(content, str) and content.endswith(_budget_note):
-                    messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
-
-            # Replay with primary model
-            _replay_messages = messages
-            if not _is_anthropic_model:
-                # Primary is non-Anthropic — strip cache_control if present
-                _replay_messages = copy.deepcopy(messages)
-                for msg in _replay_messages:
-                    content = msg.get("content")
-                    if isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict):
-                                block.pop("cache_control", None)
-
-            response = await litellm.acompletion(
-                model=model,
-                messages=_replay_messages,
-                tools=tool_defs if tool_defs else None,
-                temperature=0.7,
-                max_tokens=current_max_tokens,
-                metadata=_langfuse_meta if _langfuse_meta else None,
-                **extra_kwargs,
-            )
-
-            if not response.choices:
-                logger.warning("Primary replay returned empty choices — continuing with utility response")
-            else:
-                choice = response.choices[0]
-                llm_message = choice.message
-
-                usage = getattr(response, "usage", None)
-                cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-                cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-                input_tokens = getattr(usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(usage, "completion_tokens", 0) or 0
-                logger.info(
-                    "Primary replay response: has_tool_calls=%s finish_reason=%s "
-                    "input=%d output=%d cache_read=%d cache_write=%d",
-                    bool(llm_message.tool_calls), choice.finish_reason,
-                    input_tokens, output_tokens, cache_read, cache_write,
-                )
-
-            # Mark this iteration as no longer utility-routed
-            _use_utility = False
+        # ── Phase 2A: Adaptive iteration budget (after first iteration) ──
+        if _iteration == 0 and not _adaptive_budget_set:
+            _adaptive_budget_set = True
+            if not llm_message.tool_calls:
+                # Simple Q&A — no tool calls at all
+                max_iterations = min(max_iterations, 2)
+                logger.info("Phase 2A: classified as simple Q&A, budget=%d", max_iterations)
+            elif llm_message.tool_calls:
+                _first_tool_names = [tc.function.name for tc in llm_message.tool_calls]
+                _has_edits = any(t in ("file_edit", "file_write") for t in _first_tool_names)
+                _has_plan = any(t == "work_plan" for t in _first_tool_names)
+                _has_reads = any(t in ("file_read", "shell_grep", "search_memory") for t in _first_tool_names)
+                if _has_plan and len(_first_tool_names) >= 5:
+                    max_iterations = min(max_iterations, 50)
+                    logger.info("Phase 2A: classified as complex multi-file, budget=%d", max_iterations)
+                elif _has_edits:
+                    max_iterations = min(max_iterations, 30)
+                    logger.info("Phase 2A: classified as implementation, budget=%d", max_iterations)
+                elif _has_reads and not _has_edits:
+                    max_iterations = min(max_iterations, 15)
+                    logger.info("Phase 2A: classified as analysis, budget=%d", max_iterations)
+                else:
+                    max_iterations = min(max_iterations, 8)
+                    logger.info("Phase 2A: classified as file lookup, budget=%d", max_iterations)
+            _cost_tracking["iteration_budget"] = max_iterations
 
         if llm_message.tool_calls:
-            # Track tool names for utility model routing on next iteration
-            _last_iteration_tool_names = [
-                tc.function.name for tc in llm_message.tool_calls
-            ]
+            _iter_tool_names = [tc.function.name for tc in llm_message.tool_calls]
+
+            # ── Phase 2B: Track consequential calls ──
+            if any(t in CONSEQUENTIAL_TOOLS for t in _iter_tool_names):
+                _has_made_consequential_call = True
+
+            # ── Phase 1B: Batching nudge for single info-gathering calls ──
+            _is_single_info = (
+                len(llm_message.tool_calls) == 1
+                and _iter_tool_names[0] in INFO_GATHERING_TOOLS
+                and not (llm_message.content and llm_message.content.strip())
+            )
+            if _is_single_info:
+                _consecutive_single_info_iterations += 1
+                if _consecutive_single_info_iterations >= 3:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "SYSTEM: You have made 3+ consecutive single-tool info-gathering calls. "
+                            "This is inefficient. Batch ALL remaining information needs into a SINGLE "
+                            "response with multiple tool calls. The system executes them in parallel."
+                        ),
+                    })
+                    logger.info("Phase 1B: strong batching nudge after %d consecutive single-tool iterations",
+                              _consecutive_single_info_iterations)
+                else:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "SYSTEM: You made a single info-gathering call. If you need more information, "
+                            "batch multiple tool calls in your next response."
+                        ),
+                    })
+            else:
+                _consecutive_single_info_iterations = 0
             # Update last_assistant for tool result filter context
             if llm_message.content:
                 last_assistant = llm_message.content
@@ -1585,6 +1632,7 @@ async def _run_agent_loop(
 
                 # Check terminal tool
                 if result.get("_terminal"):
+                    _emit_cost_summary()
                     return result.get("message", ""), tool_calls_made
 
                 # Rule-based pruning (no LLM call) before utility model filter
@@ -1593,6 +1641,12 @@ async def _run_agent_loop(
                     result_json = json.dumps(pruned)
                 else:
                     # Fall through to utility model filter
+                    _filter_langfuse = {}
+                    if _langfuse_meta:
+                        _filter_langfuse = {
+                            "trace_name": f"tool-filter-{_state.agent_id}-{tool_name}",
+                            "tags": [f"agent:{_state.agent_id}", "call_type:filter"],
+                        }
                     result_json = await filter_tool_result(
                         tool_name=tool_name,
                         tool_args=tool_args,
@@ -1601,7 +1655,9 @@ async def _run_agent_loop(
                         last_assistant_content=last_assistant,
                         utility_model=utility_model,
                         utility_kwargs=utility_kwargs,
+                        langfuse_metadata=_filter_langfuse if _filter_langfuse else None,
                     )
+                    _cost_tracking["filter_calls"] += 1
 
                 messages.append({
                     "role": "tool",
@@ -1714,6 +1770,7 @@ async def _run_agent_loop(
                     _lifecycle_injected = False
 
         else:
+            _emit_cost_summary()
             return llm_message.content or "", tool_calls_made
 
     # Hit max iterations — save work plan checkpoint if active
@@ -1756,6 +1813,7 @@ async def _run_agent_loop(
     except Exception as e:
         logger.warning("Failed to save max-iterations memory: %s", e)
 
+    _emit_cost_summary()
     return (
         "I've reached my maximum number of steps. Please try rephrasing.",
         tool_calls_made,
