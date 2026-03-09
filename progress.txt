@@ -11,6 +11,8 @@ Started: 2026-02-26
 - **API routes**: `backend/app/api/v1/` — settings.py, agent.py, etc.
 - **Worker**: `backend/app/worker.py` — main agent loop, context pipeline, LLM calls via litellm
 - **Tool selection**: `backend/app/agent/tool_selection.py` — heuristic keyword + momentum, no LLM calls
+- **Lifecycle hooks**: `backend/app/agent/lifecycle.py` — Tier 2 phase detection (planning/implementing/committing/pushing/reviewing) from tool call signals, injected between turns and pre-execution
+- **Manifest**: `backend/app/agent/manifest.py` — loads prompts/manifest.yaml, caches, provides get_tier1/2/3 helpers
 - **Native tools**: `backend/app/agent/tools/native.py` — file_read (10KB cap), code_execute (stdout truncation)
 - **Provider schema**: `providers` → `provider_aliases` + `provider_api_keys` + `llm_models`
 - **Vault**: `backend/app/core/vault.py` — get_api_key_with_type(), key_type detection (oauth_token vs api_key)
@@ -64,4 +66,16 @@ Started: 2026-02-26
 - **Learnings:** LLM agents need explicit numeric targets ("under 5 tool calls") not vague guidance
 - **Done**
 
+---
+
+## 2026-03-09 09:28 - 027-phase-2: Lifecycle Hooks (Tier 2 Fragment Injection)
+- Implemented `backend/app/agent/lifecycle.py`: Phase enum, LifecycleState, detect_phase() heuristic
+- Phase detection: PLANNING (early turns/work_plan), IMPLEMENTING (file_edit/write/code_execute), COMMITTING (git add/commit), PUSHING (git push), REVIEWING (gh pr create)
+- Between-turn injection in worker.py: detects phase from tool calls, injects Tier 2 manifest fragments into system prompt
+- Pre-commit hook: injects git guidance as system message right before git commit executes
+- Pre-PR hook: injects review fragments before gh pr create
+- Phase transitions strip previous injection before adding new one
+- Handles Anthropic cached format (list content blocks) and plain string system prompts
+- 48 tests in test_lifecycle.py, all passing
+- **Learnings:** Phase priority must scan ALL tool calls per phase level (not per-call), otherwise a push in tool_call[0] masks a PR create in tool_call[1]
 ---
