@@ -27,6 +27,8 @@ dependencies = [
     "mcp>=1.26.0",
     "anyio>=4.12.1",
     "langfuse>=2.0.0,<3.0.0",
+    "semantic-router>=0.1.12",
+    "sentence-transformers>=5.2.3",
 ]
 
 [project.optional-dependencies]
