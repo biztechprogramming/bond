@@ -1020,27 +1020,61 @@ async def _run_agent_loop(
                         if isinstance(block, dict):
                             block.pop("cache_control", None)
 
-        response = await litellm.acompletion(
-            model=_iter_model,
-            messages=_call_messages,
-            tools=tool_defs if tool_defs else None,
-            temperature=0.7,
-            max_tokens=current_max_tokens,
-            metadata=_langfuse_meta if _langfuse_meta else None,
-            **_iter_kwargs,
-        )
+        # ── LLM call with retry on empty responses (rate limiting) ──
+        _retry_max = int(os.environ.get("LLM_RETRY_MAX_ATTEMPTS", "10"))
+        _retry_max_wait = float(os.environ.get("LLM_RETRY_MAX_WAIT_SECONDS", "180"))
+        response = None
+
+        for _retry_attempt in range(_retry_max):
+            response = await litellm.acompletion(
+                model=_iter_model,
+                messages=_call_messages,
+                tools=tool_defs if tool_defs else None,
+                temperature=0.7,
+                max_tokens=current_max_tokens,
+                metadata=_langfuse_meta if _langfuse_meta else None,
+                **_iter_kwargs,
+            )
+
+            if response.choices:
+                break
+
+            # Empty response — compute exponential backoff delay.
+            # Delays form a geometric series that sums to _retry_max_wait,
+            # so the last attempt fires right around the configured ceiling.
+            if _retry_max > 1:
+                _ratio = (_retry_max_wait / 1.0) ** (1.0 / (_retry_max - 1))
+                _delay = 1.0 * (_ratio ** _retry_attempt)
+                _delay = min(_delay, _retry_max_wait)
+            else:
+                _delay = _retry_max_wait
+
+            if _retry_attempt < _retry_max - 1:
+                logger.warning(
+                    "LLM returned empty response (attempt %d/%d). "
+                    "Retrying in %.1fs (possible rate limiting).",
+                    _retry_attempt + 1, _retry_max, _delay,
+                )
+                if event_queue is not None:
+                    await event_queue.put(_sse_event("status", {
+                        "state": "rate_limited",
+                        "retry_attempt": _retry_attempt + 1,
+                        "retry_max": _retry_max,
+                        "retry_delay": round(_delay, 1),
+                    }))
+                await asyncio.sleep(_delay)
+            else:
+                raise RuntimeError(
+                    f"LLM returned empty response (no choices) after {_retry_max} attempts "
+                    f"over ~{_retry_max_wait}s. "
+                    "This may indicate rate limiting, content filtering, or a malformed request."
+                )
 
         # Strip budget note from the tool result after the LLM call
         if _budget_note and _budget_target_idx >= 0:
             content = messages[_budget_target_idx].get("content", "")
             if isinstance(content, str) and content.endswith(_budget_note):
                 messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
-
-        if not response.choices:
-            raise RuntimeError(
-                "LLM returned empty response (no choices). "
-                "This may indicate rate limiting, content filtering, or a malformed request."
-            )
 
         choice = response.choices[0]
         llm_message = choice.message
