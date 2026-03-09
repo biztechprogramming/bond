@@ -24,7 +24,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # These are the direct imports of worker.py + native tools
 RUN pip install --no-cache-dir \
     aiosqlite \
+    beautifulsoup4 \
     cryptography \
+    duckduckgo-search \
     fastapi \
     uvicorn \
     litellm \
@@ -33,6 +35,7 @@ RUN pip install --no-cache-dir \
     httpx \
     mcp \
     anyio \
+    trafilatura \
     "langfuse>=2.0,<3.0"
 
 # Copy entrypoint script
