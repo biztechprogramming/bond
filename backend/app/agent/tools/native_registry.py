@@ -26,6 +26,15 @@ def build_native_registry() -> ToolRegistry:
         handle_search_memory,
         handle_parallel_orchestrate,
     )
+    from .shell_utils import (
+        handle_git_info,
+        handle_shell_find,
+        handle_shell_grep,
+        handle_shell_head,
+        handle_shell_ls,
+        handle_shell_tree,
+        handle_shell_wc,
+    )
     from .web import handle_web_read, handle_web_search
     from .work_plan import handle_work_plan
 
@@ -57,4 +66,13 @@ def build_native_registry() -> ToolRegistry:
     registry.register("parallel_orchestrate", handle_parallel_orchestrate)
     registry.register("repo_pr", handle_repo_pr)
     registry.register("load_context", handle_load_context)
+
+    # Shell utility tools (info-gathering, routed to utility model)
+    registry.register("shell_find", handle_shell_find)
+    registry.register("shell_ls", handle_shell_ls)
+    registry.register("shell_grep", handle_shell_grep)
+    registry.register("git_info", handle_git_info)
+    registry.register("shell_wc", handle_shell_wc)
+    registry.register("shell_head", handle_shell_head)
+    registry.register("shell_tree", handle_shell_tree)
     return registry

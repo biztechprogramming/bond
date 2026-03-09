@@ -118,7 +118,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "code_execute",
-            "description": "Execute code in a sandboxed environment. Supports Python and shell scripts.",
+            "description": "Execute code in a sandboxed environment. Supports Python and shell scripts. PREFER shell_find, shell_grep, shell_ls, git_info, shell_head, shell_wc, or shell_tree for read-only operations — they are cheaper and faster. Use code_execute only for mutations (install, build, test) or multi-step scripts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -568,6 +568,231 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    # ── Shell utility tools ──────────────────────────────────────────────
+    # These replace common code_execute patterns with structured, schema-driven
+    # tools that qualify for utility model routing (cheaper, faster).
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_find",
+            "description": "Find files by name, pattern, or type. Replaces 'find' commands in code_execute. Auto-excludes .venv, node_modules, __pycache__, .git.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search (default: current directory).",
+                        "default": ".",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "File name or glob pattern (e.g. '*.py', 'test_*.ts').",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "File type: f=file, d=directory, l=symlink.",
+                        "enum": ["f", "d", "l"],
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum directory depth to search.",
+                    },
+                    "exclude": {
+                        "type": "array",
+                        "description": "Additional directory names to exclude.",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_ls",
+            "description": "List directory contents. Replaces 'ls' commands in code_execute.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to list (default: current directory).",
+                        "default": ".",
+                    },
+                    "long": {
+                        "type": "boolean",
+                        "description": "Show detailed listing with sizes and dates.",
+                        "default": False,
+                    },
+                    "all": {
+                        "type": "boolean",
+                        "description": "Include hidden files.",
+                        "default": False,
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_grep",
+            "description": "Search for text patterns in files. Replaces 'grep' commands in code_execute. Auto-excludes .venv, node_modules, __pycache__, .git. Always shows line numbers.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Text or regex pattern to search for.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "File or directory to search (default: current directory).",
+                        "default": ".",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "Search recursively in directories.",
+                        "default": True,
+                    },
+                    "include": {
+                        "type": "string",
+                        "description": "File pattern to include (e.g. '*.py', '*.ts').",
+                    },
+                    "ignore_case": {
+                        "type": "boolean",
+                        "description": "Case-insensitive matching.",
+                        "default": False,
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Number of context lines around matches.",
+                        "default": 0,
+                    },
+                    "max_count": {
+                        "type": "integer",
+                        "description": "Max matches per file.",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_info",
+            "description": "Read-only git operations: status, log, diff, branch, show. Replaces git commands in code_execute. Cannot modify the repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "Git operation to perform.",
+                        "enum": ["status", "log", "diff", "branch", "show"],
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of log entries (for action=log, max 50).",
+                        "default": 10,
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "Log format (for action=log).",
+                        "enum": ["oneline", "full"],
+                        "default": "oneline",
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Diff target (for action=diff), e.g. 'HEAD~3', 'main', '--staged'.",
+                    },
+                    "ref": {
+                        "type": "string",
+                        "description": "Git ref to show (for action=show).",
+                        "default": "HEAD",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_wc",
+            "description": "Count lines, words, or characters in files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to count.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "What to count.",
+                        "enum": ["lines", "words", "chars"],
+                        "default": "lines",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_head",
+            "description": "View the first or last N lines of a file. Use file_read with line_start/line_end for mid-file ranges.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path.",
+                    },
+                    "lines": {
+                        "type": "integer",
+                        "description": "Number of lines to show.",
+                        "default": 20,
+                    },
+                    "from_end": {
+                        "type": "boolean",
+                        "description": "If true, show last N lines (tail). If false, show first N lines (head).",
+                        "default": False,
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_tree",
+            "description": "Show directory tree structure. Auto-excludes .venv, node_modules, __pycache__, .git.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Root directory.",
+                        "default": ".",
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum depth to display.",
+                        "default": 3,
+                    },
+                    "dirs_only": {
+                        "type": "boolean",
+                        "description": "Show only directories.",
+                        "default": False,
+                    },
+                },
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
@@ -710,6 +935,59 @@ class LoadContext(ToolCall):
     """Load prompt context for the current task. Pick the most specific relevant category from the manifest."""
     category: str = Field(description="Dot-separated category path e.g. engineering.git.commits")
 
+
+# ── Shell utility Pydantic models ─────────────────────────────────────
+
+class ShellFind(ToolCall):
+    """Find files by name, pattern, or type."""
+    path: str = Field(default=".", description="Directory to search.")
+    name: Optional[str] = Field(None, description="File name or glob pattern.")
+    type: Optional[Literal["f", "d", "l"]] = Field(None, description="File type.")
+    max_depth: Optional[int] = Field(None, description="Max directory depth.")
+    exclude: Optional[List[str]] = Field(None, description="Extra dirs to exclude.")
+
+class ShellLs(ToolCall):
+    """List directory contents."""
+    path: str = Field(default=".", description="Directory to list.")
+    long: bool = Field(default=False, description="Detailed listing.")
+    all: bool = Field(default=False, description="Include hidden files.")
+
+class ShellGrep(ToolCall):
+    """Search for text patterns in files."""
+    pattern: str = Field(description="Text or regex pattern.")
+    path: str = Field(default=".", description="File or directory to search.")
+    recursive: bool = Field(default=True, description="Search recursively.")
+    include: Optional[str] = Field(None, description="File pattern filter.")
+    ignore_case: bool = Field(default=False, description="Case-insensitive.")
+    context_lines: int = Field(default=0, description="Context lines around matches.")
+    max_count: Optional[int] = Field(None, description="Max matches per file.")
+
+class GitInfo(ToolCall):
+    """Read-only git operations."""
+    action: Literal["status", "log", "diff", "branch", "show"]
+    count: int = Field(default=10, description="Log entries (max 50).")
+    format: Optional[Literal["oneline", "full"]] = Field(default="oneline")
+    target: Optional[str] = Field(None, description="Diff target.")
+    ref: str = Field(default="HEAD", description="Git ref to show.")
+
+class ShellWc(ToolCall):
+    """Count lines, words, or characters."""
+    path: str = Field(description="File path.")
+    mode: Literal["lines", "words", "chars"] = Field(default="lines")
+
+class ShellHead(ToolCall):
+    """View first or last N lines of a file."""
+    path: str = Field(description="File path.")
+    lines: int = Field(default=20, description="Lines to show.")
+    from_end: bool = Field(default=False, description="Tail mode.")
+
+class ShellTree(ToolCall):
+    """Show directory tree structure."""
+    path: str = Field(default=".", description="Root directory.")
+    max_depth: int = Field(default=3, description="Max depth.")
+    dirs_only: bool = Field(default=False, description="Dirs only.")
+
+
 # Mapping for Instructor
 INSTRUCTOR_TOOL_MAP = {
     "respond": Respond,
@@ -730,6 +1008,13 @@ INSTRUCTOR_TOOL_MAP = {
     "parallel_orchestrate": ParallelOrchestrate,
     "repo_pr": RepoPr,
     "load_context": LoadContext,
+    "shell_find": ShellFind,
+    "shell_ls": ShellLs,
+    "shell_grep": ShellGrep,
+    "git_info": GitInfo,
+    "shell_wc": ShellWc,
+    "shell_head": ShellHead,
+    "shell_tree": ShellTree,
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:

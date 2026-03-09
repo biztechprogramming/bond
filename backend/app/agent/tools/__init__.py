@@ -80,6 +80,10 @@ def build_registry() -> ToolRegistry:
     from .subordinate import handle_call_subordinate
     from .skills import handle_skills
     from .work_plan import handle_work_plan
+    from .shell_utils import (
+        handle_shell_find, handle_shell_ls, handle_shell_grep,
+        handle_git_info, handle_shell_wc, handle_shell_head, handle_shell_tree,
+    )
 
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
@@ -100,4 +104,13 @@ def build_registry() -> ToolRegistry:
     registry.register("notify", handle_notify)
     registry.register("skills", handle_skills)
     registry.register("work_plan", handle_work_plan)
+
+    # Shell utility tools (info-gathering, routed to utility model)
+    registry.register("shell_find", handle_shell_find)
+    registry.register("shell_ls", handle_shell_ls)
+    registry.register("shell_grep", handle_shell_grep)
+    registry.register("git_info", handle_git_info)
+    registry.register("shell_wc", handle_shell_wc)
+    registry.register("shell_head", handle_shell_head)
+    registry.register("shell_tree", handle_shell_tree)
     return registry
