@@ -5,15 +5,18 @@
 - When searching for something, combine grep commands: `grep -rn "pattern1\|pattern2" dir/` instead of separate searches.
 - Stop exploring when you have enough information to act. Don't read every file — read what you need.
 
-### Finding Files: Use project_search First
-When looking for a file, document, or code reference, use `project_search` as your **first choice**. It automatically tries multiple strategies (filename matching, content search, path matching, zero-padded numbers) in a single call.
+### Finding Files: ALWAYS Use project_search
+**RULE: When looking for a file, document, or code reference, use `project_search`. Do NOT use `shell_find` or `shell_grep` for discovery.**
+
+`project_search` tries multiple strategies in ONE call: filename matching (with zero-padding), content search, and path matching. It finds things that `shell_find` misses because `shell_find` only matches exact globs.
 
 **Examples:**
 - `project_search(query="design doc 27")` → finds `docs/design/027-fragment-selection-roadmap.md`
 - `project_search(query="worker tests")` → finds test files related to the worker
 - `project_search(query="manifest yaml")` → finds manifest files across the project
 
-Only fall back to `shell_find` or `shell_grep` when you need their specific features (glob patterns, regex with context lines, etc.).
+**When to use shell_find instead:** Only when you already know the exact glob pattern (e.g. `shell_find(name="*.py", path="src/")`).
+**When to use shell_grep instead:** Only when searching for a specific text pattern inside files with line numbers.
 
 ### Project Structure Conventions
 - **Design docs:** `docs/design/NNN-slug.md` (zero-padded 3-digit prefix)

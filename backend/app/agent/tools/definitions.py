@@ -575,7 +575,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "shell_find",
-            "description": "Find files by name glob, regex, or type. Case-insensitive by default. Use project_search for natural-language queries — use shell_find when you need specific glob or regex patterns. Auto-excludes .venv, node_modules, __pycache__, .git.",
+            "description": "Low-level file finder using glob/regex patterns. DO NOT use this for discovery — use project_search instead, which tries multiple strategies automatically. Only use shell_find when you already know the exact glob pattern (e.g. '*.py', 'test_*.ts'). Case-insensitive. Auto-excludes .venv, node_modules, __pycache__, .git.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -641,7 +641,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "shell_grep",
-            "description": "Search for text patterns in files. Replaces 'grep' commands in code_execute. Auto-excludes .venv, node_modules, __pycache__, .git. Always shows line numbers.",
+            "description": "Search file contents for a specific text/regex pattern. For finding FILES (not content), use project_search instead. Use shell_grep when you need exact pattern matching with line numbers, context lines, or per-file match counts. Auto-excludes .venv, node_modules, __pycache__, .git.",
             "parameters": {
                 "type": "object",
                 "properties": {
