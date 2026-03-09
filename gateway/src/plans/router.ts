@@ -108,14 +108,38 @@ export function createPlansRouter(config: GatewayConfig) {
   /**
    * POST /plans
    * Create a new plan.
+   * Idempotent: if an active plan with the same title already exists for
+   * this agent+conversation, return it instead of creating a duplicate.
    */
   router.post("/plans", async (req: any, res: any) => {
     const { title, agent_id, conversation_id, parent_plan_id } = req.body;
     if (!title) return res.status(400).json({ error: "title is required" });
     if (!agent_id) return res.status(400).json({ error: "agent_id is required" });
 
-    const planId = ulid();
     try {
+      // Check for existing active plan with the same title for this agent
+      const allPlans = await sqlQuery(url, mod, "SELECT * FROM work_plans", token);
+      const normalizedTitle = title.trim().toLowerCase();
+      const duplicate = allPlans.find((p: any) =>
+        p.agent_id === agent_id &&
+        p.status === "active" &&
+        (p.title || "").trim().toLowerCase() === normalizedTitle &&
+        (!conversation_id || p.conversation_id === conversation_id)
+      );
+      if (duplicate) {
+        console.log(`[plans] dedup: active plan "${title}" already exists for agent ${agent_id} as ${duplicate.id}`);
+        return res.status(200).json({
+          plan_id: duplicate.id,
+          id: duplicate.id,
+          title: duplicate.title,
+          agent_id: duplicate.agent_id,
+          conversation_id: duplicate.conversation_id || null,
+          status: duplicate.status,
+          deduplicated: true,
+        });
+      }
+
+      const planId = ulid();
       await callReducer(url, mod, "create_work_plan", [
         planId,
         agent_id,
@@ -140,17 +164,36 @@ export function createPlansRouter(config: GatewayConfig) {
   /**
    * POST /plans/:planId/items
    * Add an item to a plan.
+   * Idempotent: if an item with the same title already exists in the plan,
+   * return it instead of creating a duplicate.
    */
   router.post("/plans/:planId/items", async (req: any, res: any) => {
     const { planId } = req.params;
     const { title, ordinal, description = "" } = req.body;
     if (!title) return res.status(400).json({ error: "title is required" });
 
-    const itemId = ulid();
     try {
+      // Check for existing item with the same title in this plan (dedup)
+      const existing = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`, token);
+      const normalizedTitle = title.trim().toLowerCase();
+      const duplicate = existing.find((i: any) => (i.title || "").trim().toLowerCase() === normalizedTitle);
+      if (duplicate) {
+        console.log(`[plans] dedup: item "${title}" already exists in plan ${planId} as ${duplicate.id}`);
+        return res.status(200).json({
+          item_id: duplicate.id,
+          id: duplicate.id,
+          plan_id: planId,
+          title: duplicate.title,
+          description: duplicate.description ?? "",
+          status: duplicate.status,
+          ordinal: duplicate.ordinal ?? 0,
+          deduplicated: true,
+        });
+      }
+
+      const itemId = ulid();
       let ord = ordinal;
       if (ord === undefined) {
-        const existing = await sqlQuery(url, mod, `SELECT * FROM work_items WHERE plan_id = '${planId}'`, token);
         ord = existing.length;
       }
       // add_work_item: {id, planId, title, ordinal, description}
