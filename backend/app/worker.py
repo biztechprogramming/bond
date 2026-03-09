@@ -452,7 +452,7 @@ async def _run_agent_loop(
     # that should always be available. No reason to gate behind agent config.
     _SHELL_UTILITY_TOOLS = [
         "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree",
+        "shell_wc", "shell_head", "shell_tree", "project_search",
     ]
     for _util_tool in _SHELL_UTILITY_TOOLS:
         if _util_tool not in agent_tools:
@@ -871,7 +871,7 @@ async def _run_agent_loop(
         "file_read", "search_memory",
         "web_search", "web_read", "work_plan",
         "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree",
+        "shell_wc", "shell_head", "shell_tree", "project_search",
     })
     CONSEQUENTIAL_TOOLS = frozenset({
         "file_write", "file_edit", "code_execute", "respond", "memory_save",
@@ -961,8 +961,16 @@ async def _run_agent_loop(
         }
 
     # ── Phase 4B/4C: Cost tracking helper ──
-    _cost_alert_threshold = float(os.environ.get("LLM_COST_ALERT_THRESHOLD", "0.25"))
-    _iteration_alert_threshold = int(os.environ.get("LLM_ITERATION_ALERT_THRESHOLD", "20"))
+    _raw_cost_thresh = os.environ.get("LLM_COST_ALERT_THRESHOLD")
+    _raw_iter_thresh = os.environ.get("LLM_ITERATION_ALERT_THRESHOLD")
+    try:
+        _cost_alert_threshold = float(_raw_cost_thresh) if isinstance(_raw_cost_thresh, str) else 0.25
+    except (TypeError, ValueError):
+        _cost_alert_threshold = 0.25
+    try:
+        _iteration_alert_threshold = int(_raw_iter_thresh) if isinstance(_raw_iter_thresh, str) else 20
+    except (TypeError, ValueError):
+        _iteration_alert_threshold = 20
 
     def _emit_cost_summary():
         """Log per-session cost summary (Phase 4B) and check for cost alerts (Phase 4C)."""
@@ -986,7 +994,11 @@ async def _run_agent_loop(
         )
 
         # Phase 4C: Cost alerting
-        if _est_total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold:
+        try:
+            _cost_exceeded = _est_total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold
+        except TypeError:
+            _cost_exceeded = False
+        if _cost_exceeded:
             logger.warning(
                 "COST ALERT: session %s exceeded thresholds (cost=$%.4f > $%.2f or iterations=%d > %d)",
                 conversation_id, _est_total, _cost_alert_threshold,

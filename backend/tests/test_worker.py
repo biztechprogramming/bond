@@ -398,6 +398,10 @@ def test_native_registry_has_expected_tools():
         "memory_update", "memory_delete",
         "code_execute", "file_read", "file_write", "file_edit",
         "web_search", "web_read", "work_plan", "parallel_orchestrate",
+        "repo_pr", "load_context",
+        # Shell utility tools
+        "shell_find", "shell_ls", "shell_grep", "git_info",
+        "shell_wc", "shell_head", "shell_tree", "project_search",
     }
     assert set(registry.registered_names) == expected
 

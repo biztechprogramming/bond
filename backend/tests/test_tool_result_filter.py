@@ -43,31 +43,33 @@ def test_skip_exempt_tools():
 
 
 def test_large_result_calls_utility():
-    large_result = {"content": "x" * 5000, "path": "/big.css"}
+    # Must exceed FILTER_THRESHOLD (6000 chars) and not be caught by rule_based_prune.
+    # Use a non-file_read tool with large output so rule_based_prune returns None.
+    large_result = {"output": "x" * 8000, "url": "https://example.com"}
 
     mock_response = AsyncMock()
     mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = '{"content": "relevant part", "path": "/big.css"}'
+    mock_response.choices[0].message.content = '{"output": "relevant part", "url": "https://example.com"}'
 
     with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm:
         mock_litellm.acompletion = AsyncMock(return_value=mock_response)
         result = _run(filter_tool_result(
-            tool_name="file_read", tool_args={"path": "/big.css"},
+            tool_name="web_read", tool_args={"url": "https://example.com"},
             raw_result=large_result, **_COMMON,
         ))
 
     mock_litellm.acompletion.assert_called_once()
     parsed = json.loads(result)
-    assert parsed["content"] == "relevant part"
+    assert parsed["output"] == "relevant part"
 
 
 def test_utility_failure_returns_raw():
-    large_result = {"content": "x" * 5000}
+    large_result = {"output": "x" * 8000}
 
     with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm:
         mock_litellm.acompletion = AsyncMock(side_effect=Exception("API error"))
         result = _run(filter_tool_result(
-            tool_name="file_read", tool_args={"path": "/test.txt"},
+            tool_name="web_read", tool_args={"url": "https://example.com"},
             raw_result=large_result, **_COMMON,
         ))
 
@@ -75,7 +77,7 @@ def test_utility_failure_returns_raw():
 
 
 def test_non_json_utility_response_wrapped():
-    large_result = {"content": "x" * 5000}
+    large_result = {"output": "x" * 8000}
 
     mock_response = AsyncMock()
     mock_response.choices = [AsyncMock()]
@@ -84,7 +86,7 @@ def test_non_json_utility_response_wrapped():
     with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm:
         mock_litellm.acompletion = AsyncMock(return_value=mock_response)
         result = _run(filter_tool_result(
-            tool_name="file_read", tool_args={"path": "/big.css"},
+            tool_name="web_read", tool_args={"url": "https://example.com"},
             raw_result=large_result, **_COMMON,
         ))
 
