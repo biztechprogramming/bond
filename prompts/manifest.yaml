@@ -1,0 +1,424 @@
+# prompts/manifest.yaml
+#
+# Fragment selection manifest for the three-tier prompt system (Doc 027).
+#
+# Tier 1 (always-on): concatenated into the system prompt every turn
+# Tier 2 (lifecycle):  injected when the agent enters a specific work phase
+# Tier 3 (context):    selected by semantic router based on user message
+#
+# Files not listed here are not loaded by the selection system.
+# agent.system.main.md is the base system prompt — it is NOT a fragment.
+
+# ══════════════════════════════════════════════════════════════════════════
+# Tier 1: Always On
+# ══════════════════════════════════════════════════════════════════════════
+# Concatenated into the system prompt at runtime. No selection logic.
+
+universal/safety.md:
+  tier: 1
+
+universal/reasoning.md:
+  tier: 1
+
+universal/communication.md:
+  tier: 1
+
+universal/error-handling.md:
+  tier: 1
+
+universal/work-planning.md:
+  tier: 1
+
+universal/progress-tracking.md:
+  tier: 1
+
+universal/memory-guidance.md:
+  tier: 1
+
+universal/proactive-workflow.md:
+  tier: 1
+
+universal/tool-efficiency.md:
+  tier: 1
+
+engineering/code-quality/must-compile/must-compile.md:
+  tier: 1
+
+# ══════════════════════════════════════════════════════════════════════════
+# Tier 2: Lifecycle-Triggered
+# ══════════════════════════════════════════════════════════════════════════
+# Injected when the agent enters the specified work phase.
+# Phase detection based on tool call observation (doc 024).
+# Phases: implementing, committing, reviewing, planning
+
+engineering/git/git.md:
+  tier: 2
+  phase: committing
+
+engineering/git/commits/commits.md:
+  tier: 2
+  phase: committing
+
+engineering/git/pull-requests/pull-requests.md:
+  tier: 2
+  phase: reviewing
+
+engineering/code-quality/code-review/code-review.md:
+  tier: 2
+  phase: reviewing
+
+engineering/code-quality/bugfix/bugfix.md:
+  tier: 2
+  phase: implementing
+
+engineering/planning/planning.md:
+  tier: 2
+  phase: planning
+
+engineering/planning/spec-building/spec-building.md:
+  tier: 2
+  phase: planning
+
+engineering/file-operations/file-operations.md:
+  tier: 2
+  phase: implementing
+
+engineering/code-quality/code-quality.md:
+  tier: 2
+  phase: implementing
+
+engineering/engineering.md:
+  tier: 2
+  phase: implementing
+
+# ══════════════════════════════════════════════════════════════════════════
+# Tier 3: Context-Dependent
+# ══════════════════════════════════════════════════════════════════════════
+# Selected by semantic router when user message matches utterances.
+
+# ── Backend ──────────────────────────────────────────────────────────────
+
+backend/backend.md:
+  tier: 3
+  utterances:
+    - "backend service"
+    - "API server implementation"
+    - "server-side code"
+
+backend/python/python.md:
+  tier: 3
+  utterances:
+    - "Python code"
+    - "Python script"
+    - "write Python"
+
+backend/python/fastapi/fastapi.md:
+  tier: 3
+  utterances:
+    - "FastAPI endpoint"
+    - "add an API route"
+    - "FastAPI dependency injection"
+    - "Pydantic model for request"
+
+backend/python/fastapi/routing/routing.md:
+  tier: 3
+  utterances:
+    - "FastAPI router"
+    - "API route organization"
+    - "path operation"
+
+backend/python/pydantic/pydantic.md:
+  tier: 3
+  utterances:
+    - "Pydantic model"
+    - "data validation"
+    - "Pydantic schema"
+
+backend/python/async/async.md:
+  tier: 3
+  utterances:
+    - "async Python"
+    - "asyncio"
+    - "await pattern"
+    - "concurrent Python"
+
+backend/python/testing/testing.md:
+  tier: 3
+  utterances:
+    - "write a pytest test"
+    - "unit test this function"
+    - "mock a dependency in tests"
+    - "test coverage"
+
+backend/typescript/typescript.md:
+  tier: 3
+  utterances:
+    - "TypeScript code"
+    - "TypeScript types"
+    - "type definitions"
+
+backend/typescript/node/node.md:
+  tier: 3
+  utterances:
+    - "Node.js"
+    - "node server"
+    - "npm package"
+
+backend/csharp/csharp.md:
+  tier: 3
+  utterances:
+    - "C# code"
+    - ".NET"
+    - "ASP.NET"
+
+backend/csharp/mediatr/mediatr.md:
+  tier: 3
+  utterances:
+    - "MediatR"
+    - "CQRS pattern"
+    - "command handler"
+    - "mediator pattern"
+
+# ── Database ─────────────────────────────────────────────────────────────
+
+database/database.md:
+  tier: 3
+  utterances:
+    - "database design"
+    - "data model"
+    - "database schema"
+
+database/relational/relational.md:
+  tier: 3
+  utterances:
+    - "relational database"
+    - "SQL tables"
+    - "foreign keys"
+
+database/relational/sqlite/sqlite.md:
+  tier: 3
+  utterances:
+    - "SQLite database"
+    - "sqlite3 connection"
+    - "aiosqlite"
+
+database/relational/sqlite/wal-mode/wal-mode.md:
+  tier: 3
+  utterances:
+    - "SQLite WAL mode"
+    - "journal_mode WAL"
+    - "concurrent SQLite reads"
+
+database/relational/libsql/libsql.md:
+  tier: 3
+  utterances:
+    - "libSQL"
+    - "Turso database"
+    - "embedded replicas"
+
+database/relational/postgresql/postgresql.md:
+  tier: 3
+  utterances:
+    - "PostgreSQL query"
+    - "psycopg connection"
+    - "Postgres-specific syntax"
+
+database/relational/postgresql/indexing/indexing.md:
+  tier: 3
+  utterances:
+    - "add a database index"
+    - "PostgreSQL index performance"
+    - "partial index"
+    - "the query is doing a sequential scan"
+
+database/relational/postgresql/query-optimization/query-optimization.md:
+  tier: 3
+  utterances:
+    - "optimize this SQL query"
+    - "query is running slow"
+    - "explain analyze output"
+    - "reduce query execution time"
+
+database/relational/migrations/migrations.md:
+  tier: 3
+  utterances:
+    - "database migration"
+    - "schema migration"
+    - "add a column migration"
+
+database/relational/migrations/zero-downtime/zero-downtime.md:
+  tier: 3
+  utterances:
+    - "zero downtime migration"
+    - "migrate without downtime"
+    - "online schema change"
+
+database/spacetimedb/spacetimedb.md:
+  tier: 3
+  utterances:
+    - "write a SpacetimeDB reducer"
+    - "how do reducers work in SpacetimeDB"
+    - "the reducer is failing with an error"
+    - "SpacetimeDB module"
+    - "spacetime publish"
+
+database/spacetimedb/reducers/reducers.md:
+  tier: 3
+  utterances:
+    - "write a SpacetimeDB reducer"
+    - "reducer is not updating the table"
+    - "add a new reducer function"
+    - "stdb reducer error"
+
+database/spacetimedb/sql/sql.md:
+  tier: 3
+  utterances:
+    - "SpacetimeDB SQL query"
+    - "query SpacetimeDB tables"
+    - "stdb sql syntax"
+
+database/spacetimedb/typescript-sdk/typescript-sdk.md:
+  tier: 3
+  utterances:
+    - "SpacetimeDB TypeScript client"
+    - "connect to SpacetimeDB from frontend"
+    - "stdb SDK subscription"
+
+# ── Frontend ─────────────────────────────────────────────────────────────
+
+frontend/frontend.md:
+  tier: 3
+  utterances:
+    - "frontend development"
+    - "UI component"
+    - "client-side code"
+
+frontend/react/react.md:
+  tier: 3
+  utterances:
+    - "React component"
+    - "useState hook"
+    - "React rendering issue"
+    - "build a UI component"
+
+frontend/react/hooks/hooks.md:
+  tier: 3
+  utterances:
+    - "React hooks"
+    - "custom hook"
+    - "useEffect"
+    - "useMemo"
+
+frontend/nextjs/nextjs.md:
+  tier: 3
+  utterances:
+    - "Next.js"
+    - "Next.js page"
+    - "Next.js API route"
+
+frontend/nextjs/app-router/app-router.md:
+  tier: 3
+  utterances:
+    - "Next.js app router"
+    - "server component"
+    - "Next.js routing"
+
+frontend/nextjs/server-components/server-components.md:
+  tier: 3
+  utterances:
+    - "React server component"
+    - "RSC"
+    - "server-side rendering"
+
+# ── Infrastructure ───────────────────────────────────────────────────────
+
+infrastructure/infrastructure.md:
+  tier: 3
+  utterances:
+    - "infrastructure setup"
+    - "deployment"
+    - "CI/CD"
+
+infrastructure/docker/docker.md:
+  tier: 3
+  utterances:
+    - "Dockerfile"
+    - "Docker container"
+    - "build a Docker image"
+    - "container networking"
+
+infrastructure/docker/compose/compose.md:
+  tier: 3
+  utterances:
+    - "docker-compose file"
+    - "Docker Compose services"
+    - "multi-container setup"
+
+infrastructure/docker/sandbox/sandbox.md:
+  tier: 3
+  utterances:
+    - "sandbox container"
+    - "agent sandbox"
+    - "isolated execution environment"
+
+# ── Messaging ────────────────────────────────────────────────────────────
+
+messaging/messaging.md:
+  tier: 3
+  utterances:
+    - "message queue"
+    - "event-driven"
+    - "pub/sub"
+
+messaging/kafka/kafka.md:
+  tier: 3
+  utterances:
+    - "Kafka topic"
+    - "Kafka consumer"
+    - "Kafka producer"
+    - "event streaming"
+
+messaging/queues/queues.md:
+  tier: 3
+  utterances:
+    - "message queue"
+    - "task queue"
+    - "background jobs"
+
+messaging/queues/azure-servicebus/azure-servicebus.md:
+  tier: 3
+  utterances:
+    - "Azure Service Bus"
+    - "service bus queue"
+    - "Azure messaging"
+
+# ── Security ─────────────────────────────────────────────────────────────
+
+security/security.md:
+  tier: 3
+  utterances:
+    - "security best practices"
+    - "security review"
+    - "vulnerability"
+
+security/auth/auth.md:
+  tier: 3
+  utterances:
+    - "authentication"
+    - "authorization"
+    - "login flow"
+    - "access control"
+
+security/auth/jwt/jwt.md:
+  tier: 3
+  utterances:
+    - "JWT authentication"
+    - "JSON web token"
+    - "bearer token validation"
+
+security/secrets/secrets.md:
+  tier: 3
+  utterances:
+    - "secret management"
+    - "API key storage"
+    - "environment variables for secrets"

@@ -97,7 +97,7 @@ class SandboxManager:
             "tools": agent["tools"],
             "max_iterations": agent["max_iterations"],
             "utility_model": agent.get("utility_model", "claude-sonnet-4-6"),
-            "prompt_fragments": agent.get("prompt_fragments", []),
+            # prompt_fragments removed (Doc 027) — loaded from disk via manifest
             "api_keys": agent.get("api_keys", {}),
             "provider_aliases": agent.get("provider_aliases", {}),
         }

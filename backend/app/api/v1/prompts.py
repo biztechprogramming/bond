@@ -1,9 +1,15 @@
-"""Prompt management API — fragments, templates, versioning, AI generation."""
+"""Prompt management API — templates, AI generation, and manifest-based fragment listing.
+
+Fragment CRUD and agent attachment endpoints have been removed (Doc 027 Phase 1).
+Prompts live on the filesystem at ~/bond/prompts/, versioned in git.
+Metadata lives in prompts/manifest.yaml.
+"""
 
 from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -20,29 +26,6 @@ router = APIRouter(prefix="/prompts", tags=["prompts"])
 # ── Models ────────────────────────────────────────────────────────────────
 
 
-class FragmentCreate(BaseModel):
-    name: str
-    display_name: str
-    category: str
-    content: str
-    description: str = ""
-    summary: str = ""
-    tier: str = "standard"
-    task_triggers: list[str] = []
-
-
-class FragmentUpdate(BaseModel):
-    display_name: str | None = None
-    category: str | None = None
-    content: str | None = None
-    description: str | None = None
-    is_active: bool | None = None
-    summary: str | None = None
-    tier: str | None = None
-    task_triggers: list[str] | None = None
-    change_reason: str = ""
-
-
 class TemplateUpdate(BaseModel):
     display_name: str | None = None
     category: str | None = None
@@ -51,17 +34,6 @@ class TemplateUpdate(BaseModel):
     description: str | None = None
     is_active: bool | None = None
     change_reason: str = ""
-
-
-class AttachFragment(BaseModel):
-    fragment_id: str
-    rank: int = 0
-    enabled: bool = True
-
-
-class UpdateAttachment(BaseModel):
-    rank: int | None = None
-    enabled: bool | None = None
 
 
 class GeneratePromptRequest(BaseModel):
@@ -89,187 +61,31 @@ class PreviewAssemblyRequest(BaseModel):
 
 
 # ── Fragment CRUD ─────────────────────────────────────────────────────────
+# REMOVED (Doc 027 Phase 1): Fragment CRUD endpoints have been removed.
+# Prompt fragments are now files on disk at ~/bond/prompts/, versioned in git.
+# Edit a prompt by editing the markdown file and committing.
+# Metadata (tier, phase, utterances) lives in prompts/manifest.yaml.
 
 
 @router.get("/fragments")
-async def list_fragments(db: AsyncSession = Depends(get_db)):
-    """List all prompt fragments with agent usage counts."""
-    result = await db.execute(text(
-        "SELECT pf.*, "
-        "(SELECT COUNT(*) FROM agent_prompt_fragments apf WHERE apf.fragment_id = pf.id) as agent_count, "
-        "(SELECT MAX(version) FROM prompt_fragment_versions pfv WHERE pfv.fragment_id = pf.id) as version "
-        "FROM prompt_fragments pf ORDER BY pf.category, pf.display_name"
-    ))
-    return [dict(r) for r in result.mappings().all()]
+async def list_fragments():
+    """List prompt fragments from the filesystem manifest.
 
-
-@router.post("/fragments")
-async def create_fragment(body: FragmentCreate, db: AsyncSession = Depends(get_db)):
-    """Create a new prompt fragment."""
-    valid_categories = {"behavior", "tools", "safety", "context"}
-    if body.category not in valid_categories:
-        raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {valid_categories}")
-
-    frag_id = str(ULID())
-    ver_id = str(ULID())
-
-    token_estimate = len(body.content) // 4
-    await db.execute(text(
-        "INSERT INTO prompt_fragments (id, name, display_name, category, content, description, "
-        "summary, tier, task_triggers, token_estimate, is_system) "
-        "VALUES (:id, :name, :display_name, :category, :content, :description, "
-        ":summary, :tier, :task_triggers, :token_estimate, 0)"
-    ), {
-        "id": frag_id, "name": body.name, "display_name": body.display_name,
-        "category": body.category, "content": body.content, "description": body.description,
-        "summary": body.summary, "tier": body.tier,
-        "task_triggers": json.dumps(body.task_triggers), "token_estimate": token_estimate,
-    })
-
-    await db.execute(text(
-        "INSERT INTO prompt_fragment_versions (id, fragment_id, version, content, change_reason, changed_by) "
-        "VALUES (:id, :frag_id, 1, :content, 'Initial creation', 'user')"
-    ), {"id": ver_id, "frag_id": frag_id, "content": body.content})
-
-    await db.commit()
-    return {"id": frag_id, "name": body.name}
-
-
-@router.get("/fragments/{fragment_id}")
-async def get_fragment(fragment_id: str, db: AsyncSession = Depends(get_db)):
-    """Get a fragment with its current content."""
-    result = await db.execute(text(
-        "SELECT pf.*, "
-        "(SELECT COUNT(*) FROM agent_prompt_fragments apf WHERE apf.fragment_id = pf.id) as agent_count, "
-        "(SELECT MAX(version) FROM prompt_fragment_versions pfv WHERE pfv.fragment_id = pf.id) as version "
-        "FROM prompt_fragments pf WHERE pf.id = :id"
-    ), {"id": fragment_id})
-    row = result.mappings().first()
-    if not row:
-        raise HTTPException(status_code=404, detail="Fragment not found")
-    return dict(row)
-
-
-@router.put("/fragments/{fragment_id}")
-async def update_fragment(fragment_id: str, body: FragmentUpdate, db: AsyncSession = Depends(get_db)):
-    """Update a fragment. If content changes, creates a new version."""
-    # Check exists
-    result = await db.execute(text("SELECT id, content FROM prompt_fragments WHERE id = :id"), {"id": fragment_id})
-    row = result.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Fragment not found")
-
-    old_content = row[1]
-    updates = {}
-    if body.display_name is not None:
-        updates["display_name"] = body.display_name
-    if body.category is not None:
-        valid_categories = {"behavior", "tools", "safety", "context"}
-        if body.category not in valid_categories:
-            raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {valid_categories}")
-        updates["category"] = body.category
-    if body.content is not None:
-        updates["content"] = body.content
-        updates["token_estimate"] = len(body.content) // 4
-    if body.description is not None:
-        updates["description"] = body.description
-    if body.is_active is not None:
-        updates["is_active"] = 1 if body.is_active else 0
-    if body.summary is not None:
-        updates["summary"] = body.summary
-    if body.tier is not None:
-        valid_tiers = {"core", "standard", "specialized"}
-        if body.tier not in valid_tiers:
-            raise HTTPException(status_code=400, detail=f"Invalid tier. Must be one of: {valid_tiers}")
-        updates["tier"] = body.tier
-    if body.task_triggers is not None:
-        updates["task_triggers"] = json.dumps(body.task_triggers)
-
-    if updates:
-        set_clause = ", ".join(f"{k} = :{k}" for k in updates)
-        updates["id"] = fragment_id
-        await db.execute(text(f"UPDATE prompt_fragments SET {set_clause} WHERE id = :id"), updates)
-
-    # Version tracking for content changes
-    if body.content is not None and body.content != old_content:
-        ver_result = await db.execute(text(
-            "SELECT MAX(version) FROM prompt_fragment_versions WHERE fragment_id = :id"
-        ), {"id": fragment_id})
-        max_ver = ver_result.fetchone()[0] or 0
-
-        ver_id = str(ULID())
-        await db.execute(text(
-            "INSERT INTO prompt_fragment_versions (id, fragment_id, version, content, change_reason, changed_by) "
-            "VALUES (:id, :frag_id, :version, :content, :reason, 'user')"
-        ), {
-            "id": ver_id, "frag_id": fragment_id, "version": max_ver + 1,
-            "content": body.content, "reason": body.change_reason or "Updated",
-        })
-
-    await db.commit()
-    return await get_fragment(fragment_id, db)
-
-
-@router.delete("/fragments/{fragment_id}")
-async def delete_fragment(fragment_id: str, db: AsyncSession = Depends(get_db)):
-    """Delete a fragment. Fails if is_system."""
-    result = await db.execute(text(
-        "SELECT is_system FROM prompt_fragments WHERE id = :id"
-    ), {"id": fragment_id})
-    row = result.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Fragment not found")
-    if row[0]:
-        raise HTTPException(status_code=400, detail="Cannot delete system fragments. Disable it instead.")
-
-    await db.execute(text("DELETE FROM prompt_fragments WHERE id = :id"), {"id": fragment_id})
-    await db.commit()
-    return {"deleted": True}
-
-
-@router.get("/fragments/{fragment_id}/versions")
-async def list_fragment_versions(fragment_id: str, db: AsyncSession = Depends(get_db)):
-    """List version history for a fragment."""
-    result = await db.execute(text(
-        "SELECT * FROM prompt_fragment_versions WHERE fragment_id = :id ORDER BY version DESC"
-    ), {"id": fragment_id})
-    return [dict(r) for r in result.mappings().all()]
-
-
-@router.post("/fragments/{fragment_id}/rollback/{version}")
-async def rollback_fragment(fragment_id: str, version: int, db: AsyncSession = Depends(get_db)):
-    """Rollback a fragment to a specific version."""
-    result = await db.execute(text(
-        "SELECT content FROM prompt_fragment_versions WHERE fragment_id = :id AND version = :ver"
-    ), {"id": fragment_id, "ver": version})
-    row = result.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Version not found")
-
-    old_content = row[0]
-
-    # Update current content
-    await db.execute(text(
-        "UPDATE prompt_fragments SET content = :content WHERE id = :id"
-    ), {"content": old_content, "id": fragment_id})
-
-    # Create a new version entry for the rollback
-    ver_result = await db.execute(text(
-        "SELECT MAX(version) FROM prompt_fragment_versions WHERE fragment_id = :id"
-    ), {"id": fragment_id})
-    max_ver = ver_result.fetchone()[0] or 0
-
-    ver_id = str(ULID())
-    await db.execute(text(
-        "INSERT INTO prompt_fragment_versions (id, fragment_id, version, content, change_reason, changed_by) "
-        "VALUES (:id, :frag_id, :version, :content, :reason, 'user')"
-    ), {
-        "id": ver_id, "frag_id": fragment_id, "version": max_ver + 1,
-        "content": old_content, "reason": f"Rollback to version {version}",
-    })
-
-    await db.commit()
-    return await get_fragment(fragment_id, db)
+    Returns fragment metadata from manifest.yaml. Content is on disk, not in a database.
+    """
+    from backend.app.agent.manifest import load_manifest
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    manifest = load_manifest(prompts_dir)
+    return [
+        {
+            "path": f.path,
+            "tier": f.tier,
+            "phase": f.phase,
+            "utterances": f.utterances,
+            "token_estimate": f.token_estimate,
+        }
+        for f in sorted(manifest.values(), key=lambda x: (x.tier, x.path))
+    ]
 
 
 # ── Template CRUD ─────────────────────────────────────────────────────────
@@ -397,87 +213,10 @@ async def rollback_template(template_id: str, version: int, db: AsyncSession = D
 
 
 # ── Agent Fragment Attachment ─────────────────────────────────────────────
-
-
-@router.get("/agents/{agent_id}/fragments")
-async def list_agent_fragments(agent_id: str, db: AsyncSession = Depends(get_db)):
-    """List fragments attached to an agent, ordered by rank."""
-    result = await db.execute(text(
-        "SELECT apf.id as attachment_id, apf.rank, apf.enabled, "
-        "pf.id, pf.name, pf.display_name, pf.category, pf.content, pf.is_active, "
-        "pf.summary, pf.tier, pf.task_triggers, pf.token_estimate "
-        "FROM agent_prompt_fragments apf "
-        "JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
-        "WHERE apf.agent_id = :agent_id "
-        "ORDER BY apf.rank"
-    ), {"agent_id": agent_id})
-    return [dict(r) for r in result.mappings().all()]
-
-
-@router.post("/agents/{agent_id}/fragments")
-async def attach_fragment(agent_id: str, body: AttachFragment, db: AsyncSession = Depends(get_db)):
-    """Attach a fragment to an agent."""
-    # Verify both exist
-    agent_check = await db.execute(text("SELECT id FROM agents WHERE id = :id"), {"id": agent_id})
-    if not agent_check.fetchone():
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    frag_check = await db.execute(text("SELECT id FROM prompt_fragments WHERE id = :id"), {"id": body.fragment_id})
-    if not frag_check.fetchone():
-        raise HTTPException(status_code=404, detail="Fragment not found")
-
-    # Check not already attached
-    existing = await db.execute(text(
-        "SELECT id FROM agent_prompt_fragments WHERE agent_id = :aid AND fragment_id = :fid"
-    ), {"aid": agent_id, "fid": body.fragment_id})
-    if existing.fetchone():
-        raise HTTPException(status_code=400, detail="Fragment already attached to this agent")
-
-    apf_id = str(ULID())
-    await db.execute(text(
-        "INSERT INTO agent_prompt_fragments (id, agent_id, fragment_id, rank, enabled) "
-        "VALUES (:id, :aid, :fid, :rank, :enabled)"
-    ), {
-        "id": apf_id, "aid": agent_id, "fid": body.fragment_id,
-        "rank": body.rank, "enabled": 1 if body.enabled else 0,
-    })
-    await db.commit()
-    return {"id": apf_id}
-
-
-@router.put("/agents/{agent_id}/fragments/{fragment_id}")
-async def update_attachment(agent_id: str, fragment_id: str, body: UpdateAttachment, db: AsyncSession = Depends(get_db)):
-    """Update rank or enabled status of an attached fragment."""
-    updates = {}
-    if body.rank is not None:
-        updates["rank"] = body.rank
-    if body.enabled is not None:
-        updates["enabled"] = 1 if body.enabled else 0
-
-    if updates:
-        set_clause = ", ".join(f"{k} = :{k}" for k in updates)
-        updates["aid"] = agent_id
-        updates["fid"] = fragment_id
-        result = await db.execute(text(
-            f"UPDATE agent_prompt_fragments SET {set_clause} WHERE agent_id = :aid AND fragment_id = :fid"
-        ), updates)
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Attachment not found")
-
-    await db.commit()
-    return {"updated": True}
-
-
-@router.delete("/agents/{agent_id}/fragments/{fragment_id}")
-async def detach_fragment(agent_id: str, fragment_id: str, db: AsyncSession = Depends(get_db)):
-    """Detach a fragment from an agent."""
-    result = await db.execute(text(
-        "DELETE FROM agent_prompt_fragments WHERE agent_id = :aid AND fragment_id = :fid"
-    ), {"aid": agent_id, "fid": fragment_id})
-    if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Attachment not found")
-    await db.commit()
-    return {"detached": True}
+# REMOVED (Doc 027 Phase 1): Fragment attachment endpoints have been removed.
+# Fragments are no longer attached to agents via checkboxes.
+# Tier 1 fragments are always-on (system prompt), Tier 2 are lifecycle-triggered,
+# Tier 3 are selected by semantic router. All from disk via manifest.yaml.
 
 
 # ── Prompt Assembly & Preview ─────────────────────────────────────────────
@@ -485,7 +224,9 @@ async def detach_fragment(agent_id: str, fragment_id: str, db: AsyncSession = De
 
 @router.post("/agents/{agent_id}/preview")
 async def preview_assembled_prompt(agent_id: str, db: AsyncSession = Depends(get_db)):
-    """Preview the full assembled prompt for an agent."""
+    """Preview the full assembled prompt for an agent (system prompt + Tier 1 fragments)."""
+    from backend.app.agent.manifest import load_manifest, get_tier1_content
+
     # Get agent system prompt
     agent_result = await db.execute(text(
         "SELECT system_prompt FROM agents WHERE id = :id"
@@ -494,21 +235,17 @@ async def preview_assembled_prompt(agent_id: str, db: AsyncSession = Depends(get
     if not agent_row:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    manifest = load_manifest(prompts_dir)
+    tier1_content = get_tier1_content(manifest)
+
     parts = [agent_row[0]]
-
-    # Get active, enabled fragments ordered by rank
-    frag_result = await db.execute(text(
-        "SELECT pf.content FROM agent_prompt_fragments apf "
-        "JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
-        "WHERE apf.agent_id = :aid AND apf.enabled = 1 AND pf.is_active = 1 "
-        "ORDER BY apf.rank"
-    ), {"aid": agent_id})
-
-    for row in frag_result.fetchall():
-        parts.append(row[0])
+    if tier1_content:
+        parts.append(tier1_content)
 
     assembled = "\n\n".join(parts)
-    return {"assembled_prompt": assembled, "fragment_count": len(parts) - 1, "total_chars": len(assembled)}
+    tier1_count = sum(1 for f in manifest.values() if f.tier == 1)
+    return {"assembled_prompt": assembled, "fragment_count": tier1_count, "total_chars": len(assembled)}
 
 
 # ── AI Generation ─────────────────────────────────────────────────────────

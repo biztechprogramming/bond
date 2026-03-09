@@ -58,9 +58,7 @@ export default function AgentsTab() {
   const [isNew, setIsNew] = useState(false);
   const [msg, setMsg] = useState("");
   const [browsingMountIndex, setBrowsingMountIndex] = useState<number | null>(null);
-  const [allFragments, setAllFragments] = useState<{ id: string; name: string; display_name: string; category: string; is_active: number }[]>([]);
-  const [agentFragments, setAgentFragments] = useState<{ id: string; display_name: string; category: string; enabled: number; rank: number; fragment_id?: string }[]>([]);
-  const [pendingFragmentIds, setPendingFragmentIds] = useState<Set<string>>(new Set());
+  // Fragment state removed (Doc 027 Phase 1) — fragments are now on disk, not per-agent checkboxes
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
 
   const fetchData = useCallback(async () => {
@@ -73,10 +71,6 @@ export default function AgentsTab() {
       setAgents(await agentsRes.json());
       setTools(await toolsRes.json());
       setSandboxImages(await imagesRes.json());
-      try {
-        const fragRes = await fetch("http://localhost:18790/api/v1/prompts/fragments");
-        if (fragRes.ok) setAllFragments(await fragRes.json());
-      } catch { /* prompts API not available */ }
       try {
         const modelsRes = await fetch("http://localhost:18790/api/v1/settings/llm/models");
         if (modelsRes.ok) setAvailableModels(await modelsRes.json());
@@ -111,38 +105,13 @@ export default function AgentsTab() {
   const startCreate = () => {
     setEditing({ ...newAgent(), tools: allToolNames });
     setIsNew(true);
-    setAgentFragments([]);
-    setPendingFragmentIds(new Set(allFragments.filter(f => f.is_active).map(f => f.id)));
     setMsg("");
   };
 
-  const loadAgentFragments = async (agentId: string) => {
-    try {
-      const res = await fetch(`http://localhost:18790/api/v1/prompts/agents/${agentId}/fragments`);
-      if (res.ok) setAgentFragments(await res.json());
-      else setAgentFragments([]);
-    } catch { setAgentFragments([]); }
-  };
-
-  const toggleAgentFragment = async (agentId: string, fragmentId: string, isAttached: boolean) => {
-    try {
-      if (isAttached) {
-        await fetch(`http://localhost:18790/api/v1/prompts/agents/${agentId}/fragments/${fragmentId}`, { method: "DELETE" });
-      } else {
-        await fetch(`http://localhost:18790/api/v1/prompts/agents/${agentId}/fragments`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fragment_id: fragmentId, rank: agentFragments.length }),
-        });
-      }
-      await loadAgentFragments(agentId);
-    } catch { /* ignore */ }
-  };
+  // loadAgentFragments and toggleAgentFragment removed (Doc 027 Phase 1)
 
   const startEdit = (agent: Agent) => {
     setEditing({ ...agent });
-    loadAgentFragments(agent.id);
-    setPendingFragmentIds(new Set());
     setIsNew(false);
     setMsg("");
   };
@@ -185,19 +154,6 @@ export default function AgentsTab() {
 
       if (res.ok) {
         const saved = await res.json();
-
-        // Attach pending fragments after creation
-        if (isNew && saved?.id && pendingFragmentIds.size > 0) {
-          const fragIds = Array.from(pendingFragmentIds);
-          await Promise.all(fragIds.map((fid, i) =>
-            fetch(`http://localhost:18790/api/v1/prompts/agents/${saved.id}/fragments`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ fragment_id: fid, rank: i }),
-            })
-          ));
-          setPendingFragmentIds(new Set());
-        }
 
         setMsg("Saved successfully.");
         setEditing(null);
@@ -363,7 +319,7 @@ export default function AgentsTab() {
                 value={editing.model}
                 onChange={(e) => setEditing({ ...editing, model: e.target.value })}
               >
-                {(availableModels.length > 0 ? availableModels : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
+                {(availableModels.length > 0 ? availableModels.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i) : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
                 {editing.model && !availableModels.find(m => m.id === editing.model) && (
@@ -378,7 +334,7 @@ export default function AgentsTab() {
                 value={editing.utility_model}
                 onChange={(e) => setEditing({ ...editing, utility_model: e.target.value })}
               >
-                {(availableModels.length > 0 ? availableModels : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
+                {(availableModels.length > 0 ? availableModels.filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i) : DEFAULT_MODELS.map(id => ({ id, name: id }))).map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
                 {editing.utility_model && !availableModels.find(m => m.id === editing.utility_model) && (
@@ -535,41 +491,9 @@ export default function AgentsTab() {
               />
             )}
 
-            <div style={{ ...styles.field, ...styles.formFull }}>
-              <label style={styles.label}>Prompt Fragments</label>
-              <div style={styles.checkboxGrid}>
-                {allFragments.filter(f => f.is_active).map((frag) => {
-                  const attached = isNew
-                    ? pendingFragmentIds.has(frag.id)
-                    : agentFragments.some(af => af.id === frag.id);
-                  const catColor: Record<string, string> = { behavior: "#6cffa0", tools: "#6c8aff", safety: "#ff6c8a", context: "#ffcc44" };
-                  return (
-                    <label key={frag.id} style={styles.checkboxLabel}>
-                      <input
-                        type="checkbox"
-                        checked={attached}
-                        onChange={() => {
-                          if (isNew) {
-                            const next = new Set(pendingFragmentIds);
-                            if (next.has(frag.id)) next.delete(frag.id);
-                            else next.add(frag.id);
-                            setPendingFragmentIds(next);
-                          } else {
-                            toggleAgentFragment(editing.id, frag.id, attached);
-                          }
-                        }}
-                        style={styles.checkbox}
-                      />
-                      <span style={{ color: catColor[frag.category] || "#888", fontSize: "0.7rem", marginRight: "4px" }}>●</span>
-                      {frag.display_name}
-                    </label>
-                  );
-                })}
-              </div>
-              <div style={{ fontSize: "0.8rem", color: "#5a5a6e", marginTop: "4px" }}>
-                Manage fragments in the Prompts tab
-              </div>
-            </div>
+            {/* Prompt fragment checkboxes removed (Doc 027 Phase 1).
+                Fragments are now loaded automatically from disk via manifest.yaml.
+                Tier 1 (always-on), Tier 2 (lifecycle), Tier 3 (context-dependent). */}
 
             {!isNew && !editing.is_default && (
               <div style={styles.buttonRow}>

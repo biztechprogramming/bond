@@ -562,7 +562,6 @@ async def conversation_turn(
         # TODO: wire up SpacetimeDB-backed settings/vault
         
         provider_aliases = {}
-        prompt_fragments = []
 
         agent_dict = {
             "id": agent_row["id"],
@@ -573,7 +572,6 @@ async def conversation_turn(
             "system_prompt": agent_row.get("system_prompt") or agent_row.get("systemPrompt"),
             "tools": json.loads(agent_row["tools"]) if isinstance(agent_row["tools"], str) else agent_row["tools"],
             "max_iterations": int(agent_row.get("max_iterations") or agent_row.get("maxIterations") or 10),
-            "prompt_fragments": prompt_fragments,
             "workspace_mounts": workspace_mounts,
             "api_keys": api_keys,
             "provider_aliases": provider_aliases,

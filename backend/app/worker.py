@@ -26,6 +26,17 @@ import aiosqlite
 import litellm
 
 from backend.app.agent.context_decay import apply_progressive_decay
+from backend.app.agent.lifecycle import (
+    LifecycleState,
+    Phase,
+    detect_phase,
+    format_lifecycle_injection,
+    format_precommit_injection,
+    is_git_commit_command,
+    is_git_push_command,
+    is_pr_create_command,
+    load_lifecycle_fragments,
+)
 from backend.app.agent.tool_selection import select_tools, compact_tool_schema
 from backend.app.agent.tool_result_filter import filter_tool_result, rule_based_prune
 from backend.app.agent.context_pipeline import (
@@ -33,7 +44,6 @@ from backend.app.agent.context_pipeline import (
     VERBATIM_MESSAGE_COUNT,
     _estimate_tokens,
     _estimate_messages_tokens,
-    _select_relevant_fragments,
     _compress_history,
     _log_compression_stats,
     _apply_sliding_window,
@@ -606,35 +616,20 @@ async def _run_agent_loop(
 
     # --- Context Distillation Pipeline ---
 
-    # Stage 1: Select relevant fragments via utility model
-    fragments = config.get("prompt_fragments", [])
-    enabled_fragments = [f for f in fragments if f.get("enabled", True)]
-    
-    # Concurrent Context Retrieval: Retrieve relevant fragments and memory search in parallel
-    async def _fetch_fragments():
-        return await _select_relevant_fragments(
-            enabled_fragments, user_message, history, config, utility_kwargs,
+    # Stage 1: Memory search (fragments are now loaded from disk via manifest)
+    recent_memories: list[dict] = []
+    try:
+        from backend.app.agent.tools.native import handle_search_memory
+        res = await handle_search_memory(
+            {"query": user_message, "limit": 3},
+            {"agent_db": _state.agent_db}
         )
+        recent_memories = res.get("results", [])
+    except Exception:
+        pass
 
-    async def _fetch_memory():
-        # Quick search for related context
-        try:
-            from backend.app.agent.tools.native import handle_search_memory
-            res = await handle_search_memory(
-                {"query": user_message, "limit": 3},
-                {"agent_db": _state.agent_db}
-            )
-            return res.get("results", [])
-        except Exception:
-            return []
+    prompt_parts = [system_prompt]
 
-    context_results = await asyncio.gather(_fetch_fragments(), _fetch_memory())
-    selected_fragments = context_results[0]
-    recent_memories = context_results[1]
-    
-    fragment_stats = {"selected": len(selected_fragments), "total": len(enabled_fragments)}
-    prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
-    
     # Inject relevant memories directly into the system prompt prefix
     if recent_memories:
         mem_text = "\n".join([f"- {m['content']}" for m in recent_memories])
@@ -642,32 +637,47 @@ async def _run_agent_loop(
         
     full_system_prompt = "\n\n".join(prompt_parts)
 
-    # Inject prompt hierarchy: universal fragments + manifest into system prompt
-    from backend.app.agent.tools.dynamic_loader import (
-        generate_manifest,
-        load_universal_fragments_with_meta,
-    )
-    import backend.app.worker as _worker_module
+    # Inject prompt hierarchy: Tier 1 fragments + category manifest from disk
+    from backend.app.agent.manifest import load_manifest, get_tier1_content, get_tier1_meta
+    from backend.app.agent.tools.dynamic_loader import generate_manifest as _generate_category_manifest
 
     _prompts_dir = Path("/bond/prompts")
     if not _prompts_dir.exists():
         # dev fallback
         _prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
 
-    _manifest = _worker_module._prompt_manifest_cache
-    if _manifest is None:
-        _manifest = generate_manifest(_prompts_dir)
-        _worker_module._prompt_manifest_cache = _manifest
+    # Load the three-tier manifest (cached, hot-reloads on file change)
+    _fragment_manifest = load_manifest(_prompts_dir)
 
-    # Universal fragments are always-on guidelines — inject once into system prompt
-    # so the agent has them without burning a tool call. load_context only loads
-    # task-specific category chains on top of these.
-    _universal, _universal_meta = load_universal_fragments_with_meta(_prompts_dir)
-    if _universal:
-        full_system_prompt = full_system_prompt + "\n\n" + _universal
+    # Tier 1: always-on fragments → system prompt
+    _tier1_content = get_tier1_content(_fragment_manifest)
+    _tier1_meta = get_tier1_meta(_fragment_manifest)
+    if _tier1_content:
+        full_system_prompt = full_system_prompt + "\n\n" + _tier1_content
 
-    if _manifest:
-        full_system_prompt = full_system_prompt + "\n\n" + _manifest
+    # Tier 3: semantic router selects context-dependent fragments
+    from backend.app.agent.fragment_router import (
+        build_route_layer,
+        get_tier3_meta,
+        select_fragments_by_similarity,
+    )
+
+    build_route_layer(_prompts_dir)
+    tier3_picks = await select_fragments_by_similarity(user_message, top_k=5)
+    _tier3_meta: list[dict] = []
+    if tier3_picks:
+        tier3_content = "\n\n---\n\n".join(f.content for f in tier3_picks)
+        full_system_prompt = full_system_prompt + "\n\n" + tier3_content
+        _tier3_meta = get_tier3_meta(tier3_picks)
+
+    # Category manifest for load_context tool (still useful for Tier 3 categories)
+    import backend.app.worker as _worker_module
+    _category_manifest = _worker_module._prompt_manifest_cache
+    if _category_manifest is None:
+        _category_manifest = _generate_category_manifest(_prompts_dir)
+        _worker_module._prompt_manifest_cache = _category_manifest
+    if _category_manifest:
+        full_system_prompt = full_system_prompt + "\n\n" + _category_manifest
 
     # Set process cwd to /workspace so file_read/file_edit/file_write resolve
     # relative paths the same way code_execute does.
@@ -718,7 +728,7 @@ async def _run_agent_loop(
 
     # Log compression audit trail
     await _log_compression_stats(
-        conversation_id, 0, compression_stats, fragment_stats,
+        conversation_id, 0, compression_stats, {"selected": len(_tier1_meta), "total": len(_fragment_manifest)},
         config.get("utility_model", "claude-sonnet-4-6"),
         agent_db=_state.agent_db,
     )
@@ -846,33 +856,27 @@ async def _run_agent_loop(
     })
     _last_iteration_tool_names: list[str] = []  # tools called in previous iteration
 
+    # ── Lifecycle phase tracking (Doc 024 — Tier 2 injection) ──
+    _lifecycle_phase = Phase.IDLE
+    _lifecycle_injected = False  # whether Tier 2 content is in the system prompt
+    _lifecycle_turn_number = 0  # logical turn counter for lifecycle detection
+
     # ── Langfuse metadata for observability ──
     # Build once before the loop. Updated if load_context adds fragments mid-turn.
     _langfuse_meta: dict[str, Any] = {}
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
         _audit_fragments: list[dict] = []
 
-        # DB-managed fragments (from _select_relevant_fragments)
-        for frag in selected_fragments:
-            _audit_fragments.append({
-                "source": "db",
-                "id": frag.get("id", ""),
-                "name": frag.get("name", ""),
-                "tier": frag.get("tier", "standard"),
-                "reason": frag.get("_selection_reason", "unknown"),
-                "tokens": frag.get("token_estimate", 0),
-            })
-
-        # Universal fragments (from load_universal_fragments_with_meta)
-        for meta in _universal_meta:
+        # Tier 1 fragments (from manifest)
+        for meta in _tier1_meta:
             _audit_fragments.append(meta)
 
-        # Manifest
-        if _manifest:
+        # Category manifest
+        if _category_manifest:
             _audit_fragments.append({
-                "source": "manifest",
+                "source": "category-manifest",
                 "name": "prompt_manifest",
-                "tokenEstimate": _estimate_tokens(_manifest),
+                "tokenEstimate": _estimate_tokens(_category_manifest),
             })
 
         # Build fragment names and metadata summary
@@ -1262,6 +1266,39 @@ async def _run_agent_loop(
                         "tool_calls_made": tool_calls_made,
                     }))
 
+                # ── Pre-execution lifecycle hook (Doc 024) ──
+                # Inject phase-specific guidance right before consequential
+                # git operations so the agent sees it in the same context
+                # window as the tool result.
+                if is_git_commit_command(tool_name, tool_args):
+                    _commit_frags = load_lifecycle_fragments(Phase.COMMITTING, _prompts_dir)
+                    if _commit_frags:
+                        _precommit_text = format_precommit_injection(_commit_frags)
+                        messages.append({
+                            "role": "user",
+                            "content": f"SYSTEM: {_precommit_text}",
+                        })
+                        logger.info(
+                            "Pre-commit hook: injected %d fragments (%s)",
+                            len(_commit_frags),
+                            [f.path for f in _commit_frags],
+                        )
+                elif is_pr_create_command(tool_name, tool_args):
+                    _review_frags = load_lifecycle_fragments(Phase.REVIEWING, _prompts_dir)
+                    if _review_frags:
+                        _review_text = "\n\n---\n\n".join(
+                            f.content for f in _review_frags if f.content
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": f"SYSTEM: ## Before Creating This PR\n{_review_text}",
+                        })
+                        logger.info(
+                            "Pre-PR hook: injected %d fragments (%s)",
+                            len(_review_frags),
+                            [f.path for f in _review_frags],
+                        )
+
                 if tool_name not in agent_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled."}
                 else:
@@ -1420,6 +1457,71 @@ async def _run_agent_loop(
                     "tool_call_id": tool_call.id,
                     "content": result_json,
                 })
+
+            # ── Between-turn lifecycle injection (Doc 024) ──
+            # After processing all tool calls for this iteration, detect the
+            # lifecycle phase and inject Tier 2 fragments into the system prompt
+            # for the next iteration. This ensures the agent sees phase-specific
+            # guidance (e.g. testing rules during implementation, git rules during
+            # committing) on the NEXT LLM call.
+            _lifecycle_turn_number += 1
+            _tool_call_strings = [
+                f"{tc.function.name}:{tc.function.arguments}"
+                for tc in llm_message.tool_calls
+            ]
+            _lc_state = LifecycleState(
+                turn_number=_lifecycle_turn_number,
+                last_tool_calls=_tool_call_strings,
+                has_work_plan=_has_active_plan,
+                work_plan_status="in_progress" if _has_active_plan else None,
+            )
+            _new_phase = detect_phase(_lc_state)
+
+            if _new_phase != _lifecycle_phase:
+                _lifecycle_phase = _new_phase
+                logger.info("Lifecycle phase changed to: %s", _lifecycle_phase.name)
+
+                # Remove previous lifecycle injection from system prompt
+                # (it's appended at the end, so we strip it)
+                sys_content = messages[0].get("content", "")
+                if isinstance(sys_content, list):
+                    # Anthropic cached format — modify text block
+                    for block in sys_content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text = block["text"]
+                            marker = "\n\n## Current Phase: "
+                            if marker in text:
+                                block["text"] = text[:text.index(marker)]
+                            break
+                elif isinstance(sys_content, str):
+                    marker = "\n\n## Current Phase: "
+                    if marker in sys_content:
+                        sys_content = sys_content[:sys_content.index(marker)]
+                        messages[0]["content"] = sys_content
+
+                # Inject new lifecycle fragments if not idle
+                if _new_phase != Phase.IDLE:
+                    _lc_frags = load_lifecycle_fragments(_new_phase, _prompts_dir)
+                    _lc_injection = format_lifecycle_injection(_new_phase, _lc_frags)
+                    if _lc_injection:
+                        if isinstance(messages[0].get("content"), list):
+                            for block in messages[0]["content"]:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    block["text"] += _lc_injection
+                                    break
+                        else:
+                            messages[0]["content"] += _lc_injection
+                        _lifecycle_injected = True
+                        logger.info(
+                            "Lifecycle injection: phase=%s fragments=%s",
+                            _new_phase.name,
+                            [f.path for f in _lc_frags],
+                        )
+                    else:
+                        _lifecycle_injected = False
+                else:
+                    _lifecycle_injected = False
+
         else:
             return llm_message.content or "", tool_calls_made
 
