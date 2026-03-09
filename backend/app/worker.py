@@ -666,19 +666,24 @@ async def _run_agent_loop(
         full_system_prompt = full_system_prompt + "\n\n" + _tier1_content
 
     # Tier 3: semantic router selects context-dependent fragments
-    from backend.app.agent.fragment_router import (
-        build_route_layer,
-        get_tier3_meta,
-        select_fragments_by_similarity,
-    )
-
-    build_route_layer(_prompts_dir)
-    tier3_picks = await select_fragments_by_similarity(user_message, top_k=5)
+    # Requires numpy + semantic_router + sentence-transformers (heavy deps).
+    # Gracefully skip if not installed in this environment.
     _tier3_meta: list[dict] = []
-    if tier3_picks:
-        tier3_content = "\n\n---\n\n".join(f.content for f in tier3_picks)
-        full_system_prompt = full_system_prompt + "\n\n" + tier3_content
-        _tier3_meta = get_tier3_meta(tier3_picks)
+    try:
+        from backend.app.agent.fragment_router import (
+            build_route_layer,
+            get_tier3_meta,
+            select_fragments_by_similarity,
+        )
+
+        build_route_layer(_prompts_dir)
+        tier3_picks = await select_fragments_by_similarity(user_message, top_k=5)
+        if tier3_picks:
+            tier3_content = "\n\n---\n\n".join(f.content for f in tier3_picks)
+            full_system_prompt = full_system_prompt + "\n\n" + tier3_content
+            _tier3_meta = get_tier3_meta(tier3_picks)
+    except ImportError as e:
+        logger.debug("Tier 3 semantic router unavailable (missing dep: %s) — skipping", e.name)
 
     # Category manifest for load_context tool (still useful for Tier 3 categories)
     import backend.app.worker as _worker_module

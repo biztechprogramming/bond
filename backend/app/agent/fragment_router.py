@@ -10,8 +10,6 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-import numpy as np
-
 from backend.app.agent.manifest import FragmentMeta, get_tier3_fragments, load_manifest
 
 logger = logging.getLogger("bond.agent.fragment_router")
@@ -123,6 +121,7 @@ async def select_fragments_by_similarity(
 
     try:
         # Encode the query and search the index for all matching embeddings
+        import numpy as np
         xq = np.array(_encoder([user_message]))
         scores, route_names = _router.index.query(vector=xq[0], top_k=len(_route_to_fragment) * 3)
     except Exception as e:
