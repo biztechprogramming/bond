@@ -33,7 +33,6 @@ from backend.app.agent.context_pipeline import (
     VERBATIM_MESSAGE_COUNT,
     _estimate_tokens,
     _estimate_messages_tokens,
-    _select_relevant_fragments,
     _compress_history,
     _log_compression_stats,
     _apply_sliding_window,
@@ -606,35 +605,20 @@ async def _run_agent_loop(
 
     # --- Context Distillation Pipeline ---
 
-    # Stage 1: Select relevant fragments via utility model
-    fragments = config.get("prompt_fragments", [])
-    enabled_fragments = [f for f in fragments if f.get("enabled", True)]
-    
-    # Concurrent Context Retrieval: Retrieve relevant fragments and memory search in parallel
-    async def _fetch_fragments():
-        return await _select_relevant_fragments(
-            enabled_fragments, user_message, history, config, utility_kwargs,
+    # Stage 1: Memory search (fragments are now loaded from disk via manifest)
+    recent_memories: list[dict] = []
+    try:
+        from backend.app.agent.tools.native import handle_search_memory
+        res = await handle_search_memory(
+            {"query": user_message, "limit": 3},
+            {"agent_db": _state.agent_db}
         )
+        recent_memories = res.get("results", [])
+    except Exception:
+        pass
 
-    async def _fetch_memory():
-        # Quick search for related context
-        try:
-            from backend.app.agent.tools.native import handle_search_memory
-            res = await handle_search_memory(
-                {"query": user_message, "limit": 3},
-                {"agent_db": _state.agent_db}
-            )
-            return res.get("results", [])
-        except Exception:
-            return []
+    prompt_parts = [system_prompt]
 
-    context_results = await asyncio.gather(_fetch_fragments(), _fetch_memory())
-    selected_fragments = context_results[0]
-    recent_memories = context_results[1]
-    
-    fragment_stats = {"selected": len(selected_fragments), "total": len(enabled_fragments)}
-    prompt_parts = [system_prompt] + [f["content"] for f in selected_fragments]
-    
     # Inject relevant memories directly into the system prompt prefix
     if recent_memories:
         mem_text = "\n".join([f"- {m['content']}" for m in recent_memories])
@@ -642,32 +626,32 @@ async def _run_agent_loop(
         
     full_system_prompt = "\n\n".join(prompt_parts)
 
-    # Inject prompt hierarchy: universal fragments + manifest into system prompt
-    from backend.app.agent.tools.dynamic_loader import (
-        generate_manifest,
-        load_universal_fragments_with_meta,
-    )
-    import backend.app.worker as _worker_module
+    # Inject prompt hierarchy: Tier 1 fragments + category manifest from disk
+    from backend.app.agent.manifest import load_manifest, get_tier1_content, get_tier1_meta
+    from backend.app.agent.tools.dynamic_loader import generate_manifest as _generate_category_manifest
 
     _prompts_dir = Path("/bond/prompts")
     if not _prompts_dir.exists():
         # dev fallback
         _prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
 
-    _manifest = _worker_module._prompt_manifest_cache
-    if _manifest is None:
-        _manifest = generate_manifest(_prompts_dir)
-        _worker_module._prompt_manifest_cache = _manifest
+    # Load the three-tier manifest (cached, hot-reloads on file change)
+    _fragment_manifest = load_manifest(_prompts_dir)
 
-    # Universal fragments are always-on guidelines — inject once into system prompt
-    # so the agent has them without burning a tool call. load_context only loads
-    # task-specific category chains on top of these.
-    _universal, _universal_meta = load_universal_fragments_with_meta(_prompts_dir)
-    if _universal:
-        full_system_prompt = full_system_prompt + "\n\n" + _universal
+    # Tier 1: always-on fragments → system prompt
+    _tier1_content = get_tier1_content(_fragment_manifest)
+    _tier1_meta = get_tier1_meta(_fragment_manifest)
+    if _tier1_content:
+        full_system_prompt = full_system_prompt + "\n\n" + _tier1_content
 
-    if _manifest:
-        full_system_prompt = full_system_prompt + "\n\n" + _manifest
+    # Category manifest for load_context tool (still useful for Tier 3 categories)
+    import backend.app.worker as _worker_module
+    _category_manifest = _worker_module._prompt_manifest_cache
+    if _category_manifest is None:
+        _category_manifest = _generate_category_manifest(_prompts_dir)
+        _worker_module._prompt_manifest_cache = _category_manifest
+    if _category_manifest:
+        full_system_prompt = full_system_prompt + "\n\n" + _category_manifest
 
     # Set process cwd to /workspace so file_read/file_edit/file_write resolve
     # relative paths the same way code_execute does.
@@ -718,7 +702,7 @@ async def _run_agent_loop(
 
     # Log compression audit trail
     await _log_compression_stats(
-        conversation_id, 0, compression_stats, fragment_stats,
+        conversation_id, 0, compression_stats, {"selected": len(_tier1_meta), "total": len(_fragment_manifest)},
         config.get("utility_model", "claude-sonnet-4-6"),
         agent_db=_state.agent_db,
     )
@@ -852,27 +836,16 @@ async def _run_agent_loop(
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
         _audit_fragments: list[dict] = []
 
-        # DB-managed fragments (from _select_relevant_fragments)
-        for frag in selected_fragments:
-            _audit_fragments.append({
-                "source": "db",
-                "id": frag.get("id", ""),
-                "name": frag.get("name", ""),
-                "tier": frag.get("tier", "standard"),
-                "reason": frag.get("_selection_reason", "unknown"),
-                "tokens": frag.get("token_estimate", 0),
-            })
-
-        # Universal fragments (from load_universal_fragments_with_meta)
-        for meta in _universal_meta:
+        # Tier 1 fragments (from manifest)
+        for meta in _tier1_meta:
             _audit_fragments.append(meta)
 
-        # Manifest
-        if _manifest:
+        # Category manifest
+        if _category_manifest:
             _audit_fragments.append({
-                "source": "manifest",
+                "source": "category-manifest",
                 "name": "prompt_manifest",
-                "tokenEstimate": _estimate_tokens(_manifest),
+                "tokenEstimate": _estimate_tokens(_category_manifest),
             })
 
         # Build fragment names and metadata summary

@@ -92,52 +92,9 @@ def load_context_fragments(category: str, prompts_dir: Path) -> str:
     return "\n\n---\n\n".join(fragments)
 
 
-def load_universal_fragments(prompts_dir: Path) -> str:
-    """Load all universal fragment files and return them as a single string.
-
-    Called once at system prompt build time so the agent always has these
-    guidelines without needing a load_context tool call.
-    """
-    universal_dir = prompts_dir / "universal"
-    if not universal_dir.exists():
-        return ""
-
-    fragments: list[str] = []
-    for f in sorted(universal_dir.glob("*.md")):
-        try:
-            fragments.append(f.read_text().strip())
-        except Exception as e:
-            logger.warning("Failed to read universal fragment %s: %s", f, e)
-
-    return "\n\n---\n\n".join(fragments)
-
-
-def load_universal_fragments_with_meta(prompts_dir: Path) -> tuple[str, list[dict]]:
-    """Load universal fragments and return (content_string, metadata_list).
-
-    Each metadata entry contains source, path, name, and token estimate
-    for audit/observability purposes. Content is NOT included in metadata.
-    """
-    universal_dir = prompts_dir / "universal"
-    if not universal_dir.exists():
-        return "", []
-
-    fragments: list[str] = []
-    meta: list[dict] = []
-    for f in sorted(universal_dir.glob("*.md")):
-        try:
-            content = f.read_text().strip()
-            fragments.append(content)
-            meta.append({
-                "source": "universal",
-                "path": str(f.relative_to(prompts_dir)),
-                "name": f.stem,
-                "tokenEstimate": len(content) // 4,  # rough estimate
-            })
-        except Exception as e:
-            logger.warning("Failed to read universal fragment %s: %s", f, e)
-
-    return "\n\n---\n\n".join(fragments), meta
+# load_universal_fragments and load_universal_fragments_with_meta have been
+# removed. Tier 1 fragment loading is now handled by backend.app.agent.manifest.
+# See Design Doc 027 Phase 1.
 
 
 def load_dynamic_tools(prompts_dir: Path) -> dict:

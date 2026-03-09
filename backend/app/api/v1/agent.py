@@ -421,35 +421,7 @@ async def resolve_agent(
     if not resolved_conversation_id or (conversation_id and not await _conversation_exists(db, conversation_id)):
         resolved_conversation_id = await _get_or_create_conversation(db, resolved_conversation_id)
 
-    # Fetch prompt fragments for this agent (include metadata for utility model selection)
-    frag_result = await db.execute(
-        text(
-            "SELECT pf.id, pf.name, pf.display_name, pf.description, pf.content, "
-            "pf.summary, pf.tier, pf.task_triggers, pf.token_estimate, "
-            "apf.enabled, apf.rank "
-            "FROM agent_prompt_fragments apf "
-            "JOIN prompt_fragments pf ON pf.id = apf.fragment_id "
-            "WHERE apf.agent_id = :id AND pf.is_active = 1 "
-            "ORDER BY apf.rank"
-        ),
-        {"id": resolved_agent_id},
-    )
-    prompt_fragments = [
-        {
-            "id": r["id"],
-            "name": r["name"],
-            "display_name": r["display_name"],
-            "description": r["description"],
-            "content": r["content"],
-            "summary": r["summary"],
-            "tier": r["tier"],
-            "task_triggers": r["task_triggers"],
-            "token_estimate": r["token_estimate"],
-            "enabled": bool(r["enabled"]),
-            "rank": r["rank"],
-        }
-        for r in frag_result.mappings().all()
-    ]
+    # Fragment loading removed (Doc 027 Phase 1) — fragments come from disk via manifest.yaml
 
     sandbox_image = agent_row["sandbox_image"]
     if sandbox_image:
@@ -486,7 +458,6 @@ async def resolve_agent(
                 "system_prompt": agent_row["system_prompt"],
                 "tools": json.loads(agent_row["tools"]),
                 "max_iterations": agent_row["max_iterations"],
-                "prompt_fragments": prompt_fragments,
                 "workspace_mounts": workspace_mounts,
                 "api_keys": api_keys,
                 "provider_aliases": provider_aliases,

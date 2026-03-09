@@ -27,8 +27,11 @@ SUMMARY_MAX_WORDS = 100
 TOPIC_MAX_MESSAGES = 8        # Force topic boundary after this many messages
 
 # ---------------------------------------------------------------------------
-# Fragment selection cache
+# Fragment selection cache (DEPRECATED — Doc 027 Phase 1)
 # ---------------------------------------------------------------------------
+# These functions are no longer called. Fragment selection has been replaced
+# by the manifest-based three-tier system in backend.app.agent.manifest.
+# Kept temporarily for reference; will be removed in Phase 3 cleanup.
 
 _fragment_cache: dict[str, tuple[float, list[dict]]] = {}
 _FRAGMENT_CACHE_TTL = 300  # 5 minutes

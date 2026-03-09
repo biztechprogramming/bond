@@ -10,7 +10,15 @@ import pytest
 from backend.app.agent.tools.dynamic_loader import (
     generate_manifest,
     load_context_fragments,
-    load_universal_fragments,
+)
+from backend.app.agent.manifest import (
+    load_manifest,
+    get_tier1_fragments,
+    get_tier1_content,
+    get_tier1_meta,
+    get_tier2_fragments,
+    get_tier3_fragments,
+    invalidate_cache,
 )
 
 
@@ -165,23 +173,126 @@ class TestLoadContextFragments:
         assert "Error:" in result
 
 
-class TestLoadUniversalFragments:
-    def test_loads_all_universal_files(self, prompts_dir: Path):
-        result = load_universal_fragments(prompts_dir)
-        assert "Communication" in result
-        assert "Safety" in result
-        assert "Reasoning" in result
+class TestManifest:
+    """Tests for the three-tier prompt manifest system (Doc 027)."""
 
-    def test_returns_empty_for_missing_universal_dir(self, tmp_path: Path):
-        # No universal/ subdirectory
-        (tmp_path / "engineering").mkdir()
-        result = load_universal_fragments(tmp_path)
-        assert result == ""
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """Ensure manifest cache is cleared between tests."""
+        invalidate_cache()
+        yield
+        invalidate_cache()
 
-    def test_returns_empty_for_nonexistent_dir(self, tmp_path: Path):
-        result = load_universal_fragments(tmp_path / "nope")
-        assert result == ""
+    @pytest.fixture()
+    def manifest_dir(self, prompts_dir: Path) -> Path:
+        """Create a manifest.yaml alongside the prompts directory."""
+        import yaml
 
-    def test_fragments_separated_by_dividers(self, prompts_dir: Path):
-        result = load_universal_fragments(prompts_dir)
-        assert "---" in result
+        manifest = {
+            "universal/safety.md": {"tier": 1},
+            "universal/communication.md": {"tier": 1},
+            "universal/reasoning.md": {"tier": 1},
+            "engineering/code-quality/must-compile/must-compile.md": {"tier": 1},
+            "engineering/git/git.md": {"tier": 2, "phase": "committing"},
+            "engineering/git/commits/commits.md": {"tier": 2, "phase": "committing"},
+            "engineering/git/pull-requests/pull-requests.md": {"tier": 2, "phase": "reviewing"},
+            "infrastructure/docker/docker.md": {
+                "tier": 3,
+                "utterances": ["Dockerfile", "Docker container", "build a Docker image"],
+            },
+            "infrastructure/docker/sandbox/sandbox.md": {
+                "tier": 3,
+                "utterances": ["sandbox container", "agent sandbox"],
+            },
+        }
+        (prompts_dir / "manifest.yaml").write_text(yaml.dump(manifest))
+        return prompts_dir
+
+    def test_load_manifest_all_files(self, manifest_dir: Path):
+        manifest = load_manifest(manifest_dir)
+        assert len(manifest) == 9
+        assert "universal/safety.md" in manifest
+        assert "infrastructure/docker/docker.md" in manifest
+
+    def test_tier1_fragments(self, manifest_dir: Path):
+        manifest = load_manifest(manifest_dir)
+        tier1 = get_tier1_fragments(manifest)
+        assert len(tier1) == 4
+        paths = {f.path for f in tier1}
+        assert "universal/safety.md" in paths
+        assert "engineering/code-quality/must-compile/must-compile.md" in paths
+
+    def test_tier1_content_concatenated(self, manifest_dir: Path):
+        manifest = load_manifest(manifest_dir)
+        content = get_tier1_content(manifest)
+        assert "Safety" in content
+        assert "Communication" in content
+        assert "Reasoning" in content
+        assert "Must Compile" in content
+        assert "---" in content  # separator between fragments
+
+    def test_tier1_meta(self, manifest_dir: Path):
+        manifest = load_manifest(manifest_dir)
+        meta = get_tier1_meta(manifest)
+        assert len(meta) == 4
+        assert all(m["source"] == "manifest-tier1" for m in meta)
+        assert all("tokenEstimate" in m for m in meta)
+
+    def test_tier2_by_phase(self, manifest_dir: Path):
+        manifest = load_manifest(manifest_dir)
+        committing = get_tier2_fragments(manifest, "committing")
+        assert len(committing) == 2
+        paths = {f.path for f in committing}
+        assert "engineering/git/git.md" in paths
+        assert "engineering/git/commits/commits.md" in paths
+
+        reviewing = get_tier2_fragments(manifest, "reviewing")
+        assert len(reviewing) == 1
+        assert reviewing[0].path == "engineering/git/pull-requests/pull-requests.md"
+
+        # Non-existent phase returns empty
+        assert get_tier2_fragments(manifest, "deploying") == []
+
+    def test_tier3_fragments(self, manifest_dir: Path):
+        manifest = load_manifest(manifest_dir)
+        tier3 = get_tier3_fragments(manifest)
+        assert len(tier3) == 2
+        docker = next(f for f in tier3 if "docker.md" in f.path and "sandbox" not in f.path)
+        assert "Dockerfile" in docker.utterances
+        assert docker.content == "## Docker\nSmall images."
+
+    def test_missing_manifest_returns_empty(self, prompts_dir: Path):
+        # No manifest.yaml created
+        manifest = load_manifest(prompts_dir)
+        assert manifest == {}
+
+    def test_missing_file_skipped(self, prompts_dir: Path):
+        """If manifest references a file that doesn't exist, it's skipped."""
+        import yaml
+
+        manifest_data = {
+            "universal/safety.md": {"tier": 1},
+            "nonexistent/file.md": {"tier": 3, "utterances": ["foo"]},
+        }
+        (prompts_dir / "manifest.yaml").write_text(yaml.dump(manifest_data))
+        manifest = load_manifest(prompts_dir)
+        assert len(manifest) == 1
+        assert "universal/safety.md" in manifest
+
+    def test_cache_hit(self, manifest_dir: Path):
+        """Loading manifest twice returns cached result."""
+        m1 = load_manifest(manifest_dir)
+        m2 = load_manifest(manifest_dir)
+        assert m1 is m2  # Same object — cache hit
+
+    def test_force_reload(self, manifest_dir: Path):
+        m1 = load_manifest(manifest_dir)
+        m2 = load_manifest(manifest_dir, force=True)
+        assert m1 is not m2  # Different objects — forced reload
+        assert len(m1) == len(m2)
+
+    def test_token_estimates(self, manifest_dir: Path):
+        manifest = load_manifest(manifest_dir)
+        for f in manifest.values():
+            assert f.token_estimate > 0
+            assert f.token_estimate == len(f.content) // 4
