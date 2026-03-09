@@ -850,6 +850,9 @@ async def _run_agent_loop(
     INFO_GATHERING_TOOLS = frozenset({
         "file_read", "search_memory",
         "web_search", "web_read", "work_plan",
+        # Shell utility tools — always info-gathering, always cheap
+        "shell_find", "shell_ls", "shell_grep", "git_info",
+        "shell_wc", "shell_head", "shell_tree",
     })
     CONSEQUENTIAL_TOOLS = frozenset({
         "file_write", "file_edit", "code_execute", "respond", "memory_save",

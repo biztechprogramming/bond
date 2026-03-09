@@ -39,7 +39,34 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "code_execute": [
         "run", "execute", "test", "install", "build", "compile", "script",
         "command", "terminal", "shell", "pip", "npm", "make", "docker",
-        "git ", "curl", "mkdir", "ls ", "cd ", "grep", "find ",
+        "curl",
+    ],
+    "shell_find": [
+        "find ", "locate file", "search for file", "where is", "*.py", "*.ts",
+        "*.js", "*.md", "*.json", "*.yaml", "*.yml", "file named",
+    ],
+    "shell_ls": [
+        "ls ", "list files", "list directory", "what files", "directory contents",
+        "what's in the folder", "show files",
+    ],
+    "shell_grep": [
+        "grep", "search for", "find text", "where is", "pattern",
+        "look for", "occurrences", "references to",
+    ],
+    "git_info": [
+        "git ", "git status", "git log", "git diff", "branch", "commit history",
+        "recent commits", "what changed", "git show",
+    ],
+    "shell_wc": [
+        "count lines", "how many lines", "line count", "word count", "wc ",
+    ],
+    "shell_head": [
+        "first lines", "last lines", "head ", "tail ", "beginning of",
+        "end of", "top of file", "bottom of file",
+    ],
+    "shell_tree": [
+        "tree", "directory structure", "project structure", "folder structure",
+        "show structure", "layout",
     ],
     "search_memory": [
         "remember", "recall", "search", "find", "what did", "do you know",
@@ -168,11 +195,19 @@ def select_tools(
         logger.debug("No tools matched for message, using respond only")
         return [t for t in selected if t in enabled_tools]
 
-    # Coding tasks often need both read + write + execute
+    # Coding tasks often need both read + write + execute + utility tools
     coding_tools = {"file_read", "file_write", "file_edit", "code_execute"}
+    shell_utility_tools = {"shell_find", "shell_ls", "shell_grep", "git_info", "shell_head", "shell_tree"}
     if coding_tools & selected:
-        # If any coding tool matched, include all enabled coding tools
+        # If any coding tool matched, include all enabled coding tools + shell utils
         selected.update(coding_tools & set(enabled_tools))
+        selected.update(shell_utility_tools & set(enabled_tools))
+    # If any shell utility tool matched, include the related ones
+    if shell_utility_tools & selected:
+        selected.update(shell_utility_tools & set(enabled_tools))
+        # Also include file_read since they're often used together
+        if "file_read" in enabled_tools:
+            selected.add("file_read")
 
     # Memory operations: if any memory tool matched, include search too
     memory_tools = {"search_memory", "memory_save", "memory_update", "memory_delete"}
