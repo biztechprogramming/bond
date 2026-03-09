@@ -162,8 +162,10 @@ class TestAddItem:
 
 class TestUpdateItem:
     def test_update_status(self):
+        # GET returns current status (different from requested) → idempotency check passes
+        get_resp = {"item_id": "ITEM1", "status": "new"}
         api_resp = {"item_id": "ITEM1", "updated": True}
-        patcher, client = _patch_client([_mock_response(api_resp)])
+        patcher, client = _patch_client([_mock_response(get_resp), _mock_response(api_resp)])
         with _api_env(), patcher:
             result = _run(handle_work_plan(
                 {"action": "update_item", "plan_id": "PLAN1", "item_id": "ITEM1", "status": "in_progress"}, _ctx()
@@ -177,7 +179,9 @@ class TestUpdateItem:
         assert "error" in result
 
     def test_update_item_api_error(self):
-        patcher, _ = _patch_client([_mock_response({}, 404)])
+        # GET for idempotency check returns current state, PUT returns 404 error
+        get_resp = _mock_response({"status": "in_progress"})
+        patcher, _ = _patch_client([get_resp, _mock_response({}, 404)])
         with _api_env(), patcher:
             result = _run(handle_work_plan(
                 {"action": "update_item", "item_id": "ITEM1", "status": "done"}, _ctx()

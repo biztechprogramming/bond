@@ -126,11 +126,43 @@ async def _handle_via_api(
                 item_id = arguments.get("item_id", "")
                 if not item_id:
                     return {"error": "item_id is required for update_item"}
+
+                requested_status = arguments.get("status")
+                plan_id = arguments.get("plan_id", "")
+
+                # ── Idempotency check: fetch current item state before updating ──
+                # If the item is already in the requested status, return a
+                # no-op signal so the model knows nothing changed and stops
+                # re-issuing the same update.
+                if requested_status:
+                    try:
+                        item_url_get = (
+                            f"{base}/api/v1/items/{item_id}"
+                        )
+                        item_resp = await client.get(item_url_get)
+                        if item_resp.status_code == 200:
+                            current = item_resp.json()
+                            current_status = current.get("status", "")
+                            if current_status == requested_status:
+                                logger.info(
+                                    "work_plan update_item NOOP: item=%s already status=%s",
+                                    item_id, requested_status,
+                                )
+                                return {
+                                    "status": "unchanged",
+                                    "already_done": True,
+                                    "item_id": item_id,
+                                    "current_status": current_status,
+                                    "message": f"Item is already '{requested_status}'. No update needed — move on to the next task.",
+                                }
+                    except Exception:
+                        pass  # Fall through to normal update on any error
+
                 body = {}
                 if "title" in arguments:
                     body["title"] = arguments["title"]
-                if "status" in arguments:
-                    body["status"] = arguments["status"]
+                if requested_status:
+                    body["status"] = requested_status
                 if "notes" in arguments:
                     body["notes"] = arguments["notes"]
                 if "context_snapshot" in arguments:
@@ -139,7 +171,6 @@ async def _handle_via_api(
                     body["files_changed"] = arguments["files_changed"]
                 if "description" in arguments:
                     body["description"] = arguments["description"]
-                plan_id = arguments.get("plan_id", "")
                 # Use flat /items/:id endpoint — plan_id not needed by the reducer.
                 # Fall back to nested URL if plan_id is known (both routes work).
                 item_url = (
@@ -152,9 +183,9 @@ async def _handle_via_api(
                 result["success"] = True
                 result["_sse_event"] = {
                     "event": "item_updated",
-                    "data": {"plan_id": plan_id, "item_id": item_id, "status": arguments.get("status")},
+                    "data": {"plan_id": plan_id, "item_id": item_id, "status": requested_status},
                 }
-                logger.info("work_plan update_item (API) item=%s status=%s", item_id, arguments.get("status"))
+                logger.info("work_plan update_item (API) item=%s status=%s", item_id, requested_status)
                 return result
 
             elif action == "complete_plan":

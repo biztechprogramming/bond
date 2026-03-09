@@ -849,6 +849,15 @@ async def _run_agent_loop(
     REPETITION_THRESHOLD = 3  # consecutive similar calls before intervention
     recent_tool_calls: list[tuple[str, str]] = []  # (tool_name, args_hash)
 
+    # Cyclical loop detection — catches patterns like A→B→C→A→B→C
+    # where individual calls differ but the sequence repeats
+    _CYCLE_WINDOW = 30  # track last N tool calls for cycle detection
+    _CYCLE_MIN_PERIOD = 2  # shortest cycle to look for (e.g. A→B→A→B)
+    _CYCLE_MAX_PERIOD = 8  # longest cycle to look for
+    _CYCLE_REPEATS = 3  # how many times a cycle must repeat to trigger
+    _loop_intervention_count = 0  # how many times we've intervened
+    _LOOP_MAX_INTERVENTIONS = 2  # after this many, hard-stop the loop
+
     # Track where the pre-turn messages end so we know which are in-loop
     _preturn_msg_count = len(messages)
 
@@ -1145,6 +1154,27 @@ async def _run_agent_loop(
             if llm_message.tool_calls:
                 _speculative_tool_names = [tc.function.name for tc in llm_message.tool_calls]
                 _needs_replay = any(t in CONSEQUENTIAL_TOOLS for t in _speculative_tool_names)
+
+                # Also replay if the utility model is repeating tool calls it
+                # already made — this is a sign the cheap model is looping and
+                # needs the primary model to make a real decision.
+                if not _needs_replay and len(recent_tool_calls) >= 2:
+                    for tc in llm_message.tool_calls:
+                        try:
+                            _tc_args = json.loads(tc.function.arguments)
+                        except json.JSONDecodeError:
+                            _tc_args = {}
+                        _tc_sig = hashlib.md5(
+                            f"{tc.function.name}:{json.dumps(_tc_args)[:200]}".encode()
+                        ).hexdigest()[:8]
+                        _sig_tuple = (tc.function.name, _tc_sig)
+                        if _sig_tuple in recent_tool_calls:
+                            _needs_replay = True
+                            logger.info(
+                                "Utility model repeating previous call %s — escalating to primary",
+                                tc.function.name,
+                            )
+                            break
             else:
                 # No tool calls = final text response — always consequential
                 _needs_replay = True
@@ -1275,36 +1305,101 @@ async def _run_agent_loop(
                 args_sig = hashlib.md5(f"{tool_name}:{json.dumps(tool_args)[:200]}".encode()).hexdigest()[:8]
                 recent_tool_calls.append((tool_name, args_sig))
 
-                # Check for consecutive repetition
+                # ── Loop detection (consecutive + cyclical) ──
+                _loop_detected = False
+                _loop_msg = ""
+
+                # 1. Consecutive repetition: same call N times in a row
                 if len(recent_tool_calls) >= REPETITION_THRESHOLD:
                     last_n = recent_tool_calls[-REPETITION_THRESHOLD:]
                     if all(tc == last_n[0] for tc in last_n):
+                        _loop_detected = True
+                        _loop_msg = (
+                            f"SYSTEM: You have called '{tool_name}' with the same arguments "
+                            f"{REPETITION_THRESHOLD} times in a row. You appear to be in a loop."
+                        )
                         logger.warning(
-                            "Repetition detected: %s called %d times with same args — injecting intervention",
+                            "Consecutive repetition detected: %s called %d times with same args",
                             tool_name, REPETITION_THRESHOLD,
                         )
-                        # Execute this tool call, then inject a nudge
-                        if tool_name not in agent_tools:
-                            result = {"error": f"Tool '{tool_name}' is not enabled."}
-                        else:
-                            result = await registry.execute(tool_name, tool_args, tool_context)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result),
-                        })
+
+                # 2. Cyclical repetition: A→B→C→A→B→C pattern
+                if not _loop_detected and len(recent_tool_calls) >= _CYCLE_MIN_PERIOD * _CYCLE_REPEATS:
+                    for period in range(_CYCLE_MIN_PERIOD, _CYCLE_MAX_PERIOD + 1):
+                        needed = period * _CYCLE_REPEATS
+                        if len(recent_tool_calls) < needed:
+                            continue
+                        tail = recent_tool_calls[-needed:]
+                        cycle = tail[:period]
+                        is_cycle = all(
+                            tail[i] == cycle[i % period]
+                            for i in range(needed)
+                        )
+                        if is_cycle:
+                            cycle_tools = [c[0] for c in cycle]
+                            _loop_detected = True
+                            _loop_msg = (
+                                f"SYSTEM: You are in a cyclical loop — repeating the pattern "
+                                f"{' → '.join(cycle_tools)} ({_CYCLE_REPEATS} times). "
+                                f"These actions have already been completed. Stop repeating them."
+                            )
+                            logger.warning(
+                                "Cyclical loop detected: pattern %s repeated %d times (period=%d)",
+                                cycle_tools, _CYCLE_REPEATS, period,
+                            )
+                            break
+
+                if _loop_detected:
+                    _loop_intervention_count += 1
+
+                    # Execute this tool call so there's a result for the tool_call_id
+                    if tool_name not in agent_tools:
+                        result = {"error": f"Tool '{tool_name}' is not enabled."}
+                    else:
+                        result = await registry.execute(tool_name, tool_args, tool_context)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(result),
+                    })
+
+                    if _loop_intervention_count > _LOOP_MAX_INTERVENTIONS:
+                        # Hard stop — we've already warned and the model keeps looping
+                        logger.error(
+                            "Loop intervention limit reached (%d interventions). "
+                            "Force-stopping agent loop at iteration %d, tool call %d.",
+                            _loop_intervention_count, _iteration, tool_calls_made,
+                        )
                         messages.append({
                             "role": "user",
                             "content": (
-                                f"SYSTEM: You have called '{tool_name}' with the same arguments "
-                                f"{REPETITION_THRESHOLD} times in a row. You appear to be in a loop. "
-                                "Stop repeating this action. Either try a different approach, "
-                                "report what you've found so far, or use the respond tool to "
-                                "explain what's blocking you."
+                                "SYSTEM: HARD STOP. You have been warned about looping multiple times "
+                                "and continue to repeat the same actions. The agent loop is being terminated. "
+                                "Use the respond tool NOW to report your current status."
                             ),
                         })
+                        if event_queue is not None:
+                            await event_queue.put(_sse_event("status", {
+                                "state": "loop_terminated",
+                                "interventions": _loop_intervention_count,
+                                "tool_calls_made": tool_calls_made,
+                            }))
+                        # Give the model one last chance to respond
+                        # by continuing the outer loop (it will see the HARD STOP)
                         recent_tool_calls.clear()
-                        break  # break inner tool_call loop, continue outer iteration
+                        break
+
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"{_loop_msg} "
+                            "Stop repeating this action. Either try a different approach, "
+                            "report what you've found so far, or use the respond tool to "
+                            "explain what's blocking you."
+                        ),
+                    })
+                    recent_tool_calls.clear()
+                    break  # break inner tool_call loop, continue outer iteration
 
                 logger.info("Tool call [%d]: %s args=%s", tool_calls_made, tool_name,
                             {k: (v[:80] + '...' if isinstance(v, str) and len(v) > 80 else v) for k, v in tool_args.items()})
