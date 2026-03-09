@@ -16,7 +16,7 @@ import litellm
 logger = logging.getLogger(__name__)
 
 # Tool results under this size (chars) skip the filter — not worth the utility call
-FILTER_THRESHOLD = 1500  # ~375 tokens
+FILTER_THRESHOLD = 6000  # ~1500 tokens (Phase 1C: raised from 1500)
 
 # Tools that should never be filtered (tiny results or final output)
 SKIP_TOOLS = frozenset({
@@ -27,6 +27,14 @@ SKIP_TOOLS = frozenset({
     "memory_delete",  # small confirmation
     "notify",         # small confirmation
     "cron",           # small confirmation
+    # Shell utility tools — always small and structured (Phase 1C)
+    "shell_find",
+    "shell_ls",
+    "shell_grep",
+    "shell_tree",
+    "shell_head",
+    "shell_wc",
+    "git_info",
 })
 
 # Max output size from the filter (chars)
@@ -41,6 +49,7 @@ async def filter_tool_result(
     last_assistant_content: str,
     utility_model: str,
     utility_kwargs: dict,
+    langfuse_metadata: dict | None = None,
 ) -> str:
     """Filter a tool result through the utility model.
 
@@ -96,11 +105,13 @@ INSTRUCTIONS:
 Return ONLY the filtered JSON result, nothing else."""
 
     try:
+        _filter_meta = langfuse_metadata or {}
         response = await litellm.acompletion(
             model=utility_model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
             max_tokens=1024,
+            metadata=_filter_meta if _filter_meta else None,
             **utility_kwargs,
         )
 
@@ -177,13 +188,17 @@ def rule_based_prune(tool_name: str, tool_args: dict, result: dict) -> dict | No
 
     modified = False
 
-    # Rule 1: Strip ANSI escape codes from code_execute stdout/stderr
+    # Rule 1: Strip ANSI escape codes + truncate large stdout from code_execute
     if tool_name == "code_execute":
         new_result = dict(result)
         for key in ("stdout", "stderr"):
             val = new_result.get(key, "")
             if isinstance(val, str) and val:
                 cleaned = _clean_string_value(val)
+                # Phase 1C: truncate stdout > 4K to first/last 1K
+                if key == "stdout" and len(cleaned) > 4000:
+                    cleaned = cleaned[:1000] + f"\n\n[...{len(cleaned) - 2000} chars truncated...]\n\n" + cleaned[-1000:]
+                    modified = True
                 if cleaned != val:
                     new_result[key] = cleaned
                     modified = True
@@ -217,9 +232,36 @@ def rule_based_prune(tool_name: str, tool_args: dict, result: dict) -> dict | No
         if count == 0:
             return result  # return as-is, skip the filter
 
-    # Rule 4: file_read / file_write — skip utility model if result is small
-    if tool_name in ("file_read", "file_write"):
+    # Rule 4: file_read — truncate to first/last 50 lines if > 200 lines (Phase 1C)
+    if tool_name == "file_read":
+        content = result.get("content", "")
+        if isinstance(content, str):
+            lines = content.splitlines()
+            if len(lines) > 200:
+                truncated_lines = lines[:50] + [f"\n[...{len(lines) - 100} lines truncated...]\n"] + lines[-50:]
+                new_result = dict(result)
+                new_result["content"] = "\n".join(truncated_lines)
+                new_result["_truncated"] = True
+                new_result["_original_lines"] = len(lines)
+                return new_result
+        if len(json.dumps(result)) < 2000:
+            return result
+
+    # Rule 4b: file_write — skip utility model if result is small
+    if tool_name == "file_write":
         if len(json.dumps(result)) < 2000:
             return result  # already structured, filter can't improve
+
+    # Rule 5: shell_grep — cap at 30 matches (Phase 1C)
+    if tool_name == "shell_grep":
+        output = result.get("output", result.get("stdout", result.get("content", "")))
+        if isinstance(output, str):
+            lines = output.splitlines()
+            if len(lines) > 30:
+                new_result = dict(result)
+                key = "output" if "output" in result else ("stdout" if "stdout" in result else "content")
+                if key in result:
+                    new_result[key] = "\n".join(lines[:30]) + f"\n[...{len(lines) - 30} more matches truncated]"
+                    return new_result
 
     return None
