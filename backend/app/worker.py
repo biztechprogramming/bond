@@ -448,6 +448,16 @@ async def _run_agent_loop(
     agent_tools = config["tools"]
     max_iterations = config["max_iterations"]
 
+    # Auto-inject shell utility tools — they're read-only info-gathering tools
+    # that should always be available. No reason to gate behind agent config.
+    _SHELL_UTILITY_TOOLS = [
+        "shell_find", "shell_ls", "shell_grep", "git_info",
+        "shell_wc", "shell_head", "shell_tree",
+    ]
+    for _util_tool in _SHELL_UTILITY_TOOLS:
+        if _util_tool not in agent_tools:
+            agent_tools.append(_util_tool)
+
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
     provider_aliases: dict[str, str] = config.get("provider_aliases", {})

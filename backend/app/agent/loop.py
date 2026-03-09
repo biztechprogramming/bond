@@ -163,6 +163,16 @@ async def agent_turn(
     else:
         agent = await _load_default_agent(db)
     agent_tools = json.loads(agent["tools"]) if isinstance(agent["tools"], str) else agent["tools"]
+
+    # Auto-inject shell utility tools — always available, read-only
+    _SHELL_UTILITY_TOOLS = [
+        "shell_find", "shell_ls", "shell_grep", "git_info",
+        "shell_wc", "shell_head", "shell_tree",
+    ]
+    for _util_tool in _SHELL_UTILITY_TOOLS:
+        if _util_tool not in agent_tools:
+            agent_tools.append(_util_tool)
+
     max_iterations = agent.get("max_iterations", 25)
     effective_prompt = system_prompt or agent.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
 

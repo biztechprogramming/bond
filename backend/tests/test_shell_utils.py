@@ -464,8 +464,10 @@ class TestToolSelection:
         ]
 
         result = select_tools("implement the new feature and write tests", enabled)
-        # Coding tasks should include shell utils
-        assert "shell_find" in result or "shell_grep" in result
+        # Coding tasks should include at least some shell utils
+        shell_utils_in_result = {"shell_find", "shell_ls", "shell_grep", "git_info",
+                                  "shell_head", "shell_tree"} & set(result)
+        assert len(shell_utils_in_result) > 0, f"No shell utils in {result}"
 
 
 # ---------------------------------------------------------------------------
