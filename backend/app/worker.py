@@ -444,7 +444,7 @@ async def _run_agent_loop(
 
     config = _state.config
     model = config["model"]
-    system_prompt = config["system_prompt"]
+    system_prompt = config["system_prompt"] or "You are a helpful AI assistant."
     agent_tools = config["tools"]
     max_iterations = config["max_iterations"]
 
