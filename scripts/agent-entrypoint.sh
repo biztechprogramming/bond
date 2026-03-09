@@ -15,14 +15,17 @@ if [ -d "/tmp/.ssh" ]; then
     ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 fi
 
-# Clone or pull the bond repo into /bond
+# Use the bond repo at /bond.
+# If mounted from host (development), use it as-is — never switch branches
+# or pull, as that would mutate the host working directory.
+# If not present, clone fresh (production/CI).
 if [ ! -d "/bond/.git" ]; then
     echo "[entrypoint] Cloning bond repo..."
     git clone "${BOND_REPO_URL:-git@github.com:biztechprogramming/bond.git}" /bond
     echo "[entrypoint] Clone complete."
 else
-    echo "[entrypoint] Pulling latest main..."
-    cd /bond && git checkout main && git pull origin main --ff-only || echo "[entrypoint] Pull failed, continuing with existing clone."
+    CURRENT_BRANCH=$(cd /bond && git branch --show-current 2>/dev/null || echo "unknown")
+    echo "[entrypoint] Using mounted bond repo (branch: $CURRENT_BRANCH)"
 fi
 
 # Execute worker
