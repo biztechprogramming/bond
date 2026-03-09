@@ -400,3 +400,92 @@ def test_native_registry_has_expected_tools():
         "web_search", "web_read", "work_plan", "parallel_orchestrate",
     }
     assert set(registry.registered_names) == expected
+
+
+# ---------------------------------------------------------------------------
+# LLM empty-response retry logic
+# ---------------------------------------------------------------------------
+
+
+def _make_empty_llm_response():
+    """Build a mock LLM response with no choices (simulates rate limiting)."""
+    response = MagicMock()
+    response.choices = []
+    return response
+
+
+@pytest.mark.asyncio
+async def test_turn_retries_on_empty_response(worker_client, monkeypatch):
+    """Empty LLM responses trigger retries; succeeds when a valid response arrives."""
+    monkeypatch.setenv("LLM_RETRY_MAX_ATTEMPTS", "3")
+    monkeypatch.setenv("LLM_RETRY_MAX_WAIT_SECONDS", "0.3")
+
+    empty = _make_empty_llm_response()
+    good = _make_llm_response(content="Recovered!")
+
+    call_count = 0
+
+    async def mock_acompletion(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= 2:
+            return empty
+        return good
+
+    with patch("backend.app.worker.litellm") as mock_mod:
+        mock_mod.acompletion = mock_acompletion
+        resp = await worker_client.post(
+            "/turn",
+            json={"message": "Hi", "history": [], "conversation_id": "conv-retry-1"},
+        )
+
+    assert resp.status_code == 200
+    assert "Recovered!" in resp.text
+    assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_turn_fails_after_max_retries(worker_client, monkeypatch):
+    """All retries exhausted => error event with descriptive message."""
+    monkeypatch.setenv("LLM_RETRY_MAX_ATTEMPTS", "3")
+    monkeypatch.setenv("LLM_RETRY_MAX_WAIT_SECONDS", "0.3")
+
+    empty = _make_empty_llm_response()
+
+    with patch("backend.app.worker.litellm") as mock_mod:
+        mock_mod.acompletion = AsyncMock(return_value=empty)
+        resp = await worker_client.post(
+            "/turn",
+            json={"message": "Hi", "history": [], "conversation_id": "conv-retry-2"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.text
+    assert "event: error" in body
+    assert "empty response" in body.lower() or "3 attempts" in body
+
+
+@pytest.mark.asyncio
+async def test_turn_retry_first_attempt_succeeds(worker_client, monkeypatch):
+    """No retry needed when first attempt succeeds."""
+    monkeypatch.setenv("LLM_RETRY_MAX_ATTEMPTS", "5")
+    monkeypatch.setenv("LLM_RETRY_MAX_WAIT_SECONDS", "10")
+
+    good = _make_llm_response(content="First try!")
+    call_count = 0
+
+    async def mock_acompletion(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return good
+
+    with patch("backend.app.worker.litellm") as mock_mod:
+        mock_mod.acompletion = mock_acompletion
+        resp = await worker_client.post(
+            "/turn",
+            json={"message": "Hi", "history": [], "conversation_id": "conv-retry-3"},
+        )
+
+    assert resp.status_code == 200
+    assert "First try!" in resp.text
+    assert call_count == 1
