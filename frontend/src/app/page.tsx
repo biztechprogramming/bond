@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from "@/lib/ws";
+import { GatewayWebSocket, type GatewayMessage, type ConversationSummary, type ConnectionState } from "@/lib/ws";
 import { GATEWAY_API } from "@/lib/config";
 import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
 import ChatPanel from "@/components/shared/ChatPanel";
@@ -31,6 +31,7 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [loading, setLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
   const [streamingContent, setStreamingContent] = useState("");
@@ -150,6 +151,12 @@ export default function Home() {
     let cancelled = false;
     const ws = new GatewayWebSocket();
     wsRef.current = ws;
+
+    ws.onConnectionChange((state: ConnectionState) => {
+      if (cancelled) return;
+      setConnectionState(state);
+      setConnected(state === "connected");
+    });
 
     ws.onMessage((msg: GatewayMessage) => {
       if (cancelled) return;
@@ -444,9 +451,14 @@ export default function Home() {
             </a>
             <span style={{
               ...styles.status,
-              color: connected ? "#6cffa0" : "#ff6c8a",
+              color: connectionState === "connected" ? "#6cffa0"
+                : connectionState === "reconnecting" ? "#ffa06c"
+                : "#ff6c8a",
             }}>
-              {connected ? "Connected" : "Connecting..."}
+              {connectionState === "connected" ? "Connected"
+                : connectionState === "reconnecting" ? "Reconnecting…"
+                : connectionState === "connecting" ? "Connecting…"
+                : "Disconnected"}
             </span>
           </div>
         </header>

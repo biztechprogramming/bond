@@ -93,6 +93,9 @@ export class WebChatChannel {
       case "delete_conversation":
         await this.handleDeleteConversation(socket, session.id, msg);
         break;
+      case "ping":
+        this.send(socket, { type: "pong" } as OutgoingMessage);
+        break;
     }
   }
 
