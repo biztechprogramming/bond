@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 
-const GATEWAY = "http://localhost:18789/api/v1";
+const GATEWAY = "http://localhost:18792/api/v1";
 
 interface ChannelInfo {
   type: string;

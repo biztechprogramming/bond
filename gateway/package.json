@@ -4,9 +4,9 @@
   "description": "Bond gateway — WebSocket server, channels, session management",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "NODE_OPTIONS='--experimental-global-webcrypto' tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node --experimental-global-webcrypto dist/index.js",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
