@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import { BACKEND_API } from "@/lib/config";
 
 interface DirBrowserProps {
   onSelect: (path: string) => void;
@@ -20,7 +21,7 @@ export default function DirBrowser({ onSelect, onClose }: DirBrowserProps) {
     setLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:18790/api/v1/agents/browse-dirs?path=${encodeURIComponent(path)}&show_hidden=${h}`
+        `${BACKEND_API}/agents/browse-dirs?path=${encodeURIComponent(path)}&show_hidden=${h}`
       );
       if (res.ok) {
         const data = await res.json();

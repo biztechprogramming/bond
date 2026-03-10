@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
+import { BACKEND_API } from "@/lib/config";
 
-const API = "http://localhost:18790/api/v1/prompts";
+const API = `${BACKEND_API}/prompts`;
 
 interface Fragment {
   id: string;

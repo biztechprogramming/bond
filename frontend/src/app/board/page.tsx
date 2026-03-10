@@ -17,8 +17,9 @@ import {
   type WorkPlan as STDBWorkPlan,
   type WorkItem as STDBWorkItem
 } from "@/lib/spacetimedb-client";
+import { BACKEND_API } from "@/lib/config";
 
-const API_BASE = "http://localhost:18790/api/v1";
+const API_BASE = BACKEND_API;
 
 // -- Board Page --
 

@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useCallback } from "react";
 import DirBrowser from "@/components/shared/DirBrowser";
+import { BACKEND_API } from "@/lib/config";
 
-const API_BASE = "http://localhost:18790/api/v1/agents";
+const API_BASE = `${BACKEND_API}/agents`;
 
 interface WorkspaceMount {
   id?: string;
@@ -64,7 +65,7 @@ export default function AgentsTab() {
       setAgents(await agentsRes.json());
       setSandboxImages(await imagesRes.json());
       try {
-        const modelsRes = await fetch("http://localhost:18790/api/v1/settings/llm/models");
+        const modelsRes = await fetch(`${BACKEND_API}/settings/llm/models`);
         if (modelsRes.ok) setAvailableModels(await modelsRes.json());
       } catch { /* models API not available */ }
     } catch {

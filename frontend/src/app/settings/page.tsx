@@ -4,8 +4,9 @@ import React, { useEffect, useState, useCallback } from "react";
 import AgentsTab from "./agents/AgentsTab";
 import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
+import { BACKEND_API } from "@/lib/config";
 
-const API_BASE = "http://localhost:18790/api/v1/settings";
+const API_BASE = `${BACKEND_API}/settings`;
 
 const TABS = [
   { id: "agents", label: "Agents" },
