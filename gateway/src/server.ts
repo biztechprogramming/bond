@@ -8,6 +8,7 @@
 import { WebSocketServer } from "ws";
 import { createServer } from "http";
 import express from "express";
+import { ulid } from "ulid";
 import type { GatewayConfig } from "./config/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { BackendClient } from "./backend/index.js";
@@ -18,6 +19,18 @@ import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
 import { ChannelManager } from "./channels/manager.js";
 import { createChannelRouter } from "./channels/routes.js";
+import {
+  MessagePipeline,
+  RateLimitHandler,
+  AuthHandler,
+  AllowListHandler,
+  AgentResolver,
+  ContextLoader,
+  TurnExecutor,
+  Persister,
+  ResponseFanOut,
+} from "./pipeline/index.js";
+import type { AllowListProvider } from "./pipeline/index.js";
 
 export interface GatewayServer {
   close(): void;
@@ -87,7 +100,82 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // Channel management API and lifecycle
   const channelManager = new ChannelManager("data/channels.json", backendClient);
-  webchat.setChannelManager(channelManager);
+
+  // Build the message pipeline
+  const allowListProvider: AllowListProvider = {
+    getAllowList(channelType: string) {
+      return channelManager.getAllowListForChannel(channelType);
+    },
+  };
+
+  const pipeline = new MessagePipeline();
+  pipeline.use(new RateLimitHandler());
+  pipeline.use(new AuthHandler());
+  pipeline.use(new AllowListHandler(allowListProvider));
+  pipeline.use(new AgentResolver({
+    getSelectedAgentId: () => null, // webchat/channels handle their own agent selection
+    getConversationId: () => null,  // conversation IDs are pre-resolved by adapters
+    generateConversationId: () => ulid(),
+    setConversationId: () => {},    // adapters manage their own conversation tracking
+  }));
+  pipeline.use(new ContextLoader());
+  pipeline.use(new TurnExecutor(backendClient));
+  pipeline.use(new Persister());
+  pipeline.use(new ResponseFanOut({
+    getWatchers(conversationId: string) {
+      const watchers: Array<{ channelType: string; channelId: string }> = [];
+
+      // Add Telegram/WhatsApp binding if one exists for this conversation
+      const binding = channelManager.getChannelBinding(conversationId);
+      if (binding) watchers.push(binding);
+
+      // Add webchat as a watcher (for messages originating from Telegram/WhatsApp)
+      // ResponseFanOut will skip the originating channel, so webchat-originated
+      // messages won't double-send. We use "webchat" + conversationId as the identifier.
+      const wcSockets = sessionManager.getSocketsForConversation(conversationId);
+      if (wcSockets.length > 0) {
+        watchers.push({ channelType: "webchat", channelId: conversationId });
+      }
+
+      return watchers;
+    },
+    async sendToChannel(channelType: string, channelId: string, message: string) {
+      if (channelType === "webchat") {
+        // Push to webchat sockets watching this conversation
+        // Used for cross-channel: Telegram/WhatsApp response → webchat
+        const payload = JSON.stringify({
+          type: "response" as const,
+          content: message,
+          conversationId: channelId,
+        });
+        for (const s of sessionManager.getSocketsForConversation(channelId)) {
+          if (s.readyState === 1) s.send(payload);
+        }
+      } else {
+        // Push directly to Telegram/WhatsApp (channelId = chat ID)
+        await channelManager.sendToChannel(channelType, channelId, message);
+      }
+    },
+  }));
+
+  // Wire pipeline into channels
+  webchat.setPipeline(pipeline);
+  webchat.setCrossChannelPush((conversationId, message, senderLabel) => {
+    channelManager.pushToChannel(conversationId, message, senderLabel).catch(() => {});
+  });
+  channelManager.setPipeline(pipeline);
+  channelManager.setCrossChannelUserEcho((conversationId, message, senderLabel) => {
+    // Push Telegram/WhatsApp user messages to webchat sockets watching this conversation
+    const payload = JSON.stringify({
+      type: "user_message" as const,
+      content: `💬 ${senderLabel}:\n${message}`,
+      conversationId,
+    });
+    for (const s of sessionManager.getSocketsForConversation(conversationId)) {
+      if (s.readyState === 1) s.send(payload);
+    }
+  });
+
   app.use("/api/v1", createChannelRouter(channelManager));
   // Auto-start previously enabled channels (non-blocking)
   channelManager.autoStart().catch((err) => {

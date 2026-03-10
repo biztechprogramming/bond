@@ -69,8 +69,14 @@ export class GatewayWebSocket {
     this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
-      console.log("[ws] Connected to gateway");
+      const wasReconnect = this.reconnectAttempts > 0;
+      console.log(`[ws] ${wasReconnect ? "Reconnected" : "Connected"} to gateway`);
       this.reconnectAttempts = 0;
+
+      // After reconnect, re-fetch conversation list so UI is in sync
+      if (wasReconnect) {
+        this.listConversations();
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -85,9 +91,32 @@ export class GatewayWebSocket {
       }
     };
 
+    this.ws.onclose = (event) => {
+      console.log(`[ws] Connection closed (code=${event.code}, reason=${event.reason})`);
+      this.ws = null;
+      if (this.shouldReconnect) {
+        this.scheduleReconnect();
+      }
+    };
 
+    this.ws.onerror = (event) => {
+      console.error("[ws] WebSocket error:", event);
+      // onclose will fire after onerror, which triggers reconnect
+    };
+  }
 
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
 
+    // Exponential backoff: 1s, 2s, 4s, 8s, ... up to maxReconnectDelay
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), this.maxReconnectDelay);
+    this.reconnectAttempts++;
+
+    console.log(`[ws] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this._connect();
+    }, delay);
   }
 
   onMessage(handler: MessageHandler): () => void {

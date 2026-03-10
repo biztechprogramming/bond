@@ -11,6 +11,7 @@ import { TelegramChannel } from "./telegram.js";
 import { WhatsAppChannel } from "./whatsapp.js";
 import type { ChannelMessage } from "./base.js";
 import type { BackendClient, AgentInfo } from "../backend/client.js";
+import type { MessagePipeline, PipelineContext, PipelineMessage } from "../pipeline/index.js";
 
 interface ChannelConfig {
   type: string;
@@ -46,6 +47,8 @@ export class ChannelManager {
   private chatSessions = new Map<string, ChatSession>();
   /** Maps conversationId → channel chat that's watching it (for cross-channel push) */
   private channelBindings = new Map<string, { channelType: string; channelId: string }>();
+  private pipeline: MessagePipeline | null = null;
+  private crossChannelUserEcho: ((conversationId: string, message: string, senderLabel: string) => void) | null = null;
 
   constructor(configPath: string, backendClient: BackendClient) {
     this.configPath = configPath;
@@ -190,6 +193,23 @@ export class ChannelManager {
   subscribeWhatsAppStatus(cb: (status: string) => void): () => void {
     this.statusSubscribers.add(cb);
     return () => { this.statusSubscribers.delete(cb); };
+  }
+
+  /** Set the pipeline for message processing. */
+  setPipeline(pipeline: MessagePipeline): void {
+    this.pipeline = pipeline;
+  }
+
+  /** Set callback for echoing user messages to webchat (cross-channel). */
+  setCrossChannelUserEcho(fn: (conversationId: string, message: string, senderLabel: string) => void): void {
+    this.crossChannelUserEcho = fn;
+  }
+
+  /** Get the AllowList for a running channel, or null. */
+  getAllowListForChannel(channelType: string): AllowList | null {
+    const config = this.configs.get(channelType);
+    if (!config) return null;
+    return new AllowList(config.allowList);
   }
 
   /**
@@ -394,10 +414,6 @@ Session: ${chatKey}`;
     const agentKey = agentId || "__default__";
     let conversationId = session.conversations.get(agentKey);
 
-    // No cached conversation for this channel+agent — create a new one.
-    // Channels always create their own conversations (never hijack webchat ones).
-    // Cross-channel happens when webchat connects to a channel-created conversation,
-    // or when we push responses to channels watching a conversation.
     if (!conversationId) {
       conversationId = ulid();
       session.conversations.set(agentKey, conversationId);
@@ -410,12 +426,71 @@ Session: ${chatKey}`;
       channelId: msg.sessionId || msg.senderId,
     });
 
+    if (this.pipeline) {
+      await this.routeViaPipeline(msg, conversationId, agentId);
+    } else {
+      await this.routeDirect(msg, conversationId, agentId);
+    }
+  }
+
+  private async routeViaPipeline(msg: ChannelMessage, conversationId: string, agentId: string | null): Promise<void> {
+    // Echo user message to webchat if anyone is watching this conversation
+    if (this.crossChannelUserEcho) {
+      const senderLabel = `You (${msg.channelType})`;
+      this.crossChannelUserEcho(conversationId, msg.content, senderLabel);
+    }
+
+    const pipelineMessage: PipelineMessage = {
+      id: ulid(),
+      channelType: msg.channelType,
+      channelId: msg.sessionId || msg.senderId,
+      content: msg.content,
+      conversationId,
+      agentId: agentId || undefined,
+      timestamp: Date.now(),
+      metadata: {
+        agentId: agentId || undefined,
+        conversationId,
+      },
+    };
+
+    const context: PipelineContext = {
+      aborted: false,
+      respond: async (text: string) => {
+        await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, text);
+      },
+      broadcast: async (_text: string) => {},
+      streamChunk: async (chunk: string) => {
+        // For non-webchat channels, chunks are accumulated and sent as complete response
+        // by the pipeline (response field on message). No streaming for Telegram/WhatsApp.
+      },
+      abort: async (reason: string) => {
+        context.aborted = true;
+        await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, `Error: ${reason}`);
+      },
+      emit: async (_event: string, _data: Record<string, any>) => {
+        // Non-webchat channels don't handle granular events
+      },
+    };
+
+    try {
+      await this.pipeline!.execute(pipelineMessage, context);
+      if (pipelineMessage.response) {
+        await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, pipelineMessage.response);
+      }
+    } catch (err) {
+      console.error(`[channels] Pipeline error for ${msg.channelType}:`, err);
+      await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, "An error occurred.");
+    }
+  }
+
+  private async routeDirect(msg: ChannelMessage, conversationId: string, agentId: string | null): Promise<void> {
     let fullResponse = "";
     for await (const event of this.backendClient.conversationTurnStream(
       conversationId,
       msg.content,
       agentId || undefined,
-      undefined, // planId
+      undefined,
       msg.channelType,
     )) {
       if (event.event === "chunk" && event.data.content) {
@@ -448,7 +523,8 @@ Session: ${chatKey}`;
     return this.channelBindings.get(conversationId) || null;
   }
 
-  private async sendToChannel(channelType: string, channelId: string, message: string): Promise<void> {
+  /** Direct send to a channel — used by ResponseFanOut and internal routing. */
+  async sendToChannel(channelType: string, channelId: string, message: string): Promise<void> {
     if (channelType === "telegram" && this.telegram) {
       await this.telegram.send(channelId, message);
     } else if (channelType === "whatsapp" && this.whatsapp) {
