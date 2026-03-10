@@ -61,7 +61,7 @@ describe("Routing", () => {
     (backendClient.conversationTurnStream as any).mockReturnValue(fakeStream());
 
     // Call the private method via type assertion
-    await (channel as any).startStreamingTurn(socket, session.id, "hi", "conv-123");
+    await (channel as any).startTurn(socket, session.id, "hi", "conv-123");
 
     const messages = getSentMessages(socket);
     const types = messages.map((m: any) => m.type);
@@ -98,7 +98,7 @@ describe("Routing", () => {
       }
     });
 
-    await (channel as any).startStreamingTurn(socket, session.id, "hi", "conv-123");
+    await (channel as any).startTurn(socket, session.id, "hi", "conv-123");
 
     // Note: saveAssistantMessage is no longer called by gateway
     // It's handled by the backend directly
@@ -133,99 +133,34 @@ describe("Routing", () => {
       }
     });
 
-    await (channel as any).startStreamingTurn(socket, session.id, "test", "conv-123");
+    await (channel as any).startTurn(socket, session.id, "test", "conv-123");
 
     // Note: saveAssistantMessage is no longer called by gateway
     // expect(backendClient.saveAssistantMessage).toHaveBeenCalledWith("conv-123", "result", 2);
   });
 
-  it("container mode promotes memory events", async () => {
-    const resolution: AgentResolution = {
-      mode: "container",
-      worker_url: "http://localhost:18793",
-      agent_id: "agent-1",
-      conversation_id: "conv-123",
-    };
-    (backendClient.resolveAgent as any).mockResolvedValue(resolution);
-    (backendClient.getConversation as any).mockResolvedValue({ id: "conv-123", messages: [] });
-    (backendClient.saveAssistantMessage as any).mockResolvedValue({ message_id: "msg-4" });
-    (backendClient.promoteMemory as any).mockResolvedValue(undefined);
+  it("memory events are not forwarded to frontend", async () => {
+    // Memory events are not part of the standard SSE events from conversationTurnStream
+    // They are handled internally. This test verifies unknown events are ignored.
+    (backendClient.conversationTurnStream as any).mockImplementation(async function*() {
+      yield { event: "chunk", data: { content: "ok" } };
+      yield { event: "done", data: { message_id: "msg-4" } };
+    });
 
-    const sseBody =
-      'event: memory\ndata: {"type":"fact","content":"user likes blue","memory_id":"mem-1","entities":[]}\n\n' +
-      'event: done\ndata: {"response":"ok","tool_calls_made":0}\n\n';
-    const encoder = new TextEncoder();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        new ReadableStream({ start(c) { c.enqueue(encoder.encode(sseBody)); c.close(); } }),
-        { status: 200 },
-      ),
-    );
+    await (channel as any).startTurn(socket, session.id, "test", "conv-123");
 
-    await (channel as any).startStreamingTurn(socket, session.id, "test", "conv-123");
-
-    // Wait for async promotion
-    await new Promise(r => setTimeout(r, 10));
-
-    expect(backendClient.promoteMemory).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agent_id: "agent-1",
-        memory_id: "mem-1",
-        type: "fact",
-        content: "user likes blue",
-      }),
-    );
-
-    // Memory events should NOT be forwarded to frontend
     const messages = getSentMessages(socket);
     const types = messages.map((m: any) => m.type);
     expect(types).not.toContain("memory");
+    expect(types).toContain("done");
   });
 
-  it("container mode memory promotion failure is non-fatal", async () => {
-    const resolution: AgentResolution = {
-      mode: "container",
-      worker_url: "http://localhost:18793",
-      agent_id: "agent-1",
-      conversation_id: "conv-123",
-    };
-    (backendClient.resolveAgent as any).mockResolvedValue(resolution);
-    (backendClient.getConversation as any).mockResolvedValue({ id: "conv-123", messages: [] });
-    (backendClient.saveAssistantMessage as any).mockResolvedValue({ message_id: "msg-5" });
-    (backendClient.promoteMemory as any).mockRejectedValue(new Error("500 Internal Server Error"));
+  it("turn error sent to frontend", async () => {
+    (backendClient.conversationTurnStream as any).mockImplementation(async function*() {
+      throw new Error("ECONNREFUSED");
+    });
 
-    const sseBody =
-      'event: memory\ndata: {"type":"fact","content":"test","memory_id":"mem-2","entities":[]}\n\n' +
-      'event: done\ndata: {"response":"ok","tool_calls_made":0}\n\n';
-    const encoder = new TextEncoder();
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
-        new ReadableStream({ start(c) { c.enqueue(encoder.encode(sseBody)); c.close(); } }),
-        { status: 200 },
-      ),
-    );
-
-    // Should not throw even though promoteMemory fails
-    await (channel as any).startStreamingTurn(socket, session.id, "test", "conv-123");
-
-    const messages = getSentMessages(socket);
-    const doneMsg = messages.find((m: any) => m.type === "done");
-    expect(doneMsg).toBeDefined();
-  });
-
-  it("container mode worker error sent to frontend", async () => {
-    const resolution: AgentResolution = {
-      mode: "container",
-      worker_url: "http://localhost:18793",
-      agent_id: "agent-1",
-      conversation_id: "conv-123",
-    };
-    (backendClient.resolveAgent as any).mockResolvedValue(resolution);
-    (backendClient.getConversation as any).mockResolvedValue({ id: "conv-123", messages: [] });
-
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
-
-    await (channel as any).startStreamingTurn(socket, session.id, "test", "conv-123");
+    await (channel as any).startTurn(socket, session.id, "test", "conv-123");
 
     const messages = getSentMessages(socket);
     const errorMsg = messages.find((m: any) => m.type === "error");
@@ -233,29 +168,15 @@ describe("Routing", () => {
     expect(errorMsg.error).toContain("ECONNREFUSED");
   });
 
-  it("interrupt routes to container worker", async () => {
-    const resolution: AgentResolution = {
-      mode: "container",
-      worker_url: "http://localhost:18793",
-      agent_id: "agent-1",
-      conversation_id: "conv-123",
-    };
-    (backendClient.resolveAgent as any).mockResolvedValue(resolution);
-
-    // Mock fetch for worker interrupt
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ acknowledged: true }), { status: 200 }),
-    );
+  it("interrupt routes to backend", async () => {
+    (backendClient.interrupt as any).mockResolvedValue({ status: "interrupt_sent" });
 
     await (channel as any).handleInterrupt(socket, session.id, {
       type: "interrupt",
       conversationId: "conv-123",
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "http://localhost:18793/interrupt",
-      expect.objectContaining({ method: "POST" }),
-    );
+    expect(backendClient.interrupt).toHaveBeenCalledWith("conv-123");
   });
 
   it("interrupt routes to backend for host mode", async () => {

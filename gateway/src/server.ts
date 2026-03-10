@@ -8,6 +8,7 @@
 import { WebSocketServer } from "ws";
 import { createServer } from "http";
 import express from "express";
+import { ulid } from "ulid";
 import type { GatewayConfig } from "./config/index.js";
 import { SessionManager } from "./sessions/index.js";
 import { BackendClient } from "./backend/index.js";
@@ -18,6 +19,18 @@ import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
 import { ChannelManager } from "./channels/manager.js";
 import { createChannelRouter } from "./channels/routes.js";
+import {
+  MessagePipeline,
+  RateLimitHandler,
+  AuthHandler,
+  AllowListHandler,
+  AgentResolver,
+  ContextLoader,
+  TurnExecutor,
+  Persister,
+  ResponseFanOut,
+} from "./pipeline/index.js";
+import type { AllowListProvider } from "./pipeline/index.js";
 
 export interface GatewayServer {
   close(): void;
@@ -87,7 +100,44 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // Channel management API and lifecycle
   const channelManager = new ChannelManager("data/channels.json", backendClient);
-  webchat.setChannelManager(channelManager);
+
+  // Build the message pipeline
+  const allowListProvider: AllowListProvider = {
+    getAllowList(channelType: string) {
+      return channelManager.getAllowListForChannel(channelType);
+    },
+  };
+
+  const pipeline = new MessagePipeline();
+  pipeline.use(new RateLimitHandler());
+  pipeline.use(new AuthHandler());
+  pipeline.use(new AllowListHandler(allowListProvider));
+  pipeline.use(new AgentResolver({
+    getSelectedAgentId: () => null, // webchat/channels handle their own agent selection
+    getConversationId: () => null,  // conversation IDs are pre-resolved by adapters
+    generateConversationId: () => ulid(),
+    setConversationId: () => {},    // adapters manage their own conversation tracking
+  }));
+  pipeline.use(new ContextLoader());
+  pipeline.use(new TurnExecutor(backendClient));
+  pipeline.use(new Persister());
+  pipeline.use(new ResponseFanOut({
+    getWatchers(conversationId: string) {
+      const binding = channelManager.getChannelBinding(conversationId);
+      const watchers: Array<{ channelType: string; channelId: string }> = [];
+      if (binding) watchers.push(binding);
+      // webchat sockets are handled separately via sendToConversation
+      return watchers;
+    },
+    async sendToChannel(channelType: string, channelId: string, message: string) {
+      await channelManager.pushToChannel(channelId, message);
+    },
+  }));
+
+  // Wire pipeline into channels
+  webchat.setPipeline(pipeline);
+  channelManager.setPipeline(pipeline);
+
   app.use("/api/v1", createChannelRouter(channelManager));
   // Auto-start previously enabled channels (non-blocking)
   channelManager.autoStart().catch((err) => {

@@ -1,37 +1,37 @@
 /**
  * WebChat channel — handles messages from the web frontend via WebSocket.
  *
- * History is now managed server-side. The gateway forwards conversation_id
- * between frontend and backend.
+ * Message handling is delegated to the pipeline. Non-message WS events
+ * (switch_conversation, list_conversations, etc.) are handled directly.
  */
 
+import { ulid } from "ulid";
 import type { WebSocket } from "ws";
 import type { IncomingMessage, OutgoingMessage } from "../protocol/types.js";
 import type { SessionManager } from "../sessions/manager.js";
 import type { BackendClient } from "../backend/client.js";
-import type { WorkerSSEEvent } from "../backend/worker-client.js";
+import type { MessagePipeline, PipelineContext, PipelineMessage } from "../pipeline/index.js";
 
 export class WebChatChannel {
   /** Accumulated streamed content per conversation during an active turn. */
   private streamBuffers = new Map<string, { content: string; agentName: string; agentStatus: string }>();
 
-  private channelManager: import("./manager.js").ChannelManager | null = null;
+  private pipeline: MessagePipeline | null = null;
 
   constructor(
     private sessionManager: SessionManager,
-    private backendClient: BackendClient
+    private backendClient: BackendClient,
   ) {}
 
-  /** Set the channel manager for cross-channel push (called after both are initialized). */
-  setChannelManager(manager: import("./manager.js").ChannelManager): void {
-    this.channelManager = manager;
+  /** Set the pipeline for message processing. */
+  setPipeline(pipeline: MessagePipeline): void {
+    this.pipeline = pipeline;
   }
 
   async handleConnection(socket: WebSocket): Promise<void> {
     const session = this.sessionManager.createSession();
     this.sessionManager.registerClient(socket, session.id);
 
-    // Send connected event with session info
     this.send(socket, {
       type: "connected",
       sessionId: session.id,
@@ -56,7 +56,7 @@ export class WebChatChannel {
 
   private async handleMessage(
     socket: WebSocket,
-    msg: IncomingMessage
+    msg: IncomingMessage,
   ): Promise<void> {
     const client = this.sessionManager.getClient(socket);
     if (!client) return;
@@ -99,7 +99,7 @@ export class WebChatChannel {
   private async handleChatMessage(
     socket: WebSocket,
     sessionId: string,
-    msg: IncomingMessage
+    msg: IncomingMessage,
   ): Promise<void> {
     if (!msg.content) return;
 
@@ -109,7 +109,6 @@ export class WebChatChannel {
     const conversationId = msg.conversationId || session.conversationId || undefined;
 
     if (session.agentBusy && conversationId) {
-      // Agent is busy — queue the message in DB
       try {
         const queueResult = await this.backendClient.queueMessage(conversationId, msg.content);
         this.send(socket, {
@@ -129,33 +128,196 @@ export class WebChatChannel {
       return;
     }
 
-    // Echo the user message to other sockets watching this conversation
-    if (conversationId) {
-      const otherSockets = this.sessionManager.getSocketsForConversation(conversationId)
-        .filter(s => s !== socket);
+    // Resolve conversation ID upfront
+    const resolvedConversationId = conversationId || ulid();
+
+    // Echo user message to other sockets watching this conversation
+    const otherSockets = this.sessionManager.getSocketsForConversation(resolvedConversationId)
+      .filter((s) => s !== socket);
+    if (otherSockets.length > 0) {
       const echoMsg = JSON.stringify({
         type: "user_message",
         content: msg.content,
-        conversationId,
+        conversationId: resolvedConversationId,
       });
       for (const s of otherSockets) {
         s.send(echoMsg);
       }
-
-      // Cross-channel: push user message to Telegram/WhatsApp if they're watching
-      if (this.channelManager) {
-        this.channelManager.pushToChannel(conversationId, msg.content || "", "You (web)").catch(() => {});
-      }
     }
 
-    // Agent is idle — start a new turn with SSE streaming
-    await this.startStreamingTurn(socket, sessionId, msg.content, conversationId, msg.agentId, msg.planId);
+    if (this.pipeline) {
+      await this.executePipeline(socket, sessionId, msg, resolvedConversationId);
+    } else {
+      await this.startTurn(socket, sessionId, msg.content, resolvedConversationId, msg.agentId, msg.planId);
+    }
+  }
+
+  /**
+   * Execute the message through the pipeline.
+   */
+  private async executePipeline(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage,
+    conversationId: string,
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const startTime = Date.now();
+    session.agentBusy = true;
+
+    this.sessionManager.setConversationId(sessionId, conversationId);
+    session.conversationId = conversationId;
+
+    this.streamBuffers.set(conversationId, { content: "", agentName: "", agentStatus: "thinking" });
+
+    this.sendToConversation(conversationId, {
+      type: "status",
+      sessionId,
+      agentStatus: "thinking",
+      conversationId,
+    });
+
+    const pipelineMessage: PipelineMessage = {
+      id: ulid(),
+      channelType: "webchat",
+      channelId: sessionId,
+      content: msg.content!,
+      conversationId,
+      agentId: msg.agentId,
+      timestamp: Date.now(),
+      metadata: {
+        agentId: msg.agentId,
+        planId: msg.planId,
+        conversationId,
+      },
+    };
+
+    const context: PipelineContext = {
+      aborted: false,
+
+      respond: async (text: string) => {
+        this.sendToConversation(conversationId, {
+          type: "error",
+          sessionId,
+          error: text,
+          conversationId,
+        });
+      },
+
+      broadcast: async (_text: string) => {
+        // Handled by ResponseFanOut
+      },
+
+      streamChunk: async (chunk: string) => {
+        const buf = this.streamBuffers.get(conversationId);
+        if (buf) buf.content += chunk;
+        this.sendToConversation(conversationId, {
+          type: "chunk",
+          sessionId,
+          content: chunk,
+          agentName: pipelineMessage.agentName || buf?.agentName,
+          conversationId,
+        });
+      },
+
+      abort: async (reason: string) => {
+        context.aborted = true;
+        this.sendToConversation(conversationId, {
+          type: "error",
+          sessionId,
+          error: reason,
+          conversationId,
+        });
+      },
+
+      emit: async (event: string, data: Record<string, any>) => {
+        switch (event) {
+          case "status": {
+            const buf = this.streamBuffers.get(conversationId);
+            if (buf) {
+              buf.agentStatus = data.agentStatus;
+              if (data.agentName) buf.agentName = data.agentName;
+            }
+            this.sendToConversation(conversationId, {
+              type: "status",
+              sessionId,
+              agentStatus: data.agentStatus,
+              conversationId,
+            });
+            break;
+          }
+          case "tool_call":
+            this.sendToConversation(conversationId, {
+              type: "tool_call",
+              sessionId,
+              content: data.content,
+              conversationId,
+            });
+            break;
+          case "plan_created":
+            this.broadcast({
+              type: "plan_created", sessionId,
+              planId: data.planId, planTitle: data.planTitle,
+              planStatus: "active", conversationId,
+            });
+            break;
+          case "item_updated":
+            this.broadcast({
+              type: "item_updated", sessionId,
+              planId: data.planId, itemId: data.itemId,
+              itemStatus: data.itemStatus, itemTitle: data.itemTitle,
+              conversationId,
+            });
+            break;
+          case "plan_completed":
+            this.broadcast({
+              type: "plan_completed", sessionId,
+              planId: data.planId, planStatus: data.planStatus,
+              conversationId,
+            });
+            break;
+          case "error":
+            this.sendToConversation(conversationId, {
+              type: "error", sessionId,
+              error: data.error, conversationId,
+            });
+            break;
+        }
+      },
+    };
+
+    try {
+      await this.pipeline!.execute(pipelineMessage, context);
+
+      session.agentBusy = false;
+      this.streamBuffers.delete(conversationId);
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`[gateway] Turn complete: conversation=${conversationId} elapsed=${elapsed}s`);
+
+      this.sendToConversation(conversationId, {
+        type: "done", sessionId, conversationId,
+        messageId: pipelineMessage.metadata.responseMessageId || "",
+        agentName: pipelineMessage.agentName || "",
+        queuedCount: 0, agentStatus: "idle",
+      });
+
+      this.handleListConversations(socket).catch(() => {});
+    } catch (err) {
+      session.agentBusy = false;
+      this.streamBuffers.delete(conversationId);
+      const errMsg = err instanceof Error ? err.message : "Agent error";
+      this.sendToConversation(conversationId, { type: "status", sessionId, agentStatus: "idle", conversationId });
+      this.sendToConversation(conversationId, { type: "error", sessionId, error: errMsg });
+    }
   }
 
   private async handleInterrupt(
     socket: WebSocket,
     sessionId: string,
-    msg: IncomingMessage
+    msg: IncomingMessage,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
@@ -174,7 +336,7 @@ export class WebChatChannel {
   private async handlePause(
     socket: WebSocket,
     sessionId: string,
-    msg: IncomingMessage
+    msg: IncomingMessage,
   ): Promise<void> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return;
@@ -190,26 +352,9 @@ export class WebChatChannel {
     }
   }
 
-  private async startStreamingTurn(
-    socket: WebSocket,
-    sessionId: string,
-    message: string | undefined,
-    conversationId: string | undefined,
-    agentId?: string,
-    planId?: string,
-  ): Promise<void> {
-    const session = this.sessionManager.getSession(sessionId);
-    if (!session) return;
-
-    if (!conversationId) {
-      // No conversation yet — generate one; backend will create it with the right agent
-      const { ulid } = await import("ulid");
-      conversationId = ulid();
-    }
-
-    await this.startTurn(socket, sessionId, message, conversationId, agentId, planId);
-  }
-
+  /**
+   * Legacy direct turn execution — fallback when pipeline is not set.
+   */
   private async startTurn(
     socket: WebSocket,
     sessionId: string,
@@ -224,11 +369,9 @@ export class WebChatChannel {
     const startTime = Date.now();
     session.agentBusy = true;
 
-    // Set conversationId on session immediately so sendToConversation can find this socket
     this.sessionManager.setConversationId(sessionId, conversationId);
     session.conversationId = conversationId;
 
-    // Initialize stream buffer for this conversation
     this.streamBuffers.set(conversationId, { content: "", agentName: "", agentStatus: "thinking" });
 
     this.sendToConversation(conversationId, {
@@ -242,87 +385,63 @@ export class WebChatChannel {
       let responseMessageId = "";
       let agentName = "";
 
-      console.log(`[GATEWAY-DEBUG] Starting SSE stream for conversation ${conversationId}`);
       for await (const event of this.backendClient.conversationTurnStream(
         conversationId, message, agentId, planId,
       )) {
-        console.log(`[GATEWAY-DEBUG] Inside SSE loop, event: ${event.event}`);
-        console.log(`[GATEWAY-WEBCHAT] Received SSE event: ${event.event}`, event.data ? `data keys: ${Object.keys(event.data)}` : 'no data');
         switch (event.event) {
           case "status":
             if (!agentName && event.data.agent_name) agentName = event.data.agent_name as string;
             const agentStatus = event.data.state as "thinking" | "tool_calling" | "responding";
-            console.log(`[GATEWAY-WEBCHAT] Sending status: ${agentStatus}`);
-            // Update buffer metadata
             const buf = this.streamBuffers.get(conversationId);
             if (buf) {
               buf.agentStatus = agentStatus;
               if (agentName) buf.agentName = agentName;
             }
             this.sendToConversation(conversationId, {
-              type: "status",
-              sessionId,
-              agentStatus,
-              conversationId,
+              type: "status", sessionId, agentStatus, conversationId,
             });
             break;
 
           case "chunk":
             const chunkContent = event.data.content as string;
-            console.log(`[GATEWAY-WEBCHAT] Sending chunk: ${chunkContent.length} chars, first 50: ${chunkContent.substring(0, 50)}`);
-            // Accumulate in buffer
             const chunkBuf = this.streamBuffers.get(conversationId);
             if (chunkBuf) chunkBuf.content += chunkContent;
             this.sendToConversation(conversationId, {
-              type: "chunk",
-              sessionId,
-              content: chunkContent,
-              agentName,
-              conversationId,
+              type: "chunk", sessionId, content: chunkContent, agentName, conversationId,
             });
             break;
 
           case "tool_call":
             this.sendToConversation(conversationId, {
-              type: "tool_call",
-              sessionId,
-              content: JSON.stringify(event.data),
-              conversationId,
+              type: "tool_call", sessionId, content: JSON.stringify(event.data), conversationId,
             });
             break;
 
           case "plan_created":
             this.broadcast({ type: "plan_created", sessionId,
-              planId: event.data.plan_id as string,
-              planTitle: event.data.title as string,
+              planId: event.data.plan_id as string, planTitle: event.data.title as string,
               planStatus: "active", conversationId });
             break;
 
           case "item_created":
             this.broadcast({ type: "item_updated", sessionId,
-              planId: event.data.plan_id as string,
-              itemId: event.data.item_id as string,
-              itemStatus: "new",
-              itemTitle: (event.data.title as string) || "", conversationId });
+              planId: event.data.plan_id as string, itemId: event.data.item_id as string,
+              itemStatus: "new", itemTitle: (event.data.title as string) || "", conversationId });
             break;
 
           case "item_updated":
             this.broadcast({ type: "item_updated", sessionId,
-              planId: event.data.plan_id as string,
-              itemId: event.data.item_id as string,
-              itemStatus: event.data.status as string,
-              itemTitle: (event.data.title as string) || "", conversationId });
+              planId: event.data.plan_id as string, itemId: event.data.item_id as string,
+              itemStatus: event.data.status as string, itemTitle: (event.data.title as string) || "", conversationId });
             break;
 
           case "plan_completed":
             this.broadcast({ type: "plan_completed", sessionId,
-              planId: event.data.plan_id as string,
-              planStatus: event.data.status as string, conversationId });
+              planId: event.data.plan_id as string, planStatus: event.data.status as string, conversationId });
             break;
 
           case "done":
             responseMessageId = (event.data.message_id as string) || "";
-            console.log(`[GATEWAY-WEBCHAT] Received done event, message_id: ${responseMessageId}, conversationId: ${conversationId}`);
             if (conversationId) {
               this.sessionManager.setConversationId(sessionId, conversationId);
               session.conversationId = conversationId;
@@ -331,22 +450,13 @@ export class WebChatChannel {
 
           case "error":
             this.sendToConversation(conversationId, {
-              type: "error", sessionId,
-              error: event.data.message as string, conversationId,
+              type: "error", sessionId, error: event.data.message as string, conversationId,
             });
             break;
         }
       }
 
       session.agentBusy = false;
-
-      // Cross-channel: push agent response to Telegram/WhatsApp if they're watching
-      const completedBuffer = this.streamBuffers.get(conversationId);
-      if (completedBuffer?.content && this.channelManager) {
-        this.channelManager.pushToChannel(conversationId, completedBuffer.content).catch(() => {});
-      }
-
-      // Clear stream buffer
       this.streamBuffers.delete(conversationId);
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -362,16 +472,16 @@ export class WebChatChannel {
     } catch (err) {
       session.agentBusy = false;
       this.streamBuffers.delete(conversationId);
-      const msg = err instanceof Error ? err.message : "Agent error";
+      const errMsg = err instanceof Error ? err.message : "Agent error";
       this.sendToConversation(conversationId, { type: "status", sessionId, agentStatus: "idle", conversationId });
-      this.sendToConversation(conversationId, { type: "error", sessionId, error: msg });
+      this.sendToConversation(conversationId, { type: "error", sessionId, error: errMsg });
     }
   }
 
   private async handleSwitchConversation(
     socket: WebSocket,
     sessionId: string,
-    msg: IncomingMessage
+    msg: IncomingMessage,
   ): Promise<void> {
     if (!msg.conversationId) return;
 
@@ -393,7 +503,6 @@ export class WebChatChannel {
         })),
       });
 
-      // If there's an active stream on this conversation, catch the client up
       const buffer = this.streamBuffers.get(msg.conversationId);
       if (buffer) {
         this.send(socket, {
@@ -440,20 +549,18 @@ export class WebChatChannel {
   private async handleDeleteConversation(
     socket: WebSocket,
     sessionId: string,
-    msg: IncomingMessage
+    msg: IncomingMessage,
   ): Promise<void> {
     if (!msg.conversationId) return;
 
     try {
       await this.backendClient.deleteConversation(msg.conversationId);
 
-      // If we deleted the active conversation, clear it
       const session = this.sessionManager.getSession(sessionId);
       if (session?.conversationId === msg.conversationId) {
         session.conversationId = null;
       }
 
-      // Refresh conversation list
       await this.handleListConversations(socket);
     } catch (err) {
       this.send(socket, {
@@ -463,9 +570,6 @@ export class WebChatChannel {
     }
   }
 
-  /**
-   * Send a message to all sockets watching the given conversation.
-   */
   private sendToConversation(conversationId: string, msg: OutgoingMessage): void {
     const payload = JSON.stringify(msg);
     const sockets = this.sessionManager.getSocketsForConversation(conversationId);
@@ -476,9 +580,8 @@ export class WebChatChannel {
 
   public broadcast(msg: OutgoingMessage): void {
     const payload = JSON.stringify(msg);
-    console.log(`[gateway] Broadcasting message: type=${msg.type} sessionId=${msg.sessionId || 'all'}`);
     for (const socket of this.sessionManager.getAllSockets()) {
-      if (socket.readyState === 1) { // 1 is OPEN
+      if (socket.readyState === 1) {
         socket.send(payload);
       }
     }
