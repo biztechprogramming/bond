@@ -3,7 +3,7 @@
  */
 
 export interface IncomingMessage {
-  type: "message" | "interrupt" | "pause" | "switch_conversation" | "new_conversation" | "list_conversations" | "delete_conversation";
+  type: "message" | "interrupt" | "pause" | "switch_conversation" | "new_conversation" | "list_conversations" | "delete_conversation" | "ping";
   sessionId?: string;
   content?: string;
   conversationId?: string;
@@ -15,7 +15,7 @@ export interface OutgoingMessage {
   type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list"
     | "queued" | "status" | "tool_call" | "tool_result" | "new_input" | "done"
     | "plan_created" | "item_updated" | "plan_completed"
-    | "user_message";
+    | "user_message" | "pong";
   sessionId?: string;
   content?: string;
   error?: string;
