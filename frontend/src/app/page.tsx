@@ -48,14 +48,16 @@ export default function Home() {
   // Conversations from SpacetimeDB — auto-updates via subscription
   const spacetimeConversations = useConversations();
   const { connected: stdbConnected } = useSpacetimeConnection();
-  const conversations: ConversationSummary[] = spacetimeConversations.map((c) => ({
-    id: c.id,
-    title: c.title || null,
-    message_count: c.messageCount,
-    updated_at: new Date(Number(c.updatedAt)).toISOString(),
-    agent_id: c.agentId,
-    agent_name: getAgentName(c.agentId),
-  }));
+  const conversations: ConversationSummary[] = spacetimeConversations
+    .filter((c) => c.messageCount > 0)
+    .map((c) => ({
+      id: c.id,
+      title: c.title || null,
+      message_count: c.messageCount,
+      updated_at: new Date(Number(c.updatedAt)).toISOString(),
+      agent_id: c.agentId,
+      agent_name: getAgentName(c.agentId),
+    }));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
