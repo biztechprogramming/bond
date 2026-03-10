@@ -90,7 +90,7 @@ class TestDetectPersistenceMode:
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            mode = await _detect_persistence_mode("http://localhost:18792")
+            mode = await _detect_persistence_mode("http://localhost:18789")
             assert mode == "api"
 
     @pytest.mark.asyncio
@@ -102,7 +102,7 @@ class TestDetectPersistenceMode:
             instance.__aexit__ = AsyncMock(return_value=False)
             MockClient.return_value = instance
 
-            mode = await _detect_persistence_mode("http://localhost:18792")
+            mode = await _detect_persistence_mode("http://localhost:18789")
             assert mode == "sqlite"
 
 
@@ -112,7 +112,7 @@ class TestDetectPersistenceMode:
 class TestClientInit:
     @pytest.mark.asyncio
     async def test_explicit_api_mode(self, clean_env):
-        client = PersistenceClient(agent_id="test", mode="api", gateway_url="http://localhost:18792")
+        client = PersistenceClient(agent_id="test", mode="api", gateway_url="http://localhost:18789")
         await client.init()
         assert client.mode == "api"
         await client.close()
@@ -127,7 +127,7 @@ class TestClientInit:
     @pytest.mark.asyncio
     async def test_env_var_mode(self, monkeypatch):
         monkeypatch.setenv("BOND_PERSISTENCE_MODE", "API")
-        client = PersistenceClient(agent_id="test", gateway_url="http://localhost:18792")
+        client = PersistenceClient(agent_id="test", gateway_url="http://localhost:18789")
         await client.init()
         assert client.mode == "api"  # normalized to lowercase
         await client.close()
@@ -230,7 +230,7 @@ class TestApiMode:
     @pytest.mark.asyncio
     async def test_save_message_success(self, clean_env):
         client = PersistenceClient(
-            agent_id="agent-1", mode="api", gateway_url="http://fake:18792"
+            agent_id="agent-1", mode="api", gateway_url="http://fake:18789"
         )
         await client.init()
 
@@ -256,7 +256,7 @@ class TestApiMode:
     @pytest.mark.asyncio
     async def test_save_message_failure_raises(self, clean_env):
         client = PersistenceClient(
-            agent_id="agent-1", mode="api", gateway_url="http://fake:18792"
+            agent_id="agent-1", mode="api", gateway_url="http://fake:18789"
         )
         await client.init()
 
@@ -274,7 +274,7 @@ class TestApiMode:
     @pytest.mark.asyncio
     async def test_log_tool_success(self, clean_env):
         client = PersistenceClient(
-            agent_id="agent-1", mode="api", gateway_url="http://fake:18792"
+            agent_id="agent-1", mode="api", gateway_url="http://fake:18789"
         )
         await client.init()
 
@@ -296,7 +296,7 @@ class TestApiMode:
     @pytest.mark.asyncio
     async def test_log_tool_failure_raises(self, clean_env):
         client = PersistenceClient(
-            agent_id="agent-1", mode="api", gateway_url="http://fake:18792"
+            agent_id="agent-1", mode="api", gateway_url="http://fake:18789"
         )
         await client.init()
 
@@ -316,7 +316,7 @@ class TestApiMode:
         monkeypatch.setenv("BOND_AGENT_TOKEN", "secret-token-123")
 
         client = PersistenceClient(
-            agent_id="agent-1", mode="api", gateway_url="http://fake:18792"
+            agent_id="agent-1", mode="api", gateway_url="http://fake:18789"
         )
         await client.init()
 

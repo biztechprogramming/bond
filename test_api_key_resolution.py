@@ -19,7 +19,7 @@ async def test_get_provider_api_key():
     
     # Mock the Gateway URL to a test server
     # In real usage, this would be set via BOND_GATEWAY_URL env var
-    client.gateway_url = "http://localhost:18792"
+    client.gateway_url = "http://localhost:18789"
     
     try:
         await client.init()

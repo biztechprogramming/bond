@@ -2,7 +2,9 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 
-const GATEWAY = "http://localhost:18792/api/v1";
+import { GATEWAY_API } from "@/lib/config";
+
+const GATEWAY = GATEWAY_API;
 
 interface ChannelInfo {
   type: string;

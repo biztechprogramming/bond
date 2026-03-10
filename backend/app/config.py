@@ -25,7 +25,7 @@ _DEFAULTS: dict[str, Any] = {
     },
     "gateway": {
         "host": "127.0.0.1",
-        "port": 18792,
+        "port": 18789,
     },
     "frontend": {
         "port": 18788,
@@ -56,7 +56,7 @@ class Settings(BaseModel):
 
     # Gateway
     gateway_host: str = "127.0.0.1"
-    gateway_port: int = 18792
+    gateway_port: int = 18789
 
     # Frontend
     frontend_port: int = 18788

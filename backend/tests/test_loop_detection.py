@@ -21,7 +21,7 @@ import pytest
 # Fix 1: work_plan idempotency
 # ---------------------------------------------------------------------------
 
-GATEWAY = "http://localhost:18792"
+GATEWAY = "http://localhost:18789"
 
 
 def _ctx():

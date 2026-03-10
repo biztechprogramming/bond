@@ -5,7 +5,7 @@ import json
 
 async def test_persistence_connection():
     # Simulate worker environment variables
-    gateway_url = os.environ.get("BOND_GATEWAY_URL", "http://localhost:18792")
+    gateway_url = os.environ.get("BOND_GATEWAY_URL", "http://localhost:18789")
     
     print(f"Testing connection to Gateway at: {gateway_url}/api/v1")
     
