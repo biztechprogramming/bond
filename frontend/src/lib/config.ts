@@ -22,3 +22,12 @@ export const GATEWAY_HTTP = `http://${HOST}:${GATEWAY_PORT}`;
 export const GATEWAY_WS = `ws://${HOST}:${GATEWAY_PORT}`;
 export const GATEWAY_API = `${GATEWAY_HTTP}/api/v1`;
 export const BACKEND_API = `http://${HOST}:${BACKEND_PORT}/api/v1`;
+
+/**
+ * SpacetimeDB WebSocket endpoint.
+ * Connect directly to SpacetimeDB — the Next.js rewrite proxies HTTP fine
+ * but doesn't reliably upgrade WebSocket from non-localhost origins.
+ * Token is fetched separately via /api/stdb-ws-token (same-origin).
+ */
+const STDB_PORT = process.env.NEXT_PUBLIC_STDB_PORT || "18787";
+export const STDB_WS = `ws://${HOST}:${STDB_PORT}`;

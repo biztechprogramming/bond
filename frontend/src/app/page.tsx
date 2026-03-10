@@ -8,6 +8,7 @@ import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
 import { useSpacetimeConnection, useConversations } from "@/hooks/useSpacetimeDB";
 import { connectToSpacetimeDB, getAgentName } from "@/lib/spacetimedb-client";
+import { STDB_WS } from "@/lib/config";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
   if (name === "file_write" || name === "file_read") {
@@ -43,7 +44,7 @@ export default function Home() {
   });
   // Connect to SpacetimeDB on mount
   useEffect(() => {
-    connectToSpacetimeDB();
+    connectToSpacetimeDB(STDB_WS);
   }, []);
 
   // Conversations from SpacetimeDB — auto-updates via subscription
