@@ -1,8 +1,16 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
   title: "Bond",
   description: "Your local AI assistant",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  interactiveWidget: "resizes-visual",
 };
 
 export default function RootLayout({
@@ -19,9 +27,6 @@ export default function RootLayout({
         color: "#e0e0e8",
         height: "100%",
         overflow: "hidden",
-        position: "fixed" as any,
-        inset: 0,
-        width: "100%",
       }}>
         {children}
         <style>{`
