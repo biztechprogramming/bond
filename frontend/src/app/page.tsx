@@ -357,7 +357,7 @@ export default function Home() {
               title={conv.title || "New conversation"}
             >
               <div style={styles.convTitle}>
-                {conv.title || "New conversation"}
+                {conv.title || (conv.agent_name ? `Chat with ${conv.agent_name}` : "New conversation")}
               </div>
               <div style={styles.convMeta}>
                 {conv.agent_name && <span style={{ color: "#6c8aff" }}>{conv.agent_name}</span>}

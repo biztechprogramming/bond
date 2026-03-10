@@ -502,6 +502,20 @@ async def conversation_turn(
         else:
             logger.info(f"[CONVERSATIONS] Successfully saved user message {msg_id}")
 
+        # Auto-title: set title from first user message if conversation is untitled
+        try:
+            title_rows = await stdb.query(
+                f"SELECT title FROM conversations WHERE id = '{conversation_id}'"
+            )
+            if title_rows and not title_rows[0].get("title"):
+                auto_title = req.message.strip()[:80]
+                if len(req.message.strip()) > 80:
+                    auto_title = auto_title.rsplit(" ", 1)[0] + "..."
+                await stdb.call_reducer("update_conversation", [conversation_id, auto_title])
+                logger.info(f"[CONVERSATIONS] Auto-titled conversation {conversation_id}: {auto_title}")
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to auto-title: {e}")
+
     # Load history from SpacetimeDB
     # Try conversation_messages first (migrated data), fall back to messages (new persistence)
     messages_rows = []
