@@ -11,12 +11,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" style={{ height: "100%", overflow: "hidden" }}>
       <body style={{
         margin: 0,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         backgroundColor: "#0a0a0f",
         color: "#e0e0e8",
+        height: "100%",
+        overflow: "hidden",
+        position: "fixed" as any,
+        inset: 0,
+        width: "100%",
       }}>
         {children}
         <style>{`

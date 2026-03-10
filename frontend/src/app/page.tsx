@@ -552,8 +552,8 @@ export default function Home() {
 const styles: Record<string, React.CSSProperties> = {
   outerContainer: {
     display: "flex",
-    position: "fixed" as const,
-    inset: 0,
+    height: "100%",
+    overflow: "hidden",
   },
   sidebar: {
     width: "280px",
@@ -683,6 +683,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     flex: 1,
     minWidth: 0,
+    height: "100%",
     overflow: "hidden",
   },
   header: {
