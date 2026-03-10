@@ -840,6 +840,38 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "host_exec",
+            "description": (
+                "Execute a command on the host machine via the Permission Broker. "
+                "Use this for git operations, build commands, GitHub CLI, and other "
+                "host-side tools that require credentials or host filesystem access. "
+                "Commands are subject to policy evaluation — some may be denied or "
+                "require user approval."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to execute on the host.",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory for execution (host path).",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 60).",
+                        "default": 60,
+                    },
+                },
+                "required": ["command"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
@@ -1028,6 +1060,12 @@ class ShellHead(ToolCall):
     lines: int = Field(default=20, description="Lines to show.")
     from_end: bool = Field(default=False, description="Tail mode.")
 
+class HostExec(ToolCall):
+    """Execute a command on the host via the Permission Broker."""
+    command: str = Field(description="Shell command to execute on the host.")
+    cwd: Optional[str] = Field(None, description="Working directory (host path).")
+    timeout: int = Field(default=60, description="Timeout in seconds.")
+
 class ShellTree(ToolCall):
     """Show directory tree structure."""
     path: str = Field(default=".", description="Root directory.")
@@ -1062,6 +1100,7 @@ INSTRUCTOR_TOOL_MAP = {
     "shell_wc": ShellWc,
     "shell_head": ShellHead,
     "shell_tree": ShellTree,
+    "host_exec": HostExec,
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:

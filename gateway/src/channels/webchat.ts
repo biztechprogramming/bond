@@ -11,17 +11,51 @@ import type { IncomingMessage, OutgoingMessage } from "../protocol/types.js";
 import type { SessionManager } from "../sessions/manager.js";
 import type { BackendClient } from "../backend/client.js";
 import type { MessagePipeline, PipelineContext, PipelineMessage } from "../pipeline/index.js";
+import { callReducer } from "../spacetimedb/client.js";
+import type { GatewayConfig } from "../config/index.js";
 
 export class WebChatChannel {
   /** Accumulated streamed content per conversation during an active turn. */
   private streamBuffers = new Map<string, { content: string; agentName: string; agentStatus: string }>();
 
   private pipeline: MessagePipeline | null = null;
+  private config: GatewayConfig | null = null;
 
   constructor(
     private sessionManager: SessionManager,
     private backendClient: BackendClient,
   ) {}
+
+  /** Provide gateway config for SpacetimeDB error persistence. */
+  setConfig(config: GatewayConfig): void {
+    this.config = config;
+  }
+
+  /**
+   * Persist an error message to SpacetimeDB so it survives refresh and
+   * is visible on all devices.
+   */
+  private async persistError(conversationId: string, errorText: string): Promise<void> {
+    if (!this.config) return;
+    const { spacetimedbUrl, spacetimedbModuleName, spacetimedbToken } = this.config;
+    if (!spacetimedbUrl || !spacetimedbModuleName || !spacetimedbToken) return;
+
+    const msgId = ulid();
+    try {
+      await callReducer(spacetimedbUrl, spacetimedbModuleName, "add_conversation_message", [
+        msgId,
+        conversationId,
+        "system",          // role
+        `Error: ${errorText}`,
+        "",                // tool_calls
+        "",                // tool_call_id
+        0,                 // token_count
+        "delivered",
+      ], spacetimedbToken);
+    } catch (err) {
+      console.error(`[webchat] Failed to persist error message to SpacetimeDB:`, err);
+    }
+  }
 
   /** Set the pipeline for message processing. */
   setPipeline(pipeline: MessagePipeline): void {
@@ -207,6 +241,7 @@ export class WebChatChannel {
           error: text,
           conversationId,
         });
+        this.persistError(conversationId, text).catch(() => {});
       },
 
       broadcast: async (_text: string) => {
@@ -233,6 +268,7 @@ export class WebChatChannel {
           error: reason,
           conversationId,
         });
+        this.persistError(conversationId, reason).catch(() => {});
       },
 
       emit: async (event: string, data: Record<string, any>) => {
@@ -286,6 +322,7 @@ export class WebChatChannel {
               type: "error", sessionId,
               error: data.error, conversationId,
             });
+            this.persistError(conversationId, data.error).catch(() => {});
             break;
         }
       },
@@ -314,6 +351,7 @@ export class WebChatChannel {
       const errMsg = err instanceof Error ? err.message : "Agent error";
       this.sendToConversation(conversationId, { type: "status", sessionId, agentStatus: "idle", conversationId });
       this.sendToConversation(conversationId, { type: "error", sessionId, error: errMsg });
+      this.persistError(conversationId, errMsg).catch(() => {});
     }
   }
 
@@ -451,11 +489,14 @@ export class WebChatChannel {
             }
             break;
 
-          case "error":
+          case "error": {
+            const errorMessage = event.data.message as string;
             this.sendToConversation(conversationId, {
-              type: "error", sessionId, error: event.data.message as string, conversationId,
+              type: "error", sessionId, error: errorMessage, conversationId,
             });
+            this.persistError(conversationId, errorMessage).catch(() => {});
             break;
+          }
         }
       }
 
@@ -478,6 +519,7 @@ export class WebChatChannel {
       const errMsg = err instanceof Error ? err.message : "Agent error";
       this.sendToConversation(conversationId, { type: "status", sessionId, agentStatus: "idle", conversationId });
       this.sendToConversation(conversationId, { type: "error", sessionId, error: errMsg });
+      this.persistError(conversationId, errMsg).catch(() => {});
     }
   }
 
