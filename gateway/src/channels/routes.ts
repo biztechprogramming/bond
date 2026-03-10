@@ -24,7 +24,11 @@ export function createChannelRouter(channelManager: ChannelManager): Router {
         return;
       }
       const botInfo = await TelegramChannel.validateToken(token);
-      channelManager.configureTelegram(token);
+      channelManager.configureTelegram(token, {
+        id: botInfo.id,
+        username: botInfo.username,
+        firstName: botInfo.firstName,
+      });
       res.json({ ok: true, bot: botInfo });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : "Invalid token" });

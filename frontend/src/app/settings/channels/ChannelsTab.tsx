@@ -150,9 +150,9 @@ export default function ChannelsTab() {
         </div>
         <p style={s.desc}>Paste bot token from @BotFather, then send /start to your bot</p>
 
-        {telegram?.status === "linked" && telegram.botInfo && (
+        {telegram?.status === "linked" && (
           <div style={s.linkedInfo}>
-            <span>Bot: @{telegram.botInfo.username}</span>
+            <span>{telegram.botInfo ? `Bot: @${telegram.botInfo.username}` : "Connected"}</span>
             <div style={{ display: "flex", gap: "8px" }}>
               <button style={s.dangerBtn} onClick={() => disconnectChannel("telegram")}>Disconnect</button>
             </div>

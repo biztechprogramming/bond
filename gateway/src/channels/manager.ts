@@ -89,13 +89,14 @@ export class ChannelManager {
     return channels;
   }
 
-  configureTelegram(token: string): void {
+  configureTelegram(token: string, botInfo?: { id: number; username: string; firstName: string }): void {
     const existing = this.configs.get("telegram");
     this.configs.set("telegram", {
       type: "telegram",
       enabled: true,
       token,
       allowList: existing?.allowList || [],
+      botInfo: botInfo || existing?.botInfo,
     });
     this.saveConfigs();
   }
