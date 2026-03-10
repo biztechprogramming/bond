@@ -2,7 +2,7 @@
  * WebSocket client for connecting to the Bond gateway.
  */
 
-import { GATEWAY_WS } from "./config.js";
+import { GATEWAY_WS } from "./config";
 
 export type MessageHandler = (msg: GatewayMessage) => void;
 
