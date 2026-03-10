@@ -60,8 +60,16 @@ engineering/git/commits/commits.md:
   phase: committing
 
 engineering/git/pull-requests/pull-requests.md:
-  tier: 2
-  phase: reviewing
+  tier: 3
+  utterances:
+    - "create a pull request"
+    - "open a PR"
+    - "submit a PR"
+    - "push branch and create PR"
+    - "propose a change"
+    - "use repo_pr"
+    - "make a PR for this"
+    - "pull request"
 
 engineering/code-quality/code-review/code-review.md:
   tier: 2

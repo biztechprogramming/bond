@@ -25,21 +25,23 @@ _COMMON = {
 
 def test_skip_small_results():
     small_result = {"status": "ok", "data": "small"}
-    result = _run(filter_tool_result(
+    result_json, cost = _run(filter_tool_result(
         tool_name="file_read", tool_args={"path": "/test.txt"},
         raw_result=small_result, **_COMMON,
     ))
-    assert result == json.dumps(small_result)
+    assert result_json == json.dumps(small_result)
+    assert cost == 0.0
 
 
 def test_skip_exempt_tools():
     large_result = {"status": "written", "path": "/test.txt", "padding": "x" * 5000}
     for tool in ("respond", "file_write", "memory_save"):
-        result = _run(filter_tool_result(
+        result_json, cost = _run(filter_tool_result(
             tool_name=tool, tool_args={},
             raw_result=large_result, **_COMMON,
         ))
-        assert result == json.dumps(large_result), f"{tool} should be skipped"
+        assert result_json == json.dumps(large_result), f"{tool} should be skipped"
+        assert cost == 0.0
 
 
 def test_large_result_calls_utility():
@@ -51,16 +53,18 @@ def test_large_result_calls_utility():
     mock_response.choices = [AsyncMock()]
     mock_response.choices[0].message.content = '{"output": "relevant part", "url": "https://example.com"}'
 
-    with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm:
+    with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm, \
+         patch("backend.app.agent.tool_result_filter._litellm_completion_cost", return_value=0.001):
         mock_litellm.acompletion = AsyncMock(return_value=mock_response)
-        result = _run(filter_tool_result(
+        result_json, cost = _run(filter_tool_result(
             tool_name="web_read", tool_args={"url": "https://example.com"},
             raw_result=large_result, **_COMMON,
         ))
 
     mock_litellm.acompletion.assert_called_once()
-    parsed = json.loads(result)
+    parsed = json.loads(result_json)
     assert parsed["output"] == "relevant part"
+    assert cost == 0.001
 
 
 def test_utility_failure_returns_raw():
@@ -68,12 +72,13 @@ def test_utility_failure_returns_raw():
 
     with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm:
         mock_litellm.acompletion = AsyncMock(side_effect=Exception("API error"))
-        result = _run(filter_tool_result(
+        result_json, cost = _run(filter_tool_result(
             tool_name="web_read", tool_args={"url": "https://example.com"},
             raw_result=large_result, **_COMMON,
         ))
 
-    assert result == json.dumps(large_result)
+    assert result_json == json.dumps(large_result)
+    assert cost == 0.0
 
 
 def test_non_json_utility_response_wrapped():
@@ -83,12 +88,14 @@ def test_non_json_utility_response_wrapped():
     mock_response.choices = [AsyncMock()]
     mock_response.choices[0].message.content = "Just the relevant CSS classes: .defects-layout, .inspection-container"
 
-    with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm:
+    with patch("backend.app.agent.tool_result_filter.litellm") as mock_litellm, \
+         patch("backend.app.agent.tool_result_filter._litellm_completion_cost", return_value=0.0005):
         mock_litellm.acompletion = AsyncMock(return_value=mock_response)
-        result = _run(filter_tool_result(
+        result_json, cost = _run(filter_tool_result(
             tool_name="web_read", tool_args={"url": "https://example.com"},
             raw_result=large_result, **_COMMON,
         ))
 
-    parsed = json.loads(result)
+    parsed = json.loads(result_json)
     assert "filtered_result" in parsed
+    assert cost == 0.0005

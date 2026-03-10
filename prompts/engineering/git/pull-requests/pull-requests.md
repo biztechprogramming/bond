@@ -1,17 +1,54 @@
 # Pull Requests
 
-You are responsible for preparing high-quality pull requests that make the reviewer's job easy.
+You have the `repo_pr` tool to propose changes to this repository. Use it whenever you need to create, add, fix, or update code.
 
-## PR Structure
-1. **Title**: Clear and descriptive, following the same conventions as commit messages.
-2. **Summary**: A brief overview of what this PR accomplishes.
-3. **Key Changes**: A bulleted list of the most important modifications.
-4. **Context/Motivation**: Why are these changes necessary? Link to relevant issues.
-5. **Testing**: Describe how the changes were verified (e.g., "Ran unit tests", "Manual verification in sandbox").
-6. **Self-Review**: Before submitting, perform a final `git diff` against the target branch to catch debug code or formatting issues.
+## Using repo_pr
 
-## Best Practices
-- **Keep it Small**: Prefer multiple small PRs over one massive PR.
-- **Draft PRs**: Use Draft status if the work is still in progress but you want early feedback.
-- **Clean History**: Ensure the branch is rebased against the target branch and has a clean commit history before requesting review.
-- **No Noise**: Ensure no unnecessary files (logs, temporary build artifacts) are included.
+The `repo_pr` tool handles everything: creates a feature branch, writes files, commits, pushes, and opens a GitHub PR. You provide:
+
+- **branch**: A descriptive branch name (e.g. `feat/add-weather-tool`, `fix/auth-token-expiry`)
+- **title**: Clear PR title following commit message conventions
+- **body**: Explain what changed and why. Include key changes, motivation, and how it was verified.
+- **files**: An object mapping relative file paths to their **full file contents**. Every file you include will be written exactly as provided.
+- **commit_message**: A clear git commit message
+
+### Important: files must contain complete contents
+
+The `files` parameter **overwrites** each file entirely. You must include the **full file content** — not a diff, not a partial snippet. If you're modifying an existing file, read it first with `file_read`, apply your changes, and pass the complete updated content.
+
+### Example
+
+```json
+{
+  "branch": "feat/add-health-endpoint",
+  "title": "Add /health endpoint to API",
+  "body": "Adds a lightweight health check endpoint.\n\n## Changes\n- New GET /health route returning 200 OK\n- Added test coverage\n\n## Why\nNeeded for container orchestration liveness probes.",
+  "files": {
+    "backend/app/api/health.py": "from fastapi import APIRouter\n\nrouter = APIRouter()\n\n@router.get(\"/health\")\nasync def health():\n    return {\"status\": \"ok\"}\n",
+    "backend/tests/test_health.py": "import httpx\nimport pytest\n\n@pytest.mark.anyio\nasync def test_health(client):\n    resp = await client.get(\"/health\")\n    assert resp.status_code == 200\n"
+  },
+  "commit_message": "feat: add /health endpoint for liveness probes"
+}
+```
+
+### When to use repo_pr
+
+- Adding new tools, endpoints, or features
+- Updating prompts or configuration
+- Fixing bugs you've identified
+- Any change that should be reviewed before merging
+
+### Workflow
+
+1. **Understand** the change needed — read relevant files first
+2. **Plan** what files need to be created or modified
+3. **Read** any existing files you'll modify (use `file_read`)
+4. **Call `repo_pr`** with the complete file contents, a clear title, and descriptive body
+5. **Report** the PR URL to the user
+
+### PR Quality
+
+- **Keep it focused**: One logical change per PR
+- **Clean body**: Summarize what changed, why, and how it was tested
+- **No noise**: Don't include debug code, logs, or unrelated changes
+- **Self-review**: Before calling `repo_pr`, mentally diff your changes against the original files to catch mistakes

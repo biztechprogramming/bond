@@ -24,6 +24,7 @@ import hashlib
 
 import aiosqlite
 import litellm
+from litellm.cost_calculator import completion_cost as _litellm_completion_cost
 
 from backend.app.agent.context_decay import apply_progressive_decay
 from backend.app.agent.lifecycle import (
@@ -964,6 +965,7 @@ async def _run_agent_loop(
         "compression_calls": 0,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
+        "total_cost": 0.0,  # Real cost from litellm.completion_cost()
         "iterations_used": 0,
         "iteration_budget": max_iterations,
     }
@@ -1043,36 +1045,48 @@ async def _run_agent_loop(
     except (TypeError, ValueError):
         _iteration_alert_threshold = 20
 
+    def _calc_call_cost(resp, resp_model: str) -> float:
+        """Calculate real cost for a single LLM call via litellm's cost calculator.
+
+        Falls back to token-based estimate if the calculator doesn't have pricing
+        for the model (e.g. custom/self-hosted models).
+        """
+        try:
+            return _litellm_completion_cost(completion_response=resp, model=resp_model)
+        except Exception:
+            # Fallback: rough estimate using Opus pricing
+            _usage = getattr(resp, "usage", None)
+            _in = getattr(_usage, "prompt_tokens", 0) or 0
+            _out = getattr(_usage, "completion_tokens", 0) or 0
+            return _in * 15.0 / 1_000_000 + _out * 75.0 / 1_000_000
+
     def _emit_cost_summary():
         """Log per-session cost summary (Phase 4B) and check for cost alerts (Phase 4C)."""
-        # Rough cost estimate: Opus input=$15/M, output=$75/M; cached reads are cheaper
-        _est_input_cost = _cost_tracking["total_input_tokens"] * 15.0 / 1_000_000
-        _est_output_cost = _cost_tracking["total_output_tokens"] * 75.0 / 1_000_000
-        _est_total = _est_input_cost + _est_output_cost
+        _total = _cost_tracking["total_cost"]
 
         logger.info(
             "Cost summary: calls=%d (primary=%d, filter=%d, compression=%d) "
-            "tokens_in=%d tokens_out=%d est_cost=$%.4f iterations=%d/%d",
+            "tokens_in=%d tokens_out=%d cost=$%.4f iterations=%d/%d",
             _cost_tracking["primary_calls"] + _cost_tracking["filter_calls"] + _cost_tracking["compression_calls"],
             _cost_tracking["primary_calls"],
             _cost_tracking["filter_calls"],
             _cost_tracking["compression_calls"],
             _cost_tracking["total_input_tokens"],
             _cost_tracking["total_output_tokens"],
-            _est_total,
+            _total,
             _cost_tracking["iterations_used"],
             _cost_tracking["iteration_budget"],
         )
 
         # Phase 4C: Cost alerting
         try:
-            _cost_exceeded = _est_total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold
+            _cost_exceeded = _total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold
         except TypeError:
             _cost_exceeded = False
         if _cost_exceeded:
             logger.warning(
                 "COST ALERT: session %s exceeded thresholds (cost=$%.4f > $%.2f or iterations=%d > %d)",
-                conversation_id, _est_total, _cost_alert_threshold,
+                conversation_id, _total, _cost_alert_threshold,
                 _cost_tracking["iterations_used"], _iteration_alert_threshold,
             )
             if _langfuse_meta:
@@ -1326,10 +1340,13 @@ async def _run_agent_loop(
         continuation_attempts = 0
 
         # ── Phase 4B: Track cost per iteration ──
+        _iter_cost = _calc_call_cost(response, _iter_model)
         _cost_tracking["primary_calls"] += 1
         _cost_tracking["total_input_tokens"] += input_tokens
         _cost_tracking["total_output_tokens"] += output_tokens
+        _cost_tracking["total_cost"] += _iter_cost
         _cost_tracking["iterations_used"] = _iteration + 1
+        logger.debug("Iteration %d cost: $%.4f (cumulative: $%.4f)", _iteration, _iter_cost, _cost_tracking["total_cost"])
 
         # ── Phase 2A: Adaptive iteration budget (after first iteration) ──
         if _iteration == 0 and not _adaptive_budget_set:
@@ -1756,7 +1773,7 @@ async def _run_agent_loop(
                             "trace_name": f"tool-filter-{_state.agent_id}-{tool_name}",
                             "tags": [f"agent:{_state.agent_id}", "call_type:filter"],
                         }
-                    result_json = await filter_tool_result(
+                    _filter_result = await filter_tool_result(
                         tool_name=tool_name,
                         tool_args=tool_args,
                         raw_result=result,
@@ -1766,7 +1783,12 @@ async def _run_agent_loop(
                         utility_kwargs=utility_kwargs,
                         langfuse_metadata=_filter_langfuse if _filter_langfuse else None,
                     )
+                    if isinstance(_filter_result, tuple):
+                        result_json, _filter_cost = _filter_result
+                    else:
+                        result_json, _filter_cost = _filter_result, 0.0
                     _cost_tracking["filter_calls"] += 1
+                    _cost_tracking["total_cost"] += _filter_cost
 
                 messages.append({
                     "role": "tool",

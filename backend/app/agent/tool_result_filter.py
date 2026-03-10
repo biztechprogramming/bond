@@ -12,6 +12,7 @@ import logging
 import re
 
 import litellm
+from litellm.cost_calculator import completion_cost as _litellm_completion_cost
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +52,11 @@ async def filter_tool_result(
     utility_model: str,
     utility_kwargs: dict,
     langfuse_metadata: dict | None = None,
-) -> str:
+) -> str | tuple[str, float]:
     """Filter a tool result through the utility model.
 
-    Returns the filtered result as a JSON string ready for the messages array.
+    Returns the filtered result as a JSON string ready for the messages array,
+    or a tuple of (result_json, cost) when cost can be calculated.
     If filtering is skipped or fails, returns the raw result as JSON.
 
     Args:
@@ -70,7 +72,7 @@ async def filter_tool_result(
 
     # Skip small results and exempt tools
     if tool_name in SKIP_TOOLS or len(raw_json) < FILTER_THRESHOLD:
-        return raw_json
+        return raw_json, 0.0
 
     # Build context for the utility model
     # Include tool name + args so it knows what was requested
@@ -133,19 +135,25 @@ Return ONLY the filtered JSON result, nothing else."""
         filtered_tokens = len(filtered) // 4
         savings = original_tokens - filtered_tokens
 
+        # Calculate real cost for this filter call
+        try:
+            call_cost = _litellm_completion_cost(completion_response=response, model=utility_model)
+        except Exception:
+            call_cost = 0.0
+
         if savings > 0:
             logger.info(
-                "Tool filter [%s]: %d → %d tokens (~%d saved)",
-                tool_name, original_tokens, filtered_tokens, savings,
+                "Tool filter [%s]: %d → %d tokens (~%d saved) cost=$%.4f",
+                tool_name, original_tokens, filtered_tokens, savings, call_cost,
             )
         else:
-            logger.debug("Tool filter [%s]: no reduction (%d tokens)", tool_name, original_tokens)
+            logger.debug("Tool filter [%s]: no reduction (%d tokens) cost=$%.4f", tool_name, original_tokens, call_cost)
 
-        return filtered
+        return filtered, call_cost
 
     except Exception as e:
         logger.warning("Tool filter failed for %s, using raw result: %s", tool_name, e)
-        return raw_json
+        return raw_json, 0.0
 
 
 # ---------------------------------------------------------------------------
