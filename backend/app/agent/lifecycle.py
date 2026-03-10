@@ -120,7 +120,7 @@ _COMMIT_SIGNALS = ("git commit", "git add", "git stage")
 _PUSH_SIGNALS = ("git push",)
 
 # Signals for PR creation / review detection
-_PR_SIGNALS = ("gh pr create", "gh pr review", "gh pr merge")
+_PR_SIGNALS = ("gh pr create", "gh pr review", "gh pr merge", "repo_pr")
 
 # Signals for implementation tool detection
 _IMPL_TOOLS = ("file_edit", "code_execute", "file_write")

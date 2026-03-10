@@ -521,7 +521,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "repo_pr",
-            "description": "Propose a change to the Bond repo. Creates a feature branch, writes the specified files, commits, pushes, and opens a PR on GitHub. Use this to add tools, update prompts, or fix bugs.",
+            "description": "Propose a change to the Bond repo. Creates a feature branch, writes the specified files, commits, pushes, and opens a GitHub PR. Use this when you need to add, fix, or update code. IMPORTANT: each file in 'files' must contain the COMPLETE file content (not a diff) — the file will be overwritten entirely. Read existing files with file_read first if modifying them.",
             "parameters": {
                 "type": "object",
                 "properties": {
