@@ -403,6 +403,8 @@ Session: ${chatKey}`;
       conversationId,
       msg.content,
       agentId || undefined,
+      undefined, // planId
+      msg.channelType,
     )) {
       if (event.event === "chunk" && event.data.content) {
         fullResponse += event.data.content as string;

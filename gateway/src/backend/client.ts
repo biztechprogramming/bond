@@ -140,6 +140,7 @@ export class BackendClient {
     message: string | undefined,
     agentId?: string,
     planId?: string,
+    channel?: string,
   ): AsyncGenerator<SSEEvent> {
     console.log(`[BACKEND-CLIENT] Calling backend: ${this.baseUrl}/api/v1/conversations/${conversationId}/turn`);
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/turn`, {
@@ -148,6 +149,7 @@ export class BackendClient {
       body: JSON.stringify({
         message: message ?? null,
         agent_id: agentId ?? null,
+        channel: channel ?? null,
         plan_id: planId ?? null,
       }),
     });

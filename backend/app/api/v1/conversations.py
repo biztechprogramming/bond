@@ -295,6 +295,7 @@ class ConversationTurnRequest(BaseModel):
     message: str | None = None
     plan_id: str | None = None
     agent_id: str | None = None  # only used when creating a brand-new conversation
+    channel: str | None = None   # "webchat", "telegram", "whatsapp" — defaults to webchat
 
 
 def _sse(event: str, data: dict) -> str:
@@ -423,7 +424,7 @@ async def conversation_turn(
                 agent_id = default_agents[0]["id"]
                 logger.info(f"[CONVERSATIONS] Using default agent: {agent_id}")
         
-        await stdb.call_reducer("create_conversation", [conversation_id, agent_id, "webchat", ""])
+        await stdb.call_reducer("create_conversation", [conversation_id, agent_id, req.channel or "webchat", ""])
         logger.info(f"[CONVERSATIONS] Created new conversation {conversation_id} with agent {agent_id}")
     else:
         # Existing conversation — use its agent
