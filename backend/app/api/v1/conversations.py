@@ -593,11 +593,52 @@ async def conversation_turn(
         else:
             logger.info(f"[CONVERSATIONS] Agent has no workspace mounts")
 
-        # Decrypt API keys or load from vault
+        # Load API keys from SpacetimeDB provider_api_keys table
         api_keys = {}
-        # TODO: wire up SpacetimeDB-backed settings/vault
-        
+        try:
+            key_rows = await stdb.query("SELECT providerId, encryptedValue FROM provider_api_keys")
+            if not key_rows:
+                key_rows = await stdb.query("SELECT provider_id, encrypted_value FROM provider_api_keys")
+            for kr in key_rows:
+                provider_id = kr.get("providerId") or kr.get("provider_id")
+                encrypted_val = kr.get("encryptedValue") or kr.get("encrypted_value")
+                if provider_id and encrypted_val:
+                    try:
+                        from backend.app.core.crypto import decrypt_value, is_encrypted
+                        val = decrypt_value(encrypted_val)
+                        if val:
+                            api_keys[provider_id] = val
+                    except Exception:
+                        # If decryption fails, try as plaintext (dev mode)
+                        from backend.app.core.crypto import is_encrypted
+                        if not is_encrypted(encrypted_val):
+                            api_keys[provider_id] = encrypted_val
+            logger.info(f"[CONVERSATIONS] Loaded {len(api_keys)} API keys from provider_api_keys")
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to load API keys from SpacetimeDB: {e}")
+            # Fallback: try environment variables
+            import os
+            for env_key in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]:
+                val = os.environ.get(env_key)
+                if val:
+                    provider = env_key.replace("_API_KEY", "").lower()
+                    api_keys[provider] = val
+            if api_keys:
+                logger.info(f"[CONVERSATIONS] Loaded {len(api_keys)} API keys from environment")
+
+        # Load provider aliases from SpacetimeDB
         provider_aliases = {}
+        try:
+            alias_rows = await stdb.query("SELECT alias, providerId FROM provider_aliases")
+            if not alias_rows:
+                alias_rows = await stdb.query("SELECT alias, provider_id FROM provider_aliases")
+            for r in alias_rows:
+                alias = r.get("alias")
+                pid = r.get("providerId") or r.get("provider_id")
+                if alias and pid:
+                    provider_aliases[alias] = pid
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to load provider aliases: {e}")
 
         agent_dict = {
             "id": agent_row["id"],
