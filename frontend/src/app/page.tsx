@@ -79,6 +79,23 @@ export default function Home() {
     if (name) currentAgentNameRef.current = name;
   }, [selectedAgentId, agents]);
 
+  // Prevent mobile keyboard from scrolling the page
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onResize = () => {
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    };
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", onResize);
+    return () => {
+      vv.removeEventListener("resize", onResize);
+      vv.removeEventListener("scroll", onResize);
+    };
+  }, []);
+
   // Persist conversation ID
   useEffect(() => {
     if (conversationId) {
