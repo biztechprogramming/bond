@@ -17,6 +17,7 @@ def build_native_registry() -> ToolRegistry:
         handle_file_edit,
         handle_file_read,
         handle_file_write,
+        handle_host_exec,
         handle_load_context,
         handle_memory_delete,
         handle_memory_save,
@@ -67,6 +68,7 @@ def build_native_registry() -> ToolRegistry:
     registry.register("parallel_orchestrate", handle_parallel_orchestrate)
     registry.register("repo_pr", handle_repo_pr)
     registry.register("load_context", handle_load_context)
+    registry.register("host_exec", handle_host_exec)
 
     # Shell utility tools (info-gathering, routed to utility model)
     registry.register("shell_find", handle_shell_find)

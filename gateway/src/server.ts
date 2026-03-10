@@ -7,6 +7,8 @@
 
 import { WebSocketServer } from "ws";
 import { createServer } from "http";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import express from "express";
 import { ulid } from "ulid";
 import type { GatewayConfig } from "./config/index.js";
@@ -17,6 +19,7 @@ import { createPersistenceRouter } from "./persistence/index.js";
 import { createConversationsRouter } from "./conversations/index.js";
 import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
+import { createBrokerRouter } from "./broker/router.js";
 import { ChannelManager } from "./channels/manager.js";
 import { createChannelRouter } from "./channels/routes.js";
 import {
@@ -98,6 +101,12 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     },
   });
   app.use("/webhooks", webhookRouter);
+
+  // Permission Broker
+  app.use("/api/v1/broker", createBrokerRouter({
+    dataDir: join(homedir(), ".bond", "data"),
+    policyDir: join(homedir(), ".bond", "policies"),
+  }));
 
   // Channel management API and lifecycle
   const channelManager = new ChannelManager("data/channels.json", backendClient);

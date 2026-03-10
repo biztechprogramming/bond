@@ -733,6 +733,49 @@ async def handle_memory_delete(
 
 
 # ---------------------------------------------------------------------------
+# Host Exec (via Permission Broker)
+# ---------------------------------------------------------------------------
+
+async def handle_host_exec(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute a command on the host via the Permission Broker."""
+    command = arguments.get("command", "")
+    if not command:
+        return {"error": "command is required"}
+
+    try:
+        from backend.app.agent.broker_client import BrokerClient, BrokerError
+    except ImportError:
+        return {"error": "BrokerClient not available"}
+
+    client = BrokerClient()
+    try:
+        result = await client.exec(
+            command=command,
+            cwd=arguments.get("cwd"),
+            timeout=arguments.get("timeout"),
+        )
+        return {
+            "stdout": result.get("stdout", ""),
+            "stderr": result.get("stderr", ""),
+            "exit_code": result.get("exit_code", 0),
+            "duration_ms": result.get("duration_ms"),
+        }
+    except BrokerError as e:
+        return {
+            "error": str(e),
+            "decision": e.decision,
+            "policy_rule": e.policy_rule,
+        }
+    except Exception as e:
+        return {"error": f"Broker request failed: {e}"}
+    finally:
+        await client.close()
+
+
+# ---------------------------------------------------------------------------
 # Respond (same as host-side, terminal tool)
 # ---------------------------------------------------------------------------
 
