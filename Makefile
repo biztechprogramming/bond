@@ -74,6 +74,7 @@ images:
 	docker build -f Dockerfile.agent -t bond-agent-worker:latest .
 	docker build -f docker/Dockerfile.python -t bond-agent-python:latest .
 	docker build -f docker/Dockerfile.dotnet -t bond-agent-dotnet:latest .
+	docker build -f docker/Dockerfile.node -t bond-agent-node:latest .
 	@echo "All agent images built."
 
 # Clean generated files

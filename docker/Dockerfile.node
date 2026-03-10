@@ -1,0 +1,83 @@
+# Bond Agent Worker — Node.js / Bun Development Environment
+# Extends bond-agent-worker:latest with Node.js 22, Bun, and JS/TS tooling.
+#
+# Usage:
+#   docker build -f docker/Dockerfile.node -t bond-agent-node:latest .
+
+FROM bond-agent-worker:latest
+
+USER root
+
+# Install system deps for general dev
+RUN apt-get update && apt-get install -y \
+    wget \
+    tmux \
+    vim \
+    build-essential \
+    jq \
+    less \
+    fzf \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 22
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Bun
+RUN curl -fsSL https://bun.sh/install | bash \
+    && mv /root/.bun/bin/bun /usr/local/bin/ \
+    && chmod +x /usr/local/bin/bun \
+    && ln -sf /usr/local/bin/bun /usr/bin/bun
+
+# Install common global npm packages
+RUN npm install -g \
+    pnpm \
+    typescript \
+    tsx \
+    tslab
+
+# Install Jupyter for code interpreter support (opt-in via BOND_CODE_INTERPRETER=1)
+RUN pip install --no-cache-dir --break-system-packages \
+    jupyter \
+    ipykernel \
+    && python3 -m ipykernel install --name python --display-name "Python" \
+    && tslab install
+
+# Install delta for better git diffs
+RUN ARCH=$(dpkg --print-architecture) \
+    && wget "https://github.com/dandavison/delta/releases/download/0.18.2/git-delta_0.18.2_${ARCH}.deb" \
+    && dpkg -i "git-delta_0.18.2_${ARCH}.deb" \
+    && rm "git-delta_0.18.2_${ARCH}.deb"
+
+# Configure git with better defaults
+RUN git config --global core.pager "delta" \
+    && git config --global interactive.diffFilter "delta --color-only" \
+    && git config --global delta.navigate true \
+    && git config --global delta.light false \
+    && git config --global merge.conflictstyle diff3 \
+    && git config --global diff.colorMoved default
+
+# Environment
+ENV NPM_CONFIG_PREFIX=/usr/local/share/npm-global \
+    PATH="${PATH}:/usr/local/share/npm-global/bin"
+
+# Setup tmux
+RUN echo 'set -g mouse on' > /root/.tmux.conf \
+    && echo 'set -g history-limit 50000' >> /root/.tmux.conf \
+    && echo 'set -g display-time 4000' >> /root/.tmux.conf \
+    && echo 'set -g default-terminal "screen-256color"' >> /root/.tmux.conf
+
+# Verify installations
+RUN node --version && npm --version && bun --version && pnpm --version
+
+WORKDIR /bond
+
+EXPOSE 18791
+
+# ENTRYPOINT and CMD are inherited from bond-agent-worker:latest:
+#   ENTRYPOINT ["/agent-entrypoint.sh"]  — handles git clone/pull then execs worker
+#   CMD ["--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]
+# Do NOT override CMD here — adding args after the image name in docker run would
+# break if no ENTRYPOINT is set (--port would be treated as the executable).

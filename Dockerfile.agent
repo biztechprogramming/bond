@@ -34,6 +34,7 @@ RUN pip install --no-cache-dir \
     pydantic \
     httpx \
     mcp \
+    "sqlalchemy[asyncio]>=2.0.0" \
     anyio \
     trafilatura \
     "langfuse>=2.0,<3.0" \
@@ -45,8 +46,13 @@ RUN pip install --no-cache-dir \
 COPY scripts/agent-entrypoint.sh /agent-entrypoint.sh
 RUN chmod +x /agent-entrypoint.sh
 
+# Install OpenSandbox execd — structured command execution, file ops, code interpreter
+# Built from vendor/OpenSandbox/components/execd (see docs/design/030-code-interpreter-images.md)
+COPY docker/bin/execd /opt/opensandbox/execd
+RUN chmod +x /opt/opensandbox/execd
+
 # Create directories the worker expects
-RUN mkdir -p /data /data/shared /config /workspace
+RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox
 
 # Bond library is mounted at /bond at runtime (read-only)
 # Worker is invoked as: python -m backend.app.worker --port 18791

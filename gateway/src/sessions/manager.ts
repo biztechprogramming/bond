@@ -64,4 +64,19 @@ export class SessionManager {
   getAllSockets(): WebSocket[] {
     return Array.from(this.clients.keys());
   }
+
+  /**
+   * Get all open sockets whose session is watching the given conversation.
+   */
+  getSocketsForConversation(conversationId: string): WebSocket[] {
+    const sockets: WebSocket[] = [];
+    for (const [socket, client] of this.clients.entries()) {
+      if (socket.readyState !== 1) continue; // 1 = OPEN
+      const session = this.sessions.get(client.sessionId);
+      if (session?.conversationId === conversationId) {
+        sockets.push(socket);
+      }
+    }
+    return sockets;
+  }
 }

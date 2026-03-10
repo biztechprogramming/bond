@@ -236,6 +236,9 @@ export default function Home() {
         ]);
         setLoading(false);
         setAgentStatus("idle");
+      } else if (msg.type === "user_message" && msg.content) {
+        // User message sent from another window/tab
+        setMessages((prev) => [...prev, { role: "user", content: msg.content! }]);
       }
       // Plan events
       if (msg.type === "plan_created" && msg.planId && msg.planTitle) {
@@ -284,23 +287,11 @@ export default function Home() {
   const handleNewConversation = async () => {
     setMessages([]);
     setConversationId(null);
-    try {
-      const resp = await fetch("http://localhost:18792/api/v1/conversations", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (resp.ok) {
-        const conv = await resp.json();
-        setConversationId(conv.id);
-        wsRef.current?.newConversation(); // reset session — no history to load for a new conversation
-      } else {
-        // fallback — let the gateway assign an ID on first message
-        wsRef.current?.newConversation();
-      }
-    } catch {
-      wsRef.current?.newConversation();
-    }
+    // Don't pre-create the conversation via REST — let the first message
+    // create it through the WebSocket path, which passes the selected
+    // agentId correctly. Pre-creating caused a bug where the conversation
+    // was created with the default agent before the user picked one.
+    wsRef.current?.newConversation();
   };
 
   const handleSwitchConversation = (id: string) => {

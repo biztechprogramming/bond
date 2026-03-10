@@ -414,7 +414,7 @@ async def conversation_turn(
         agent_id = req.agent_id
         if not agent_id:
             # Query SpacetimeDB for the default agent
-            default_agents = await stdb.query("SELECT id FROM agents WHERE is_default = true LIMIT 1")
+            default_agents = await stdb.query("SELECT id FROM agents WHERE isDefault = true LIMIT 1")
             if not default_agents:
                 # Last resort fallback if SpacetimeDB agents table is truly empty
                 agent_id = "01JBOND0000000000000DEFAULT"
@@ -426,9 +426,30 @@ async def conversation_turn(
         await stdb.call_reducer("create_conversation", [conversation_id, agent_id, "webchat", ""])
         logger.info(f"[CONVERSATIONS] Created new conversation {conversation_id} with agent {agent_id}")
     else:
-        # Existing conversation — agent is locked, ignore req.agent_id
+        # Existing conversation — use its agent
         agent_id = conv_row["agent_id"]
         logger.info(f"[CONVERSATIONS] Found existing conversation {conversation_id} with agent {agent_id}")
+
+        # If the caller specifies a different agent and the conversation has
+        # no messages yet, update the agent. This handles the case where the
+        # user creates a conversation, then switches the agent dropdown before
+        # sending the first message.
+        if req.agent_id and req.agent_id != agent_id:
+            msg_count = conv_row.get("message_count") or conv_row.get("messageCount") or 0
+            if int(msg_count) == 0:
+                # Verify the requested agent exists
+                check = await stdb.query(f"SELECT id FROM agents WHERE id = '{req.agent_id}'")
+                if check:
+                    agent_id = req.agent_id
+                    try:
+                        await stdb.call_reducer("update_conversation_agent", [conversation_id, agent_id])
+                        logger.info(f"[CONVERSATIONS] Updated empty conversation {conversation_id} agent to {agent_id}")
+                    except Exception as e:
+                        logger.warning(f"[CONVERSATIONS] Could not update conversation agent via reducer: {e}")
+                        # If no reducer exists, the agent will still be used for this turn
+                        # via the agent_id variable — just won't persist for future turns.
+                else:
+                    logger.warning(f"[CONVERSATIONS] Requested agent {req.agent_id} not found, keeping {agent_id}")
 
     # Save user message to SpacetimeDB
     if req.message:

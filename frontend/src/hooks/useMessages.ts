@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useSpacetimeDB, getMessagesForConversation } from '@/lib/spacetimedb-client';
+import { useSpacetimeDB } from '@/hooks/useSpacetimeDB';
+import { getMessagesForConversation } from '@/lib/spacetimedb-client';
 import type { ConversationMessage } from '@/lib/spacetimedb-client';
 
 /**
