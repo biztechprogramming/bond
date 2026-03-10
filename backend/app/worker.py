@@ -458,6 +458,12 @@ async def _run_agent_loop(
         if _util_tool not in agent_tools:
             agent_tools.append(_util_tool)
 
+    # Auto-inject host_exec — it's gated by the Permission Broker so
+    # always safe to expose.  Without this the agent can't run git,
+    # gh CLI, or build commands on the host.
+    if "host_exec" not in agent_tools:
+        agent_tools.append("host_exec")
+
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
     provider_aliases: dict[str, str] = config.get("provider_aliases", {})
@@ -1439,6 +1445,12 @@ async def _run_agent_loop(
                             "total_count": len(llm_message.tool_calls),
                         }))
 
+            # Collect lifecycle hook messages to append AFTER all tool
+            # results.  Injecting user messages between tool_use and
+            # tool_result violates Anthropic's message contract and
+            # causes "tool_use ids without tool_result" errors.
+            _deferred_injections: list[dict] = []
+
             for tool_call in llm_message.tool_calls:
                 tool_name = tool_call.function.name
                 try:
@@ -1561,19 +1573,20 @@ async def _run_agent_loop(
                     }))
 
                 # ── Pre-execution lifecycle hook (Doc 024) ──
-                # Inject phase-specific guidance right before consequential
-                # git operations so the agent sees it in the same context
-                # window as the tool result.
+                # Collect phase-specific guidance for consequential git
+                # operations.  These are DEFERRED and appended after all
+                # tool_result messages to avoid breaking Anthropic's
+                # requirement that tool_results follow tool_use immediately.
                 if is_git_commit_command(tool_name, tool_args):
                     _commit_frags = load_lifecycle_fragments(Phase.COMMITTING, _prompts_dir)
                     if _commit_frags:
                         _precommit_text = format_precommit_injection(_commit_frags)
-                        messages.append({
+                        _deferred_injections.append({
                             "role": "user",
                             "content": f"SYSTEM: {_precommit_text}",
                         })
                         logger.info(
-                            "Pre-commit hook: injected %d fragments (%s)",
+                            "Pre-commit hook: deferred %d fragments (%s)",
                             len(_commit_frags),
                             [f.path for f in _commit_frags],
                         )
@@ -1583,12 +1596,12 @@ async def _run_agent_loop(
                         _review_text = "\n\n---\n\n".join(
                             f.content for f in _review_frags if f.content
                         )
-                        messages.append({
+                        _deferred_injections.append({
                             "role": "user",
                             "content": f"SYSTEM: ## Before Creating This PR\n{_review_text}",
                         })
                         logger.info(
-                            "Pre-PR hook: injected %d fragments (%s)",
+                            "Pre-PR hook: deferred %d fragments (%s)",
                             len(_review_frags),
                             [f.path for f in _review_frags],
                         )
@@ -1760,6 +1773,28 @@ async def _run_agent_loop(
                     "tool_call_id": tool_call.id,
                     "content": result_json,
                 })
+
+            # Ensure every tool_use in this batch has a matching tool_result.
+            # If the inner loop broke early (loop detection, etc.) some
+            # tool calls may be orphaned — Anthropic rejects those.
+            _expected_tc_ids = {tc.id for tc in llm_message.tool_calls}
+            _emitted_tc_ids = {
+                m["tool_call_id"]
+                for m in messages[-len(_expected_tc_ids) * 3:]  # scan recent tail only
+                if m.get("role") == "tool" and m.get("tool_call_id") in _expected_tc_ids
+            }
+            for _tc in llm_message.tool_calls:
+                if _tc.id not in _emitted_tc_ids:
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": _tc.id,
+                        "content": json.dumps({"error": "Skipped — agent loop intervention"}),
+                    })
+
+            # Flush deferred lifecycle injections now that all tool_result
+            # messages have been appended (safe for Anthropic).
+            for _inj in _deferred_injections:
+                messages.append(_inj)
 
             # ── Between-turn lifecycle injection (Doc 024) ──
             # After processing all tool calls for this iteration, detect the
