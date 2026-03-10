@@ -65,6 +65,13 @@ export interface ConversationDetail {
   messages: ConversationMessage[];
 }
 
+export interface AgentInfo {
+  id: string;
+  name: string;
+  display_name: string;
+  is_default: boolean;
+}
+
 export class BackendClient {
   private baseUrl: string;
 
@@ -128,11 +135,34 @@ export class BackendClient {
     return (await res.json()) as ConversationSummary[];
   }
 
+  /**
+   * Find the most recent active conversation for a given agent.
+   * Returns the conversation ID or null if none found.
+   */
+  async findActiveConversation(agentId?: string): Promise<string | null> {
+    try {
+      const conversations = await this.listConversations();
+      // Filter to active conversations with messages, sorted by most recent
+      const candidates = conversations
+        .filter((c) => c.message_count > 0)
+        .filter((c) => !agentId || c.agent_id === agentId);
+      
+      if (candidates.length > 0) {
+        // Already sorted by updated_at desc from backend
+        return candidates[0].id;
+      }
+    } catch {
+      // If we can't list conversations, return null
+    }
+    return null;
+  }
+
   async *conversationTurnStream(
     conversationId: string,
     message: string | undefined,
     agentId?: string,
     planId?: string,
+    channel?: string,
   ): AsyncGenerator<SSEEvent> {
     console.log(`[BACKEND-CLIENT] Calling backend: ${this.baseUrl}/api/v1/conversations/${conversationId}/turn`);
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/turn`, {
@@ -141,6 +171,7 @@ export class BackendClient {
       body: JSON.stringify({
         message: message ?? null,
         agent_id: agentId ?? null,
+        channel: channel ?? null,
         plan_id: planId ?? null,
       }),
     });
@@ -247,6 +278,22 @@ export class BackendClient {
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+  }
+
+  async listAgents(): Promise<AgentInfo[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/v1/agents`);
+      if (!res.ok) return [];
+      const agents = await res.json();
+      return (agents as any[]).map((a) => ({
+        id: a.id,
+        name: a.name,
+        display_name: a.display_name,
+        is_default: !!a.is_default,
+      }));
+    } catch {
+      return [];
     }
   }
 

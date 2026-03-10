@@ -15,7 +15,7 @@ This means the Bond gateway cannot authenticate with SpacetimeDB to read/write w
 ┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
 │  Agent Sandbox   │     │   Bond Gateway    │     │   SpacetimeDB    │
 │  (this container)│────▶│  (Node/Express)   │────▶│  (port 18787)    │
-│                  │     │  (port 18792)     │     │                  │
+│                  │     │  (port 18789)     │     │                  │
 │ Python backend   │     │ Plans router      │     │ bond-core-v2     │
 │ also reads token │     │ Conversations     │     │ module           │
 └─────────────────┘     └──────────────────┘     └──────────────────┘

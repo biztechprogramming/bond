@@ -4,6 +4,11 @@
 # Start all services for development
 dev:
 	@echo "Starting Bond development servers..."
+	@# Kill stale processes on our ports
+	@lsof -ti :18789 | xargs kill -9 2>/dev/null || true
+	@lsof -ti :18790 | xargs kill -9 2>/dev/null || true
+	@lsof -ti :18788 | xargs kill -9 2>/dev/null || true
+	@sleep 1
 	@$(MAKE) -j3 backend gateway frontend
 
 # Backend (FastAPI)

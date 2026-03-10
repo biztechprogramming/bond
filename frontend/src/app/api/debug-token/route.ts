@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
+const GATEWAY_PORT = process.env.NEXT_PUBLIC_GATEWAY_PORT || "18789";
+
 export async function GET() {
-  const gatewayUrl = "http://localhost:18792/api/v1/spacetimedb/token";
+  const gatewayUrl = `http://localhost:${GATEWAY_PORT}/api/v1/spacetimedb/token`;
   const stdbUrl = "http://localhost:18787/v1/identity/websocket-token";
 
   let gatewayToken = null;

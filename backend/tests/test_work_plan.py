@@ -23,7 +23,7 @@ from backend.app.agent.tools.work_plan import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-GATEWAY = "http://localhost:18792"
+GATEWAY = "http://localhost:18789"
 AGENT_ID = "test-agent"
 CONV_ID = "conv-1"
 

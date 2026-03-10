@@ -23,7 +23,7 @@ import httpx
 # Config — mirrors bond/gateway/src/config/index.ts defaults
 # ---------------------------------------------------------------------------
 
-GATEWAY_URL = os.environ.get("BOND_GATEWAY_URL", "http://host.docker.internal:18792")
+GATEWAY_URL = os.environ.get("BOND_GATEWAY_URL", "http://host.docker.internal:18789")
 SPACETIMEDB_URL = os.environ.get("BOND_SPACETIMEDB_URL", "http://host.docker.internal:18787")
 SPACETIMEDB_MODULE = os.environ.get("BOND_SPACETIMEDB_MODULE", "bond-core-v2")
 

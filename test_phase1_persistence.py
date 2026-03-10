@@ -5,8 +5,8 @@ import json
 
 async def test_persistence_connection():
     # Simulate worker environment variables
-    # Default to 18792 which is the design port we just verified
-    gateway_url = os.environ.get("BOND_GATEWAY_URL", "http://localhost:18792")
+    # Default to 18789 which is the design port we just verified
+    gateway_url = os.environ.get("BOND_GATEWAY_URL", "http://localhost:18789")
     
     print(f"Testing connection to Gateway at: {gateway_url}")
     

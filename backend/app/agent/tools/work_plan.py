@@ -17,7 +17,7 @@ from ulid import ULID
 logger = logging.getLogger("bond.agent.tools.work_plan")
 
 # Gateway API URL — set by the sandbox manager when running in a container.
-# On the host, set BOND_API_URL to the Gateway base URL (e.g. http://localhost:18792).
+# On the host, set BOND_API_URL to the Gateway base URL (e.g. http://localhost:18789).
 # All plan data lives in SpacetimeDB; there is no SQLite fallback.
 _BOND_API_URL = os.environ.get("BOND_API_URL", "")
 

@@ -14,7 +14,7 @@ class MockState:
     def __init__(self):
         from backend.app.agent.persistence_client import PersistenceClient
         self.persistence = PersistenceClient(agent_id="test-agent", mode="api")
-        self.persistence.gateway_url = "http://localhost:18792"
+        self.persistence.gateway_url = "http://localhost:18789"
 
 async def test_api_key_resolution():
     """Test the _resolve_api_key logic."""

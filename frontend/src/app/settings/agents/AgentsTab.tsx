@@ -18,11 +18,6 @@ interface ChannelConfig {
   sandbox_override: string | null;
 }
 
-interface ToolInfo {
-  name: string;
-  description: string;
-}
-
 interface Agent {
   id: string;
   name: string;
@@ -51,8 +46,7 @@ const ALL_CHANNELS = ["webchat", "signal", "telegram", "discord", "whatsapp", "e
 
 export default function AgentsTab() {
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [tools, setTools] = useState<ToolInfo[]>([]);
-  const allToolNames = tools.map((t) => t.name);
+
   const [sandboxImages, setSandboxImages] = useState<string[]>([]);
   const [editing, setEditing] = useState<Agent | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -63,13 +57,11 @@ export default function AgentsTab() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [agentsRes, toolsRes, imagesRes] = await Promise.all([
+      const [agentsRes, imagesRes] = await Promise.all([
         fetch(API_BASE),
-        fetch(`${API_BASE}/tools`),
         fetch(`${API_BASE}/sandbox-images`),
       ]);
       setAgents(await agentsRes.json());
-      setTools(await toolsRes.json());
       setSandboxImages(await imagesRes.json());
       try {
         const modelsRes = await fetch("http://localhost:18790/api/v1/settings/llm/models");
@@ -103,7 +95,7 @@ export default function AgentsTab() {
   });
 
   const startCreate = () => {
-    setEditing({ ...newAgent(), tools: allToolNames });
+    setEditing({ ...newAgent() });
     setIsNew(true);
     setMsg("");
   };
@@ -127,7 +119,6 @@ export default function AgentsTab() {
         model: editing.model,
         utility_model: editing.utility_model,
         sandbox_image: editing.sandbox_image,
-        tools: editing.tools,
         max_iterations: editing.max_iterations,
         auto_rag: editing.auto_rag,
         auto_rag_limit: editing.auto_rag_limit,
@@ -193,14 +184,6 @@ export default function AgentsTab() {
     } catch {
       setMsg("Failed to set default.");
     }
-  };
-
-  const toggleTool = (toolName: string) => {
-    if (!editing) return;
-    const newTools = editing.tools.includes(toolName)
-      ? editing.tools.filter((t) => t !== toolName)
-      : [...editing.tools, toolName];
-    setEditing({ ...editing, tools: newTools });
   };
 
   const toggleChannel = (channel: string) => {
@@ -284,7 +267,6 @@ export default function AgentsTab() {
                   {agent.is_default && <span style={styles.badge}>Default</span>}
                 </div>
                 <div style={styles.cardMeta}>{agent.model}</div>
-                <div style={styles.cardMeta}>{agent.tools.length} tools enabled</div>
                 <div style={styles.cardMeta}>
                   Channels: {agent.channels?.map((c) => c.channel).join(", ") || "none"}
                 </div>
@@ -401,23 +383,6 @@ export default function AgentsTab() {
                 value={editing.system_prompt}
                 onChange={(e) => setEditing({ ...editing, system_prompt: e.target.value })}
               />
-            </div>
-
-            <div style={styles.field}>
-              <label style={styles.label}>Tools</label>
-              <div style={styles.checkboxGrid}>
-                {tools.map((tool) => (
-                  <label key={tool.name} style={styles.checkboxLabel} title={tool.description}>
-                    <input
-                      type="checkbox"
-                      checked={editing.tools.includes(tool.name)}
-                      onChange={() => toggleTool(tool.name)}
-                      style={styles.checkbox}
-                    />
-                    {tool.name}
-                  </label>
-                ))}
-              </div>
             </div>
 
             <div style={styles.field}>

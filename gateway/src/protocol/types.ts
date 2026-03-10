@@ -25,6 +25,7 @@ export interface OutgoingMessage {
   agentName?: string;
   queuePosition?: number;
   queuedCount?: number;
+  agentId?: string;
   messages?: Array<{ role: string; content: string; id?: string; created_at?: string }>;
   conversations?: Array<ConversationSummary>;
   planId?: string;

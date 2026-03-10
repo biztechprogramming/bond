@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GatewayWebSocket, type GatewayMessage, type ConversationSummary } from "@/lib/ws";
+import { GATEWAY_API } from "@/lib/config";
 import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
@@ -47,14 +48,16 @@ export default function Home() {
   // Conversations from SpacetimeDB — auto-updates via subscription
   const spacetimeConversations = useConversations();
   const { connected: stdbConnected } = useSpacetimeConnection();
-  const conversations: ConversationSummary[] = spacetimeConversations.map((c) => ({
-    id: c.id,
-    title: c.title || null,
-    message_count: c.messageCount,
-    updated_at: new Date(Number(c.updatedAt)).toISOString(),
-    agent_id: c.agentId,
-    agent_name: getAgentName(c.agentId),
-  }));
+  const conversations: ConversationSummary[] = spacetimeConversations
+    .filter((c) => c.messageCount > 0)
+    .map((c) => ({
+      id: c.id,
+      title: c.title || null,
+      message_count: c.messageCount,
+      updated_at: new Date(Number(c.updatedAt)).toISOString(),
+      agent_id: c.agentId,
+      agent_name: getAgentName(c.agentId),
+    }));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -99,7 +102,7 @@ export default function Home() {
   const deleteMessage = async (msgId: string, index: number) => {
     if (msgId && conversationId) {
       try {
-        await fetch(`http://localhost:18792/api/v1/conversations/${conversationId}/messages/${msgId}`, {
+        await fetch(`${GATEWAY_API}/conversations/${conversationId}/messages/${msgId}`, {
           method: "DELETE",
         });
       } catch { /* best effort */ }
@@ -218,6 +221,10 @@ export default function Home() {
         );
         if (msg.conversationId) {
           setConversationId(msg.conversationId);
+        }
+        // Switch to the conversation's agent (authoritative — comes from backend)
+        if (msg.agentId) {
+          setSelectedAgentId(msg.agentId);
         }
       } else if (msg.type === "conversations_list" && msg.conversations) {
         // Legacy: still handle for agent selection init until agents are in SpacetimeDB
@@ -350,7 +357,7 @@ export default function Home() {
               title={conv.title || "New conversation"}
             >
               <div style={styles.convTitle}>
-                {conv.title || "New conversation"}
+                {conv.title || (conv.agent_name ? `Chat with ${conv.agent_name}` : "New conversation")}
               </div>
               <div style={styles.convMeta}>
                 {conv.agent_name && <span style={{ color: "#6c8aff" }}>{conv.agent_name}</span>}

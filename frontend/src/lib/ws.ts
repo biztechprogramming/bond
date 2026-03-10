@@ -2,6 +2,8 @@
  * WebSocket client for connecting to the Bond gateway.
  */
 
+import { GATEWAY_WS } from "./config";
+
 export type MessageHandler = (msg: GatewayMessage) => void;
 
 export interface ConversationSummary {
@@ -24,6 +26,7 @@ export interface GatewayMessage {
   conversationId?: string;
   messageId?: string;
   agentStatus?: "idle" | "thinking" | "tool_calling" | "responding";
+  agentId?: string;
   agentName?: string;
   queuePosition?: number;
   queuedCount?: number;
@@ -49,7 +52,7 @@ export class GatewayWebSocket {
   private maxReconnectDelay = 30000;
 
   constructor(url?: string) {
-    this.url = url || `ws://localhost:18792/ws`;
+    this.url = url || `${GATEWAY_WS}/ws`;
   }
 
   connect(): void {

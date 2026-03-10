@@ -36,17 +36,26 @@ import {
 // Import all reducer arg schemas
 import AddAgentReducer from "./add_agent_reducer";
 import AddAgentMountReducer from "./add_agent_mount_reducer";
+import AddAgentPromptFragmentReducer from "./add_agent_prompt_fragment_reducer";
 import AddConversationMessageReducer from "./add_conversation_message_reducer";
 import AddMcpServerReducer from "./add_mcp_server_reducer";
 import AddModelReducer from "./add_model_reducer";
+import AddPromptFragmentReducer from "./add_prompt_fragment_reducer";
+import AddPromptFragmentVersionReducer from "./add_prompt_fragment_version_reducer";
+import AddPromptTemplateReducer from "./add_prompt_template_reducer";
+import AddPromptTemplateVersionReducer from "./add_prompt_template_version_reducer";
 import AddProviderReducer from "./add_provider_reducer";
 import AddWorkItemReducer from "./add_work_item_reducer";
 import CreateConversationReducer from "./create_conversation_reducer";
 import CreateWorkPlanReducer from "./create_work_plan_reducer";
+import DeleteAgentPromptFragmentReducer from "./delete_agent_prompt_fragment_reducer";
 import DeleteConversationReducer from "./delete_conversation_reducer";
 import DeleteConversationMessageReducer from "./delete_conversation_message_reducer";
 import DeleteMcpServerReducer from "./delete_mcp_server_reducer";
+import DeletePromptFragmentReducer from "./delete_prompt_fragment_reducer";
+import DeletePromptTemplateReducer from "./delete_prompt_template_reducer";
 import DeleteProviderReducer from "./delete_provider_reducer";
+import DeleteProviderAliasReducer from "./delete_provider_alias_reducer";
 import DeleteProviderApiKeyReducer from "./delete_provider_api_key_reducer";
 import DeleteSettingReducer from "./delete_setting_reducer";
 import DeleteWorkPlanReducer from "./delete_work_plan_reducer";
@@ -57,6 +66,7 @@ import ImportWorkPlanReducer from "./import_work_plan_reducer";
 import LogToolReducer from "./log_tool_reducer";
 import RenameWorkItemReducer from "./rename_work_item_reducer";
 import SaveMessageReducer from "./save_message_reducer";
+import SetProviderAliasReducer from "./set_provider_alias_reducer";
 import SetProviderApiKeyReducer from "./set_provider_api_key_reducer";
 import SetSettingReducer from "./set_setting_reducer";
 import UpdateConversationReducer from "./update_conversation_reducer";
@@ -69,6 +79,7 @@ import UpdateWorkPlanStatusReducer from "./update_work_plan_status_reducer";
 
 // Import all table schema definitions
 import AgentChannelsRow from "./agent_channels_table";
+import AgentPromptFragmentsRow from "./agent_prompt_fragments_table";
 import AgentWorkspaceMountsRow from "./agent_workspace_mounts_table";
 import AgentsRow from "./agents_table";
 import ConversationMessagesRow from "./conversation_messages_table";
@@ -76,6 +87,11 @@ import ConversationsRow from "./conversations_table";
 import LlmModelsRow from "./llm_models_table";
 import McpServersRow from "./mcp_servers_table";
 import MessagesRow from "./messages_table";
+import PromptFragmentVersionsRow from "./prompt_fragment_versions_table";
+import PromptFragmentsRow from "./prompt_fragments_table";
+import PromptTemplateVersionsRow from "./prompt_template_versions_table";
+import PromptTemplatesRow from "./prompt_templates_table";
+import ProviderAliasesRow from "./provider_aliases_table";
 import ProviderApiKeysRow from "./provider_api_keys_table";
 import ProvidersRow from "./providers_table";
 import SettingsRow from "./settings_table";
@@ -98,6 +114,17 @@ const tablesSchema = __schema({
       { name: 'agent_channels_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, AgentChannelsRow),
+  agent_prompt_fragments: __table({
+    name: 'agent_prompt_fragments',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'agent_prompt_fragments_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AgentPromptFragmentsRow),
   agent_workspace_mounts: __table({
     name: 'agent_workspace_mounts',
     indexes: [
@@ -175,6 +202,61 @@ const tablesSchema = __schema({
       { name: 'messages_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, MessagesRow),
+  prompt_fragment_versions: __table({
+    name: 'prompt_fragment_versions',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'prompt_fragment_versions_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PromptFragmentVersionsRow),
+  prompt_fragments: __table({
+    name: 'prompt_fragments',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'prompt_fragments_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PromptFragmentsRow),
+  prompt_template_versions: __table({
+    name: 'prompt_template_versions',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'prompt_template_versions_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PromptTemplateVersionsRow),
+  prompt_templates: __table({
+    name: 'prompt_templates',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'prompt_templates_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PromptTemplatesRow),
+  provider_aliases: __table({
+    name: 'provider_aliases',
+    indexes: [
+      { name: 'alias', algorithm: 'btree', columns: [
+        'alias',
+      ] },
+    ],
+    constraints: [
+      { name: 'provider_aliases_alias_key', constraint: 'unique', columns: ['alias'] },
+    ],
+  }, ProviderAliasesRow),
   provider_api_keys: __table({
     name: 'provider_api_keys',
     indexes: [
@@ -247,17 +329,26 @@ const tablesSchema = __schema({
 const reducersSchema = __reducers(
   __reducerSchema("add_agent", AddAgentReducer),
   __reducerSchema("add_agent_mount", AddAgentMountReducer),
+  __reducerSchema("add_agent_prompt_fragment", AddAgentPromptFragmentReducer),
   __reducerSchema("add_conversation_message", AddConversationMessageReducer),
   __reducerSchema("add_mcp_server", AddMcpServerReducer),
   __reducerSchema("add_model", AddModelReducer),
+  __reducerSchema("add_prompt_fragment", AddPromptFragmentReducer),
+  __reducerSchema("add_prompt_fragment_version", AddPromptFragmentVersionReducer),
+  __reducerSchema("add_prompt_template", AddPromptTemplateReducer),
+  __reducerSchema("add_prompt_template_version", AddPromptTemplateVersionReducer),
   __reducerSchema("add_provider", AddProviderReducer),
   __reducerSchema("add_work_item", AddWorkItemReducer),
   __reducerSchema("create_conversation", CreateConversationReducer),
   __reducerSchema("create_work_plan", CreateWorkPlanReducer),
+  __reducerSchema("delete_agent_prompt_fragment", DeleteAgentPromptFragmentReducer),
   __reducerSchema("delete_conversation", DeleteConversationReducer),
   __reducerSchema("delete_conversation_message", DeleteConversationMessageReducer),
   __reducerSchema("delete_mcp_server", DeleteMcpServerReducer),
+  __reducerSchema("delete_prompt_fragment", DeletePromptFragmentReducer),
+  __reducerSchema("delete_prompt_template", DeletePromptTemplateReducer),
   __reducerSchema("delete_provider", DeleteProviderReducer),
+  __reducerSchema("delete_provider_alias", DeleteProviderAliasReducer),
   __reducerSchema("delete_provider_api_key", DeleteProviderApiKeyReducer),
   __reducerSchema("delete_setting", DeleteSettingReducer),
   __reducerSchema("delete_work_plan", DeleteWorkPlanReducer),
@@ -268,6 +359,7 @@ const reducersSchema = __reducers(
   __reducerSchema("log_tool", LogToolReducer),
   __reducerSchema("rename_work_item", RenameWorkItemReducer),
   __reducerSchema("save_message", SaveMessageReducer),
+  __reducerSchema("set_provider_alias", SetProviderAliasReducer),
   __reducerSchema("set_provider_api_key", SetProviderApiKeyReducer),
   __reducerSchema("set_setting", SetSettingReducer),
   __reducerSchema("update_conversation", UpdateConversationReducer),

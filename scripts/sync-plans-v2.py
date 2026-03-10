@@ -3,7 +3,7 @@ import httpx
 from sqlalchemy import text
 from backend.app.db.session import get_session_factory
 
-GATEWAY_URL = "http://localhost:18792/api/v1"
+GATEWAY_URL = "http://localhost:18789/api/v1"
 
 async def sync():
     session_factory = get_session_factory()

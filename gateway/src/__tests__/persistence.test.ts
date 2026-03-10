@@ -23,7 +23,7 @@ import type { GatewayConfig } from "../config/index.js";
 function buildConfig(overrides: Partial<GatewayConfig> = {}): GatewayConfig {
   return {
     host: "127.0.0.1",
-    port: 18792,
+    port: 18789,
     backendUrl: "http://127.0.0.1:18790",
     frontendOrigin: "http://localhost:18788",
     spacetimedbUrl: "http://fake-spacetimedb:18787",

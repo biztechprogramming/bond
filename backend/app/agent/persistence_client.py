@@ -35,10 +35,10 @@ def _resolve_gateway_url() -> str:
     system = platform.system().lower()
     if system in ("darwin", "windows") or "microsoft" in platform.release().lower():
         # macOS, Windows, WSL — Docker Desktop provides host.docker.internal
-        return "http://host.docker.internal:18792"
+        return "http://host.docker.internal:18789"
     else:
         # Native Linux — Docker bridge gateway
-        return "http://172.17.0.1:18792"
+        return "http://172.17.0.1:18789"
 
 
 async def _detect_persistence_mode(gateway_url: str) -> str:

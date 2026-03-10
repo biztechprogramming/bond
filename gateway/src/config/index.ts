@@ -1,10 +1,13 @@
 /**
- * Gateway configuration — reads from environment or defaults.
+ * Gateway configuration.
+ *
+ * Single source of truth: bond.json (project root).
+ * Environment variables override bond.json values.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 
 export interface GatewayConfig {
   host: string;
@@ -14,6 +17,23 @@ export interface GatewayConfig {
   spacetimedbUrl: string;
   spacetimedbModuleName: string;
   spacetimedbToken: string;
+}
+
+/** Walk up from cwd to find bond.json */
+function findBondJson(): Record<string, any> {
+  let dir = process.cwd();
+  while (true) {
+    const candidate = join(dir, "bond.json");
+    if (existsSync(candidate)) {
+      try {
+        return JSON.parse(readFileSync(candidate, "utf8"));
+      } catch { return {}; }
+    }
+    const parent = resolve(dir, "..");
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return {};
 }
 
 /** Read the SpacetimeDB token from ~/.config/spacetime/cli.toml if not in env. */
@@ -28,11 +48,22 @@ function resolveSpacetimeToken(): string {
 }
 
 export function loadConfig(): GatewayConfig {
+  const bond = findBondJson();
+  const gw = bond.gateway || {};
+  const be = bond.backend || {};
+  const fe = bond.frontend || {};
+
+  const host = process.env.BOND_GATEWAY_HOST || gw.host || "127.0.0.1";
+  const port = parseInt(process.env.BOND_GATEWAY_PORT || String(gw.port || 18789), 10);
+  const backendHost = process.env.BOND_BACKEND_HOST || be.host || "127.0.0.1";
+  const backendPort = process.env.BOND_BACKEND_PORT || String(be.port || 18790);
+  const frontendPort = process.env.BOND_FRONTEND_PORT || String(fe.port || 18788);
+
   return {
-    host: process.env.BOND_GATEWAY_HOST || "127.0.0.1",
-    port: parseInt(process.env.BOND_GATEWAY_PORT || "18792", 10),
-    backendUrl: process.env.BOND_BACKEND_URL || "http://127.0.0.1:18790",
-    frontendOrigin: process.env.BOND_FRONTEND_ORIGIN || "http://localhost:18788",
+    host,
+    port,
+    backendUrl: process.env.BOND_BACKEND_URL || `http://${backendHost}:${backendPort}`,
+    frontendOrigin: process.env.BOND_FRONTEND_ORIGIN || `http://localhost:${frontendPort}`,
     spacetimedbUrl: process.env.BOND_SPACETIMEDB_URL || "http://localhost:18787",
     spacetimedbModuleName: process.env.BOND_SPACETIMEDB_MODULE || "bond-core-v2",
     spacetimedbToken: resolveSpacetimeToken(),

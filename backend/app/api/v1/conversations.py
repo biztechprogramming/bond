@@ -295,6 +295,7 @@ class ConversationTurnRequest(BaseModel):
     message: str | None = None
     plan_id: str | None = None
     agent_id: str | None = None  # only used when creating a brand-new conversation
+    channel: str | None = None   # "webchat", "telegram", "whatsapp" — defaults to webchat
 
 
 def _sse(event: str, data: dict) -> str:
@@ -423,7 +424,7 @@ async def conversation_turn(
                 agent_id = default_agents[0]["id"]
                 logger.info(f"[CONVERSATIONS] Using default agent: {agent_id}")
         
-        await stdb.call_reducer("create_conversation", [conversation_id, agent_id, "webchat", ""])
+        await stdb.call_reducer("create_conversation", [conversation_id, agent_id, req.channel or "webchat", ""])
         logger.info(f"[CONVERSATIONS] Created new conversation {conversation_id} with agent {agent_id}")
     else:
         # Existing conversation — use its agent
@@ -502,6 +503,20 @@ async def conversation_turn(
         else:
             logger.info(f"[CONVERSATIONS] Successfully saved user message {msg_id}")
 
+        # Auto-title: set title from first user message if conversation is untitled
+        try:
+            title_rows = await stdb.query(
+                f"SELECT title FROM conversations WHERE id = '{conversation_id}'"
+            )
+            if title_rows and not title_rows[0].get("title"):
+                auto_title = req.message.strip()[:80]
+                if len(req.message.strip()) > 80:
+                    auto_title = auto_title.rsplit(" ", 1)[0] + "..."
+                await stdb.call_reducer("update_conversation", [conversation_id, auto_title])
+                logger.info(f"[CONVERSATIONS] Auto-titled conversation {conversation_id}: {auto_title}")
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to auto-title: {e}")
+
     # Load history from SpacetimeDB
     # Try conversation_messages first (migrated data), fall back to messages (new persistence)
     messages_rows = []
@@ -578,11 +593,52 @@ async def conversation_turn(
         else:
             logger.info(f"[CONVERSATIONS] Agent has no workspace mounts")
 
-        # Decrypt API keys or load from vault
+        # Load API keys from SpacetimeDB provider_api_keys table
         api_keys = {}
-        # TODO: wire up SpacetimeDB-backed settings/vault
-        
+        try:
+            key_rows = await stdb.query("SELECT providerId, encryptedValue FROM provider_api_keys")
+            if not key_rows:
+                key_rows = await stdb.query("SELECT provider_id, encrypted_value FROM provider_api_keys")
+            for kr in key_rows:
+                provider_id = kr.get("providerId") or kr.get("provider_id")
+                encrypted_val = kr.get("encryptedValue") or kr.get("encrypted_value")
+                if provider_id and encrypted_val:
+                    try:
+                        from backend.app.core.crypto import decrypt_value, is_encrypted
+                        val = decrypt_value(encrypted_val)
+                        if val:
+                            api_keys[provider_id] = val
+                    except Exception:
+                        # If decryption fails, try as plaintext (dev mode)
+                        from backend.app.core.crypto import is_encrypted
+                        if not is_encrypted(encrypted_val):
+                            api_keys[provider_id] = encrypted_val
+            logger.info(f"[CONVERSATIONS] Loaded {len(api_keys)} API keys from provider_api_keys")
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to load API keys from SpacetimeDB: {e}")
+            # Fallback: try environment variables
+            import os
+            for env_key in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY"]:
+                val = os.environ.get(env_key)
+                if val:
+                    provider = env_key.replace("_API_KEY", "").lower()
+                    api_keys[provider] = val
+            if api_keys:
+                logger.info(f"[CONVERSATIONS] Loaded {len(api_keys)} API keys from environment")
+
+        # Load provider aliases from SpacetimeDB
         provider_aliases = {}
+        try:
+            alias_rows = await stdb.query("SELECT alias, providerId FROM provider_aliases")
+            if not alias_rows:
+                alias_rows = await stdb.query("SELECT alias, provider_id FROM provider_aliases")
+            for r in alias_rows:
+                alias = r.get("alias")
+                pid = r.get("providerId") or r.get("provider_id")
+                if alias and pid:
+                    provider_aliases[alias] = pid
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to load provider aliases: {e}")
 
         agent_dict = {
             "id": agent_row["id"],
