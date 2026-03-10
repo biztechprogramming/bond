@@ -40,6 +40,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   const sessionManager = new SessionManager();
   const backendClient = new BackendClient(config.backendUrl);
   const webchat = new WebChatChannel(sessionManager, backendClient);
+  webchat.setConfig(config);
 
   const app = express();
   app.use(express.json());
