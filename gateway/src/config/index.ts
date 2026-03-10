@@ -53,7 +53,7 @@ export function loadConfig(): GatewayConfig {
   const be = bond.backend || {};
   const fe = bond.frontend || {};
 
-  const host = process.env.BOND_GATEWAY_HOST || gw.host || "127.0.0.1";
+  const host = process.env.BOND_GATEWAY_HOST || gw.host || "0.0.0.0";
   const port = parseInt(process.env.BOND_GATEWAY_PORT || String(gw.port || 18789), 10);
   const backendHost = process.env.BOND_BACKEND_HOST || be.host || "127.0.0.1";
   const backendPort = process.env.BOND_BACKEND_PORT || String(be.port || 18790);

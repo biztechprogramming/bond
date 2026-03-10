@@ -17,7 +17,7 @@ import {
   type WorkPlan as STDBWorkPlan,
   type WorkItem as STDBWorkItem
 } from "@/lib/spacetimedb-client";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API, STDB_WS } from "@/lib/config";
 
 const API_BASE = BACKEND_API;
 
@@ -119,7 +119,7 @@ function BoardPage() {
 
   // Initialize SpacetimeDB connection
   useEffect(() => {
-    connectToSpacetimeDB();
+    connectToSpacetimeDB(STDB_WS);
   }, []);
 
   // Persist conversation ID

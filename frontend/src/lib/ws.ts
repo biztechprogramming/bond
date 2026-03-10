@@ -95,6 +95,7 @@ export class GatewayWebSocket {
     }
 
     try {
+      console.log("[ws] Connecting to:", this.url);
       this.ws = new WebSocket(this.url);
     } catch (err) {
       console.error("[ws] Failed to create WebSocket:", err);
