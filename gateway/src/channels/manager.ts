@@ -1,14 +1,16 @@
 /**
  * Channel lifecycle manager.
  * Manages channel configs, start/stop, and routes inbound messages to the backend.
+ * Supports multi-agent command routing via /help, /agents, /agent, /all, /reset, /status.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { dirname } from "path";
+import { ulid } from "ulid";
 import { AllowList } from "./allowlist.js";
 import { TelegramChannel } from "./telegram.js";
 import { WhatsAppChannel } from "./whatsapp.js";
 import type { ChannelMessage } from "./base.js";
-import type { BackendClient } from "../backend/client.js";
+import type { BackendClient, AgentInfo } from "../backend/client.js";
 
 interface ChannelConfig {
   type: string;
@@ -26,6 +28,12 @@ interface ChannelStatus {
   user?: { id: string; name?: string };
 }
 
+interface ChatSession {
+  currentAgentId: string | null;
+  currentAgentName: string | null;
+  conversations: Map<string, string>;
+}
+
 export class ChannelManager {
   private configs = new Map<string, ChannelConfig>();
   private telegram: TelegramChannel | null = null;
@@ -35,6 +43,7 @@ export class ChannelManager {
   private qrSubscribers = new Set<(qr: string) => void>();
   private statusSubscribers = new Set<(status: string) => void>();
   private whatsappAuthDir: string;
+  private chatSessions = new Map<string, ChatSession>();
 
   constructor(configPath: string, backendClient: BackendClient) {
     this.configPath = configPath;
@@ -182,38 +191,234 @@ export class ChannelManager {
   }
 
   /**
-   * Route inbound channel messages to the backend.
-   * Creates a conversation turn similar to webchat flow.
+   * Route inbound channel messages — parse commands first, then route to agent.
    */
   private async handleInboundMessage(msg: ChannelMessage): Promise<void> {
     console.log(`[channels] Inbound ${msg.channelType} message from ${msg.senderId}: ${msg.content.substring(0, 50)}`);
 
     try {
-      // Use the backend client to start a conversation turn.
-      // The sessionId from the channel message serves as the conversation routing key.
-      const conversationId = `${msg.channelType}-${msg.sessionId || msg.senderId}`;
+      const text = msg.content.trim();
+      const chatKey = `${msg.channelType}-${msg.sessionId || msg.senderId}`;
 
-      // Stream the response and collect it for sending back
-      let fullResponse = "";
-      for await (const event of this.backendClient.conversationTurnStream(
-        conversationId,
-        msg.content,
-      )) {
-        if (event.event === "chunk" && event.data.content) {
-          fullResponse += event.data.content as string;
+      if (text.startsWith("/")) {
+        const response = await this.handleCommand(chatKey, text, msg);
+        if (response) {
+          await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, response);
+          return;
         }
       }
 
-      // Send the collected response back through the channel
-      if (fullResponse) {
-        if (msg.channelType === "telegram" && this.telegram) {
-          await this.telegram.send(msg.sessionId || msg.senderId, fullResponse);
-        } else if (msg.channelType === "whatsapp" && this.whatsapp) {
-          await this.whatsapp.send(msg.senderId, fullResponse);
-        }
-      }
+      await this.routeToAgent(chatKey, msg);
     } catch (err) {
       console.error(`[channels] Error handling ${msg.channelType} message:`, err);
+    }
+  }
+
+  private getOrCreateSession(chatKey: string): ChatSession {
+    let session = this.chatSessions.get(chatKey);
+    if (!session) {
+      session = { currentAgentId: null, currentAgentName: null, conversations: new Map() };
+      this.chatSessions.set(chatKey, session);
+    }
+    return session;
+  }
+
+  private async handleCommand(chatKey: string, text: string, msg: ChannelMessage): Promise<string | null> {
+    const parts = text.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const arg = parts.slice(1).join(" ").trim();
+
+    switch (cmd) {
+      case "/help":
+        return this.cmdHelp();
+      case "/agents":
+        return this.cmdAgents(chatKey);
+      case "/agent":
+        return this.cmdAgent(chatKey, arg);
+      case "/all":
+        return arg ? this.cmdAll(chatKey, arg, msg) : "Usage: /all <message>";
+      case "/reset":
+        return this.cmdReset(chatKey, arg);
+      case "/status":
+        return this.cmdStatus(chatKey, msg);
+      default:
+        return null; // Not a recognized command — pass through to agent
+    }
+  }
+
+  private cmdHelp(): string {
+    return `📋 Bond Commands
+
+/help — Show this help message
+/agents — List available agents
+/agent <name> — Switch to an agent (no arg = show current)
+/all <message> — Send message to all agents
+/reset — Clear conversation with current agent
+/reset all — Clear all agent conversations
+/reset <name> — Clear conversation with specific agent
+/status — Show current agent and session info`;
+  }
+
+  private async cmdAgents(chatKey: string): Promise<string> {
+    const agents = await this.backendClient.listAgents();
+    if (!agents.length) return "No agents available.";
+
+    const session = this.getOrCreateSession(chatKey);
+    const currentId = session.currentAgentId;
+
+    const lines = agents.map((a) => {
+      const isCurrent = currentId ? a.id === currentId : a.is_default;
+      const prefix = isCurrent ? "✅" : "  ";
+      const suffix = a.is_default ? " (default)" : "";
+      return `${prefix} ${a.display_name || a.name}${suffix}`;
+    });
+
+    return `🤖 Available Agents\n\n${lines.join("\n")}`;
+  }
+
+  private async cmdAgent(chatKey: string, name: string): Promise<string> {
+    const session = this.getOrCreateSession(chatKey);
+
+    if (!name) {
+      const label = session.currentAgentName || "default agent";
+      return `Currently talking to: ${label}`;
+    }
+
+    const agents = await this.backendClient.listAgents();
+    const match = agents.find(
+      (a) =>
+        a.name.toLowerCase() === name.toLowerCase() ||
+        a.display_name.toLowerCase() === name.toLowerCase(),
+    );
+
+    if (!match) {
+      return `Agent "${name}" not found. Use /agents to see available agents.`;
+    }
+
+    session.currentAgentId = match.id;
+    session.currentAgentName = match.display_name || match.name;
+    const suffix = match.is_default ? " (default)" : "";
+    return `Switched to: ${session.currentAgentName}${suffix}`;
+  }
+
+  private async cmdAll(chatKey: string, message: string, msg: ChannelMessage): Promise<string> {
+    const agents = await this.backendClient.listAgents();
+    if (!agents.length) return "No agents available.";
+
+    const session = this.getOrCreateSession(chatKey);
+
+    const results = await Promise.allSettled(
+      agents.map(async (agent) => {
+        const agentKey = agent.id;
+        let conversationId = session.conversations.get(agentKey);
+        if (!conversationId) {
+          conversationId = ulid();
+          session.conversations.set(agentKey, conversationId);
+        }
+
+        let fullResponse = "";
+        for await (const event of this.backendClient.conversationTurnStream(
+          conversationId,
+          message,
+          agent.id,
+        )) {
+          if (event.event === "chunk" && event.data.content) {
+            fullResponse += event.data.content as string;
+          }
+        }
+        return { agent, response: fullResponse || "(no response)" };
+      }),
+    );
+
+    const lines: string[] = [];
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        const { agent, response } = result.value;
+        lines.push(`🤖 ${agent.display_name || agent.name}:\n${response}`);
+      } else {
+        lines.push(`❌ Error: ${result.reason}`);
+      }
+    }
+
+    return lines.join("\n\n");
+  }
+
+  private async cmdReset(chatKey: string, arg: string): Promise<string> {
+    const session = this.getOrCreateSession(chatKey);
+
+    if (arg.toLowerCase() === "all") {
+      const count = session.conversations.size;
+      session.conversations.clear();
+      return `🔄 Cleared all ${count} conversation(s). Next message starts fresh.`;
+    }
+
+    if (arg) {
+      const agents = await this.backendClient.listAgents();
+      const match = agents.find(
+        (a) =>
+          a.name.toLowerCase() === arg.toLowerCase() ||
+          a.display_name.toLowerCase() === arg.toLowerCase(),
+      );
+      if (!match) return `Agent "${arg}" not found. Use /agents to see available agents.`;
+      const deleted = session.conversations.delete(match.id);
+      return deleted
+        ? `🔄 Cleared conversation with ${match.display_name || match.name}. Next message starts fresh.`
+        : `No active conversation with ${match.display_name || match.name}.`;
+    }
+
+    // Reset current agent
+    const agentKey = session.currentAgentId || "__default__";
+    const deleted = session.conversations.delete(agentKey);
+    return deleted
+      ? "🔄 Cleared current conversation. Next message starts fresh."
+      : "No active conversation to clear.";
+  }
+
+  private cmdStatus(chatKey: string, msg: ChannelMessage): string {
+    const session = this.getOrCreateSession(chatKey);
+    const agentLabel = session.currentAgentName || "default agent";
+    const convCount = session.conversations.size;
+
+    return `📊 Status
+
+Channel: ${msg.channelType}
+Current agent: ${agentLabel}
+Active conversations: ${convCount}
+Session: ${chatKey}`;
+  }
+
+  private async routeToAgent(chatKey: string, msg: ChannelMessage): Promise<void> {
+    const session = this.getOrCreateSession(chatKey);
+    const agentId = session.currentAgentId;
+
+    const agentKey = agentId || "__default__";
+    let conversationId = session.conversations.get(agentKey);
+    if (!conversationId) {
+      conversationId = ulid();
+      session.conversations.set(agentKey, conversationId);
+    }
+
+    let fullResponse = "";
+    for await (const event of this.backendClient.conversationTurnStream(
+      conversationId,
+      msg.content,
+      agentId || undefined,
+    )) {
+      if (event.event === "chunk" && event.data.content) {
+        fullResponse += event.data.content as string;
+      }
+    }
+
+    if (fullResponse) {
+      await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, fullResponse);
+    }
+  }
+
+  private async sendToChannel(channelType: string, channelId: string, message: string): Promise<void> {
+    if (channelType === "telegram" && this.telegram) {
+      await this.telegram.send(channelId, message);
+    } else if (channelType === "whatsapp" && this.whatsapp) {
+      await this.whatsapp.send(channelId, message);
     }
   }
 

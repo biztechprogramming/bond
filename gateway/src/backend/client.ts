@@ -65,6 +65,13 @@ export interface ConversationDetail {
   messages: ConversationMessage[];
 }
 
+export interface AgentInfo {
+  id: string;
+  name: string;
+  display_name: string;
+  is_default: boolean;
+}
+
 export class BackendClient {
   private baseUrl: string;
 
@@ -247,6 +254,22 @@ export class BackendClient {
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+  }
+
+  async listAgents(): Promise<AgentInfo[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/v1/agents`);
+      if (!res.ok) return [];
+      const agents = await res.json();
+      return (agents as any[]).map((a) => ({
+        id: a.id,
+        name: a.name,
+        display_name: a.display_name,
+        is_default: !!a.is_default,
+      }));
+    } catch {
+      return [];
     }
   }
 
