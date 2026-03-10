@@ -511,7 +511,8 @@ Session: ${chatKey}`;
     return this.channelBindings.get(conversationId) || null;
   }
 
-  private async sendToChannel(channelType: string, channelId: string, message: string): Promise<void> {
+  /** Direct send to a channel — used by ResponseFanOut and internal routing. */
+  async sendToChannel(channelType: string, channelId: string, message: string): Promise<void> {
     if (channelType === "telegram" && this.telegram) {
       await this.telegram.send(channelId, message);
     } else if (channelType === "whatsapp" && this.whatsapp) {

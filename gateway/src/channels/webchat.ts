@@ -17,6 +17,7 @@ export class WebChatChannel {
   private streamBuffers = new Map<string, { content: string; agentName: string; agentStatus: string }>();
 
   private pipeline: MessagePipeline | null = null;
+  private crossChannelPush: ((conversationId: string, message: string, senderLabel?: string) => void) | null = null;
 
   constructor(
     private sessionManager: SessionManager,
@@ -26,6 +27,11 @@ export class WebChatChannel {
   /** Set the pipeline for message processing. */
   setPipeline(pipeline: MessagePipeline): void {
     this.pipeline = pipeline;
+  }
+
+  /** Set callback for pushing user messages to other channels (Telegram/WhatsApp). */
+  setCrossChannelPush(fn: (conversationId: string, message: string, senderLabel?: string) => void): void {
+    this.crossChannelPush = fn;
   }
 
   async handleConnection(socket: WebSocket): Promise<void> {
@@ -143,6 +149,11 @@ export class WebChatChannel {
       for (const s of otherSockets) {
         s.send(echoMsg);
       }
+    }
+
+    // Cross-channel: push user message to Telegram/WhatsApp if they're watching this conversation
+    if (this.crossChannelPush) {
+      this.crossChannelPush(resolvedConversationId, msg.content, "You (web)");
     }
 
     if (this.pipeline) {

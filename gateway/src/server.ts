@@ -126,16 +126,36 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
       const binding = channelManager.getChannelBinding(conversationId);
       const watchers: Array<{ channelType: string; channelId: string }> = [];
       if (binding) watchers.push(binding);
-      // webchat sockets are handled separately via sendToConversation
+      // Also include webchat sockets watching this conversation
+      const wcSockets = sessionManager.getSocketsForConversation(conversationId);
+      if (wcSockets.length > 0) {
+        watchers.push({ channelType: "webchat", channelId: conversationId });
+      }
       return watchers;
     },
     async sendToChannel(channelType: string, channelId: string, message: string) {
-      await channelManager.pushToChannel(channelId, message);
+      if (channelType === "webchat") {
+        // Push to webchat sockets watching this conversation (channelId = conversationId for webchat watchers)
+        const payload = JSON.stringify({
+          type: "chunk" as const,
+          content: message,
+          conversationId: channelId,
+        });
+        for (const s of sessionManager.getSocketsForConversation(channelId)) {
+          if (s.readyState === 1) s.send(payload);
+        }
+      } else {
+        // Push directly to Telegram/WhatsApp (channelId = chat ID)
+        await channelManager.sendToChannel(channelType, channelId, message);
+      }
     },
   }));
 
   // Wire pipeline into channels
   webchat.setPipeline(pipeline);
+  webchat.setCrossChannelPush((conversationId, message, senderLabel) => {
+    channelManager.pushToChannel(conversationId, message, senderLabel).catch(() => {});
+  });
   channelManager.setPipeline(pipeline);
 
   app.use("/api/v1", createChannelRouter(channelManager));
