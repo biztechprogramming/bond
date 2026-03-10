@@ -1,6 +1,6 @@
 """Semantic router for Tier 3 fragment selection (Doc 027 Phase 3).
 
-Uses sentence-transformers embeddings to match user messages against
+Uses FastEmbed (ONNX Runtime) embeddings to match user messages against
 manifest utterances. Fast local inference, no API calls.
 """
 
@@ -18,7 +18,7 @@ logger = logging.getLogger("bond.agent.fragment_router")
 # Configuration
 # ---------------------------------------------------------------------------
 
-ENCODER_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+ENCODER_MODEL = "BAAI/bge-small-en-v1.5"
 SCORE_THRESHOLD = 0.4  # Minimum similarity to include a route
 LOW_CONFIDENCE_THRESHOLD = 0.6  # Warn when best score is below this
 
@@ -59,12 +59,12 @@ def _build_routes(prompts_dir: Path) -> None:
     global _router, _route_to_fragment, _encoder
 
     from semantic_router import Route, SemanticRouter
-    from semantic_router.encoders import HuggingFaceEncoder
+    from semantic_router.encoders import FastEmbedEncoder
 
     manifest = load_manifest(prompts_dir)
     tier3 = get_tier3_fragments(manifest)
 
-    encoder = HuggingFaceEncoder(name=ENCODER_MODEL)
+    encoder = FastEmbedEncoder(name=ENCODER_MODEL)
     _encoder = encoder
 
     if not tier3:
