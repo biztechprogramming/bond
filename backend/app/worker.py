@@ -599,19 +599,83 @@ async def _run_agent_loop(
     if utility_key:
         utility_kwargs["api_key"] = utility_key
 
-    # --- Crash Recovery: check for active work plans ---
+    # --- Plan-Aware Continuation (Design Doc 034) ---
+    # Classify intent, load plan, and build minimal context for continuations.
     _has_active_plan = False
     _active_plan_id: str | None = None
+    _is_continuation = False
     try:
         from backend.app.agent.tools.work_plan import load_active_plan, format_plan_context, format_recovery_context
+        from backend.app.agent.continuation import (
+            classify_intent,
+            ContinuationIntent,
+            resolve_plan_position,
+            build_continuation_context,
+            build_checkpoint_from_history,
+            format_checkpoint_context,
+        )
+
         active_plan = await load_active_plan(_state.agent_db, _state.agent_id, conversation_id=conversation_id, plan_id=plan_id)
         if active_plan:
             _has_active_plan = True
             _active_plan_id = active_plan["id"]
 
-            # Always inject plan context with real IDs so the agent never hallucinates them.
-            # Use recovery format if the plan has in-progress items (resuming interrupted work),
-            # otherwise use the compact ID-focused format.
+        # Classify user intent
+        intent = classify_intent(user_message, _has_active_plan)
+        logger.info("Continuation intent: %s (has_plan=%s)", intent.value, _has_active_plan)
+
+        if intent in (ContinuationIntent.CONTINUE, ContinuationIntent.ADJUST) and active_plan:
+            # --- Plan-Aware Fresh Context ---
+            # Instead of injecting bloated history, build minimal continuation context.
+            _is_continuation = True
+
+            # Resolve position against real state
+            _workspace_dir_for_plan = os.environ.get("WORKSPACE_DIR", "/workspace")
+            position = await resolve_plan_position(active_plan, _workspace_dir_for_plan)
+
+            # Build focused context
+            adjustment = user_message if intent == ContinuationIntent.ADJUST else None
+            continuation_ctx = build_continuation_context(position, active_plan, adjustment)
+
+            # Also include plan IDs for the work_plan tool
+            plan_id_ctx = format_plan_context(active_plan)
+
+            # Replace history with minimal continuation context
+            # This is the key optimization: ~2K tokens instead of ~100K
+            history = [{"role": "user", "content": continuation_ctx + "\n\n" + plan_id_ctx}]
+
+            logger.info(
+                "Continuation: plan %s, %d/%d complete, next=%s, history replaced (%d tokens)",
+                _active_plan_id,
+                len(position.completed_items),
+                position.total_items,
+                position.next_item.get("title", "none") if position.next_item else "none",
+                len(continuation_ctx) // 4,
+            )
+
+            # Emit continuation event for the frontend
+            if event_queue is not None:
+                await event_queue.put(_sse_event("status", {
+                    "state": "continuing",
+                    "plan_id": _active_plan_id,
+                    "progress": f"{len(position.completed_items)}/{position.total_items}",
+                    "next_item": position.next_item.get("title", "") if position.next_item else "",
+                }))
+
+        elif intent == ContinuationIntent.CONTINUE and not active_plan and history:
+            # --- Fallback: No Work Plan ---
+            # Build a lightweight checkpoint from history instead of sending it all.
+            _is_continuation = True
+            checkpoint = build_checkpoint_from_history(history)
+            checkpoint_ctx = format_checkpoint_context(checkpoint)
+
+            # Replace history with checkpoint (~500 tokens)
+            history = [{"role": "user", "content": checkpoint_ctx}]
+
+            logger.info("Continuation (no plan): checkpoint built, history replaced")
+
+        elif active_plan:
+            # Normal message with active plan — use existing format_plan_context
             in_progress = [i for i in active_plan.get("items", []) if i["status"] == "in_progress"]
             if in_progress:
                 plan_ctx = format_recovery_context(active_plan) + "\n\n" + format_plan_context(active_plan)
@@ -621,8 +685,9 @@ async def _run_agent_loop(
             # Inject as a system message prefix so the agent always has IDs in context
             history = [{"role": "user", "content": plan_ctx}] + history
             logger.info("Injected active plan context for plan %s (%d items)", _active_plan_id, len(active_plan.get("items", [])))
+
     except Exception as e:
-        logger.debug("Work plan context injection skipped: %s", e)
+        logger.debug("Plan-aware continuation skipped: %s", e)
 
     # --- Context Distillation Pipeline ---
 
@@ -1085,12 +1150,31 @@ async def _run_agent_loop(
             if isinstance(content, str):
                 messages[_budget_target_idx]["content"] = content + _budget_note
 
-        # ── Phase 2A: Wrap-up nudge at 80% of budget ──
-        if _iteration > 0 and _iteration >= int(max_iterations * 0.8):
-            messages.append({
-                "role": "user",
-                "content": "SYSTEM: You're approaching your iteration limit. Wrap up or synthesize what you have.",
-            })
+        # ── Phase 2A + Doc 034: Plan-aware iteration budget ──
+        # Uses IterationBudget for 50%/80%/95% thresholds with plan context.
+        try:
+            from backend.app.agent.continuation import IterationBudget
+            _iter_budget = IterationBudget(total=max_iterations, used=_iteration)
+            _budget_msg = _iter_budget.get_budget_message()
+            if _budget_msg:
+                # At 95%: checkpoint the plan before it's too late
+                if _iter_budget.should_stop and _has_active_plan:
+                    try:
+                        from backend.app.agent.tools.work_plan import checkpoint_active_plan
+                        await checkpoint_active_plan(
+                            _state.agent_db, _state.agent_id,
+                            f"Budget at {_iter_budget.pct_used:.0%} — auto-checkpoint at iteration {_iteration}/{max_iterations}",
+                        )
+                    except Exception:
+                        pass
+                messages.append({"role": "user", "content": f"SYSTEM: {_budget_msg}"})
+        except Exception:
+            # Fallback to simple 80% check
+            if _iteration > 0 and _iteration >= int(max_iterations * 0.8):
+                messages.append({
+                    "role": "user",
+                    "content": "SYSTEM: You're approaching your iteration limit. Wrap up or synthesize what you have.",
+                })
 
         # ── Phase 2B: Early termination nudges for read-only tasks ──
         if not _has_made_consequential_call:

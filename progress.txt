@@ -18,6 +18,7 @@ Started: 2026-02-26
 - **Vault**: `backend/app/core/vault.py` — get_api_key_with_type(), key_type detection (oauth_token vs api_key)
 - **Jobs**: `backend/app/jobs/scheduler.py` + `sync_models.py` — DB-driven, no hardcoded provider registry
 - **litellm model IDs**: `{litellm_prefix}/{model_slug}` e.g. `anthropic/claude-opus-4-6`
+- **Continuation**: `backend/app/agent/continuation.py` — intent classification, plan position resolution, minimal context builder; integrated into worker.py before history compression
 - **Branch**: `feature/sprint-1-skeleton`
 
 ---
@@ -78,4 +79,17 @@ Started: 2026-02-26
 - Handles Anthropic cached format (list content blocks) and plain string system prompts
 - 48 tests in test_lifecycle.py, all passing
 - **Learnings:** Phase priority must scan ALL tool calls per phase level (not per-call), otherwise a push in tool_call[0] masks a PR create in tool_call[1]
+---
+
+## 2026-03-10 12:48 - 034: Conversation Continuation with Plan-Aware Fresh Context
+- Implemented intent classifier (regex-based: continue/adjust/new_task/normal)
+- Plan position resolver: verifies plan items against git/filesystem state
+- Continuation context builder: ~2K tokens vs ~100K compressed history
+- Lightweight checkpoint fallback for plan-less continuations
+- Iteration budget tracker: 50%/80%/95% thresholds with plan-aware auto-checkpoint
+- Integrated into worker.py's _run_agent_loop — classifies intent on every turn
+- SSE "continuing" status event emitted for frontend
+- Files: backend/app/agent/continuation.py, backend/app/worker.py, backend/tests/test_continuation.py
+- PR #69
+- **Learnings:** The worker's plan context injection section (line ~600) is the right integration point. Intent classification must happen BEFORE history compression to avoid wasting work compressing history we'll throw away.
 ---
