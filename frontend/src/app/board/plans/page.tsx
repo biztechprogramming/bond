@@ -16,7 +16,9 @@ interface WorkPlan {
   items?: WorkItem[];
 }
 
-const API_BASE = "http://localhost:18790/api/v1";
+import { BACKEND_API } from "@/lib/config";
+
+const API_BASE = BACKEND_API;
 
 const STATUS_EMOJI: Record<string, string> = {
   active: "\uD83D\uDD04",

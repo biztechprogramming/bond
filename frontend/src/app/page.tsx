@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GatewayWebSocket, type GatewayMessage, type ConversationSummary, type ConnectionState } from "@/lib/ws";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API, BACKEND_API } from "@/lib/config";
 import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
@@ -131,7 +131,7 @@ export default function Home() {
 
   // Fetch agents
   useEffect(() => {
-    fetch("http://localhost:18790/api/v1/agents")
+    fetch(`${BACKEND_API}/agents`)
       .then(r => r.json())
       .then((data: { id: string; display_name: string; is_default: boolean }[]) => {
         setAgents(data);
