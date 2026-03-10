@@ -1,7 +1,7 @@
 /**
  * Channel lifecycle manager.
  * Manages channel configs, start/stop, and routes inbound messages to the backend.
- * Supports multi-agent command routing via /help, /agents, /agent, /all, /reset, /status.
+ * Supports multi-agent command routing via /help, /agents, /agent, /all, /new, /status.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { dirname } from "path";
@@ -44,6 +44,8 @@ export class ChannelManager {
   private statusSubscribers = new Set<(status: string) => void>();
   private whatsappAuthDir: string;
   private chatSessions = new Map<string, ChatSession>();
+  /** Maps conversationId → channel chat that's watching it (for cross-channel push) */
+  private channelBindings = new Map<string, { channelType: string; channelId: string }>();
 
   constructor(configPath: string, backendClient: BackendClient) {
     this.configPath = configPath;
@@ -237,8 +239,10 @@ export class ChannelManager {
         return this.cmdAgent(chatKey, arg);
       case "/all":
         return arg ? this.cmdAll(chatKey, arg, msg) : "Usage: /all <message>";
+      case "/new":
+        return this.cmdNew(chatKey, arg);
       case "/reset":
-        return this.cmdReset(chatKey, arg);
+        return this.cmdNew(chatKey, arg);
       case "/status":
         return this.cmdStatus(chatKey, msg);
       default:
@@ -253,9 +257,9 @@ export class ChannelManager {
 /agents — List available agents
 /agent <name> — Switch to an agent (no arg = show current)
 /all <message> — Send message to all agents
-/reset — Clear conversation with current agent
-/reset all — Clear all agent conversations
-/reset <name> — Clear conversation with specific agent
+/new — Start a new conversation with current agent
+/new all — Start fresh with all agents
+/new <name> — Start a new conversation with specific agent
 /status — Show current agent and session info`;
   }
 
@@ -343,13 +347,13 @@ export class ChannelManager {
     return lines.join("\n\n");
   }
 
-  private async cmdReset(chatKey: string, arg: string): Promise<string> {
+  private async cmdNew(chatKey: string, arg: string): Promise<string> {
     const session = this.getOrCreateSession(chatKey);
 
     if (arg.toLowerCase() === "all") {
       const count = session.conversations.size;
       session.conversations.clear();
-      return `🔄 Cleared all ${count} conversation(s). Next message starts fresh.`;
+      return `✨ Starting fresh with all agents. Next message creates a new conversation.`;
     }
 
     if (arg) {
@@ -360,18 +364,14 @@ export class ChannelManager {
           a.display_name.toLowerCase() === arg.toLowerCase(),
       );
       if (!match) return `Agent "${arg}" not found. Use /agents to see available agents.`;
-      const deleted = session.conversations.delete(match.id);
-      return deleted
-        ? `🔄 Cleared conversation with ${match.display_name || match.name}. Next message starts fresh.`
-        : `No active conversation with ${match.display_name || match.name}.`;
+      session.conversations.delete(match.id);
+      return `✨ Next message to ${match.display_name || match.name} starts a new conversation.`;
     }
 
-    // Reset current agent
+    // New conversation for current agent
     const agentKey = session.currentAgentId || "__default__";
-    const deleted = session.conversations.delete(agentKey);
-    return deleted
-      ? "🔄 Cleared current conversation. Next message starts fresh."
-      : "No active conversation to clear.";
+    session.conversations.delete(agentKey);
+    return "✨ Next message starts a new conversation.";
   }
 
   private cmdStatus(chatKey: string, msg: ChannelMessage): string {
@@ -394,27 +394,21 @@ Session: ${chatKey}`;
     const agentKey = agentId || "__default__";
     let conversationId = session.conversations.get(agentKey);
 
-    // If no conversation cached for this chat+agent, find the most recent one
+    // No cached conversation for this channel+agent — create a new one.
+    // Channels always create their own conversations (never hijack webchat ones).
+    // Cross-channel happens when webchat connects to a channel-created conversation,
+    // or when we push responses to channels watching a conversation.
     if (!conversationId) {
-      // Resolve the actual agent ID (default if none selected)
-      let resolvedAgentId = agentId;
-      if (!resolvedAgentId) {
-        const agents = await this.backendClient.listAgents();
-        const defaultAgent = agents.find((a) => a.is_default);
-        if (defaultAgent) resolvedAgentId = defaultAgent.id;
-      }
-
-      // Try to find an existing active conversation for this agent
-      const existing = await this.backendClient.findActiveConversation(resolvedAgentId || undefined);
-      if (existing) {
-        conversationId = existing;
-        console.log(`[channels] Resuming conversation ${conversationId} for agent ${resolvedAgentId}`);
-      } else {
-        conversationId = ulid();
-        console.log(`[channels] Creating new conversation ${conversationId} for agent ${resolvedAgentId}`);
-      }
+      conversationId = ulid();
       session.conversations.set(agentKey, conversationId);
+      console.log(`[channels] New ${msg.channelType} conversation ${conversationId}`);
     }
+
+    // Track which channel chats are watching which conversations
+    this.channelBindings.set(conversationId, {
+      channelType: msg.channelType,
+      channelId: msg.sessionId || msg.senderId,
+    });
 
     let fullResponse = "";
     for await (const event of this.backendClient.conversationTurnStream(
@@ -432,20 +426,26 @@ Session: ${chatKey}`;
     if (fullResponse) {
       await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, fullResponse);
     }
-
-    // Notify webchat clients watching this conversation
-    this.notifyWebchat(conversationId);
   }
 
   /**
-   * Notify webchat clients that a conversation has been updated
-   * so they see messages from other channels in real-time.
+   * Push a message to a channel if it's watching the given conversation.
+   * Called by webchat when a user sends a message in a conversation that
+   * originated from Telegram/WhatsApp (cross-channel).
    */
-  private notifyWebchat(conversationId: string): void {
-    // The webchat channel uses WebSocket and SpacetimeDB subscriptions.
-    // SpacetimeDB auto-notifies subscribers when conversation_messages change,
-    // so webchat clients will see the new messages automatically.
-    // This method exists as a hook for future push notifications if needed.
+  async pushToChannel(conversationId: string, message: string, senderLabel?: string): Promise<void> {
+    const binding = this.channelBindings.get(conversationId);
+    if (!binding) return;
+
+    const prefix = senderLabel ? `💬 ${senderLabel}:\n` : "";
+    await this.sendToChannel(binding.channelType, binding.channelId, prefix + message);
+  }
+
+  /**
+   * Check if a conversation has a channel binding (Telegram/WhatsApp watching it).
+   */
+  getChannelBinding(conversationId: string): { channelType: string; channelId: string } | null {
+    return this.channelBindings.get(conversationId) || null;
   }
 
   private async sendToChannel(channelType: string, channelId: string, message: string): Promise<void> {

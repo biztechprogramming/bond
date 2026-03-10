@@ -87,6 +87,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // Channel management API and lifecycle
   const channelManager = new ChannelManager("data/channels.json", backendClient);
+  webchat.setChannelManager(channelManager);
   app.use("/api/v1", createChannelRouter(channelManager));
   // Auto-start previously enabled channels (non-blocking)
   channelManager.autoStart().catch((err) => {

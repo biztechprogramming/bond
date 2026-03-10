@@ -15,10 +15,17 @@ export class WebChatChannel {
   /** Accumulated streamed content per conversation during an active turn. */
   private streamBuffers = new Map<string, { content: string; agentName: string; agentStatus: string }>();
 
+  private channelManager: import("./manager.js").ChannelManager | null = null;
+
   constructor(
     private sessionManager: SessionManager,
     private backendClient: BackendClient
   ) {}
+
+  /** Set the channel manager for cross-channel push (called after both are initialized). */
+  setChannelManager(manager: import("./manager.js").ChannelManager): void {
+    this.channelManager = manager;
+  }
 
   async handleConnection(socket: WebSocket): Promise<void> {
     const session = this.sessionManager.createSession();
@@ -133,6 +140,11 @@ export class WebChatChannel {
       });
       for (const s of otherSockets) {
         s.send(echoMsg);
+      }
+
+      // Cross-channel: push user message to Telegram/WhatsApp if they're watching
+      if (this.channelManager) {
+        this.channelManager.pushToChannel(conversationId, msg.content || "", "You (web)").catch(() => {});
       }
     }
 
@@ -327,6 +339,13 @@ export class WebChatChannel {
       }
 
       session.agentBusy = false;
+
+      // Cross-channel: push agent response to Telegram/WhatsApp if they're watching
+      const completedBuffer = this.streamBuffers.get(conversationId);
+      if (completedBuffer?.content && this.channelManager) {
+        this.channelManager.pushToChannel(conversationId, completedBuffer.content).catch(() => {});
+      }
+
       // Clear stream buffer
       this.streamBuffers.delete(conversationId);
 
