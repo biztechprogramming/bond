@@ -16,6 +16,8 @@ import { createPersistenceRouter } from "./persistence/index.js";
 import { createConversationsRouter } from "./conversations/index.js";
 import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
+import { ChannelManager } from "./channels/manager.js";
+import { createChannelRouter } from "./channels/routes.js";
 
 export interface GatewayServer {
   close(): void;
@@ -82,6 +84,14 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     },
   });
   app.use("/webhooks", webhookRouter);
+
+  // Channel management API and lifecycle
+  const channelManager = new ChannelManager("data/channels.json", backendClient);
+  app.use("/api/v1", createChannelRouter(channelManager));
+  // Auto-start previously enabled channels (non-blocking)
+  channelManager.autoStart().catch((err) => {
+    console.warn("[gateway] Channel auto-start error:", err);
+  });
 
   // Global Broadcast API for internal services
   app.post("/api/v1/broadcast", (req: any, res: any) => {
