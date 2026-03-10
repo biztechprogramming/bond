@@ -692,8 +692,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "12px 16px",
     borderBottom: "1px solid #1e1e2e",
     flexShrink: 0,
-    flexWrap: "wrap" as const,
     gap: "8px",
+    zIndex: 50,
+    backgroundColor: "#0d0d14",
   },
   title: {
     fontSize: "1.5rem",
