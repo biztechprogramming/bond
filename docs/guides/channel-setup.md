@@ -163,14 +163,121 @@ curl -X DELETE http://localhost:18789/api/v1/channels/whatsapp
 
 - **Owner-only by default** — Each channel's allow-list is locked to the person who set it up. No one else can message your bot.
 - **Credentials encrypted** — Bot tokens and auth state are stored locally, never sent to external services.
-- **No public exposure** — Both Telegram (long-polling) and WhatsApp (Baileys) connect outbound. No ports need to be opened.
+- **No public exposure** — All channels connect outbound (Telegram long-polling, WhatsApp Baileys, Discord Gateway, Slack Socket Mode). No ports need to be opened.
 - **Wildcard (`*`) is dev-only** — The allow-list supports `*` to allow all senders, but this is intended for local development/testing only.
+
+---
+
+## Discord
+
+### Prerequisites
+
+- A Discord account
+- Access to the [Discord Developer Portal](https://discord.com/developers/applications)
+
+### Step 1: Create a Bot
+
+1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+2. Click **New Application** → give it a name (e.g. "Bond Agent") → **Create**
+3. Go to **Bot** in the left sidebar
+4. **⚠️ Enable the `MESSAGE_CONTENT` privileged intent** under *Privileged Gateway Intents*. Without this, the bot receives empty message bodies.
+5. Click **Reset Token** → copy the bot token.
+
+### Step 2: Connect in Bond Settings
+
+1. Open Bond Settings → **Channels** tab
+2. Find the **Discord** card and click **Set Up**
+3. Paste your bot token → click **Connect**
+4. Bond validates the token and shows: "✅ Connected as BondBot"
+5. Click the **Invite Link** to add the bot to your Discord server
+
+### Step 3: Start Chatting
+
+1. Send a DM to the bot in Discord
+2. The first message auto-registers you as the owner (allow-list)
+3. You can also @mention the bot in any server channel
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Bot connects but messages are empty | Enable `MESSAGE_CONTENT` intent in Developer Portal → Bot → Privileged Gateway Intents |
+| "Invalid token" error | Reset the token in Developer Portal and paste the new one |
+| Bot doesn't respond to @mentions | Make sure the bot has been invited to the server with the invite link |
+| "You're not on the allow list" | The first DM auto-adds you. If you @mentioned first, try a DM instead |
+
+---
+
+## Slack
+
+### Prerequisites
+
+- A Slack workspace where you have admin/install permissions
+- Access to [api.slack.com/apps](https://api.slack.com/apps)
+
+### Step 1: Create a Slack App (from Manifest)
+
+The fastest way — paste this manifest to auto-configure everything:
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest**
+2. Select your workspace
+3. Switch to **YAML** and paste:
+
+```yaml
+display_information:
+  name: Bond Agent
+  description: Personal AI assistant
+features:
+  bot_user:
+    display_name: Bond
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - app_mentions:read
+      - im:history
+      - im:read
+      - im:write
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  socket_mode_enabled: true
+```
+
+4. Click **Create**
+5. Go to **Install App** → **Install to Workspace** → **Allow**
+6. Copy the **Bot User OAuth Token** (`xoxb-...`)
+7. Go to **Basic Information** → **App-Level Tokens** → **Generate Token** (scope: `connections:write`) → copy the token (`xapp-...`)
+
+### Step 2: Connect in Bond Settings
+
+1. Open Bond Settings → **Channels** tab
+2. Find the **Slack** card and click **Set Up**
+3. Paste the **Bot Token** (`xoxb-...`) and **App Token** (`xapp-...`) → click **Connect**
+4. Bond validates and shows: "✅ Connected to workspace: YourWorkspace"
+
+### Step 3: Start Chatting
+
+1. Open a DM with the bot in Slack
+2. The first message auto-registers you as the owner (allow-list)
+3. You can also @mention the bot in any channel it's been invited to
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| "not_authed" or "invalid_auth" | Double-check both tokens. Bot Token starts with `xoxb-`, App Token starts with `xapp-` |
+| Bot doesn't respond to DMs | Ensure `im:history` and `im:read` scopes are present. Reinstall the app after adding scopes |
+| Bot doesn't respond to @mentions | Ensure `app_mentions:read` scope is present and the `app_mention` event is subscribed |
+| "You're not on the allow list" | The first DM auto-adds you. If you @mentioned first, try a DM instead |
+| Socket Mode connection fails | Ensure the App-Level Token has the `connections:write` scope |
 
 ---
 
 ## Coming Soon
 
-- **Discord** — Bot integration via discord.js
-- **Slack** — Workspace app via Bolt.js
 - **Group chat support** — Mention-gated responses in Telegram/WhatsApp groups
 - **Multi-user allow-lists** — UI for adding additional allowed users
