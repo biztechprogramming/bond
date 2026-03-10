@@ -12,6 +12,9 @@ import type { BackendClient } from "../backend/client.js";
 import type { WorkerSSEEvent } from "../backend/worker-client.js";
 
 export class WebChatChannel {
+  /** Accumulated streamed content per conversation during an active turn. */
+  private streamBuffers = new Map<string, { content: string; agentName: string; agentStatus: string }>();
+
   constructor(
     private sessionManager: SessionManager,
     private backendClient: BackendClient
@@ -195,7 +198,14 @@ export class WebChatChannel {
     const startTime = Date.now();
     session.agentBusy = true;
 
-    this.send(socket, {
+    // Set conversationId on session immediately so sendToConversation can find this socket
+    this.sessionManager.setConversationId(sessionId, conversationId);
+    session.conversationId = conversationId;
+
+    // Initialize stream buffer for this conversation
+    this.streamBuffers.set(conversationId, { content: "", agentName: "", agentStatus: "thinking" });
+
+    this.sendToConversation(conversationId, {
       type: "status",
       sessionId,
       agentStatus: "thinking",
@@ -215,11 +225,18 @@ export class WebChatChannel {
         switch (event.event) {
           case "status":
             if (!agentName && event.data.agent_name) agentName = event.data.agent_name as string;
-            console.log(`[GATEWAY-WEBCHAT] Sending status: ${event.data.state}`);
-            this.send(socket, {
+            const agentStatus = event.data.state as "thinking" | "tool_calling" | "responding";
+            console.log(`[GATEWAY-WEBCHAT] Sending status: ${agentStatus}`);
+            // Update buffer metadata
+            const buf = this.streamBuffers.get(conversationId);
+            if (buf) {
+              buf.agentStatus = agentStatus;
+              if (agentName) buf.agentName = agentName;
+            }
+            this.sendToConversation(conversationId, {
               type: "status",
               sessionId,
-              agentStatus: event.data.state as "thinking" | "tool_calling" | "responding",
+              agentStatus,
               conversationId,
             });
             break;
@@ -227,7 +244,10 @@ export class WebChatChannel {
           case "chunk":
             const chunkContent = event.data.content as string;
             console.log(`[GATEWAY-WEBCHAT] Sending chunk: ${chunkContent.length} chars, first 50: ${chunkContent.substring(0, 50)}`);
-            this.send(socket, {
+            // Accumulate in buffer
+            const chunkBuf = this.streamBuffers.get(conversationId);
+            if (chunkBuf) chunkBuf.content += chunkContent;
+            this.sendToConversation(conversationId, {
               type: "chunk",
               sessionId,
               content: chunkContent,
@@ -237,7 +257,7 @@ export class WebChatChannel {
             break;
 
           case "tool_call":
-            this.send(socket, {
+            this.sendToConversation(conversationId, {
               type: "tool_call",
               sessionId,
               content: JSON.stringify(event.data),
@@ -284,7 +304,7 @@ export class WebChatChannel {
             break;
 
           case "error":
-            this.send(socket, {
+            this.sendToConversation(conversationId, {
               type: "error", sessionId,
               error: event.data.message as string, conversationId,
             });
@@ -293,11 +313,13 @@ export class WebChatChannel {
       }
 
       session.agentBusy = false;
+      // Clear stream buffer
+      this.streamBuffers.delete(conversationId);
+
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`[gateway] Turn complete: conversation=${conversationId} elapsed=${elapsed}s`);
-      console.log(`[GATEWAY-TEST] Testing if gateway logs are working`);
 
-      this.send(socket, {
+      this.sendToConversation(conversationId, {
         type: "done", sessionId, conversationId,
         messageId: responseMessageId, agentName,
         queuedCount: 0, agentStatus: "idle",
@@ -306,9 +328,10 @@ export class WebChatChannel {
       this.handleListConversations(socket).catch(() => {});
     } catch (err) {
       session.agentBusy = false;
+      this.streamBuffers.delete(conversationId);
       const msg = err instanceof Error ? err.message : "Agent error";
-      this.send(socket, { type: "status", sessionId, agentStatus: "idle", conversationId });
-      this.send(socket, { type: "error", sessionId, error: msg });
+      this.sendToConversation(conversationId, { type: "status", sessionId, agentStatus: "idle", conversationId });
+      this.sendToConversation(conversationId, { type: "error", sessionId, error: msg });
     }
   }
 
@@ -334,6 +357,27 @@ export class WebChatChannel {
           created_at: m.created_at,
         })),
       });
+
+      // If there's an active stream on this conversation, catch the client up
+      const buffer = this.streamBuffers.get(msg.conversationId);
+      if (buffer) {
+        this.send(socket, {
+          type: "status",
+          sessionId,
+          agentStatus: buffer.agentStatus as "thinking" | "tool_calling" | "responding",
+          agentName: buffer.agentName || undefined,
+          conversationId: msg.conversationId,
+        });
+        if (buffer.content) {
+          this.send(socket, {
+            type: "chunk",
+            sessionId,
+            content: buffer.content,
+            agentName: buffer.agentName || undefined,
+            conversationId: msg.conversationId,
+          });
+        }
+      }
     } catch (err) {
       this.send(socket, {
         type: "error",
@@ -381,6 +425,17 @@ export class WebChatChannel {
         type: "error",
         error: err instanceof Error ? err.message : "Failed to delete conversation",
       });
+    }
+  }
+
+  /**
+   * Send a message to all sockets watching the given conversation.
+   */
+  private sendToConversation(conversationId: string, msg: OutgoingMessage): void {
+    const payload = JSON.stringify(msg);
+    const sockets = this.sessionManager.getSocketsForConversation(conversationId);
+    for (const s of sockets) {
+      s.send(payload);
     }
   }
 
