@@ -393,8 +393,26 @@ Session: ${chatKey}`;
 
     const agentKey = agentId || "__default__";
     let conversationId = session.conversations.get(agentKey);
+
+    // If no conversation cached for this chat+agent, find the most recent one
     if (!conversationId) {
-      conversationId = ulid();
+      // Resolve the actual agent ID (default if none selected)
+      let resolvedAgentId = agentId;
+      if (!resolvedAgentId) {
+        const agents = await this.backendClient.listAgents();
+        const defaultAgent = agents.find((a) => a.is_default);
+        if (defaultAgent) resolvedAgentId = defaultAgent.id;
+      }
+
+      // Try to find an existing active conversation for this agent
+      const existing = await this.backendClient.findActiveConversation(resolvedAgentId || undefined);
+      if (existing) {
+        conversationId = existing;
+        console.log(`[channels] Resuming conversation ${conversationId} for agent ${resolvedAgentId}`);
+      } else {
+        conversationId = ulid();
+        console.log(`[channels] Creating new conversation ${conversationId} for agent ${resolvedAgentId}`);
+      }
       session.conversations.set(agentKey, conversationId);
     }
 
@@ -414,6 +432,20 @@ Session: ${chatKey}`;
     if (fullResponse) {
       await this.sendToChannel(msg.channelType, msg.sessionId || msg.senderId, fullResponse);
     }
+
+    // Notify webchat clients watching this conversation
+    this.notifyWebchat(conversationId);
+  }
+
+  /**
+   * Notify webchat clients that a conversation has been updated
+   * so they see messages from other channels in real-time.
+   */
+  private notifyWebchat(conversationId: string): void {
+    // The webchat channel uses WebSocket and SpacetimeDB subscriptions.
+    // SpacetimeDB auto-notifies subscribers when conversation_messages change,
+    // so webchat clients will see the new messages automatically.
+    // This method exists as a hook for future push notifications if needed.
   }
 
   private async sendToChannel(channelType: string, channelId: string, message: string): Promise<void> {

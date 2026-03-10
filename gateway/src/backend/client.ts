@@ -135,6 +135,28 @@ export class BackendClient {
     return (await res.json()) as ConversationSummary[];
   }
 
+  /**
+   * Find the most recent active conversation for a given agent.
+   * Returns the conversation ID or null if none found.
+   */
+  async findActiveConversation(agentId?: string): Promise<string | null> {
+    try {
+      const conversations = await this.listConversations();
+      // Filter to active conversations with messages, sorted by most recent
+      const candidates = conversations
+        .filter((c) => c.message_count > 0)
+        .filter((c) => !agentId || c.agent_id === agentId);
+      
+      if (candidates.length > 0) {
+        // Already sorted by updated_at desc from backend
+        return candidates[0].id;
+      }
+    } catch {
+      // If we can't list conversations, return null
+    }
+    return null;
+  }
+
   async *conversationTurnStream(
     conversationId: string,
     message: string | undefined,
