@@ -417,6 +417,27 @@ export default function Home() {
             <div style={styles.convEmpty}>No conversations yet</div>
           )}
         </div>
+        {/* Sidebar footer with nav links */}
+        <div style={{
+          padding: "12px 16px",
+          borderTop: "1px solid #1e1e2e",
+          display: "flex",
+          gap: "12px",
+          flexShrink: 0,
+        }}>
+          <a href="/board" style={{
+            flex: 1, textAlign: "center" as const, color: "#8888a0", textDecoration: "none",
+            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", border: "1px solid #2a2a3e",
+          }}>
+            📋 Board
+          </a>
+          <a href="/settings" style={{
+            flex: 1, textAlign: "center" as const, color: "#6c8aff", textDecoration: "none",
+            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", border: "1px solid #2a2a3e",
+          }}>
+            ⚙ Settings
+          </a>
+        </div>
       </div>
 
       {/* Main chat area */}
@@ -531,7 +552,8 @@ export default function Home() {
 const styles: Record<string, React.CSSProperties> = {
   outerContainer: {
     display: "flex",
-    height: "100dvh",
+    position: "fixed" as const,
+    inset: 0,
   },
   sidebar: {
     width: "280px",
@@ -659,7 +681,6 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: "flex",
     flexDirection: "column",
-    height: "100dvh",
     flex: 1,
     minWidth: 0,
     overflow: "hidden",
