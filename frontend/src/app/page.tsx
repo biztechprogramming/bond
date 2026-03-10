@@ -79,14 +79,7 @@ export default function Home() {
     if (name) currentAgentNameRef.current = name;
   }, [selectedAgentId, agents]);
 
-  // Track actual viewport height for mobile keyboard handling
-  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
-  useEffect(() => {
-    const update = () => setViewportHeight(window.innerHeight);
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
+
 
 
 
@@ -355,7 +348,7 @@ export default function Home() {
   const selectedAgentName = agents.find(a => a.id === selectedAgentId)?.display_name || "Bond";
 
   return (
-    <div style={{ ...styles.outerContainer, height: viewportHeight ? `${viewportHeight}px` : "100%" }}>
+    <div style={styles.outerContainer}>
       {/* Mobile responsive overrides */}
       <style>{`
         @media (max-width: 767px) {
@@ -563,6 +556,7 @@ export default function Home() {
 const styles: Record<string, React.CSSProperties> = {
   outerContainer: {
     display: "flex",
+    height: "100dvh",
     overflow: "hidden",
   },
   sidebar: {
