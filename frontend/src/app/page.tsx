@@ -316,6 +316,8 @@ export default function Home() {
     const conv = conversations.find(c => c.id === id);
     if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
     wsRef.current?.switchConversation(id);
+    // Auto-close sidebar on narrow screens
+    if (window.innerWidth < 768) setSidebarOpen(false);
   };
 
   const handleDeleteConversation = (id: string, e: React.MouseEvent) => {
@@ -343,11 +345,41 @@ export default function Home() {
 
   return (
     <div style={styles.outerContainer}>
+      {/* Mobile responsive overrides */}
+      <style>{`
+        @media (max-width: 767px) {
+          .bond-sidebar {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            bottom: 0 !important;
+            z-index: 200 !important;
+            width: 280px !important;
+          }
+          .bond-sidebar.collapsed {
+            width: 0px !important;
+          }
+          .bond-sidebar-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 199;
+          }
+          .bond-header-extras {
+            display: none !important;
+          }
+        }
+      `}</style>
+      {/* Sidebar overlay for mobile */}
+      {sidebarOpen && <div className="bond-sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
       {/* Sidebar */}
-      <div style={{
-        ...styles.sidebar,
-        ...(sidebarOpen ? {} : styles.sidebarCollapsed),
-      }}>
+      <div
+        className={`bond-sidebar${sidebarOpen ? "" : " collapsed"}`}
+        style={{
+          ...styles.sidebar,
+          ...(sidebarOpen ? {} : styles.sidebarCollapsed),
+        }}
+      >
         <div style={styles.sidebarHeader}>
           <button style={styles.newConvButton} onClick={handleNewConversation}>
             + New Conversation
@@ -402,7 +434,7 @@ export default function Home() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             {agents.length > 1 && (
-              <div ref={agentDropdownRef} style={{ position: "relative" }}>
+              <div ref={agentDropdownRef} style={{ position: "relative" }} className="bond-header-extras">
                 <button
                   onClick={() => setAgentDropdownOpen(!agentDropdownOpen)}
                   style={{
@@ -441,13 +473,13 @@ export default function Home() {
                 )}
               </div>
             )}
-            <a href="/board" style={{
+            <a href="/board" className="bond-header-extras" style={{
               color: "#8888a0", textDecoration: "none", fontSize: "0.85rem",
               padding: "6px 12px", borderRadius: "8px", border: "1px solid #2a2a3e",
             }}>
               &#x1F4CB; Board
             </a>
-            <a href="/settings" style={{ color: "#6c8aff", textDecoration: "none", fontSize: "0.85rem" }}>
+            <a href="/settings" className="bond-header-extras" style={{ color: "#6c8aff", textDecoration: "none", fontSize: "0.85rem" }}>
               Settings
             </a>
             <span style={{
@@ -499,7 +531,7 @@ export default function Home() {
 const styles: Record<string, React.CSSProperties> = {
   outerContainer: {
     display: "flex",
-    height: "100vh",
+    height: "100dvh",
   },
   sidebar: {
     width: "280px",
@@ -515,6 +547,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: "0px",
     borderRight: "none",
   },
+  /* Applied via className below for mobile overlay behavior */
   sidebarHeader: {
     padding: "16px",
     borderBottom: "1px solid #1e1e2e",
@@ -626,16 +659,20 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: "flex",
     flexDirection: "column",
-    height: "100vh",
+    height: "100dvh",
     flex: 1,
     minWidth: 0,
+    overflow: "hidden",
   },
   header: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    padding: "16px 24px",
+    padding: "12px 16px",
     borderBottom: "1px solid #1e1e2e",
+    flexShrink: 0,
+    flexWrap: "wrap" as const,
+    gap: "8px",
   },
   title: {
     fontSize: "1.5rem",
