@@ -47,14 +47,17 @@ export class ChannelManager {
   private chatSessions = new Map<string, ChatSession>();
   /** Maps conversationId → channel chat that's watching it (for cross-channel push) */
   private channelBindings = new Map<string, { channelType: string; channelId: string }>();
+  private bindingsPath: string;
   private pipeline: MessagePipeline | null = null;
   private crossChannelUserEcho: ((conversationId: string, message: string, senderLabel: string) => void) | null = null;
 
   constructor(configPath: string, backendClient: BackendClient) {
     this.configPath = configPath;
+    this.bindingsPath = configPath.replace(/[^/]+$/, "channel-bindings.json");
     this.backendClient = backendClient;
     this.whatsappAuthDir = configPath.replace(/[^/]+$/, "whatsapp-auth");
     this.loadConfigs();
+    this.loadBindings();
   }
 
   listChannels(): ChannelStatus[] {
@@ -420,11 +423,12 @@ Session: ${chatKey}`;
       console.log(`[channels] New ${msg.channelType} conversation ${conversationId}`);
     }
 
-    // Track which channel chats are watching which conversations
+    // Track which channel chats are watching which conversations (persisted to disk)
     this.channelBindings.set(conversationId, {
       channelType: msg.channelType,
       channelId: msg.sessionId || msg.senderId,
     });
+    this.saveBindings();
 
     if (this.pipeline) {
       await this.routeViaPipeline(msg, conversationId, agentId);
@@ -529,6 +533,34 @@ Session: ${chatKey}`;
       await this.telegram.send(channelId, message);
     } else if (channelType === "whatsapp" && this.whatsapp) {
       await this.whatsapp.send(channelId, message);
+    }
+  }
+
+  private loadBindings(): void {
+    try {
+      if (existsSync(this.bindingsPath)) {
+        const data = JSON.parse(readFileSync(this.bindingsPath, "utf-8"));
+        for (const [conversationId, binding] of Object.entries(data)) {
+          this.channelBindings.set(conversationId, binding as { channelType: string; channelId: string });
+        }
+        console.log(`[channels] Loaded ${this.channelBindings.size} channel bindings`);
+      }
+    } catch (err) {
+      console.warn("[channels] Failed to load channel bindings:", err);
+    }
+  }
+
+  private saveBindings(): void {
+    try {
+      const dir = dirname(this.bindingsPath);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const data: Record<string, { channelType: string; channelId: string }> = {};
+      for (const [key, value] of this.channelBindings) {
+        data[key] = value;
+      }
+      writeFileSync(this.bindingsPath, JSON.stringify(data, null, 2));
+    } catch (err) {
+      console.warn("[channels] Failed to save channel bindings:", err);
     }
   }
 

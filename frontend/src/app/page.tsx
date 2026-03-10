@@ -57,6 +57,7 @@ export default function Home() {
       updated_at: new Date(Number(c.updatedAt)).toISOString(),
       agent_id: c.agentId,
       agent_name: getAgentName(c.agentId),
+      channel: c.channel,
     }));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
@@ -332,6 +333,7 @@ export default function Home() {
   };
 
   const selectedAgentName = agents.find(a => a.id === selectedAgentId)?.display_name || "Bond";
+  const currentConvChannel = conversations.find(c => c.id === conversationId)?.channel;
 
   return (
     <div style={styles.outerContainer}>
@@ -357,6 +359,11 @@ export default function Home() {
               title={conv.title || "New conversation"}
             >
               <div style={styles.convTitle}>
+                {conv.channel && conv.channel !== "webchat" && (
+                  <span style={styles.channelBadge} title={`Connected to ${conv.channel}`}>
+                    {conv.channel === "telegram" ? "✈️" : conv.channel === "whatsapp" ? "💬" : "📡"}
+                  </span>
+                )}
                 {conv.title || (conv.agent_name ? `Chat with ${conv.agent_name}` : "New conversation")}
               </div>
               <div style={styles.convMeta}>
@@ -390,7 +397,14 @@ export default function Home() {
             >
               {sidebarOpen ? "\u2190" : "\u2261"}
             </button>
-            <h1 style={styles.title}>{selectedAgentName}</h1>
+            <h1 style={styles.title}>
+              {selectedAgentName}
+              {currentConvChannel && currentConvChannel !== "webchat" && (
+                <span style={styles.channelHeaderBadge} title={`Messages also sent to ${currentConvChannel}`}>
+                  {currentConvChannel === "telegram" ? "✈️ Telegram" : currentConvChannel === "whatsapp" ? "💬 WhatsApp" : `📡 ${currentConvChannel}`}
+                </span>
+              )}
+            </h1>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             {agents.length > 1 && (
@@ -541,6 +555,17 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
     paddingRight: "24px",
+  },
+  channelBadge: {
+    marginRight: "4px",
+    fontSize: "0.75rem",
+  },
+  channelHeaderBadge: {
+    marginLeft: "10px",
+    fontSize: "0.75rem",
+    color: "#6c8aff",
+    fontWeight: 400,
+    verticalAlign: "middle",
   },
   convMeta: {
     fontSize: "0.7rem",

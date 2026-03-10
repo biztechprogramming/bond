@@ -13,6 +13,7 @@ export interface ConversationSummary {
   updated_at: string;
   agent_id: string | null;
   agent_name: string | null;
+  channel?: string;
 }
 
 export interface GatewayMessage {
