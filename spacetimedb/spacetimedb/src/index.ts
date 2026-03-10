@@ -144,6 +144,15 @@ const spacetimedb = schema({
     }
   ),
 
+  // -- Provider Aliases (e.g., gemini → google, claude → anthropic) --
+  provider_aliases: table(
+    { public: true },
+    {
+      alias: t.string().primaryKey(),
+      providerId: t.string(),
+    }
+  ),
+
   // -- Model Catalog --
   llm_models: table(
     { public: true },
@@ -913,6 +922,33 @@ export const deleteProviderApiKey = spacetimedb.reducer(
     const existing = ctx.db.provider_api_keys.providerId.find(providerId);
     if (existing) {
       ctx.db.provider_api_keys.providerId.delete(providerId);
+    }
+  }
+);
+
+// -- Provider Aliases --
+
+export const setProviderAlias = spacetimedb.reducer(
+  {
+    alias: t.string(),
+    providerId: t.string(),
+  },
+  (ctx, { alias, providerId }) => {
+    const existing = ctx.db.provider_aliases.alias.find(alias);
+    if (existing) {
+      ctx.db.provider_aliases.alias.update({ alias, providerId });
+    } else {
+      ctx.db.provider_aliases.insert({ alias, providerId });
+    }
+  }
+);
+
+export const deleteProviderAlias = spacetimedb.reducer(
+  { alias: t.string() },
+  (ctx, { alias }) => {
+    const existing = ctx.db.provider_aliases.alias.find(alias);
+    if (existing) {
+      ctx.db.provider_aliases.alias.delete(alias);
     }
   }
 );

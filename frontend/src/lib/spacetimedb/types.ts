@@ -20,6 +20,16 @@ export const AgentChannels = __t.object("AgentChannels", {
 });
 export type AgentChannels = __Infer<typeof AgentChannels>;
 
+export const AgentPromptFragments = __t.object("AgentPromptFragments", {
+  id: __t.string(),
+  agentId: __t.string(),
+  fragmentId: __t.string(),
+  rank: __t.u32(),
+  enabled: __t.bool(),
+  createdAt: __t.u64(),
+});
+export type AgentPromptFragments = __Infer<typeof AgentPromptFragments>;
+
 export const AgentWorkspaceMounts = __t.object("AgentWorkspaceMounts", {
   id: __t.string(),
   agentId: __t.string(),
@@ -107,6 +117,66 @@ export const Messages = __t.object("Messages", {
   createdAt: __t.u64(),
 });
 export type Messages = __Infer<typeof Messages>;
+
+export const PromptFragmentVersions = __t.object("PromptFragmentVersions", {
+  id: __t.string(),
+  fragmentId: __t.string(),
+  version: __t.u32(),
+  content: __t.string(),
+  changeReason: __t.string(),
+  changedBy: __t.string(),
+  createdAt: __t.u64(),
+});
+export type PromptFragmentVersions = __Infer<typeof PromptFragmentVersions>;
+
+export const PromptFragments = __t.object("PromptFragments", {
+  id: __t.string(),
+  name: __t.string(),
+  displayName: __t.string(),
+  category: __t.string(),
+  content: __t.string(),
+  description: __t.string(),
+  isActive: __t.bool(),
+  isSystem: __t.bool(),
+  summary: __t.string(),
+  tier: __t.string(),
+  taskTriggers: __t.string(),
+  tokenEstimate: __t.u32(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type PromptFragments = __Infer<typeof PromptFragments>;
+
+export const PromptTemplateVersions = __t.object("PromptTemplateVersions", {
+  id: __t.string(),
+  templateId: __t.string(),
+  version: __t.u32(),
+  content: __t.string(),
+  changeReason: __t.string(),
+  changedBy: __t.string(),
+  createdAt: __t.u64(),
+});
+export type PromptTemplateVersions = __Infer<typeof PromptTemplateVersions>;
+
+export const PromptTemplates = __t.object("PromptTemplates", {
+  id: __t.string(),
+  name: __t.string(),
+  displayName: __t.string(),
+  category: __t.string(),
+  content: __t.string(),
+  variables: __t.string(),
+  description: __t.string(),
+  isActive: __t.bool(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type PromptTemplates = __Infer<typeof PromptTemplates>;
+
+export const ProviderAliases = __t.object("ProviderAliases", {
+  alias: __t.string(),
+  providerId: __t.string(),
+});
+export type ProviderAliases = __Infer<typeof ProviderAliases>;
 
 export const ProviderApiKeys = __t.object("ProviderApiKeys", {
   providerId: __t.string(),
