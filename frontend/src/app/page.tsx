@@ -220,6 +220,10 @@ export default function Home() {
         if (msg.conversationId) {
           setConversationId(msg.conversationId);
         }
+        // Switch to the conversation's agent (authoritative — comes from backend)
+        if (msg.agentId) {
+          setSelectedAgentId(msg.agentId);
+        }
       } else if (msg.type === "conversations_list" && msg.conversations) {
         // Legacy: still handle for agent selection init until agents are in SpacetimeDB
         if (!initialAgentSetRef.current) {

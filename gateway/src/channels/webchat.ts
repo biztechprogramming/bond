@@ -364,6 +364,8 @@ export class WebChatChannel {
         type: "history",
         sessionId,
         conversationId: msg.conversationId,
+        agentId: conv.agent_id || undefined,
+        agentName: conv.agent_name || undefined,
         messages: conv.messages.map((m) => ({
           role: m.role,
           content: m.content,
