@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { GatewayWebSocket, type GatewayMessage } from "@/lib/ws";
+import { GatewayWebSocket, type GatewayMessage, type ConnectionState } from "@/lib/ws";
 import type { ChatMessage, AgentStatus } from "@/lib/types";
 import { STATUS_EMOJI, KANBAN_COLUMNS } from "@/lib/theme";
 import ChatPanel from "@/components/shared/ChatPanel";
@@ -90,6 +90,7 @@ function BoardPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
+  const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [loading, setLoading] = useState(false);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
   const [streamingContent, setStreamingContent] = useState("");
@@ -194,6 +195,12 @@ function BoardPage() {
     let cancelled = false;
     const ws = new GatewayWebSocket();
     wsRef.current = ws;
+
+    ws.onConnectionChange((state: ConnectionState) => {
+      if (cancelled) return;
+      setConnectionState(state);
+      setConnected(state === "connected");
+    });
 
     ws.onMessage((msg: GatewayMessage) => {
       if (cancelled) return;
@@ -394,8 +401,21 @@ function BoardPage() {
               &#x23F9; Cancel
             </button>
           )}
-          <span style={{ ...s.statusDot, color: connected ? "#6cffa0" : "#ff6c8a" }}>
-            {connected ? "\u25CF" : "\u25CB"}
+          <span
+            style={{
+              ...s.statusDot,
+              color: connectionState === "connected" ? "#6cffa0"
+                : connectionState === "reconnecting" ? "#ffa06c"
+                : "#ff6c8a",
+            }}
+            title={connectionState === "connected" ? "Connected"
+              : connectionState === "reconnecting" ? "Reconnecting…"
+              : connectionState === "connecting" ? "Connecting…"
+              : "Disconnected"}
+          >
+            {connectionState === "connected" ? "\u25CF"
+              : connectionState === "reconnecting" ? "\u25D4"
+              : "\u25CB"}
           </span>
         </div>
       </header>
