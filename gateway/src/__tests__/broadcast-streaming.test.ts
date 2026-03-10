@@ -210,6 +210,83 @@ describe("Broadcast streaming to all conversation clients", () => {
     expect(chunkMsgs.length).toBe(0);
   });
 
+  it("echoes user message to other sockets watching the same conversation", async () => {
+    // Socket A connects and will send a message
+    const socketA = mockSocket();
+    await channel.handleConnection(socketA);
+
+    // Socket B connects and switches to conv-1
+    const socketB = mockSocket();
+    await channel.handleConnection(socketB);
+    (backendClient.getConversation as any).mockResolvedValue({
+      id: "conv-1",
+      messages: [],
+    });
+    const onMessageB = (socketB.on as any).mock.calls.find(
+      (c: any[]) => c[0] === "message"
+    )[1];
+    await onMessageB(
+      JSON.stringify({ type: "switch_conversation", conversationId: "conv-1" })
+    );
+
+    // Socket C is on a different conversation — should NOT get the echo
+    const socketC = mockSocket();
+    await channel.handleConnection(socketC);
+    (backendClient.getConversation as any).mockResolvedValue({
+      id: "conv-other",
+      messages: [],
+    });
+    const onMessageC = (socketC.on as any).mock.calls.find(
+      (c: any[]) => c[0] === "message"
+    )[1];
+    await onMessageC(
+      JSON.stringify({ type: "switch_conversation", conversationId: "conv-other" })
+    );
+
+    // Set up stream so the message handler doesn't error
+    async function* fakeStream() {
+      yield { event: "done", data: { message_id: "msg-1" } };
+    }
+    (backendClient.conversationTurnStream as any).mockReturnValue(fakeStream());
+
+    // Clear mock calls so we only see new messages
+    (socketA.send as any).mockClear();
+    (socketB.send as any).mockClear();
+    (socketC.send as any).mockClear();
+
+    // Socket A sends a user message to conv-1
+    const onMessageA = (socketA.on as any).mock.calls.find(
+      (c: any[]) => c[0] === "message"
+    )[1];
+    await onMessageA(
+      JSON.stringify({
+        type: "message",
+        content: "hello from A",
+        conversationId: "conv-1",
+      })
+    );
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const msgsB = getSentMessages(socketB);
+    const msgsC = getSentMessages(socketC);
+
+    // Socket B should have received the user_message echo
+    const userMsgsB = msgsB.filter((m) => m.type === "user_message");
+    expect(userMsgsB.length).toBe(1);
+    expect(userMsgsB[0].content).toBe("hello from A");
+    expect(userMsgsB[0].conversationId).toBe("conv-1");
+
+    // Socket A should NOT get the echo (it already added the message locally)
+    const msgsA = getSentMessages(socketA);
+    const userMsgsA = msgsA.filter((m) => m.type === "user_message");
+    expect(userMsgsA.length).toBe(0);
+
+    // Socket C should NOT get the echo (different conversation)
+    const userMsgsC = msgsC.filter((m) => m.type === "user_message");
+    expect(userMsgsC.length).toBe(0);
+  });
+
   it("socket not watching conversation does not receive chunks", async () => {
     const sessionA = sessionManager.createSession("conv-1");
     const socketA = mockSocket();

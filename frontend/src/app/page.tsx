@@ -236,6 +236,9 @@ export default function Home() {
         ]);
         setLoading(false);
         setAgentStatus("idle");
+      } else if (msg.type === "user_message" && msg.content) {
+        // User message sent from another window/tab
+        setMessages((prev) => [...prev, { role: "user", content: msg.content! }]);
       }
       // Plan events
       if (msg.type === "plan_created" && msg.planId && msg.planTitle) {

@@ -122,6 +122,20 @@ export class WebChatChannel {
       return;
     }
 
+    // Echo the user message to other sockets watching this conversation
+    if (conversationId) {
+      const otherSockets = this.sessionManager.getSocketsForConversation(conversationId)
+        .filter(s => s !== socket);
+      const echoMsg = JSON.stringify({
+        type: "user_message",
+        content: msg.content,
+        conversationId,
+      });
+      for (const s of otherSockets) {
+        s.send(echoMsg);
+      }
+    }
+
     // Agent is idle — start a new turn with SSE streaming
     await this.startStreamingTurn(socket, sessionId, msg.content, conversationId, msg.agentId, msg.planId);
   }

@@ -253,6 +253,9 @@ function BoardPage() {
         setMessages(prev => [...prev, { role: "system", content: `Error: ${msg.error || "Unknown error"}` }]);
         setLoading(false);
         setAgentStatus("idle");
+      } else if (msg.type === "user_message" && msg.content) {
+        // User message sent from another window/tab
+        setMessages(prev => [...prev, { role: "user", content: msg.content! }]);
       }
       
       // Only auto-switch to a newly created plan if the user hasn't manually
