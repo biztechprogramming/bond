@@ -2,7 +2,7 @@
 
 **Implemented:** 2026-03-10  
 **Branch:** `feature/032-message-pipeline`  
-**Commits:** `91ac621`, `54dff59`  
+**Commits:** `91ac621`, `54dff59`, `07cde26`, `6673a20`  
 **Design Doc:** [`docs/design/032-message-pipeline-architecture.md`](../design/032-message-pipeline-architecture.md)
 
 ---
@@ -162,6 +162,8 @@ Watchers are resolved via `FanOutDeps`:
 - Telegram/WhatsApp bindings from `ChannelManager.getChannelBinding()`
 - WebChat sockets from `SessionManager.getSocketsForConversation()`
 
+**Skip logic:** Skips any watcher whose `channelType` matches the originating message's `channelType`. This prevents double-delivery (e.g., webchat already got chunks via streaming, so ResponseFanOut only pushes to Telegram/WhatsApp).
+
 ---
 
 ## Channel Adapters
@@ -178,6 +180,10 @@ Watchers are resolved via `FanOutDeps`:
 - `interrupt` / `pause` — abort active turn via backend
 
 **Cross-channel push:** `setCrossChannelPush()` callback pushes user messages to Telegram/WhatsApp watchers. Agent responses are pushed by ResponseFanOut.
+
+### Cross-Channel User Message Echo
+
+When a Telegram/WhatsApp user sends a message, `ChannelManager.setCrossChannelUserEcho()` pushes the user's message text to any webchat sockets watching the same conversation (as a `"user_message"` WS event with sender label). This is wired in `server.ts`.
 
 **Stream buffering:** Active streams are buffered in `streamBuffers` so clients joining mid-stream (via `switch_conversation`) see accumulated content.
 
