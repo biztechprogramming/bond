@@ -13,7 +13,7 @@ dev:
 
 # Backend (FastAPI)
 backend:
-	cd /home/andrew/bond && uv run uvicorn backend.app.main:app --host 127.0.0.1 --port 18790 --reload
+	cd /home/andrew/bond && uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload
 
 # Gateway (TypeScript WebSocket server)
 gateway:
