@@ -123,21 +123,28 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   pipeline.use(new Persister());
   pipeline.use(new ResponseFanOut({
     getWatchers(conversationId: string) {
-      const binding = channelManager.getChannelBinding(conversationId);
       const watchers: Array<{ channelType: string; channelId: string }> = [];
+
+      // Add Telegram/WhatsApp binding if one exists for this conversation
+      const binding = channelManager.getChannelBinding(conversationId);
       if (binding) watchers.push(binding);
-      // Also include webchat sockets watching this conversation
+
+      // Add webchat as a watcher (for messages originating from Telegram/WhatsApp)
+      // ResponseFanOut will skip the originating channel, so webchat-originated
+      // messages won't double-send. We use "webchat" + conversationId as the identifier.
       const wcSockets = sessionManager.getSocketsForConversation(conversationId);
       if (wcSockets.length > 0) {
         watchers.push({ channelType: "webchat", channelId: conversationId });
       }
+
       return watchers;
     },
     async sendToChannel(channelType: string, channelId: string, message: string) {
       if (channelType === "webchat") {
-        // Push to webchat sockets watching this conversation (channelId = conversationId for webchat watchers)
+        // Push to webchat sockets watching this conversation
+        // Used for cross-channel: Telegram/WhatsApp response → webchat
         const payload = JSON.stringify({
-          type: "chunk" as const,
+          type: "response" as const,
           content: message,
           conversationId: channelId,
         });
@@ -157,6 +164,17 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     channelManager.pushToChannel(conversationId, message, senderLabel).catch(() => {});
   });
   channelManager.setPipeline(pipeline);
+  channelManager.setCrossChannelUserEcho((conversationId, message, senderLabel) => {
+    // Push Telegram/WhatsApp user messages to webchat sockets watching this conversation
+    const payload = JSON.stringify({
+      type: "user_message" as const,
+      content: `💬 ${senderLabel}:\n${message}`,
+      conversationId,
+    });
+    for (const s of sessionManager.getSocketsForConversation(conversationId)) {
+      if (s.readyState === 1) s.send(payload);
+    }
+  });
 
   app.use("/api/v1", createChannelRouter(channelManager));
   // Auto-start previously enabled channels (non-blocking)

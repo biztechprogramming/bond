@@ -26,8 +26,11 @@ export class ResponseFanOut implements PipelineHandler {
     if (message.conversationId && message.response) {
       const watchers = this.deps.getWatchers(message.conversationId);
       for (const watcher of watchers) {
-        // Skip the originating channel
-        if (watcher.channelType === message.channelType && watcher.channelId === message.channelId) {
+        // Skip the originating channel type — it already received the response
+        // via its own streaming/accumulation mechanism.
+        // We compare by channelType (not channelId) because adapters use
+        // different ID schemes (webchat uses sessionId, telegram uses chatId).
+        if (watcher.channelType === message.channelType) {
           continue;
         }
         await this.deps.sendToChannel(watcher.channelType, watcher.channelId, message.response).catch(() => {});

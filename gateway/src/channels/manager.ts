@@ -48,6 +48,7 @@ export class ChannelManager {
   /** Maps conversationId → channel chat that's watching it (for cross-channel push) */
   private channelBindings = new Map<string, { channelType: string; channelId: string }>();
   private pipeline: MessagePipeline | null = null;
+  private crossChannelUserEcho: ((conversationId: string, message: string, senderLabel: string) => void) | null = null;
 
   constructor(configPath: string, backendClient: BackendClient) {
     this.configPath = configPath;
@@ -197,6 +198,11 @@ export class ChannelManager {
   /** Set the pipeline for message processing. */
   setPipeline(pipeline: MessagePipeline): void {
     this.pipeline = pipeline;
+  }
+
+  /** Set callback for echoing user messages to webchat (cross-channel). */
+  setCrossChannelUserEcho(fn: (conversationId: string, message: string, senderLabel: string) => void): void {
+    this.crossChannelUserEcho = fn;
   }
 
   /** Get the AllowList for a running channel, or null. */
@@ -428,6 +434,12 @@ Session: ${chatKey}`;
   }
 
   private async routeViaPipeline(msg: ChannelMessage, conversationId: string, agentId: string | null): Promise<void> {
+    // Echo user message to webchat if anyone is watching this conversation
+    if (this.crossChannelUserEcho) {
+      const senderLabel = `You (${msg.channelType})`;
+      this.crossChannelUserEcho(conversationId, msg.content, senderLabel);
+    }
+
     const pipelineMessage: PipelineMessage = {
       id: ulid(),
       channelType: msg.channelType,
