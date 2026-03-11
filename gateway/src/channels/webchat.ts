@@ -320,6 +320,24 @@ export class WebChatChannel {
               conversationId,
             });
             break;
+          case "coding_agent_output":
+            this.sendToConversation(conversationId, {
+              type: "coding_agent_output", sessionId,
+              content: JSON.stringify({ agent_type: data.agent_type, line: data.line }),
+              conversationId,
+            } as any);
+            break;
+          case "coding_agent_done":
+            this.sendToConversation(conversationId, {
+              type: "coding_agent_done", sessionId,
+              content: JSON.stringify({
+                status: data.status, exit_code: data.exit_code,
+                agent_type: data.agent_type, elapsed_seconds: data.elapsed_seconds,
+                git_changes: data.git_changes,
+              }),
+              conversationId,
+            } as any);
+            break;
           case "error":
             this.sendToConversation(conversationId, {
               type: "error", sessionId,
@@ -519,6 +537,26 @@ export class WebChatChannel {
           case "plan_completed":
             this.broadcast({ type: "plan_completed", sessionId,
               planId: event.data.plan_id as string, planStatus: event.data.status as string, conversationId });
+            break;
+
+          case "coding_agent_output":
+            this.sendToConversation(conversationId, {
+              type: "coding_agent_output", sessionId,
+              content: JSON.stringify({ agent_type: event.data.agent_type, line: event.data.line }),
+              conversationId,
+            } as any);
+            break;
+
+          case "coding_agent_done":
+            this.sendToConversation(conversationId, {
+              type: "coding_agent_done", sessionId,
+              content: JSON.stringify({
+                status: event.data.status, exit_code: event.data.exit_code,
+                agent_type: event.data.agent_type, elapsed_seconds: event.data.elapsed_seconds,
+                git_changes: event.data.git_changes,
+              }),
+              conversationId,
+            } as any);
             break;
 
           case "done":

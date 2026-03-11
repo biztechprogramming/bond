@@ -17,6 +17,10 @@ interface ChatPanelProps {
   streamingContent: string;
   currentAgentName: string;
   toolActivity: { name: string; args: string; time: number }[];
+  /** Live coding agent terminal output lines */
+  codingAgentOutput?: string[];
+  /** Whether a coding agent is currently running */
+  codingAgentActive?: boolean;
   /** Compact mode for board sidebar */
   compact?: boolean;
   /** Show pause/resume/cancel controls */
@@ -49,17 +53,27 @@ export default function ChatPanel({
   showToolActivityLog = false,
   placeholder,
   emptyMessage,
+  codingAgentOutput = [],
+  codingAgentActive = false,
   deleteMode = false,
   onDeleteMessage,
   onResendMessage,
   selectedAgentName,
 }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<HTMLDivElement | null>(null);
   const [showToolLog, setShowToolLog] = React.useState(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
+
+  // Auto-scroll terminal output
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [codingAgentOutput]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -186,6 +200,38 @@ export default function ChatPanel({
                 )}
               </div>
             )}
+          </div>
+        )}
+        {codingAgentActive && codingAgentOutput.length > 0 && (
+          <div style={{ ...s.chatMsg, maxWidth: "100%", padding: 0, overflow: "hidden" }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: "8px",
+              padding: "8px 12px", borderBottom: "1px solid #1e1e2e",
+              fontSize: "0.8rem", color: "#6c8aff",
+            }}>
+              <span style={{ animation: "pulse 1.5s ease-in-out infinite", display: "inline-block" }}>●</span>
+              <span>Coding Agent</span>
+              <span style={{ color: "#5a5a6e", marginLeft: "auto", fontSize: "0.72rem" }}>
+                {codingAgentOutput.length} lines
+              </span>
+            </div>
+            <div
+              ref={terminalRef}
+              style={{
+                maxHeight: "400px", overflowY: "auto", overflowX: "auto",
+                padding: "8px 12px",
+                backgroundColor: "#0a0a0f",
+                fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+                fontSize: "0.78rem", lineHeight: 1.5,
+                whiteSpace: "pre", color: "#c0c0d0",
+              }}
+            >
+              {codingAgentOutput.map((line, idx) => (
+                <div key={idx} style={{ color: idx === codingAgentOutput.length - 1 ? "#e0e0e8" : "#8888a0" }}>
+                  {line}
+                </div>
+              ))}
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
