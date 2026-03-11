@@ -307,7 +307,9 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
         "NOT for: multi-step coding tasks (use coding_agent)."
     ),
     "file_read": (
-        " The ONLY reading tool. Supports full read, line ranges (head/tail), and outline mode."
+        " Reads file content into context. Good for small/medium files (<500 lines)."
+        " For large files (>500 lines), prefer shell_grep to find line numbers then"
+        " shell_sed to extract just the section you need — avoids loading the whole file."
         " If you have the path, call this directly — never search/find/ls first."
     ),
     "file_edit": (
