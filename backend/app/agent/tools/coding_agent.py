@@ -322,24 +322,22 @@ async def handle_coding_agent(
         _active_processes.pop(agent_id, None)
         return {"error": str(e)}
 
-    # Stream output, emitting progress via event_queue if available
+    # Stream output line-by-line via SSE for real-time visibility
     event_queue = context.get("event_queue")
-    output_chunks: list[str] = []
     _stream_done = asyncio.Event()
+
+    def _format_sse(event: str, data: Any) -> str:
+        import json as _json
+        return f"event: {event}\ndata: {_json.dumps(data)}\n\n"
 
     async def _stream() -> None:
         try:
             async for line in cap.stream_output():
-                output_chunks.append(line)
-                # Emit SSE event every 5 lines for live progress
-                if event_queue and len(output_chunks) % 5 == 0:
-                    await event_queue.put({
-                        "event": "tool_call",
-                        "data": {
-                            "tool_name": "coding_agent",
-                            "summary": f"[{agent_type}] {line[:120]}",
-                        },
-                    })
+                if event_queue:
+                    await event_queue.put(_format_sse("coding_agent_output", {
+                        "agent_type": agent_type,
+                        "line": line,
+                    }))
         finally:
             _stream_done.set()
 
@@ -360,7 +358,6 @@ async def handle_coding_agent(
 
     _active_processes.pop(agent_id, None)
 
-    output = cap.get_output(last_n=300)
     elapsed = cap.elapsed
 
     # Collect git status after sub-agent finishes (if it's a git repo)
@@ -378,20 +375,29 @@ async def handle_coding_agent(
     except Exception:
         pass
 
-    result: dict[str, Any] = {
-        "status": "completed" if exit_code == 0 else "failed",
-        "exit_code": exit_code,
-        "agent_type": agent_type,
-        "working_directory": working_dir,
-        "elapsed_seconds": round(elapsed, 1),
-        "output": output,
-    }
+    # Build a short summary for the final SSE done event
+    status = "completed" if exit_code == 0 else "failed"
+    summary_parts = [f"Coding agent ({agent_type}) {status} in {round(elapsed, 1)}s"]
     if branch:
-        result["branch"] = branch
+        summary_parts.append(f"Branch: {branch}")
     if git_summary:
-        result["git_changes"] = git_summary
+        summary_parts.append(f"Changes:\n{git_summary}")
 
-    return result
+    # Emit completion event
+    if event_queue:
+        await event_queue.put(_format_sse("coding_agent_done", {
+            "status": status,
+            "exit_code": exit_code,
+            "agent_type": agent_type,
+            "elapsed_seconds": round(elapsed, 1),
+            "git_changes": git_summary or None,
+        }))
+
+    # Terminal — ends the agent loop. No further tool calls.
+    return {
+        "message": "\n".join(summary_parts),
+        "_terminal": True,
+    }
 
 
 async def kill_coding_agent(agent_id: str) -> bool:

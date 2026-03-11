@@ -93,6 +93,25 @@ export class TurnExecutor implements PipelineHandler {
           });
           break;
 
+        case "coding_agent_output":
+          await context.emit("coding_agent_output", {
+            agent_type: event.data.agent_type,
+            line: event.data.line,
+            conversationId: message.conversationId,
+          });
+          break;
+
+        case "coding_agent_done":
+          await context.emit("coding_agent_done", {
+            status: event.data.status,
+            exit_code: event.data.exit_code,
+            agent_type: event.data.agent_type,
+            elapsed_seconds: event.data.elapsed_seconds,
+            git_changes: event.data.git_changes,
+            conversationId: message.conversationId,
+          });
+          break;
+
         case "done":
           message.metadata.responseMessageId = event.data.message_id || "";
           break;

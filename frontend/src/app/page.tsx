@@ -68,6 +68,8 @@ export default function Home() {
   const [deleteMode, setDeleteMode] = useState(false);
   const currentAgentNameRef = useRef<string>("Agent");
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
+  const [codingAgentOutput, setCodingAgentOutput] = useState<string[]>([]);
+  const [codingAgentActive, setCodingAgentActive] = useState(false);
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -193,6 +195,27 @@ export default function Home() {
           const summary = _toolSummary(name, data);
           setToolActivity((prev) => [...prev, { name, args: summary, time: Date.now() }]);
         } catch { /* ignore parse errors */ }
+      } else if (msg.type === "coding_agent_output" && msg.content) {
+        try {
+          const data = JSON.parse(msg.content);
+          setCodingAgentActive(true);
+          setCodingAgentOutput((prev) => [...prev, data.line]);
+          setAgentStatus("tool_calling");
+        } catch { /* ignore */ }
+      } else if (msg.type === "coding_agent_done" && msg.content) {
+        try {
+          const data = JSON.parse(msg.content);
+          setCodingAgentActive(false);
+          // Add a summary message from the coding agent
+          const summary = [`Coding agent (${data.agent_type}) ${data.status} in ${data.elapsed_seconds}s`];
+          if (data.git_changes) summary.push(`\nChanges:\n${data.git_changes}`);
+          setMessages((prev) => [...prev, {
+            role: "assistant" as const,
+            content: summary.join(""),
+            agentName: `${data.agent_type} agent`,
+          }]);
+          setCodingAgentOutput([]);
+        } catch { /* ignore */ }
       } else if (msg.type === "chunk" && msg.content) {
         setStreamingContent((prev) => prev + msg.content!);
         setAgentStatus("responding");
@@ -209,6 +232,8 @@ export default function Home() {
           }
           return "";
         });
+        setCodingAgentActive(false);
+        setCodingAgentOutput([]);
         setLoading(false);
         setAgentStatus("idle");
         setToolActivity([]);
@@ -553,6 +578,8 @@ export default function Home() {
           streamingContent={streamingContent}
           currentAgentName={currentAgentNameRef.current}
           toolActivity={toolActivity}
+          codingAgentOutput={codingAgentOutput}
+          codingAgentActive={codingAgentActive}
           compact={false}
           showToolActivityLog={true}
           emptyMessage={`Send a message to start chatting with ${selectedAgentName}.`}

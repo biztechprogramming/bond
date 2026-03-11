@@ -23,7 +23,8 @@ export interface GatewayMessage {
   type: "response" | "chunk" | "error" | "connected" | "history" | "conversations_list"
     | "queued" | "status" | "tool_call" | "done" | "new_input"
     | "plan_created" | "plan_updated" | "item_updated" | "plan_completed"
-    | "user_message" | "pong";
+    | "user_message" | "pong"
+    | "coding_agent_output" | "coding_agent_done";
   sessionId?: string;
   content?: string;
   error?: string;
