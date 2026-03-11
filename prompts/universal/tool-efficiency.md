@@ -8,16 +8,15 @@
 ### Finding Files: ALWAYS Use project_search
 **RULE: When looking for a file, document, or code reference, use `project_search`. Do NOT use `shell_find` or `shell_grep` for discovery.**
 
-`project_search` searches every word in your query across filenames, directory paths, AND file contents — all in one call. It also supports extension filtering via the `include` parameter (e.g. `include="*.css"`). There is no discovery scenario where `shell_find` is better.
+`project_search` tries multiple strategies in ONE call: filename matching (with zero-padding), content search, and path matching. It finds things that `shell_find` misses because `shell_find` only matches exact globs.
 
 **Examples:**
 - `project_search(query="design doc 27")` → finds `docs/design/027-fragment-selection-roadmap.md`
 - `project_search(query="worker tests")` → finds test files related to the worker
-- `project_search(query="css styles inspection")` → finds CSS files related to inspections
-- `project_search(query="app.css", include="*.css")` → finds CSS files named app.css
+- `project_search(query="manifest yaml")` → finds manifest files across the project
 
-**Do NOT use shell_find.** `project_search` replaces it entirely — including glob-based searches like `*.css`, `*.py`, etc. Use the `include` parameter for extension filtering.
-**When to use shell_grep:** Only when searching for a specific text pattern inside files with line numbers (not for finding files).
+**When to use shell_find instead:** Only when you already know the exact glob pattern (e.g. `shell_find(name="*.py", path="src/")`).
+**When to use shell_grep instead:** Only when searching for a specific text pattern inside files with line numbers.
 
 ### Discovery Phase (First Turn)
 For any non-trivial task, your **first tool-call turn** must batch all available discovery calls together. Emit these in a single response so they execute in parallel:
