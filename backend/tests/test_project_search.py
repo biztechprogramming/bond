@@ -307,6 +307,43 @@ async def test_backward_compatible_category_lists(project_tree):
     assert "results" in result  # new ranked list
 
 
+async def test_wildcard_matches_grouped_by_term(project_tree):
+    """wildcard_matches should show files grouped by *term* glob, like shell_find would."""
+    result = await handle_project_search(
+        {"query": "pallet defect razor", "path": str(project_tree)}, {}
+    )
+    wc = result.get("wildcard_matches", {})
+    # Should have entries keyed by *pallet*, *defect*, and *razor*
+    assert any("pallet" in key for key in wc), f"Expected *pallet* key: {list(wc.keys())}"
+    assert any("defect" in key for key in wc), f"Expected *defect* key: {list(wc.keys())}"
+    assert any("razor" in key for key in wc), f"Expected *razor* key: {list(wc.keys())}"
+
+    # *pallet* should list PalletOverview.razor and PalletDefectReport.razor
+    pallet_key = [k for k in wc if "pallet" in k][0]
+    pallet_basenames = [os.path.basename(f) for f in wc[pallet_key]]
+    assert "PalletOverview.razor" in pallet_basenames, f"Expected PalletOverview.razor: {pallet_basenames}"
+    assert "PalletDefectReport.razor" in pallet_basenames, f"Expected PalletDefectReport.razor: {pallet_basenames}"
+
+    # *defect* should include DefectEntry.razor and PalletDefectReport.razor
+    defect_key = [k for k in wc if "defect" in k][0]
+    defect_basenames = [os.path.basename(f) for f in wc[defect_key]]
+    assert "DefectEntry.razor" in defect_basenames
+    assert "PalletDefectReport.razor" in defect_basenames
+
+    # *razor* should list ALL .razor files in the project
+    razor_key = [k for k in wc if "razor" in k][0]
+    razor_basenames = [os.path.basename(f) for f in wc[razor_key]]
+    assert len(razor_basenames) >= 4, f"Expected multiple .razor files: {razor_basenames}"
+    assert "DefectEntry.razor" in razor_basenames
+    assert "InspectionForm.razor" in razor_basenames
+
+    # No gitignored files in wildcard results
+    for key, files in wc.items():
+        for f in files:
+            assert "/bin/" not in f, f"gitignored bin/ file in wildcard_matches: {f}"
+            assert "/obj/" not in f, f"gitignored obj/ file in wildcard_matches: {f}"
+
+
 async def test_inspection_form_razor_search(project_tree):
     """The exact failing scenario: 'InspectionForm razor' should find InspectionForm.razor
     without needing shell_find."""

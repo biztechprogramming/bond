@@ -580,10 +580,24 @@ async def handle_project_search(
     path_set = {e["path"] for e in enriched if "path" in file_scores.get(e["path"], {}).get("categories", set())}
     content_set = {e["path"] for e in enriched if "content" in file_scores.get(e["path"], {}).get("categories", set())}
 
+    # --- Wildcard file matches grouped by query term ---
+    # Shows what `shell_find -iname "*term*"` would return, so the agent
+    # never needs a separate shell_find call.
+    wildcard_matches: dict[str, list[str]] = {}
+    for token in all_tokens:
+        glob_label = f"*{token}*"
+        matching_files: list[str] = []
+        for filepath in all_project_files:
+            if token in os.path.basename(filepath).lower():
+                matching_files.append(filepath)
+        if matching_files:
+            wildcard_matches[glob_label] = sorted(matching_files)
+
     results: dict[str, Any] = {
         "query": query,
         "search_root": path,
         "results": enriched,  # Primary: ranked by relevance
+        "wildcard_matches": wildcard_matches,  # grouped by *term* glob
         "filename_matches": [e for e in enriched if e["path"] in filename_set],
         "path_matches": [e for e in enriched if e["path"] in path_set],
         "content_matches": [e for e in enriched if e["path"] in content_set],
