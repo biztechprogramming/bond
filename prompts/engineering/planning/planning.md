@@ -6,4 +6,4 @@ Principles for task decomposition and execution planning:
 - **Break into deliverables** — Each step should produce something testable and reviewable.
 - **Identify risks early** — Call out unknowns, dependencies, and assumptions before they become blockers.
 - **Iterate in slices** — Deliver working end-to-end slices, not layers. A thin vertical slice beats a perfect foundation with nothing on top.
-- **Communicate changes** — If the plan changes during execution, flag it and get alignment before continuing.
+- **Communicate changes** — If YOUR plan diverges from what the user asked for, note the deviation. But never ask permission to do what the user already requested.
