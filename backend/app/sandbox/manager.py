@@ -381,8 +381,8 @@ class SandboxManager:
         cmd = [
             "docker", "run", "-d",
             "--name", key,
-            "--memory", "512m",
-            "--cpus", "1",
+            "--memory", "2048m",
+            "--cpus", "2",
         ]
 
         # Port mapping: host_port -> internal worker port
@@ -584,8 +584,8 @@ class SandboxManager:
         cmd = [
             "docker", "run", "-d",
             "--name", key,
-            "--memory", "512m",
-            "--cpus", "1",
+            "--memory", "2048m",
+            "--cpus", "2",
         ]
 
         # Add workspace mounts
