@@ -65,8 +65,55 @@ fi
 # ---------------------------------------------------------------------------
 # Privilege drop (037 §4.4.3)
 # ---------------------------------------------------------------------------
-# Fix ownership of runtime dirs that may be mounted from host
-chown -R bond-agent:bond-agent /data /workspace /config 2>/dev/null || true
+# Grant bond-agent access to mounted volumes via group membership rather
+# than chown (which would change ownership on the host side).
+#
+# Strategy: detect the GID of each mounted dir, create a matching group
+# inside the container, and add bond-agent to it. This gives read/write
+# access without changing file ownership.
+
+_add_bond_agent_to_gid() {
+    local dir="$1"
+    [ -d "$dir" ] || return 0
+    local gid
+    gid=$(stat -c '%g' "$dir" 2>/dev/null) || return 0
+
+    # Skip if bond-agent is already in a group with this GID
+    if id -G bond-agent 2>/dev/null | tr ' ' '\n' | grep -qx "$gid"; then
+        return 0
+    fi
+
+    # Create a group for this GID if it doesn't exist
+    local grp_name
+    grp_name=$(getent group "$gid" | cut -d: -f1 2>/dev/null)
+    if [ -z "$grp_name" ]; then
+        grp_name="hostmount_${gid}"
+        groupadd -g "$gid" "$grp_name" 2>/dev/null || true
+    fi
+
+    usermod -aG "$grp_name" bond-agent 2>/dev/null || true
+    echo "[entrypoint] Added bond-agent to group $grp_name (gid=$gid) for $dir"
+}
+
+_add_bond_agent_to_gid /bond
+_add_bond_agent_to_gid /workspace
+_add_bond_agent_to_gid /data
+_add_bond_agent_to_gid /config
+
+# /data may be a fresh container volume with root ownership — bond-agent
+# needs to write here (agent DB, logs). Only chown dirs that are NOT
+# host mounts (i.e., Docker-managed volumes or dirs created by the image).
+# Detect by checking if the dir is on the same device as /.
+_root_dev=$(stat -c '%d' / 2>/dev/null)
+for dir in /data /data/shared; do
+    if [ -d "$dir" ]; then
+        _dir_dev=$(stat -c '%d' "$dir" 2>/dev/null)
+        if [ "$_dir_dev" = "$_root_dev" ]; then
+            # Same device as / → likely created by Dockerfile, safe to chown
+            chown bond-agent:bond-agent "$dir" 2>/dev/null || true
+        fi
+    fi
+done
 
 # Copy git/ssh config to bond-agent user
 if [ -d /root/.ssh ]; then

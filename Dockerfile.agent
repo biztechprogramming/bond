@@ -86,9 +86,11 @@ RUN chmod +x /agent-entrypoint.sh
 COPY docker/bin/execd /opt/opensandbox/execd
 RUN chmod +x /opt/opensandbox/execd
 
-# Create directories the worker expects and set ownership
-RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox && \
-    chown -R bond-agent:bond-agent /data /workspace
+# Create directories the worker expects
+# Note: /data and /workspace ownership is handled at runtime in the
+# entrypoint via group membership (not chown) to avoid changing
+# ownership on host-mounted volumes.
+RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox
 
 # Bond library is mounted at /bond at runtime (read-only)
 # Worker is invoked as: python -m backend.app.worker --port 18791
