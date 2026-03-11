@@ -13,7 +13,7 @@ def get_sandbox_backend() -> str:
     from backend.app.config import load_bond_json
 
     config = load_bond_json()
-    return config.get("sandbox_backend", "legacy")
+    return config.get("sandbox_backend", "opensandbox")
 
 
 def get_executor() -> Any:
