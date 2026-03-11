@@ -51,7 +51,6 @@ from backend.app.agent.context_pipeline import (
 )
 from backend.app.agent.cache_manager import (
     _advance_cache_breakpoint,
-    _decay_in_loop_tool_results,
 )
 from backend.app.agent.parallel_worker import (
     ParallelWorkerPool,
@@ -1224,32 +1223,13 @@ async def _run_agent_loop(
                     await event_queue.put(_sse_event("status", {"state": "paused"}))
                 break
 
-        # ── Phase 3B: Improved in-loop tool result decay ──
-        # Run every 2 iterations (was 3). After iteration 8, decay to one-line
-        # summaries for results older than last 3. After 15, last 2 only.
-        if _iteration > 0 and _iteration % 2 == 0:
-            messages = _decay_in_loop_tool_results(messages, _preturn_msg_count, frozen_up_to=_cache_bp2_index)
-        if _iteration >= 8:
-            # Aggressive decay: keep only last 3 tool results verbatim
-            _aggressive_keep = 3 if _iteration < 15 else 2
-            _in_loop = messages[_preturn_msg_count:]
-            _tool_indices = [i for i, m in enumerate(_in_loop) if m.get("role") == "tool"]
-            if len(_tool_indices) > _aggressive_keep:
-                _decay_cutoff = _tool_indices[-_aggressive_keep]
-                for _di in range(len(_in_loop)):
-                    if _di < _decay_cutoff and _in_loop[_di].get("role") == "tool":
-                        _tc = _in_loop[_di].get("content", "")
-                        if isinstance(_tc, str) and len(_tc) > 100:
-                            try:
-                                _parsed = json.loads(_tc)
-                                if isinstance(_parsed, dict):
-                                    _summary = "; ".join(
-                                        f"{k}: {str(v)[:50]}" for k, v in list(_parsed.items())[:3]
-                                    )
-                                    _in_loop[_di] = {**_in_loop[_di], "content": f"[Decayed] {_summary}"}
-                            except (json.JSONDecodeError, TypeError):
-                                _in_loop[_di] = {**_in_loop[_di], "content": _tc[:80] + "...[decayed]"}
-                messages = messages[:_preturn_msg_count] + _in_loop
+        # ── Phase 3B: In-loop tool result decay — DISABLED ──
+        # Previously compressed older tool results to save context, but this
+        # destroys file content the agent paid for. Combined with file_read
+        # dedup (which correctly refuses re-reads), this created an impossible
+        # loop: agent loses content to compression, tries to re-read, dedup
+        # blocks it saying "you already have it", agent is stuck.
+        # The ~2K tokens saved per compression is not worth a wasted iteration.
 
         current_max_tokens = TOKEN_TIERS[current_tier]
         context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
