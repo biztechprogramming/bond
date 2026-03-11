@@ -1,8 +1,9 @@
 # Design Doc: Coding Agent Completion Loop
 
-## Status: Proposed
+## Status: Implemented
 ## Author: Bond AI
 ## Date: 2026-03-11
+## Branch: feature/system-events-subscription
 
 ---
 
@@ -17,293 +18,239 @@ When Bond spawns a coding agent (via the `coding_agent` tool), the agent loop re
 
 ### How OpenClaw solves this
 
-OpenClaw has a fundamentally different architecture for background task completion:
+OpenClaw uses an in-memory system events queue + heartbeat wake mechanism:
 
-1. **System Events Queue** (`system-events.ts`) — An in-memory, session-scoped queue where components can enqueue human-readable event strings (e.g., `"Exec finished (node=merlin, code 0)\n<output snippet>"`).
+1. **System Events Queue** (`system-events.ts`) — An in-memory, session-scoped queue where components enqueue human-readable event strings.
+2. **Heartbeat Wake** (`heartbeat-wake.ts`) — `requestHeartbeatNow()` schedules an immediate heartbeat that drains events and injects them into the next agent turn.
 
-2. **Heartbeat Wake** (`heartbeat-wake.ts`) — When a system event is enqueued, `requestHeartbeatNow()` is called, which schedules an immediate heartbeat with coalescing (default 250ms). This wakes the agent loop.
-
-3. **Heartbeat → Agent Turn** — The heartbeat runner drains pending system events and injects them as context into the next agent turn. The LLM sees *"System: Exec completed (code 0): ..."* and can respond conversationally.
-
-4. **Session scoping** — Events are keyed to specific sessions, so multi-session setups route completions to the right conversation.
-
-The result: when a background `exec` finishes in OpenClaw, the agent wakes up within seconds, sees the completion event, and replies to the user with a summary. Bond has none of this.
+This works for OpenClaw's single-process gateway architecture. Bond's architecture is different — workers run in separate Docker containers, communicating with the gateway over HTTP. An in-memory queue inside a worker container can't wake the gateway.
 
 ---
 
-## 2. Gap Analysis: Bond vs OpenClaw
+## 2. Gap Analysis: Bond vs OpenClaw (pre-implementation)
 
-| Capability | OpenClaw | Bond |
+| Capability | OpenClaw | Bond (before) |
 |---|---|---|
 | Background process monitoring | `exec` tool + `process` management | `CodingAgentProcess` + `GitDiffWatcher` |
 | Incremental progress to UI | System events → heartbeat → agent reply | SSE events → frontend (no LLM involvement) |
 | Completion notification | `enqueueSystemEvent` → `requestHeartbeatNow` → agent turn | `event_queue.put({"type": "done"})` → SSE only |
 | Agent re-engagement on finish | ✅ Heartbeat wakes agent, LLM summarizes | ❌ No mechanism |
 | Failure notification | ✅ Agent sees error event, responds | ❌ Silent — user must check UI |
-| "I'll follow up" accuracy | ✅ It actually follows up | ❌ Empty promise |
-| Multi-agent orchestration | Sub-agent completion events route to parent | Single coding agent per conversation, no callback |
+| SpacetimeDB usage | N/A (uses in-memory queue) | HTTP-only (tables for storage, no subscriptions) |
 
-### Bond's current flow
+### The key insight: Bond already has SpacetimeDB
 
-```
-User: "Build feature X"
-  → LLM calls coding_agent tool
-  → CodingAgentProcess spawns subprocess
-  → Tool returns immediately: {"status": "started", ...}
-  → LLM says: "I've started the coding agent, I'll report back..."
-  → [Background: GitDiffWatcher pushes SSE diffs to frontend]
-  → [Background: Process finishes, "done" event sent via SSE]
-  → [Nothing happens in the LLM. User is on their own.]
-```
+Bond's frontend already uses SpacetimeDB's real-time WebSocket subscription system for conversations, messages, and work plans. The generated TypeScript SDK with `DbConnection`, `onInsert`/`onUpdate` callbacks, and subscription queries is fully operational in `frontend/src/lib/spacetimedb-client.ts`.
 
-### What it should look like
+However, **only the frontend subscribes**. The gateway and workers treat SpacetimeDB as a dumb REST database — `callReducer()` and `sqlQuery()` over HTTP. This means:
 
 ```
-User: "Build feature X"
-  → LLM calls coding_agent tool
-  → CodingAgentProcess spawns subprocess
-  → Tool returns immediately: {"status": "started", ...}
-  → LLM says: "I've started the coding agent, I'll report back..."
-  → [Background: GitDiffWatcher pushes SSE diffs to frontend]
-  → [Background: Process finishes]
-  → Completion event injected into next agent turn
-  → LLM sees: "Coding agent (claude) completed in 142s. 8 files changed..."
-  → LLM responds: "The coding agent finished. Here's what it did: [summary].
-     Tests pass. Want me to push to a branch?"
+Frontend  ──WebSocket──▶  SpacetimeDB  ◀──HTTP REST──  Gateway/Workers
+   (real-time push)                       (request/response only)
 ```
+
+The solution: extend SpacetimeDB subscriptions to the gateway. When a worker writes a completion event to SpacetimeDB, the gateway sees it instantly via WebSocket push and triggers an agent turn.
 
 ---
 
-## 3. Proposed Design
+## 3. Architecture
 
-### 3.1 Completion Callback System
+### Data flow
 
-Add a lightweight callback mechanism in the worker that allows background tasks to trigger a new agent turn when they complete.
-
-```python
-# New file: backend/app/agent/completion_events.py
-
-class CompletionEvent:
-    """A background task completion that should trigger an agent turn."""
-    def __init__(self, conversation_id: str, event_type: str, summary: str, 
-                 metadata: dict | None = None):
-        self.conversation_id = conversation_id
-        self.event_type = event_type  # "coding_agent_done", "coding_agent_failed", etc.
-        self.summary = summary
-        self.metadata = metadata or {}
-        self.timestamp = time.time()
-
-# Session-scoped queue (mirrors OpenClaw's system-events.ts)
-_pending_events: dict[str, list[CompletionEvent]] = {}  # conversation_id -> events
-
-def enqueue_completion(event: CompletionEvent) -> None:
-    """Queue a completion event for the next agent turn."""
-    events = _pending_events.setdefault(event.conversation_id, [])
-    events.append(event)
-    # Cap at 20 events per conversation
-    if len(events) > 20:
-        events.pop(0)
-
-def drain_completions(conversation_id: str) -> list[CompletionEvent]:
-    """Drain all pending completion events for a conversation."""
-    return _pending_events.pop(conversation_id, [])
+```
+                              SpacetimeDB
+                            ┌─────────────┐
+Worker (Python)             │             │          Gateway (TypeScript)
+┌──────────────┐  HTTP      │ system_     │  WebSocket  ┌──────────────┐
+│ coding_agent │──reducer──▶│ events      │──onInsert──▶│ subscription │
+│ _monitor()   │            │ table       │             │ .ts          │
+└──────────────┘            └─────────────┘             └──────┬───────┘
+                                                               │
+                                                               ▼
+                                                        ┌──────────────┐
+                                                        │ completion/  │
+                                                        │ handler.ts   │
+                                                        └──────┬───────┘
+                                                               │
+                                              conversationTurnStream()
+                                                               │
+                                                               ▼
+                                                        ┌──────────────┐
+                                                        │ BackendClient│──▶ Worker /turn
+                                                        └──────┬───────┘
+                                                               │
+                                                          WebSocket
+                                                               │
+                                                               ▼
+                                                        ┌──────────────┐
+                                                        │ Frontend     │
+                                                        │ (user sees   │
+                                                        │  the reply)  │
+                                                        └──────────────┘
 ```
 
-### 3.2 CodingAgentSession Monitor Enhancement
+### Why SpacetimeDB instead of in-memory queues
 
-Modify the existing `_monitor()` method in `CodingAgentSession` to enqueue a completion event when the process finishes:
-
-```python
-# In coding_agent.py, CodingAgentSession._monitor()
-
-async def _monitor(self) -> None:
-    try:
-        # ... existing diff polling loop ...
-        
-        # Process finished — build summary (existing code)
-        self.exit_code = self.process.process.returncode
-        self.finished = True
-        # ... existing summary building ...
-        
-        # NEW: Enqueue completion event for agent re-engagement
-        from backend.app.agent.completion_events import enqueue_completion, CompletionEvent
-        enqueue_completion(CompletionEvent(
-            conversation_id=self.conversation_id,
-            event_type="coding_agent_done" if self.exit_code == 0 else "coding_agent_failed",
-            summary=self.final_summary,
-            metadata={
-                "agent_type": self.agent_type,
-                "exit_code": self.exit_code,
-                "elapsed_seconds": round(self.process.elapsed, 1),
-                "git_stat": stat,
-                "baseline_commit": self.baseline_commit,
-                "branch": self.branch,
-                "working_directory": self.process.working_directory,
-            },
-        ))
-        
-        # ... existing SSE event push ...
-```
-
-### 3.3 Worker Wake Mechanism
-
-Bond doesn't have OpenClaw's heartbeat system. Two options:
-
-#### Option A: Polling endpoint (simpler)
-
-Add an endpoint the frontend/gateway can poll, and trigger a synthetic agent turn when completions are pending:
-
-```python
-# In worker.py
-
-@app.post("/check-completions/{conversation_id}")
-async def check_completions(conversation_id: str) -> dict:
-    """Check for pending background task completions."""
-    from backend.app.agent.completion_events import drain_completions
-    events = drain_completions(conversation_id)
-    if not events:
-        return {"pending": False}
-    return {
-        "pending": True,
-        "events": [
-            {"type": e.event_type, "summary": e.summary, "metadata": e.metadata}
-            for e in events
-        ],
-    }
-```
-
-The frontend would poll this every ~10s when a coding agent is active, and auto-trigger a `/turn` with the completion context injected as a system message.
-
-#### Option B: Internal wake (preferred, mirrors OpenClaw)
-
-The monitor task directly triggers a new agent turn internally:
-
-```python
-# In coding_agent.py or a new completion_handler.py
-
-async def _trigger_completion_turn(
-    conversation_id: str, 
-    completion_summary: str,
-    metadata: dict,
-) -> None:
-    """Trigger a new agent turn with completion context.
-    
-    Injects the completion as a system event and runs a lightweight
-    agent loop iteration that can respond to the user.
-    """
-    # Build a synthetic "system" message with the completion info
-    system_context = (
-        f"[System: Background task completed]\n\n"
-        f"{completion_summary}\n\n"
-        f"Summarize what happened for the user. If the task succeeded, "
-        f"describe the changes and suggest next steps. If it failed, "
-        f"explain what went wrong and offer to help debug."
-    )
-    
-    # Trigger a new turn via the worker's internal API
-    # This reuses the existing _run_agent_loop with the completion
-    # injected as the "user message" (but marked as system-originated)
-    response_text, _ = await _run_agent_loop(
-        user_message=system_context,
-        history=await _load_recent_history(conversation_id),
-        conversation_id=conversation_id,
-        is_system_initiated=True,  # New flag: don't wait for user input
-    )
-    
-    # Push the response to the frontend via SSE or WebSocket
-    await _push_assistant_message(conversation_id, response_text)
-```
-
-### 3.4 Frontend Integration
-
-The frontend needs to handle unsolicited assistant messages (agent-initiated turns). Two delivery options:
-
-1. **Extend existing SSE stream** — Keep the coding agent SSE connection open after the process finishes. When the completion turn runs, push the agent's response through the same stream.
-
-2. **WebSocket push** — If the frontend has a WebSocket connection (or can open one), push completion responses as a new message type.
-
-3. **Poll + fetch** — Frontend polls `/check-completions`, and when completions are found, fetches the latest messages for the conversation.
-
-### 3.5 Message Persistence
-
-Completion-triggered turns must be persisted the same way user-initiated turns are:
-
-- The completion context (system message) is stored in history so the LLM has context in future turns
-- The agent's response is stored as a normal assistant message
-- The frontend renders it as a regular assistant message (perhaps with a subtle "auto-generated" indicator)
+| Concern | In-memory dict | SpacetimeDB table |
+|---|---|---|
+| Cross-process | ❌ Worker and gateway are separate containers | ✅ Both can read/write the same table |
+| Durability | ❌ Lost on restart | ✅ Events survive restarts; gateway drains on reconnect |
+| Frontend visibility | ❌ Requires separate notification channel | ✅ Frontend can subscribe to same table for toasts |
+| Observability | ❌ No audit trail | ✅ Every event is a queryable row |
+| Latency | ~0ms (same process) | ~sub-millisecond (WebSocket push) |
+| Complexity | Lower (but only works single-process) | Uses existing SDK already in `package.json` |
 
 ---
 
-## 4. Implementation Plan
+## 4. Implementation
 
-### Phase 1: Core completion events (backend only)
-1. Create `backend/app/agent/completion_events.py` with the event queue
-2. Modify `CodingAgentSession._monitor()` to enqueue completion events
-3. Add `/check-completions/{conversation_id}` polling endpoint
-4. Add integration tests
+### 4.1 SpacetimeDB Schema
 
-**Effort:** ~1 day  
-**Risk:** Low — additive, no changes to existing agent loop
+**File:** `spacetimedb/spacetimedb/src/index.ts`
 
-### Phase 2: Internal wake + auto-turn
-1. Implement `_trigger_completion_turn()` in the worker
-2. Add `is_system_initiated` flag to `_run_agent_loop` to distinguish auto-turns
-3. Handle message persistence for system-initiated turns
-4. Add guard rails: max 1 auto-turn per completion, timeout on auto-turn, no recursive spawning
+New table:
 
-**Effort:** ~2 days  
-**Risk:** Medium — modifying the agent loop requires care to avoid infinite loops or unexpected behavior
+```typescript
+system_events: table(
+  { public: true },
+  {
+    id: t.string().primaryKey(),
+    conversationId: t.string(),
+    agentId: t.string(),
+    eventType: t.string(),     // "coding_agent_done", "coding_agent_failed"
+    summary: t.string(),       // human-readable summary
+    metadata: t.string(),      // JSON string with structured data
+    consumed: t.bool(),
+    createdAt: t.u64(),
+  }
+),
+```
 
-### Phase 3: Frontend delivery
-1. Extend SSE or add WebSocket push for unsolicited messages
-2. Frontend renders completion-triggered messages with appropriate UX
-3. Add "coding agent completed" notification/toast in the UI
+New reducers:
 
-**Effort:** ~1-2 days  
-**Risk:** Low-medium — frontend changes, but well-scoped
+- `enqueueSystemEvent` — inserts a row with `consumed: false`
+- `consumeSystemEvent` — deletes the row by ID (cleanup after processing)
 
-### Phase 4: Enhanced UX
-1. Progress summaries during long runs (periodic, not just on completion)
-2. Failure diagnostics — when the coding agent fails, auto-read its output and provide actionable error info
-3. Auto-suggest next steps (run tests, create PR, review diffs)
-4. Multi-agent support — handle multiple concurrent coding agents with separate completion events
+### 4.2 Gateway: SpacetimeDB WebSocket Subscription
 
-**Effort:** ~2-3 days  
-**Risk:** Low — incremental improvements on solid foundation
+**New file:** `gateway/src/spacetimedb/subscription.ts`
+
+- Opens a WebSocket connection using the existing `DbConnection` from the generated SDK
+- Subscribes to `SELECT * FROM system_events`
+- Registers `onInsert` callback on the `system_events` table
+- On insert of unconsumed event → calls the provided handler
+- On connect: drains any existing unconsumed events (recovery after gateway restart)
+- Auto-reconnects with exponential backoff (5s → 60s max)
+
+The WebSocket URL is derived from the existing `config.spacetimedbUrl` by replacing `http://` with `ws://`.
+
+### 4.3 Gateway: Completion Turn Handler
+
+**New file:** `gateway/src/completion/handler.ts`
+
+`CompletionHandler` class:
+
+1. **Receives** a `SystemEventRow` from the subscription callback
+2. **Rate-limits**: max 3 auto-turns per conversation per 60-second window
+3. **Deduplicates**: tracks in-flight event IDs to prevent double-processing
+4. **Builds** a system-context message based on event type:
+   - `coding_agent_done` → "[System: Background coding agent completed successfully]" + summary + git stat + instruction to summarize
+   - `coding_agent_failed` → "[System: Background coding agent failed]" + exit code + error + instruction to explain
+   - Both include: "Do NOT spawn another coding agent in this response."
+5. **Triggers** an agent turn via `backendClient.conversationTurnStream()`
+6. **Streams** response chunks to WebSocket clients via `webchat.sendToConversation()`
+7. **Consumes** the event via HTTP `callReducer("consume_system_event", [id])`
+
+All broadcasts include `isCompletionTurn: true` so the frontend can distinguish auto-turns from user-initiated turns.
+
+### 4.4 Gateway: Server Wiring
+
+**File:** `gateway/src/server.ts`
+
+After `httpServer.listen()`, if SpacetimeDB is configured:
+- Creates a `CompletionHandler` with the backend client and webchat broadcast function
+- Calls `initSubscription(config, handler)` 
+- Logs success or warns on failure (non-fatal — gateway works without subscriptions)
+
+### 4.5 Python Worker: System Event Enqueue
+
+**File:** `backend/app/agent/tools/coding_agent.py`
+
+New method `CodingAgentSession._enqueue_system_event()`:
+- Called from `_monitor()` after building the summary and pushing the SSE "done" event
+- Uses the existing `StdbClient.call_reducer()` (HTTP) to call `enqueue_system_event`
+- Passes: UUID, conversation_id, agent_id, event_type, summary, metadata JSON
+- Wrapped in try/except — SpacetimeDB failure is logged but doesn't break the existing SSE flow
+
+### 4.6 WebSocket Channel Visibility
+
+**File:** `gateway/src/channels/webchat.ts`
+
+Changed `sendToConversation` from `private` to `public` so the completion handler can broadcast to conversation subscribers.
 
 ---
 
 ## 5. Guard Rails
 
-Background-triggered agent turns are powerful but need constraints:
-
-| Guard | Why |
+| Guard | Implementation |
 |---|---|
-| **Max 1 auto-turn per completion** | Prevent runaway loops |
-| **No tool calls in auto-turns** (Phase 2 only) | Keep auto-turns cheap and safe; relax later |
-| **Timeout on auto-turns: 30s** | Don't let a completion summary consume expensive model time |
-| **No recursive coding agent spawns** | A completion turn must not spawn another coding agent |
-| **Rate limit: max 3 auto-turns per minute per conversation** | Prevent rapid-fire completions from overwhelming the user |
-| **Cooldown after user message** | If the user sends a message while a completion turn is pending, cancel the auto-turn (user takes priority) |
+| **Rate limit: 3 auto-turns/min/conversation** | `CompletionHandler.checkRateLimit()` — per-conversation sliding window |
+| **Event deduplication** | `CompletionHandler.processing` Set — prevents concurrent handling of same event ID |
+| **No recursive coding agent spawns** | Completion message includes "Do NOT spawn another coding agent in this response" |
+| **Graceful degradation** | SpacetimeDB subscription failure is non-fatal; gateway logs warning and continues without completion turns |
+| **Event cleanup** | Events are always consumed (deleted) after processing, even on error |
+| **Reconnection** | Subscription auto-reconnects with exponential backoff (5s → 60s) |
+| **Recovery after downtime** | On reconnect, gateway drains all existing unconsumed events |
 
 ---
 
-## 6. Future: Convergence with OpenClaw
+## 6. Deployment
 
-Bond's architecture is converging toward OpenClaw's event-driven model. Long-term, Bond should adopt:
+After merging `feature/system-events-subscription`:
 
-- **A general system events queue** (not just for coding agent completions) — any background task (file watchers, CI webhooks, scheduled jobs) can enqueue events
-- **A heartbeat/wake mechanism** — periodic polling for pending events, with immediate wake on high-priority events
-- **Session-scoped event routing** — events are delivered to the right conversation/session
-
-This design doc addresses the immediate pain point (coding agent follow-up) while laying groundwork for the broader event-driven architecture.
+1. **Deploy schema:** `cd spacetimedb/spacetimedb && spacetime build && spacetime publish`
+2. **Regenerate SDK bindings:** `spacetime generate` — creates the `system_events` table accessor that `subscription.ts` references (`conn.db.system_events`)
+3. **Restart gateway** — picks up new subscription code
+4. **Rebuild worker containers** — picks up the `_enqueue_system_event` changes in `coding_agent.py`
 
 ---
 
-## 7. Success Criteria
+## 7. Future Extensions
 
-- [ ] When a coding agent finishes, the user receives a conversational summary within 30 seconds
-- [ ] When a coding agent fails, the user receives a clear error explanation
-- [ ] The LLM never says "I'll report back" without a mechanism to actually report back
-- [ ] No regressions in existing coding agent functionality (SSE diffs, kill, etc.)
-- [ ] Auto-turns are distinguishable from user-initiated turns in the UI
+The `system_events` table is generic — not limited to coding agent completions. Future uses:
+
+- **CI/CD webhooks** — GitHub Actions completes → insert system event → agent reports results
+- **Scheduled tasks** — Cron job finishes → system event → agent summarizes
+- **Multi-agent coordination** — Agent A finishes work → system event → Agent B picks up next step
+- **External service notifications** — Any webhook → system event → agent responds
+- **Frontend toasts** — Frontend subscribes to `system_events` for real-time notification UI
+
+---
+
+## 8. Test Coverage
+
+### Gateway (`gateway/src/__tests__/completion-handler.test.ts`) — 10 tests
+- Message building: done, failed, and generic event types
+- Rate limiting: allows 3, blocks 4th, independent per conversation
+- Event deduplication: same ID not processed twice concurrently
+- Broadcasting: correct message types and `isCompletionTurn` flag
+- Error handling: event consumed even when backend fails
+
+### Python (`backend/tests/test_system_events.py`) — 4 tests
+- Successful completion enqueues `coding_agent_done` with correct metadata
+- Failed completion enqueues `coding_agent_failed`
+- SpacetimeDB connection failure is graceful (no crash)
+- Reducer returning false is graceful (no crash)
+
+---
+
+## 9. Success Criteria
+
+- [x] SpacetimeDB `system_events` table and reducers defined
+- [x] Gateway subscribes to SpacetimeDB via WebSocket
+- [x] Completion handler triggers agent turn on coding agent finish
+- [x] Worker enqueues system event when coding agent exits
+- [x] Rate limiting and deduplication guard rails
+- [x] 14 tests passing (10 gateway + 4 Python)
+- [ ] Schema deployed and SDK bindings regenerated
+- [ ] End-to-end verification: spawn coding agent → completes → user receives conversational summary
