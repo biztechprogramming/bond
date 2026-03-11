@@ -1,5 +1,5 @@
-# Bond Agent Worker — lightweight container for running agent turns.
-# Design doc: 008-containerized-agent-runtime.md §15.4
+# Bond Agent Worker — container for running agent turns.
+# Design docs: 008-containerized-agent-runtime.md §15.4, 037-coding-agent-skill.md §4.4
 #
 # Usage:
 #   docker build -f Dockerfile.agent -t bond-agent-worker .
@@ -9,9 +9,10 @@
 
 FROM python:3.12-slim
 
-# System deps: git (for agent git ops), curl (for health checks during debug), openssh-client (for git push)
+# System deps: git, curl, openssh-client, gosu (privilege drop), sudo
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git curl openssh-client && \
+    apt-get install -y --no-install-recommends \
+        git curl openssh-client gosu sudo && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Mark /bond as safe for git operations
@@ -42,6 +43,40 @@ RUN pip install --no-cache-dir \
     semantic-router \
     fastembed
 
+# ---------------------------------------------------------------------------
+# Node.js + Coding Agent CLIs (037 §4.4.2)
+# ---------------------------------------------------------------------------
+# Claude Code refuses --dangerously-skip-permissions as root, so we install
+# the CLIs here (as root, globally) and run the worker as bond-agent below.
+
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Claude Code
+RUN npm install -g @anthropic-ai/claude-code@latest
+
+# OpenAI Codex CLI
+RUN npm install -g @openai/codex@latest
+
+# Pi — uncomment when publicly available
+# RUN npm install -g @anthropic-ai/pi@latest || true
+
+# ---------------------------------------------------------------------------
+# Non-root user (037 §4.4.1)
+# ---------------------------------------------------------------------------
+# Claude Code exits with error if --dangerously-skip-permissions is used as
+# root. The bond-agent user resolves this. Entrypoint runs as root for
+# privileged setup, then drops to bond-agent via gosu.
+
+RUN useradd -m -s /bin/bash bond-agent && \
+    echo 'bond-agent ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    usermod -aG sudo bond-agent
+
+# Pre-create Claude Code config directory
+RUN mkdir -p /home/bond-agent/.claude && \
+    chown -R bond-agent:bond-agent /home/bond-agent
+
 # Copy entrypoint script
 COPY scripts/agent-entrypoint.sh /agent-entrypoint.sh
 RUN chmod +x /agent-entrypoint.sh
@@ -51,8 +86,9 @@ RUN chmod +x /agent-entrypoint.sh
 COPY docker/bin/execd /opt/opensandbox/execd
 RUN chmod +x /opt/opensandbox/execd
 
-# Create directories the worker expects
-RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox
+# Create directories the worker expects and set ownership
+RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox && \
+    chown -R bond-agent:bond-agent /data /workspace
 
 # Bond library is mounted at /bond at runtime (read-only)
 # Worker is invoked as: python -m backend.app.worker --port 18791
@@ -68,6 +104,7 @@ WORKDIR /bond
 
 EXPOSE 18791
 
-# Entrypoint handles git clone/pull, then execs worker
+# Entrypoint handles git clone/pull, permission fixup, then drops
+# privileges to bond-agent via gosu before exec-ing the worker.
 ENTRYPOINT ["/agent-entrypoint.sh"]
 CMD ["--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]

@@ -314,6 +314,22 @@ export class GatewayWebSocket {
     );
   }
 
+  /**
+   * Inject context mid-turn (037 §5.3.1).
+   * Sends a message that interrupts the current LLM call and injects
+   * the content into the agent's context immediately.
+   */
+  inject(conversationId: string, content: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "inject",
+        conversationId,
+        content,
+      })
+    );
+  }
+
   deleteConversation(conversationId: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(

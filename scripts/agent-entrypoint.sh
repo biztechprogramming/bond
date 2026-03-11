@@ -1,10 +1,11 @@
 #!/bin/bash
 set -e
 
-# Configure git identity
+# Configure git identity (as root — will be copied to bond-agent below)
 git config --global user.name "${AGENT_NAME:-bond-agent}"
 git config --global user.email "${AGENT_EMAIL:-agent@bond.internal}"
 git config --global --add safe.directory /bond
+git config --global --add safe.directory /workspace
 
 # Set up SSH from mounted keys
 if [ -d "/tmp/.ssh" ]; then
@@ -61,5 +62,26 @@ if [ "${BOND_CODE_INTERPRETER:-0}" = "1" ] && command -v jupyter &>/dev/null; th
     echo "[entrypoint] Jupyter started (pid=$JUPYTER_PID)"
 fi
 
-# Execute worker
-exec python -m backend.app.worker "$@"
+# ---------------------------------------------------------------------------
+# Privilege drop (037 §4.4.3)
+# ---------------------------------------------------------------------------
+# Fix ownership of runtime dirs that may be mounted from host
+chown -R bond-agent:bond-agent /data /workspace /config 2>/dev/null || true
+
+# Copy git/ssh config to bond-agent user
+if [ -d /root/.ssh ]; then
+    mkdir -p /home/bond-agent/.ssh
+    cp -r /root/.ssh/* /home/bond-agent/.ssh/ 2>/dev/null || true
+    chown -R bond-agent:bond-agent /home/bond-agent/.ssh
+    chmod 700 /home/bond-agent/.ssh
+    chmod 600 /home/bond-agent/.ssh/id_* 2>/dev/null || true
+fi
+cp /root/.gitconfig /home/bond-agent/.gitconfig 2>/dev/null || true
+chown bond-agent:bond-agent /home/bond-agent/.gitconfig 2>/dev/null || true
+
+# Mark /bond and /workspace as safe for git under the bond-agent user too
+su -c "git config --global --add safe.directory /bond" bond-agent
+su -c "git config --global --add safe.directory /workspace" bond-agent
+
+# Drop privileges and exec worker as bond-agent
+exec gosu bond-agent python -m backend.app.worker "$@"

@@ -208,9 +208,14 @@ export class BackendClient {
     return (await res.json()) as QueueMessageResponse;
   }
 
-  async interrupt(conversationId: string): Promise<{ status: string }> {
+  async interrupt(
+    conversationId: string,
+    newMessages?: Array<{ role: string; content: string }>,
+  ): Promise<{ status: string }> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/interrupt`, {
       method: "POST",
+      headers: newMessages ? { "Content-Type": "application/json" } : {},
+      body: newMessages ? JSON.stringify({ new_messages: newMessages }) : undefined,
     });
     if (!res.ok) {
       const text = await res.text();

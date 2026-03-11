@@ -108,6 +108,9 @@ export class WebChatChannel {
       case "pause":
         await this.handlePause(socket, session.id, msg);
         break;
+      case "inject":
+        await this.handleInject(socket, session.id, msg);
+        break;
       case "switch_conversation":
         await this.handleSwitchConversation(socket, session.id, msg);
         break;
@@ -390,6 +393,41 @@ export class WebChatChannel {
       this.send(socket, { type: "status", sessionId, agentStatus: "idle", conversationId });
     } catch (err) {
       this.send(socket, { type: "error", sessionId, error: err instanceof Error ? err.message : "Failed to pause" });
+    }
+  }
+
+  /**
+   * Inject context mid-turn (037 §5.3.2).
+   * Interrupts the current LLM call and injects the user's message into
+   * the agent's context so it's picked up immediately.
+   */
+  private async handleInject(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage,
+  ): Promise<void> {
+    const session = this.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const conversationId = msg.conversationId || session.conversationId;
+    if (!conversationId || !msg.content) return;
+
+    try {
+      await this.backendClient.interrupt(conversationId, [
+        { role: "user", content: msg.content },
+      ]);
+      this.send(socket, {
+        type: "injected",
+        sessionId,
+        conversationId,
+        content: msg.content,
+      } as any);
+    } catch (err) {
+      this.send(socket, {
+        type: "error",
+        sessionId,
+        error: err instanceof Error ? err.message : "Failed to inject context",
+      });
     }
   }
 
