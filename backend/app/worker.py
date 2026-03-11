@@ -1004,9 +1004,6 @@ async def _run_agent_loop(
     # ── Phase 1B: Batching nudge tracking ──
     _consecutive_single_info_iterations = 0
 
-    # ── Phase 2A: Adaptive iteration budget ──
-    _adaptive_budget_set = False
-
     # ── Phase 2B: Early termination for read-only tasks ──
     _has_made_consequential_call = False
 
@@ -1436,31 +1433,8 @@ async def _run_agent_loop(
         _cost_tracking["iterations_used"] = _iteration + 1
         logger.debug("Iteration %d cost: $%.4f (cumulative: $%.4f)", _iteration, _iter_cost, _cost_tracking["total_cost"])
 
-        # ── Phase 2A: Adaptive iteration budget (after first iteration) ──
-        if _iteration == 0 and not _adaptive_budget_set:
-            _adaptive_budget_set = True
-            if not llm_message.tool_calls:
-                # Simple Q&A — no tool calls at all
-                max_iterations = min(max_iterations, 2)
-                logger.info("Phase 2A: classified as simple Q&A, budget=%d", max_iterations)
-            elif llm_message.tool_calls:
-                _first_tool_names = [tc.function.name for tc in llm_message.tool_calls]
-                _has_edits = any(t in ("file_edit", "file_write") for t in _first_tool_names)
-                _has_plan = any(t == "work_plan" for t in _first_tool_names)
-                _has_reads = any(t in ("file_read", "shell_grep", "search_memory") for t in _first_tool_names)
-                if _has_plan and len(_first_tool_names) >= 5:
-                    max_iterations = min(max_iterations, 50)
-                    logger.info("Phase 2A: classified as complex multi-file, budget=%d", max_iterations)
-                elif _has_edits:
-                    max_iterations = min(max_iterations, 30)
-                    logger.info("Phase 2A: classified as implementation, budget=%d", max_iterations)
-                elif _has_reads and not _has_edits:
-                    max_iterations = min(max_iterations, 15)
-                    logger.info("Phase 2A: classified as analysis, budget=%d", max_iterations)
-                else:
-                    max_iterations = min(max_iterations, 8)
-                    logger.info("Phase 2A: classified as file lookup, budget=%d", max_iterations)
-            _cost_tracking["iteration_budget"] = max_iterations
+        # Phase 2A (adaptive iteration budget) removed — max_iterations is
+        # the configured budget.  Use it as-is; don't second-guess it.
 
         if llm_message.tool_calls:
             _iter_tool_names = [tc.function.name for tc in llm_message.tool_calls]
