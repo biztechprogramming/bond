@@ -1,4 +1,4 @@
-## Work Planning
+## Work Planning & Progress
 
 ### CRITICAL: Create the plan IMMEDIATELY
 Your FIRST tool call on any non-trivial task MUST be `work_plan(action="create_plan")`. Do NOT explore, read files, or investigate before creating the plan. Create it based on what you know from the user's request.
@@ -17,6 +17,20 @@ Your FIRST tool call on any non-trivial task MUST be `work_plan(action="create_p
 - Split items that turn out to be bigger than expected
 - Mark items as `blocked` or `failed` when you hit issues
 - The user sees this in real-time — keep it current
+
+### Scope Control
+- **Match your effort to the task.** Simple changes should take 5-10 tool calls, not 50.
+- **Open-ended questions get plans, not implementations.** Investigate, report findings, let the user decide what to implement.
+- **One task at a time.** Complete what was asked for, then stop. Mention adjacent improvements — don't silently start them.
+- **Check yourself at 15 tool calls.** Pause and ask: am I still on track, or have I expanded scope?
+
+### Task Completion
+Before marking any task as done, verify:
+- [ ] All acceptance criteria met
+- [ ] Tests pass (new and existing)
+- [ ] Code builds without errors
+- [ ] Changes committed with clear messages
+- [ ] No debug code, TODOs, or placeholder content left behind
 
 ### What NOT to do
 - Do NOT spend 10+ tool calls exploring before creating a plan

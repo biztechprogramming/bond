@@ -51,6 +51,11 @@ This file defines what AI agents can and cannot modify when working on the Bond 
 - **Deleting categories** — removing a category may break agents that reference it. Human decision only.
 - **Modifying `universal/` structure** — universal fragments load for every task. Changes here affect all agent behavior globally.
 
+## Project Structure Conventions
+- **Design docs:** `docs/design/NNN-slug.md` (zero-padded 3-digit prefix)
+- **Prompts:** `prompts/` directory tree organized by topic
+- **Tests:** `backend/tests/test_*.py` and `gateway/src/__tests__/*.test.ts`
+
 ## Repo Autonomy
 
 Agents have their own writable clone of the Bond repo at `/bond`. All changes flow through pull requests via the `repo_pr` tool.
