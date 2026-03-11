@@ -346,12 +346,27 @@ async def handle_shell_tree(
 # ---------------------------------------------------------------------------
 
 
+# Directories to always exclude from project_search results.
+# Applied as a post-filter to both git ls-files and find output.
+_EXCLUDED_DIR_SEGMENTS = {
+    ".venv", "venv", "node_modules", "__pycache__", ".git",
+    ".next", "dist", "build", ".tox", "bin", "obj",
+    ".worktrees", ".vs", ".auto-claude",
+}
+
+
+def _is_excluded_path(filepath: str) -> bool:
+    """Return True if the path contains any excluded directory segment."""
+    parts = filepath.replace("\\", "/").split("/")
+    return bool(_EXCLUDED_DIR_SEGMENTS.intersection(parts))
+
+
 async def _get_file_listing(path: str, file_type: str | None, include: str | None) -> list[str]:
     """Get file listing respecting .gitignore when inside a git repo.
 
     Uses `git ls-files` (tracked + untracked-but-not-ignored) when inside a
     git repo, falls back to `find` with hardcoded exclusions otherwise.
-    Returns absolute paths.
+    Returns absolute paths. Always filters out excluded directories.
     """
     # Check if we're in a git repo
     git_check = await _run_cmd(
@@ -388,13 +403,13 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
                 import fnmatch
                 pattern = include  # e.g. "*.py"
                 files = [f for f in files if fnmatch.fnmatch(os.path.basename(f).lower(), pattern.lower())]
-            return files
+            return [f for f in files if not _is_excluded_path(f)]
         # git ls-files returned nothing — fall through to find
     # Fallback for non-git directories
     prune_clause = (
-        r"\( -name .venv -o -name node_modules -o -name __pycache__ -o -name .git "
+        r"\( -name .venv -o -name venv -o -name node_modules -o -name __pycache__ -o -name .git "
         r"-o -name .next -o -name dist -o -name build -o -name .tox "
-        r"-o -name bin -o -name obj \) -prune -o"
+        r"-o -name bin -o -name obj -o -name .worktrees \) -prune -o"
     )
     type_clause = f"-type {file_type}" if file_type in ("f", "d") else "-type f"
     include_filter = f"-iname {_shell_quote(include)}" if include else ""
@@ -404,7 +419,8 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
     )
     result = await _run_cmd(["sh", "-c", find_cmd], timeout=30, truncate=False)
     if result["exit_code"] == 0 and result["stdout"].strip():
-        return result["stdout"].strip().split("\n")
+        files = result["stdout"].strip().split("\n")
+        return [f for f in files if not _is_excluded_path(f)]
     return []
 
 
@@ -531,10 +547,11 @@ async def handle_project_search(
                 )
             content_cmd = (
                 f"grep -rnil {include_flags} "
-                f"--exclude-dir=.venv --exclude-dir=node_modules "
+                f"--exclude-dir=.venv --exclude-dir=venv --exclude-dir=node_modules "
                 f"--exclude-dir=__pycache__ --exclude-dir=.git --exclude-dir=.next "
                 f"--exclude-dir=dist --exclude-dir=build --exclude-dir=.tox "
-                f"--exclude-dir=bin --exclude-dir=obj "
+                f"--exclude-dir=bin --exclude-dir=obj --exclude-dir=.worktrees "
+                f"--exclude-dir=.vs --exclude-dir=.auto-claude "
                 f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
                 f"| head -{max_results * 2}"
             )
@@ -548,6 +565,8 @@ async def handle_project_search(
                 # Make absolute if git grep returned relative paths
                 if not os.path.isabs(filepath) and is_git:
                     filepath = os.path.join(git_check["stdout"].strip(), filepath)
+                if _is_excluded_path(filepath):
+                    continue
                 if filepath in file_scores:
                     file_scores[filepath]["score"] += 2
                     file_scores[filepath]["categories"].add("content")
@@ -589,8 +608,11 @@ async def handle_project_search(
     # --- Wildcard file matches grouped by query term ---
     # Shows what `shell_find -iname "*term*"` would return, so the agent
     # never needs a separate shell_find call.
+    # Skip short tokens (≤5 chars) — they match too many files and create noise.
     wildcard_matches: dict[str, list[str]] = {}
     for token in all_tokens:
+        if len(token) <= 5:
+            continue
         glob_label = f"*{token}*"
         matching_files: list[str] = []
         for filepath in all_project_files:
