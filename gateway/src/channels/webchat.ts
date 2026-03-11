@@ -371,7 +371,9 @@ export class WebChatChannel {
 
     try {
       await this.backendClient.interrupt(conversationId);
-      this.send(socket, { type: "status", sessionId, agentStatus: "idle", conversationId });
+      // Don't send idle here — the SSE stream will send "interrupted" then "done"
+      // which will properly clean up the frontend state.
+      this.send(socket, { type: "status", sessionId, agentStatus: "stopping", conversationId });
     } catch (err) {
       this.send(socket, { type: "error", sessionId, error: err instanceof Error ? err.message : "Failed to interrupt" });
     }
@@ -390,7 +392,7 @@ export class WebChatChannel {
 
     try {
       await this.backendClient.interrupt(conversationId);
-      this.send(socket, { type: "status", sessionId, agentStatus: "idle", conversationId });
+      this.send(socket, { type: "status", sessionId, agentStatus: "stopping", conversationId });
     } catch (err) {
       this.send(socket, { type: "error", sessionId, error: err instanceof Error ? err.message : "Failed to pause" });
     }

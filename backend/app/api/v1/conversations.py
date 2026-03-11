@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
-from backend.app.agent.interrupts import set_interrupt, is_turn_active
+from backend.app.agent.interrupts import set_interrupt, is_turn_active, get_worker_url
 from backend.app.api.v1.turn_stdb import _stream_container_turn_stdb
 from backend.app.core.spacetimedb import get_stdb
 from backend.app.sandbox.manager import get_sandbox_manager
@@ -280,11 +280,31 @@ async def save_or_queue_message(
 async def interrupt_conversation(
     conversation_id: str
 ):
-    """Signal the agent to interrupt and check for new messages."""
+    """Signal the agent to interrupt and check for new messages.
+
+    For container-based agents, also forwards the interrupt to the worker
+    so the agent loop actually stops.
+    """
     if not is_turn_active(conversation_id):
         return {"status": "no_active_turn"}
 
+    # Set the in-process flag (stops the SSE proxy loop)
     set_interrupt(conversation_id)
+
+    # Forward to worker container if one is running
+    worker_url = get_worker_url(conversation_id)
+    if worker_url:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+                await client.post(
+                    f"{worker_url}/interrupt",
+                    json={"new_messages": []},
+                )
+            logger.info("Interrupt forwarded to worker at %s", worker_url)
+        except Exception as e:
+            logger.warning("Failed to forward interrupt to worker: %s", e)
+
     return {"status": "interrupt_sent"}
 
 

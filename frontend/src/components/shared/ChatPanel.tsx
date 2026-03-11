@@ -77,7 +77,7 @@ export default function ChatPanel({
           Agent Chat
           {agentStatus !== "idle" && (
             <span style={s.agentStatusBadge}>
-              {agentStatus === "thinking" ? "Thinking..." : agentStatus === "tool_calling" ? "Using tools..." : "Responding..."}
+              {agentStatus === "thinking" ? "Thinking..." : agentStatus === "tool_calling" ? "Using tools..." : agentStatus === "stopping" ? "Stopping..." : agentStatus === "interrupted" ? "Stopped" : "Responding..."}
             </span>
           )}
         </div>
@@ -133,6 +133,8 @@ export default function ChatPanel({
               {streamingContent || (
                 agentStatus === "tool_calling" ? "Using tools..." :
                 agentStatus === "responding" ? "Responding..." :
+                agentStatus === "stopping" ? "Stopping..." :
+                agentStatus === "interrupted" ? "Stopped" :
                 "Thinking..."
               )}
             </div>

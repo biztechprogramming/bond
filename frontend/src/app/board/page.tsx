@@ -218,7 +218,7 @@ function BoardPage() {
         const status = msg.agentStatus || "idle";
         setAgentStatus(status);
         if (msg.agentName) currentAgentNameRef.current = msg.agentName;
-        if (status !== "idle") {
+        if (status !== "idle" && status !== "stopping" && status !== "interrupted") {
           setLoading(true);
         }
       } else if (msg.type === "tool_call" && msg.content) {
