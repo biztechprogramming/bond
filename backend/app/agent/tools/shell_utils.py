@@ -352,6 +352,7 @@ _EXCLUDED_DIR_SEGMENTS = {
     ".venv", "venv", "node_modules", "__pycache__", ".git",
     ".next", "dist", "build", ".tox", "bin", "obj",
     ".worktrees", ".vs", ".auto-claude",
+    "packages", "deploy",
 }
 
 
@@ -398,21 +399,35 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
                     for i in range(1, len(parts)):
                         dirs.add(os.path.join(abs_path, *parts[:i]))
                 files = sorted(dirs)
-            # Apply include filter (glob on basename)
+            # Apply include filter (glob on basename, supports comma-separated)
             if include:
                 import fnmatch
-                pattern = include  # e.g. "*.py"
-                files = [f for f in files if fnmatch.fnmatch(os.path.basename(f).lower(), pattern.lower())]
+                patterns = [p.strip() for p in include.split(",")]
+                files = [
+                    f for f in files
+                    if any(fnmatch.fnmatch(os.path.basename(f).lower(), p.lower()) for p in patterns)
+                ]
             return [f for f in files if not _is_excluded_path(f)]
         # git ls-files returned nothing — fall through to find
     # Fallback for non-git directories
     prune_clause = (
         r"\( -name .venv -o -name venv -o -name node_modules -o -name __pycache__ -o -name .git "
         r"-o -name .next -o -name dist -o -name build -o -name .tox "
-        r"-o -name bin -o -name obj -o -name .worktrees \) -prune -o"
+        r"-o -name bin -o -name obj -o -name .worktrees -o -name .vs "
+        r"-o -name .auto-claude -o -name packages -o -name deploy \) -prune -o"
     )
     type_clause = f"-type {file_type}" if file_type in ("f", "d") else "-type f"
-    include_filter = f"-iname {_shell_quote(include)}" if include else ""
+    # Build include filter (supports comma-separated patterns)
+    if include:
+        patterns = [p.strip() for p in include.split(",")]
+        if len(patterns) == 1:
+            include_filter = f"-iname {_shell_quote(patterns[0])}"
+        else:
+            # Multiple patterns: \( -iname '*.cs' -o -iname '*.html' \)
+            parts = " -o ".join(f"-iname {_shell_quote(p)}" for p in patterns)
+            include_filter = rf"\( {parts} \)"
+    else:
+        include_filter = ""
     find_cmd = (
         f"find {_shell_quote(path)} {prune_clause} {type_clause} "
         f"{include_filter} -print 2>/dev/null"
@@ -529,21 +544,19 @@ async def handle_project_search(
         else:
             # Fallback: regular grep with hardcoded exclusions
             if include:
-                include_flags = f"--include={_shell_quote(include)}"
+                # Support comma-separated patterns
+                patterns = [p.strip() for p in include.split(",")]
+                include_flags = " ".join(f"--include={_shell_quote(p)}" for p in patterns)
             else:
+                # No include specified — shouldn't happen since include is required,
+                # but fall back to common source extensions just in case
                 include_flags = (
                     "--include='*.md' --include='*.txt' --include='*.yaml' --include='*.yml' "
                     "--include='*.py' --include='*.ts' --include='*.tsx' --include='*.js' "
                     "--include='*.jsx' --include='*.cs' --include='*.razor' --include='*.cshtml' "
                     "--include='*.html' --include='*.css' --include='*.scss' --include='*.json' "
                     "--include='*.xml' --include='*.toml' --include='*.cfg' --include='*.ini' "
-                    "--include='*.java' --include='*.go' --include='*.rs' --include='*.rb' "
-                    "--include='*.php' --include='*.swift' --include='*.kt' --include='*.c' "
-                    "--include='*.cpp' --include='*.h' --include='*.hpp' --include='*.sql' "
-                    "--include='*.sh' --include='*.bash' --include='*.zsh' --include='*.vue' "
-                    "--include='*.svelte' --include='*.astro' --include='*.tf' --include='*.hcl' "
-                    "--include='*.proto' --include='*.graphql' --include='*.prisma' "
-                    "--include='*.csproj' --include='*.sln' --include='*.fsproj'"
+                    "--include='*.sql' --include='*.sh' --include='*.csproj' --include='*.sln'"
                 )
             content_cmd = (
                 f"grep -rnil {include_flags} "
@@ -552,6 +565,7 @@ async def handle_project_search(
                 f"--exclude-dir=dist --exclude-dir=build --exclude-dir=.tox "
                 f"--exclude-dir=bin --exclude-dir=obj --exclude-dir=.worktrees "
                 f"--exclude-dir=.vs --exclude-dir=.auto-claude "
+                f"--exclude-dir=packages --exclude-dir=deploy "
                 f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
                 f"| head -{max_results * 2}"
             )

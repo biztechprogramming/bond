@@ -843,7 +843,11 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "include": {
                         "type": "string",
-                        "description": "File extension filter (e.g. '*.md', '*.py').",
+                        "description": (
+                            "Required file extension filter. Comma-separated glob patterns. "
+                            "Examples: '*.cs', '*.html,*.razor', '*.py,*.md,*.yml'. "
+                            "Choose extensions relevant to your search to keep results focused."
+                        ),
                     },
                     "max_results": {
                         "type": "integer",
@@ -851,7 +855,7 @@ TOOL_DEFINITIONS: list[dict] = [
                         "default": 30,
                     },
                 },
-                "required": ["query"],
+                "required": ["query", "include"],
             },
         },
     },
