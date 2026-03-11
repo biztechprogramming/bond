@@ -345,9 +345,10 @@ async def handle_project_search(
 ) -> dict[str, Any]:
     """Search the project using multiple strategies simultaneously.
 
-    Combines filename matching, content search, and path component matching
-    into a single tool call. Returns categorized results so the agent can
-    immediately act on what was found.
+    Searches EVERY word in the query independently (OR logic) and matches
+    against: filenames, directory/path components at any depth, file contents,
+    and project/directory names. Returns full paths with a preview snippet
+    so the agent can confirm the right file without a follow-up read.
 
     This is the preferred tool for "find me X" requests. Use shell_find or
     shell_grep only when you need their specific features (glob patterns,
@@ -358,62 +359,55 @@ async def handle_project_search(
     file_type = arguments.get("type")  # f, d — optional filter
     include = arguments.get("include")  # e.g. "*.md", "*.py"
     max_results = arguments.get("max_results", 30)
+    preview_chars = 200  # first N chars of each matched file
 
     if not query:
         return {"error": "query is required"}
 
-    results: dict[str, Any] = {
-        "query": query,
-        "search_root": path,
-        "filename_matches": [],
-        "content_matches": [],
-        "path_matches": [],
-    }
-
-    # Build exclusion clause
-    prune_clause = r"\( -name .venv -o -name node_modules -o -name __pycache__ -o -name .git -o -name .next \) -prune -o"
-    type_clause = f"-type {file_type}" if file_type in ("f", "d") else "-type f"
-
-    # --- Strategy 1: Filename matching ---
-    # Try multiple patterns: exact, contains, numeric prefix, fuzzy
-    # Extract numeric component if present (e.g. "design doc 27" → "027", "27")
     import re
+
     numbers = re.findall(r'\d+', query)
     words = [w.lower() for w in re.findall(r'[a-zA-Z]+', query) if len(w) > 2]
 
-    filename_patterns = set()
+    # Collect all unique file paths across strategies, then enrich at the end
+    seen: set[str] = set()
+    filename_matches: list[str] = []
+    path_matches: list[str] = []
+    content_matches: list[str] = []
 
-    # Direct glob from query words
+    def _add(target: list[str], files: list[str]) -> None:
+        for f in files:
+            if f and f not in seen:
+                seen.add(f)
+                target.append(f)
+
+    # Build exclusion clause
+    prune_clause = r"\( -name .venv -o -name node_modules -o -name __pycache__ -o -name .git -o -name .next -o -name dist -o -name build -o -name .tox \) -prune -o"
+    type_clause = f"-type {file_type}" if file_type in ("f", "d") else "-type f"
+
+    # --- Build search tokens ---
+    filename_patterns: set[str] = set()
     for word in words:
         filename_patterns.add(f"*{word}*")
-
-    # Numeric patterns: with and without zero-padding
     for num in numbers:
         filename_patterns.add(f"*{num}*")
         if len(num) < 3:
             filename_patterns.add(f"*{num.zfill(3)}*")  # 27 → 027
+    filename_patterns_list = list(filename_patterns)[:10]
 
-    # Limit patterns to avoid explosion
-    filename_patterns = list(filename_patterns)[:8]
+    # --- Strategy 1: Filename matching (always runs) ---
+    if filename_patterns_list:
+        name_preds = " -o ".join(f'-iname {_shell_quote(p)}' for p in filename_patterns_list)
 
-    if filename_patterns:
-        # Build a single find command with -o for all patterns
-        name_preds = " -o ".join(f'-iname {_shell_quote(p)}' for p in filename_patterns)
-        include_filter = f'-iname {_shell_quote(include)}' if include else ""
-
-        if include_filter:
-            # Two-stage: match include pattern AND name pattern
-            find_cmd = (
-                f"find {_shell_quote(path)} {prune_clause} {type_clause} "
-                f"{include_filter} -print 2>/dev/null | head -1000"
-            )
-            # Filter the include results by name patterns
+        if include:
+            # Match include extension AND any name pattern
             grep_patterns = "|".join(
-                p.replace("*", ".*") for p in filename_patterns
+                p.replace("*", ".*") for p in filename_patterns_list
             )
             find_cmd = (
                 f"find {_shell_quote(path)} {prune_clause} {type_clause} "
-                f"{include_filter} -print 2>/dev/null | grep -iE '{grep_patterns}' | head -{max_results}"
+                f"-iname {_shell_quote(include)} -print 2>/dev/null "
+                f"| grep -iE '{grep_patterns}' | head -{max_results}"
             )
         else:
             find_cmd = (
@@ -423,72 +417,102 @@ async def handle_project_search(
 
         find_result = await _run_cmd(["sh", "-c", find_cmd], timeout=10)
         if find_result["exit_code"] == 0 and find_result["stdout"].strip():
-            files = [f for f in find_result["stdout"].strip().split("\n") if f]
-            results["filename_matches"] = files[:max_results]
+            _add(filename_matches, find_result["stdout"].strip().split("\n"))
 
-    # --- Strategy 2: Content search (grep) ---
-    # Search file contents for the query terms — useful when the filename
-    # doesn't match but the content contains what the user is looking for.
-    # Only run if filename search found < 5 results (otherwise we probably
-    # already have what we need).
-    if len(results["filename_matches"]) < 5:
-        # Build a grep pattern from the most distinctive query terms
-        grep_terms = []
+    # --- Strategy 2: Full path matching (always runs) ---
+    # Match query words against ANY path component (parent dirs, grandparent, etc.)
+    # e.g. "inspection defect" matches /app/inspection/components/DefectEntry.razor
+    if words:
+        # Find all files, then filter paths that contain ANY query word
+        path_grep_pattern = "|".join(re.escape(w) for w in words)
         for num in numbers:
-            grep_terms.append(num)
+            path_grep_pattern += "|" + re.escape(num)
             if len(num) < 3:
-                grep_terms.append(num.zfill(3))
-        # Add the longest words (most distinctive)
-        sorted_words = sorted(words, key=len, reverse=True)[:3]
-        grep_terms.extend(sorted_words)
+                path_grep_pattern += "|" + re.escape(num.zfill(3))
 
-        if grep_terms:
-            grep_pattern = "\\|".join(grep_terms)
-            include_flag = f"--include={_shell_quote(include)}" if include else "--include='*.md' --include='*.txt' --include='*.yaml' --include='*.yml'"
-
-            grep_cmd = (
-                f"grep -rnil {include_flag} "
-                f"--exclude-dir=.venv --exclude-dir=node_modules "
-                f"--exclude-dir=__pycache__ --exclude-dir=.git --exclude-dir=.next "
-                f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
-                f"| head -{max_results}"
-            )
-            grep_result = await _run_cmd(["sh", "-c", grep_cmd], timeout=15)
-            if grep_result["exit_code"] == 0 and grep_result["stdout"].strip():
-                content_files = [f for f in grep_result["stdout"].strip().split("\n") if f]
-                # Deduplicate against filename matches
-                already_found = set(results["filename_matches"])
-                results["content_matches"] = [
-                    f for f in content_files if f not in already_found
-                ][:max_results]
-
-    # --- Strategy 3: Path component matching ---
-    # Search for query terms in directory names (e.g. "design" matches docs/design/)
-    if words and len(results["filename_matches"]) + len(results["content_matches"]) < 5:
-        # Find directories matching query words, then list their contents
-        dir_patterns = " -o ".join(f'-iname {_shell_quote("*" + w + "*")}' for w in words[:3])
-        dir_cmd = (
-            f"find {_shell_quote(path)} -maxdepth 4 "
-            f"{prune_clause} -type d \\( {dir_patterns} \\) -print 2>/dev/null | head -5"
+        include_filter = f"-iname {_shell_quote(include)}" if include else ""
+        path_cmd = (
+            f"find {_shell_quote(path)} {prune_clause} {type_clause} "
+            f"{include_filter} -print 2>/dev/null "
+            f"| grep -iE '{path_grep_pattern}' | sort | head -{max_results * 2}"
         )
-        dir_result = await _run_cmd(["sh", "-c", dir_cmd], timeout=10)
-        if dir_result["exit_code"] == 0 and dir_result["stdout"].strip():
-            matching_dirs = [d for d in dir_result["stdout"].strip().split("\n") if d]
-            for d in matching_dirs[:3]:
-                # List contents of matching directories
-                ls_cmd = f"find {_shell_quote(d)} -maxdepth 1 -type f -print 2>/dev/null | sort"
-                ls_result = await _run_cmd(["sh", "-c", ls_cmd], timeout=5)
-                if ls_result["exit_code"] == 0 and ls_result["stdout"].strip():
-                    dir_files = [f for f in ls_result["stdout"].strip().split("\n") if f]
-                    already_found = set(results["filename_matches"] + results["content_matches"])
-                    new_files = [f for f in dir_files if f not in already_found]
-                    results["path_matches"].extend(new_files[:10])
+        path_result = await _run_cmd(["sh", "-c", path_cmd], timeout=15)
+        if path_result["exit_code"] == 0 and path_result["stdout"].strip():
+            _add(path_matches, path_result["stdout"].strip().split("\n"))
 
-    # Build summary
-    total = len(results["filename_matches"]) + len(results["content_matches"]) + len(results["path_matches"])
-    results["total_results"] = total
+    # --- Strategy 3: Content search (always runs) ---
+    # Search file contents for ALL query terms (each word independently via OR)
+    grep_terms: list[str] = []
+    for num in numbers:
+        grep_terms.append(num)
+        if len(num) < 3:
+            grep_terms.append(num.zfill(3))
+    sorted_words = sorted(words, key=len, reverse=True)[:5]
+    grep_terms.extend(sorted_words)
 
-    if total == 0:
+    if grep_terms:
+        grep_pattern = "\\|".join(grep_terms)
+        # Search all common file types when no include filter is specified
+        if include:
+            include_flags = f"--include={_shell_quote(include)}"
+        else:
+            include_flags = (
+                "--include='*.md' --include='*.txt' --include='*.yaml' --include='*.yml' "
+                "--include='*.py' --include='*.ts' --include='*.tsx' --include='*.js' "
+                "--include='*.jsx' --include='*.cs' --include='*.razor' --include='*.cshtml' "
+                "--include='*.html' --include='*.css' --include='*.scss' --include='*.json' "
+                "--include='*.xml' --include='*.toml' --include='*.cfg' --include='*.ini' "
+                "--include='*.java' --include='*.go' --include='*.rs' --include='*.rb' "
+                "--include='*.php' --include='*.swift' --include='*.kt' --include='*.c' "
+                "--include='*.cpp' --include='*.h' --include='*.hpp' --include='*.sql' "
+                "--include='*.sh' --include='*.bash' --include='*.zsh' --include='*.vue' "
+                "--include='*.svelte' --include='*.astro' --include='*.tf' --include='*.hcl' "
+                "--include='*.proto' --include='*.graphql' --include='*.prisma' "
+                "--include='*.csproj' --include='*.sln' --include='*.fsproj'"
+            )
+
+        grep_cmd = (
+            f"grep -rnil {include_flags} "
+            f"--exclude-dir=.venv --exclude-dir=node_modules "
+            f"--exclude-dir=__pycache__ --exclude-dir=.git --exclude-dir=.next "
+            f"--exclude-dir=dist --exclude-dir=build --exclude-dir=.tox "
+            f"--exclude-dir=bin --exclude-dir=obj "
+            f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
+            f"| head -{max_results}"
+        )
+        grep_result = await _run_cmd(["sh", "-c", grep_cmd], timeout=15)
+        if grep_result["exit_code"] == 0 and grep_result["stdout"].strip():
+            _add(content_matches, grep_result["stdout"].strip().split("\n"))
+
+    # --- Enrich results with previews ---
+    all_files = filename_matches + path_matches + content_matches
+    enriched: list[dict[str, str]] = []
+    for filepath in all_files[:max_results]:
+        entry: dict[str, str] = {"path": filepath}
+        # Add file size + preview
+        try:
+            stat_cmd = f"head -c {preview_chars} {_shell_quote(filepath)} 2>/dev/null"
+            preview_result = await _run_cmd(["sh", "-c", stat_cmd], timeout=3)
+            if preview_result["exit_code"] == 0:
+                preview_text = preview_result["stdout"]
+                # Replace excessive whitespace for readability
+                preview_text = re.sub(r'\n{3,}', '\n\n', preview_text).strip()
+                entry["preview"] = preview_text
+        except Exception:
+            pass
+        enriched.append(entry)
+
+    # Build result
+    results: dict[str, Any] = {
+        "query": query,
+        "search_root": path,
+        "filename_matches": [e for e in enriched if e["path"] in set(filename_matches)],
+        "path_matches": [e for e in enriched if e["path"] in set(path_matches)],
+        "content_matches": [e for e in enriched if e["path"] in set(content_matches)],
+        "total_results": len(enriched),
+    }
+
+    if len(enriched) == 0:
         results["suggestion"] = (
             f"No results found for '{query}'. Try: "
             f"shell_ls on likely directories, or shell_grep with simpler patterns."
