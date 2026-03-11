@@ -599,7 +599,27 @@ export class WebChatChannel {
     if (!msg.conversationId) return;
 
     try {
-      await this.backendClient.deleteConversation(msg.conversationId);
+      // Delete from SpacetimeDB (authoritative store) — this also deletes
+      // all conversation_messages for this conversation via the reducer.
+      if (this.config) {
+        const { spacetimedbUrl, spacetimedbModuleName, spacetimedbToken } = this.config;
+        if (spacetimedbUrl && spacetimedbModuleName) {
+          await callReducer(
+            spacetimedbUrl,
+            spacetimedbModuleName,
+            "delete_conversation",
+            [msg.conversationId],
+            spacetimedbToken,
+          );
+        }
+      }
+
+      // Mirror delete to backend SQLite (best-effort, non-fatal)
+      try {
+        await this.backendClient.deleteConversation(msg.conversationId);
+      } catch (syncErr) {
+        console.warn("[webchat] backend delete sync failed (non-fatal):", syncErr);
+      }
 
       const session = this.sessionManager.getSession(sessionId);
       if (session?.conversationId === msg.conversationId) {
