@@ -308,6 +308,35 @@ async def interrupt_conversation(
     return {"status": "interrupt_sent"}
 
 
+@router.get("/{conversation_id}/coding-agent/events")
+async def coding_agent_events(conversation_id: str):
+    """Proxy SSE stream of coding agent diffs from the worker container.
+
+    The frontend subscribes to this endpoint when a coding agent is active.
+    """
+    worker_url = get_worker_url(conversation_id)
+    if not worker_url:
+        return StreamingResponse(
+            iter(["event: error\ndata: {\"message\": \"No active worker\"}\n\n"]),
+            media_type="text/event-stream",
+        )
+
+    async def proxy_stream():
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1800.0)) as client:
+                async with client.stream(
+                    "GET",
+                    f"{worker_url}/coding-agent/events/{conversation_id}",
+                ) as response:
+                    async for chunk in response.aiter_text():
+                        yield chunk
+        except Exception as e:
+            logger.error("Coding agent events proxy error: %s", e)
+            yield f"event: error\ndata: {{\"message\": \"{str(e)}\"}}\n\n"
+
+    return StreamingResponse(proxy_stream(), media_type="text/event-stream")
+
+
 # -- Turn endpoint --
 
 
