@@ -291,16 +291,24 @@ export default function Home() {
 
     const content = input.trim();
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content, status: "sending" }]);
-    if (!loading) {
-      setLoading(true);
+
+    if (loading && conversationId) {
+      // Agent is busy — inject context mid-turn (037 §5.3.3)
+      setMessages((prev) => [...prev, { role: "user", content, status: "complete", injected: true }]);
+      wsRef.current.inject(conversationId, content);
+    } else {
+      setMessages((prev) => [...prev, { role: "user", content, status: "sending" }]);
+      if (!loading) {
+        setLoading(true);
+      }
+      wsRef.current.send(content, conversationId || undefined, selectedAgentId || undefined);
     }
-    wsRef.current.send(content, conversationId || undefined, selectedAgentId || undefined);
   }, [input, loading, conversationId, selectedAgentId]);
 
   const handleStop = useCallback(() => {
     if (!wsRef.current?.connected || !conversationId) return;
     wsRef.current.interrupt(conversationId);
+    setLoading(false);
   }, [conversationId]);
 
   const handleNewConversation = async () => {

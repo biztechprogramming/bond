@@ -843,6 +843,42 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "coding_agent",
+            "description": "Spawn a coding sub-agent to perform complex coding tasks. The sub-agent will have access to the specified working directory and can read/write files, run commands, and commit changes. Use for tasks that require multi-step file exploration, writing code across multiple files, running tests, and iterating. This tool blocks until the sub-agent completes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "Detailed description of the coding task. Include: what to build/fix, acceptance criteria, files to focus on, and any constraints.",
+                    },
+                    "working_directory": {
+                        "type": "string",
+                        "description": "Absolute path to the project root. The sub-agent will be scoped to this directory.",
+                    },
+                    "agent_type": {
+                        "type": "string",
+                        "enum": ["claude", "codex", "pi"],
+                        "description": "Which coding agent to use. Defaults to 'claude' if not specified.",
+                        "default": "claude",
+                    },
+                    "branch": {
+                        "type": "string",
+                        "description": "Git branch to create/checkout before starting. Optional.",
+                    },
+                    "timeout_minutes": {
+                        "type": "integer",
+                        "description": "Maximum time the sub-agent can run. Default: 30.",
+                        "default": 30,
+                    },
+                },
+                "required": ["task", "working_directory"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "host_exec",
             "description": (
                 "Execute a command on the host machine via the Permission Broker. "
@@ -1060,6 +1096,14 @@ class ShellHead(ToolCall):
     lines: int = Field(default=20, description="Lines to show.")
     from_end: bool = Field(default=False, description="Tail mode.")
 
+class CodingAgent(ToolCall):
+    """Spawn a coding sub-agent to perform complex coding tasks."""
+    task: str = Field(description="Detailed description of the coding task.")
+    working_directory: str = Field(description="Absolute path to the project root.")
+    agent_type: Optional[Literal["claude", "codex", "pi"]] = Field(default="claude", description="Which coding agent to use.")
+    branch: Optional[str] = Field(None, description="Git branch to create/checkout.")
+    timeout_minutes: int = Field(default=30, description="Max time in minutes.")
+
 class HostExec(ToolCall):
     """Execute a command on the host via the Permission Broker."""
     command: str = Field(description="Shell command to execute on the host.")
@@ -1100,6 +1144,7 @@ INSTRUCTOR_TOOL_MAP = {
     "shell_wc": ShellWc,
     "shell_head": ShellHead,
     "shell_tree": ShellTree,
+    "coding_agent": CodingAgent,
     "host_exec": HostExec,
 }
 

@@ -194,14 +194,25 @@ export default function ChatPanel({
           value={input}
           onChange={e => onInputChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder || (loading ? "Type to queue a message..." : "Type a message...")}
+          placeholder={placeholder || (loading ? "Add context... (agent is working)" : "Type a message...")}
           rows={1}
           disabled={!connected}
         />
         {loading && onStop ? (
-          <button style={s.chatStopBtn} onClick={onStop} title="Stop">
-            Stop
-          </button>
+          <>
+            {input.trim() && (
+              <button
+                style={{ ...s.chatSendBtn, marginRight: 4 }}
+                onClick={onSend}
+                disabled={!input.trim() || !connected}
+              >
+                Send
+              </button>
+            )}
+            <button style={s.chatStopBtn} onClick={onStop} title="Stop">
+              ⏹
+            </button>
+          </>
         ) : (
           <button
             style={{ ...s.chatSendBtn, opacity: !input.trim() || !connected ? 0.5 : 1 }}

@@ -233,6 +233,43 @@ class WorkerState:
 _state = WorkerState()
 
 # ---------------------------------------------------------------------------
+# Cancellable LLM call (Design doc 037 §5.2.1)
+# ---------------------------------------------------------------------------
+
+
+async def _cancellable_llm_call(
+    interrupt_event: asyncio.Event,
+    **kwargs: Any,
+) -> Any | None:
+    """Run LLM call but abort if interrupt_event fires.
+
+    Returns the LiteLLM response on success, or None if interrupted.
+    The caller should check for None and handle graceful exit.
+    """
+    llm_task = asyncio.create_task(litellm.acompletion(**kwargs))
+    interrupt_task = asyncio.create_task(interrupt_event.wait())
+
+    done, pending = await asyncio.wait(
+        {llm_task, interrupt_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    for task in pending:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    if llm_task in done:
+        return llm_task.result()
+    else:
+        # Interrupted — LLM call was cancelled
+        logger.info("LLM call interrupted by user")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
@@ -264,7 +301,16 @@ async def _lifespan(application: FastAPI):
         await mcp_manager.stop_all()
     except:
         pass
-        
+
+    # Kill any active coding agent sub-processes
+    try:
+        from backend.app.agent.tools.coding_agent import kill_all_coding_agents
+        killed = await kill_all_coding_agents()
+        if killed:
+            logger.info("Killed %d active coding agent(s) on shutdown", killed)
+    except Exception:
+        pass
+
     await _shutdown()
 
 async def _worker_load_mcp_servers(manager):
@@ -464,6 +510,12 @@ async def _run_agent_loop(
     # gh CLI, or build commands on the host.
     if "host_exec" not in agent_tools:
         agent_tools.append("host_exec")
+
+    # Auto-inject coding_agent — delegates complex coding tasks to
+    # Claude Code, Codex, or Pi sub-agents.  Gated at runtime by binary
+    # availability and API key presence (037 §4.4.5).
+    if "coding_agent" not in agent_tools:
+        agent_tools.append("coding_agent")
 
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
@@ -1221,12 +1273,15 @@ async def _run_agent_loop(
         else:
             logger.debug("Calling LiteLLM with model %s, no API key in kwargs", _iter_model)
         # ── LLM call with retry on empty responses (rate limiting) ──
+        # Uses _cancellable_llm_call (037 §5.2.1) so interrupts take effect
+        # mid-call instead of waiting for the full response.
         _retry_max = int(os.environ.get("LLM_RETRY_MAX_ATTEMPTS", "10"))
         _retry_max_wait = float(os.environ.get("LLM_RETRY_MAX_WAIT_SECONDS", "180"))
         response = None
 
         for _retry_attempt in range(_retry_max):
-            response = await litellm.acompletion(
+            response = await _cancellable_llm_call(
+                _state.interrupt_event,
                 model=_iter_model,
                 messages=messages,
                 tools=tool_defs if tool_defs else None,
@@ -1235,6 +1290,35 @@ async def _run_agent_loop(
                 metadata=_iter_langfuse_meta if _iter_langfuse_meta else None,
                 **_iter_kwargs,
             )
+
+            # Interrupted mid-call — check for injected context or stop
+            if response is None:
+                _state.interrupt_event.clear()
+                if _state.pending_messages:
+                    logger.info(
+                        "LLM call interrupted with %d pending messages — injecting context",
+                        len(_state.pending_messages),
+                    )
+                    for msg in _state.pending_messages:
+                        messages.append(msg)
+                    _state.pending_messages.clear()
+                    if event_queue is not None:
+                        await event_queue.put(_sse_event("status", {"state": "context_injected"}))
+                    break  # break retry loop, continue outer iteration
+                else:
+                    logger.info("LLM call interrupted — stopping agent loop")
+                    # Kill any active coding agent sub-processes
+                    from backend.app.agent.tools.coding_agent import kill_coding_agent
+                    await kill_coding_agent(_state.agent_id)
+                    if event_queue is not None:
+                        await event_queue.put(_sse_event("status", {"state": "interrupted"}))
+                    # Strip budget note before returning
+                    if _budget_note and _budget_target_idx >= 0:
+                        content = messages[_budget_target_idx].get("content", "")
+                        if isinstance(content, str) and content.endswith(_budget_note):
+                            messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
+                    _emit_cost_summary()
+                    return "", tool_calls_made
 
             if response.choices:
                 break
@@ -1269,6 +1353,10 @@ async def _run_agent_loop(
                     f"over ~{_retry_max_wait}s. "
                     "This may indicate rate limiting, content filtering, or a malformed request."
                 )
+
+        # If we broke out of retry loop due to context injection, continue outer loop
+        if response is None:
+            continue
 
         # Strip budget note from the tool result after the LLM call
         if _budget_note and _budget_target_idx >= 0:
@@ -1650,7 +1738,39 @@ async def _run_agent_loop(
                         logger.info("Using precomputed parallel result for %s (%.2fs)", tool_name, duration)
                     else:
                         start_ts = time.time()
-                        result = await registry.execute(tool_name, tool_args, tool_context)
+                        # For long-running tools (coding_agent), make execution
+                        # interruptible (037 §5.2.2)
+                        tool_task = asyncio.create_task(
+                            registry.execute(tool_name, tool_args, tool_context)
+                        )
+                        interrupt_task = asyncio.create_task(
+                            _state.interrupt_event.wait()
+                        )
+                        _done, _pending = await asyncio.wait(
+                            {tool_task, interrupt_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for _t in _pending:
+                            _t.cancel()
+                            try:
+                                await _t
+                            except asyncio.CancelledError:
+                                pass
+
+                        if tool_task in _done:
+                            result = tool_task.result()
+                        else:
+                            # Tool was interrupted
+                            logger.info("Tool %s interrupted by user", tool_name)
+                            from backend.app.agent.tools.coding_agent import kill_coding_agent
+                            await kill_coding_agent(_state.agent_id)
+                            result = {"error": "Tool execution interrupted by user"}
+                            _state.interrupt_event.clear()
+                            # Check for injected context
+                            if _state.pending_messages:
+                                for msg in _state.pending_messages:
+                                    messages.append(msg)
+                                _state.pending_messages.clear()
                         duration = time.time() - start_ts
                     
                     # Persist tool log
