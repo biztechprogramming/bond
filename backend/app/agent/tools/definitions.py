@@ -575,7 +575,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "shell_find",
-            "description": "Low-level file finder using glob/regex patterns. DO NOT use this for discovery — use project_search instead, which tries multiple strategies automatically. Only use shell_find when you already know the exact glob pattern (e.g. '*.py', 'test_*.ts'). Case-insensitive. Auto-excludes .venv, node_modules, __pycache__, .git.",
+            "description": "DEPRECATED for most uses — use project_search instead. project_search handles filename matching, extension filtering (via include param), path matching, AND content search in one call. shell_find exists only as a low-level fallback for non-discovery tasks like counting files or checking directory existence. Never use shell_find to locate files, documents, or code.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -805,10 +805,11 @@ TOOL_DEFINITIONS: list[dict] = [
                 "Smart project search: finds files by searching EVERY word in the query independently "
                 "across filenames, directory paths (any depth), and file contents — all in one call. "
                 "Use this FIRST when looking for any file, document, or code reference. Returns full "
-                "paths with a preview of each file so you can confirm it's the right one. Example: "
-                "project_search(query='inspection defect entry blazor') finds files matching ANY of "
-                "those words in their name, parent directories, or contents. Never need shell_find or "
-                "shell_grep for discovery — this covers it all."
+                "paths with a preview of each file so you can confirm it's the right one. "
+                "Supports extension filtering via include param (e.g. include='*.css'). "
+                "Example: project_search(query='inspection defect entry blazor') finds files matching ANY of "
+                "those words in their name, parent directories, or contents. "
+                "REPLACES shell_find entirely — never use shell_find for discovery, even for glob patterns like *.css."
             ),
             "parameters": {
                 "type": "object",

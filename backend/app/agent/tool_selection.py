@@ -52,10 +52,12 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "find", "locate", "search for", "where is", "look for", "find the",
         "find me", "looking for", "design doc", "doc ", "document",
         "which file", "what file", "where's the", "can you find",
+        "*.py", "*.ts", "*.js", "*.md", "*.json", "*.yaml", "*.yml",
+        "*.css", "*.html", "*.razor", "*.cs", "*.jsx", "*.tsx",
+        "file named", "glob", "files matching",
     ],
     "shell_find": [
-        "*.py", "*.ts", "*.js", "*.md", "*.json", "*.yaml", "*.yml",
-        "file named", "glob", "find -name", "-type f", "-type d",
+        "find -name", "-type f", "-type d", "count files",
     ],
     "shell_ls": [
         "ls ", "list files", "list directory", "what files", "directory contents",
