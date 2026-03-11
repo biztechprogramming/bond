@@ -272,27 +272,43 @@ async def handle_coding_agent(
     timeout_minutes = arguments.get("timeout_minutes", 30)
     agent_id = context.get("agent_id", "default")
 
+    def _terminal_error(msg: str) -> dict[str, Any]:
+        """Return a terminal error — stops the agent loop."""
+        return {"message": f"coding_agent error: {msg}", "_terminal": True}
+
     if not task:
-        return {"error": "task is required"}
+        return _terminal_error("task is required")
     if not working_dir:
-        return {"error": "working_directory is required"}
+        return _terminal_error("working_directory is required")
 
     # Validate agent type
     if agent_type not in AGENT_COMMANDS:
-        return {
-            "error": f"Unknown agent_type: {agent_type}. "
+        return _terminal_error(
+            f"Unknown agent_type: {agent_type}. "
             f"Supported: {list(AGENT_COMMANDS.keys())}"
-        }
+        )
 
-    # Validate required API key
+    # Resolve API key: prefer context-injected keys (from SpacetimeDB/config),
+    # fall back to environment variable.
     env_var = REQUIRED_ENV.get(agent_type)
-    if env_var and not os.environ.get(env_var):
-        return {"error": f"{agent_type} requires {env_var} to be set"}
+    resolved_api_key: str | None = None
+    if env_var:
+        # Check context for keys resolved by the worker's key resolution pipeline
+        injected_keys: dict[str, str] = context.get("api_keys", {})
+        # Map env var names to provider keys
+        _env_to_provider = {
+            "ANTHROPIC_API_KEY": "anthropic",
+            "OPENAI_API_KEY": "openai",
+        }
+        provider = _env_to_provider.get(env_var, "")
+        resolved_api_key = injected_keys.get(provider) or os.environ.get(env_var)
+        if not resolved_api_key:
+            return _terminal_error(f"{agent_type} requires {env_var} to be set")
 
     # Validate working directory
     dir_error = _validate_working_directory(working_dir)
     if dir_error:
-        return {"error": dir_error}
+        return _terminal_error(dir_error)
 
     # Kill any existing process for this agent
     if agent_id in _active_processes:
@@ -309,18 +325,22 @@ async def handle_coding_agent(
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            return {"error": f"Git checkout failed: {stderr.decode().strip()}"}
+            return _terminal_error(f"Git checkout failed: {stderr.decode().strip()}")
         logger.info("Checked out branch %s in %s", branch, working_dir)
 
     # Start the coding agent
     cap = CodingAgentProcess(agent_type, task, working_dir, timeout_minutes)
     _active_processes[agent_id] = cap
 
+    # Inject resolved API key into the subprocess environment
+    if resolved_api_key and env_var:
+        os.environ[env_var] = resolved_api_key
+
     try:
         await cap.start()
     except (FileNotFoundError, ValueError) as e:
         _active_processes.pop(agent_id, None)
-        return {"error": str(e)}
+        return _terminal_error(str(e))
 
     # Stream output line-by-line via SSE for real-time visibility
     event_queue = context.get("event_queue")
