@@ -275,14 +275,24 @@ class SandboxManager:
         lock = self._get_agent_lock(key)
 
         async with lock:
+            # Normalize current mounts for comparison
+            current_mounts = sorted(
+                [repr(m) for m in agent.get("workspace_mounts", [])],
+            )
+
             # Check if container already running + healthy (Task 8)
             # First check in-memory tracking
             if key in self._containers:
                 info = self._containers[key]
                 cid = info["container_id"]
                 worker_url = info.get("worker_url", "")
+                tracked_mounts = info.get("mounts", [])
 
-                if await self._is_running(cid):
+                # If mounts changed, destroy and recreate
+                if tracked_mounts != current_mounts:
+                    logger.info("Agent %s mounts changed, recreating worker container %s", agent_id, key)
+                    await self.destroy_agent_container(agent_id)
+                elif await self._is_running(cid):
                     try:
                         await self._wait_for_health(worker_url, agent_id, cid, timeout=5.0)
                         self._containers[key]["last_used"] = time.time()
@@ -324,6 +334,7 @@ class SandboxManager:
                     "worker_port": port,
                     "config_path": str(config_path),
                     "last_used": time.time(),
+                    "mounts": current_mounts,
                 }
 
                 # Wait for health
@@ -419,6 +430,7 @@ class SandboxManager:
 
         # Workspace mounts
         workspace_mounts = agent.get("workspace_mounts", [])
+        logger.info("Agent %s workspace_mounts: %s", agent_id, workspace_mounts)
         if workspace_mounts:
             for mount in workspace_mounts:
                 host_path = os.path.expanduser(mount.get("host_path", ""))
@@ -428,7 +440,10 @@ class SandboxManager:
                 mount_str = f"{host_path}:{container_path}"
                 if readonly:
                     mount_str += ":ro"
+                logger.info("Agent %s mounting: %s", agent_id, mount_str)
                 cmd.extend(["-v", mount_str])
+        else:
+            logger.warning("Agent %s has NO workspace mounts configured!", agent_id)
 
         # Agent data: bind mount (host-accessible, persists across restarts)
         agent_data_dir = self._agent_data_dir(agent_id)
@@ -523,13 +538,27 @@ class SandboxManager:
         agent_name: str,
         key: str,
     ) -> str:
+        # Normalize current mounts for comparison
+        current_mounts = sorted(
+            [repr(m) for m in (workspace_mounts or [])],
+        )
+
         # Check if already tracked and running
         if key in self._containers:
             cid = self._containers[key]["container_id"]
+            tracked_mounts = self._containers[key].get("mounts", [])
             if await self._is_running(cid):
-                self._containers[key]["last_used"] = time.time()
-                return cid
-            # Container died — remove tracking
+                if tracked_mounts == current_mounts:
+                    self._containers[key]["last_used"] = time.time()
+                    return cid
+                # Mounts changed — tear down and recreate
+                logger.info("Agent %s mounts changed, recreating container %s", agent_id, key)
+                rm_proc = await asyncio.create_subprocess_exec(
+                    "docker", "rm", "-f", cid,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await rm_proc.communicate()
             del self._containers[key]
 
         # Check if a container already exists with this name (from a previous run)
@@ -542,17 +571,14 @@ class SandboxManager:
         existing_id = stdout.decode().strip()
 
         if existing_id:
-            # Start and reuse
-            await asyncio.create_subprocess_exec(
-                "docker", "start", existing_id,
+            # Remove stale container so we recreate with current mounts
+            logger.info("Removing stale container %s (%s) to recreate with current mounts", key, existing_id)
+            rm_proc = await asyncio.create_subprocess_exec(
+                "docker", "rm", "-f", existing_id,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            self._containers[key] = {
-                "container_id": existing_id,
-                "last_used": time.time(),
-            }
-            return existing_id
+            await rm_proc.communicate()
 
         # Create new container
         cmd = [
@@ -590,6 +616,7 @@ class SandboxManager:
         self._containers[key] = {
             "container_id": container_id,
             "last_used": time.time(),
+            "mounts": current_mounts,
         }
         logger.info("Created sandbox container %s for agent %s", container_id, agent_id)
 
