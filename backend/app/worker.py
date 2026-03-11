@@ -1546,7 +1546,12 @@ async def _run_agent_loop(
                             "Force-stopping agent loop at iteration %d, tool call %d.",
                             _loop_intervention_count, _iteration, tool_calls_made,
                         )
-                        messages.append({
+                        # Defer the user message so it comes AFTER all tool_result
+                        # messages (including orphan fillers).  Inserting a user
+                        # message between tool_results violates Anthropic's
+                        # requirement that every tool_use has a matching
+                        # tool_result immediately after.
+                        _deferred_injections.append({
                             "role": "user",
                             "content": (
                                 "SYSTEM: HARD STOP. You have been warned about looping multiple times "
@@ -1565,7 +1570,12 @@ async def _run_agent_loop(
                         recent_tool_calls.clear()
                         break
 
-                    messages.append({
+                    # Defer the loop intervention message so it comes AFTER all
+                    # tool_result messages (including orphan fillers for any
+                    # remaining tool_calls in this batch).  Appending a user
+                    # message here would violate Anthropic's requirement that
+                    # every tool_use has a matching tool_result immediately after.
+                    _deferred_injections.append({
                         "role": "user",
                         "content": (
                             f"{_loop_msg} "

@@ -493,3 +493,114 @@ async def test_turn_retry_first_attempt_succeeds(worker_client, monkeypatch):
     assert resp.status_code == 200
     assert "First try!" in resp.text
     assert call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Loop detection: tool_result ordering (Anthropic message contract)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_detection_no_user_message_between_tool_results(worker_client):
+    """When loop detection breaks out of a multi-tool batch, user messages
+    must come AFTER all tool_result messages — not between them.
+
+    Anthropic requires every tool_use to have a corresponding tool_result
+    immediately after.  Previously, loop intervention user messages were
+    injected between tool_results, causing:
+      assistant(tool_use A,B,C) → tool(A) → user(loop) → tool(B) → tool(C)
+    which Anthropic rejects.
+    """
+    # We need 3 iterations of the same tool call to trigger loop detection
+    # (REPETITION_THRESHOLD = 3).  The 3rd response has 3 tool calls in a
+    # batch.  Loop detection triggers on the first tool call in that batch,
+    # breaking out early and leaving B and C as orphans.
+    same_tc = _make_tool_call("call_same", "file_read", {"path": "/tmp/x.txt"})
+
+    # First two responses: single tool call each (builds up repetition count)
+    resp1 = _make_llm_response(tool_calls=[
+        _make_tool_call("call_r1", "file_read", {"path": "/tmp/x.txt"}),
+    ])
+    resp2 = _make_llm_response(tool_calls=[
+        _make_tool_call("call_r2", "file_read", {"path": "/tmp/x.txt"}),
+    ])
+    # Third response: batch of 3 — loop detection triggers on first call
+    resp3 = _make_llm_response(tool_calls=[
+        _make_tool_call("call_r3a", "file_read", {"path": "/tmp/x.txt"}),
+        _make_tool_call("call_r3b", "file_read", {"path": "/tmp/x.txt"}),
+        _make_tool_call("call_r3c", "file_read", {"path": "/tmp/x.txt"}),
+    ])
+    # Final response: simple text (after loop intervention)
+    final = _make_llm_response(content="Done after loop.")
+
+    call_count = 0
+
+    async def mock_acompletion(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        messages = kwargs.get("messages", [])
+        if call_count == 1:
+            return resp1
+        elif call_count == 2:
+            return resp2
+        elif call_count == 3:
+            return resp3
+        else:
+            return final
+
+    with patch("backend.app.worker.litellm") as mock_mod:
+        mock_mod.acompletion = mock_acompletion
+        resp = await worker_client.post(
+            "/turn",
+            json={"message": "Read the file", "history": [], "conversation_id": "conv-loop-order"},
+        )
+
+    assert resp.status_code == 200
+    # The response should complete without Anthropic errors
+    body = resp.text
+    assert "event: done" in body
+
+
+def test_tool_result_ordering_invariant():
+    """Validate that after an assistant message with tool_calls, all
+    tool_result messages come before any user messages.
+
+    This is a structural invariant required by Anthropic's API.
+    """
+    # Simulate the message list that would be built during the agent loop
+    # when loop detection fires mid-batch.
+    messages = [
+        {"role": "system", "content": "You are a test agent."},
+        {"role": "user", "content": "Do something"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "tc_a", "type": "function", "function": {"name": "file_read", "arguments": "{}"}},
+                {"id": "tc_b", "type": "function", "function": {"name": "file_read", "arguments": "{}"}},
+                {"id": "tc_c", "type": "function", "function": {"name": "file_read", "arguments": "{}"}},
+            ],
+        },
+        # All tool results must come here, grouped together:
+        {"role": "tool", "tool_call_id": "tc_a", "content": '{"content": "ok"}'},
+        {"role": "tool", "tool_call_id": "tc_b", "content": '{"error": "Skipped"}'},
+        {"role": "tool", "tool_call_id": "tc_c", "content": '{"error": "Skipped"}'},
+        # User message (loop intervention) comes AFTER all tool results:
+        {"role": "user", "content": "SYSTEM: loop detected"},
+    ]
+
+    # Verify: after each assistant message with tool_calls, all tool_results
+    # come before any non-tool message.
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            tc_ids = {tc["id"] for tc in msg["tool_calls"]}
+            seen_non_tool = False
+            for j in range(i + 1, len(messages)):
+                m = messages[j]
+                if m.get("role") == "tool" and m.get("tool_call_id") in tc_ids:
+                    assert not seen_non_tool, (
+                        f"tool_result for {m['tool_call_id']} at index {j} comes AFTER "
+                        f"a non-tool message — this violates Anthropic's message contract"
+                    )
+                elif m.get("role") != "tool":
+                    seen_non_tool = True

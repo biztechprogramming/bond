@@ -17,32 +17,31 @@
 universal/safety.md:
   tier: 1
 
-universal/reasoning.md:
-  tier: 1
-
-universal/communication.md:
-  tier: 1
-
-universal/error-handling.md:
-  tier: 1
-
-universal/work-planning.md:
-  tier: 1
-
-universal/progress-tracking.md:
-  tier: 1
-
 universal/memory-guidance.md:
-  tier: 1
-
-universal/proactive-workflow.md:
   tier: 1
 
 universal/tool-efficiency.md:
   tier: 1
 
-engineering/code-quality/must-compile/must-compile.md:
+universal/proactive-workflow.md:
   tier: 1
+
+# Demoted from Tier 1 — only needed during active work phases
+universal/reasoning.md:
+  tier: 2
+  phase: implementing
+
+universal/error-handling.md:
+  tier: 2
+  phase: implementing
+
+universal/work-planning.md:
+  tier: 2
+  phase: planning
+
+engineering/code-quality/must-compile/must-compile.md:
+  tier: 2
+  phase: implementing
 
 # ══════════════════════════════════════════════════════════════════════════
 # Tier 2: Lifecycle-Triggered

@@ -18,11 +18,6 @@
 **When to use shell_find instead:** Only when you already know the exact glob pattern (e.g. `shell_find(name="*.py", path="src/")`).
 **When to use shell_grep instead:** Only when searching for a specific text pattern inside files with line numbers.
 
-### Project Structure Conventions
-- **Design docs:** `docs/design/NNN-slug.md` (zero-padded 3-digit prefix)
-- **Prompts:** `prompts/` directory tree organized by topic
-- **Tests:** `backend/tests/test_*.py` and `gateway/src/__tests__/*.test.ts`
-
 ### Discovery Phase (First Turn)
 For any non-trivial task, your **first tool-call turn** must batch all available discovery calls together. Emit these in a single response so they execute in parallel:
 1. `search_memory` — check for past context, decisions, and known issues related to the task.
