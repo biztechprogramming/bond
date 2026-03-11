@@ -553,34 +553,12 @@ async def _run_agent_loop(
     config = _state.config
     model = config["model"]
     system_prompt = config["system_prompt"] or "You are a helpful AI assistant."
-    agent_tools = config["tools"]
     max_iterations = config["max_iterations"]
 
-    # Auto-inject filesystem + shell utility tools — read-only info-gathering
-    # and file buffer tools that should always be available.
-    _SHELL_UTILITY_TOOLS = [
-        "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tail", "shell_tree",
-        "shell_sed", "shell_diff", "shell_awk", "shell_jq",
-        "project_search", "batch_head",
-        "file_open", "file_view", "file_search", "file_replace",
-        "file_smart_edit",
-    ]
-    for _util_tool in _SHELL_UTILITY_TOOLS:
-        if _util_tool not in agent_tools:
-            agent_tools.append(_util_tool)
-
-    # Auto-inject host_exec — it's gated by the Permission Broker so
-    # always safe to expose.  Without this the agent can't run git,
-    # gh CLI, or build commands on the host.
-    if "host_exec" not in agent_tools:
-        agent_tools.append("host_exec")
-
-    # Auto-inject coding_agent — delegates complex coding tasks to
-    # Claude Code, Codex, or Pi sub-agents.  Gated at runtime by binary
-    # availability and API key presence (037 §4.4.5).
-    if "coding_agent" not in agent_tools:
-        agent_tools.append("coding_agent")
+    # Use all registered tools. The DB tools field is legacy — tool
+    # availability is now controlled by tool_selection.py heuristics
+    # and runtime gating (Permission Broker, API key presence, etc.).
+    agent_tools = list(TOOL_MAP.keys())
 
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
