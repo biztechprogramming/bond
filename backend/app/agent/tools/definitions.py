@@ -817,8 +817,10 @@ TOOL_DEFINITIONS: list[dict] = [
             "description": (
                 "Smart project search: finds files by searching EVERY word in the query independently "
                 "across filenames, directory paths (any depth), and file contents — all in one call. "
+                "Returns path, file size, and last-modified date for each match (no content preview). "
                 "Use ONLY when you do NOT already have the exact file path. If you have a path, use "
-                "file_read or shell_head directly — never search first. Example: "
+                "file_read or shell_head directly — never search first. "
+                "To peek at multiple results, pass their paths to batch_head. Example: "
                 "project_search(query='inspection defect entry blazor') finds files matching ANY of "
                 "those words in their name, parent directories, or contents."
             ),
@@ -850,6 +852,33 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_head",
+            "description": (
+                "Peek at the first N lines of multiple files in one call. "
+                "Use after project_search to quickly inspect several candidate files "
+                "without making one tool call per file. Returns content and total line count for each file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of file paths to read the head of (max 20).",
+                    },
+                    "lines": {
+                        "type": "integer",
+                        "description": "Number of lines to read from each file (default: 40, max: 200).",
+                        "default": 40,
+                    },
+                },
+                "required": ["files"],
             },
         },
     },
