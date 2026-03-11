@@ -123,6 +123,12 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "call_subordinate": [
         "delegate", "subordinate", "sub-agent", "hand off", "ask another",
     ],
+    "coding_agent": [
+        "coding agent", "sub-agent", "claude code", "codex", "spawn agent",
+        "delegate coding", "implement this", "build this feature",
+        "multi-file", "refactor the", "complex change", "across multiple files",
+        "write the code", "coding task", "have an agent", "let an agent",
+    ],
     "work_plan": [
         "implement", "build", "create", "fix", "refactor", "change",
         "update", "migrate", "plan", "task", "work plan", "multi-step",
@@ -207,8 +213,8 @@ def select_tools(
         logger.debug("No tools matched for message, using respond only")
         return [t for t in selected if t in enabled_tools]
 
-    # Coding tasks often need both read + write + execute
-    coding_tools = {"file_read", "file_write", "file_edit", "code_execute"}
+    # Coding tasks often need both read + write + execute + coding_agent
+    coding_tools = {"file_read", "file_write", "file_edit", "code_execute", "coding_agent"}
     if coding_tools & selected:
         selected.update(coding_tools & set(enabled_tools))
 
@@ -256,16 +262,47 @@ def select_tools(
     return result
 
 
+# Routing hints appended to compact descriptions so the LLM can differentiate
+# similar tools. These survive compact_tool_schema's first-sentence truncation.
+TOOL_ROUTING_HINTS: dict[str, str] = {
+    "coding_agent": (
+        " Use when: multi-file features, refactors, bug fixes requiring "
+        "exploration + iteration (10+ tool calls to do yourself). "
+        "NOT for: simple edits (use file_edit), reading code (use file_read), "
+        "or single commands (use code_execute)."
+    ),
+    "code_execute": (
+        " Use for: running commands (build, test, install, scripts). "
+        "NOT for: multi-step coding tasks (use coding_agent)."
+    ),
+    "file_edit": (
+        " Use for: targeted changes when you know exactly what to write."
+    ),
+    "host_exec": (
+        " Use for: git push, gh CLI, build commands needing host credentials."
+    ),
+    "call_subordinate": (
+        " Reserved for future use. Use coding_agent for coding delegation."
+    ),
+}
+
+
 def compact_tool_schema(tool_def: dict) -> dict:
     """Create a compact version of a tool schema, stripping verbose descriptions.
 
-    Keeps: function name, first sentence of description, param names/types/enums/required.
+    Keeps: function name, first sentence of description + routing hint,
+    param names/types/enums/required.
     Strips: long descriptions, parameter descriptions, examples.
     """
     func = tool_def.get("function", {})
     desc = func.get("description", "")
+    tool_name = func.get("name", "")
     # First sentence only
     short_desc = desc.split(". ")[0].rstrip(".") + "." if desc else ""
+    # Append routing hint if available
+    hint = TOOL_ROUTING_HINTS.get(tool_name, "")
+    if hint:
+        short_desc += hint
 
     compact: dict[str, Any] = {
         "type": "function",

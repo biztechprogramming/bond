@@ -511,6 +511,12 @@ async def _run_agent_loop(
     if "host_exec" not in agent_tools:
         agent_tools.append("host_exec")
 
+    # Auto-inject coding_agent — delegates complex coding tasks to
+    # Claude Code, Codex, or Pi sub-agents.  Gated at runtime by binary
+    # availability and API key presence (037 §4.4.5).
+    if "coding_agent" not in agent_tools:
+        agent_tools.append("coding_agent")
+
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
     provider_aliases: dict[str, str] = config.get("provider_aliases", {})
