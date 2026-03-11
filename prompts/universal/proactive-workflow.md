@@ -15,6 +15,6 @@ You don't wait to be told every step. You think ahead and act:
 ### Before Finishing
 - Run tests and build checks to verify your work.
 - Review your own diff: `git diff` — look for debug code, TODOs, or incomplete work.
-- Push your branch.
+- **Commit and push to a prefixed branch** (`feature/`, `fix/`, `chore/`, etc.). This is mandatory after any code changes. Commit immediately — never wait for push access or anything else. Find the remote with `git remote -v` or `.git/config`. Never commit to `main`, `master`, or `develop`.
 - Save learnings to memory: patterns discovered, gotchas found, decisions made.
 - Report what was done, what was tested, and what (if anything) needs follow-up.
