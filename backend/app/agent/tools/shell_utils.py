@@ -346,12 +346,28 @@ async def handle_shell_tree(
 # ---------------------------------------------------------------------------
 
 
+# Directories to always exclude from project_search results.
+# Applied as a post-filter to both git ls-files and find output.
+_EXCLUDED_DIR_SEGMENTS = {
+    ".venv", "venv", "node_modules", "__pycache__", ".git",
+    ".next", "dist", "build", ".tox", "bin", "obj",
+    ".worktrees", ".vs", ".auto-claude",
+    "packages", "deploy",
+}
+
+
+def _is_excluded_path(filepath: str) -> bool:
+    """Return True if the path contains any excluded directory segment."""
+    parts = filepath.replace("\\", "/").split("/")
+    return bool(_EXCLUDED_DIR_SEGMENTS.intersection(parts))
+
+
 async def _get_file_listing(path: str, file_type: str | None, include: str | None) -> list[str]:
     """Get file listing respecting .gitignore when inside a git repo.
 
     Uses `git ls-files` (tracked + untracked-but-not-ignored) when inside a
     git repo, falls back to `find` with hardcoded exclusions otherwise.
-    Returns absolute paths.
+    Returns absolute paths. Always filters out excluded directories.
     """
     # Check if we're in a git repo
     git_check = await _run_cmd(
@@ -383,28 +399,43 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
                     for i in range(1, len(parts)):
                         dirs.add(os.path.join(abs_path, *parts[:i]))
                 files = sorted(dirs)
-            # Apply include filter (glob on basename)
+            # Apply include filter (glob on basename, supports comma-separated)
             if include:
                 import fnmatch
-                pattern = include  # e.g. "*.py"
-                files = [f for f in files if fnmatch.fnmatch(os.path.basename(f).lower(), pattern.lower())]
-            return files
+                patterns = [p.strip() for p in include.split(",")]
+                files = [
+                    f for f in files
+                    if any(fnmatch.fnmatch(os.path.basename(f).lower(), p.lower()) for p in patterns)
+                ]
+            return [f for f in files if not _is_excluded_path(f)]
         # git ls-files returned nothing — fall through to find
     # Fallback for non-git directories
     prune_clause = (
-        r"\( -name .venv -o -name node_modules -o -name __pycache__ -o -name .git "
+        r"\( -name .venv -o -name venv -o -name node_modules -o -name __pycache__ -o -name .git "
         r"-o -name .next -o -name dist -o -name build -o -name .tox "
-        r"-o -name bin -o -name obj \) -prune -o"
+        r"-o -name bin -o -name obj -o -name .worktrees -o -name .vs "
+        r"-o -name .auto-claude -o -name packages -o -name deploy \) -prune -o"
     )
     type_clause = f"-type {file_type}" if file_type in ("f", "d") else "-type f"
-    include_filter = f"-iname {_shell_quote(include)}" if include else ""
+    # Build include filter (supports comma-separated patterns)
+    if include:
+        patterns = [p.strip() for p in include.split(",")]
+        if len(patterns) == 1:
+            include_filter = f"-iname {_shell_quote(patterns[0])}"
+        else:
+            # Multiple patterns: \( -iname '*.cs' -o -iname '*.html' \)
+            parts = " -o ".join(f"-iname {_shell_quote(p)}" for p in patterns)
+            include_filter = rf"\( {parts} \)"
+    else:
+        include_filter = ""
     find_cmd = (
         f"find {_shell_quote(path)} {prune_clause} {type_clause} "
         f"{include_filter} -print 2>/dev/null"
     )
     result = await _run_cmd(["sh", "-c", find_cmd], timeout=30, truncate=False)
     if result["exit_code"] == 0 and result["stdout"].strip():
-        return result["stdout"].strip().split("\n")
+        files = result["stdout"].strip().split("\n")
+        return [f for f in files if not _is_excluded_path(f)]
     return []
 
 
@@ -513,28 +544,28 @@ async def handle_project_search(
         else:
             # Fallback: regular grep with hardcoded exclusions
             if include:
-                include_flags = f"--include={_shell_quote(include)}"
+                # Support comma-separated patterns
+                patterns = [p.strip() for p in include.split(",")]
+                include_flags = " ".join(f"--include={_shell_quote(p)}" for p in patterns)
             else:
+                # No include specified — shouldn't happen since include is required,
+                # but fall back to common source extensions just in case
                 include_flags = (
                     "--include='*.md' --include='*.txt' --include='*.yaml' --include='*.yml' "
                     "--include='*.py' --include='*.ts' --include='*.tsx' --include='*.js' "
                     "--include='*.jsx' --include='*.cs' --include='*.razor' --include='*.cshtml' "
                     "--include='*.html' --include='*.css' --include='*.scss' --include='*.json' "
                     "--include='*.xml' --include='*.toml' --include='*.cfg' --include='*.ini' "
-                    "--include='*.java' --include='*.go' --include='*.rs' --include='*.rb' "
-                    "--include='*.php' --include='*.swift' --include='*.kt' --include='*.c' "
-                    "--include='*.cpp' --include='*.h' --include='*.hpp' --include='*.sql' "
-                    "--include='*.sh' --include='*.bash' --include='*.zsh' --include='*.vue' "
-                    "--include='*.svelte' --include='*.astro' --include='*.tf' --include='*.hcl' "
-                    "--include='*.proto' --include='*.graphql' --include='*.prisma' "
-                    "--include='*.csproj' --include='*.sln' --include='*.fsproj'"
+                    "--include='*.sql' --include='*.sh' --include='*.csproj' --include='*.sln'"
                 )
             content_cmd = (
                 f"grep -rnil {include_flags} "
-                f"--exclude-dir=.venv --exclude-dir=node_modules "
+                f"--exclude-dir=.venv --exclude-dir=venv --exclude-dir=node_modules "
                 f"--exclude-dir=__pycache__ --exclude-dir=.git --exclude-dir=.next "
                 f"--exclude-dir=dist --exclude-dir=build --exclude-dir=.tox "
-                f"--exclude-dir=bin --exclude-dir=obj "
+                f"--exclude-dir=bin --exclude-dir=obj --exclude-dir=.worktrees "
+                f"--exclude-dir=.vs --exclude-dir=.auto-claude "
+                f"--exclude-dir=packages --exclude-dir=deploy "
                 f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
                 f"| head -{max_results * 2}"
             )
@@ -548,6 +579,8 @@ async def handle_project_search(
                 # Make absolute if git grep returned relative paths
                 if not os.path.isabs(filepath) and is_git:
                     filepath = os.path.join(git_check["stdout"].strip(), filepath)
+                if _is_excluded_path(filepath):
+                    continue
                 if filepath in file_scores:
                     file_scores[filepath]["score"] += 2
                     file_scores[filepath]["categories"].add("content")
@@ -589,8 +622,11 @@ async def handle_project_search(
     # --- Wildcard file matches grouped by query term ---
     # Shows what `shell_find -iname "*term*"` would return, so the agent
     # never needs a separate shell_find call.
+    # Skip short tokens (≤5 chars) — they match too many files and create noise.
     wildcard_matches: dict[str, list[str]] = {}
     for token in all_tokens:
+        if len(token) <= 5:
+            continue
         glob_label = f"*{token}*"
         matching_files: list[str] = []
         for filepath in all_project_files:
@@ -671,3 +707,182 @@ async def handle_batch_head(
         results.append(entry)
 
     return {"files": results}
+
+
+# ---------------------------------------------------------------------------
+# shell_tail — read the last N lines of a file
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_tail(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the last N lines of a file."""
+    path = arguments.get("path", "")
+    lines = arguments.get("lines", 50)
+    if not path:
+        return {"error": "path is required"}
+    lines = min(max(1, lines), 500)
+
+    result = await _run_cmd(
+        ["sh", "-c", f"tail -n {lines} {_shell_quote(path)} 2>&1"],
+        timeout=10,
+    )
+    output: dict[str, Any] = {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }
+    # Include total line count for context
+    wc_result = await _run_cmd(
+        ["sh", "-c", f"wc -l < {_shell_quote(path)} 2>/dev/null"],
+        timeout=3,
+    )
+    if wc_result["exit_code"] == 0:
+        try:
+            output["total_lines"] = int(wc_result["stdout"].strip())
+        except ValueError:
+            pass
+    return output
+
+
+# ---------------------------------------------------------------------------
+# shell_sed — extract line ranges or transform text with sed
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_sed(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Run sed on a file or input. Most useful for extracting line ranges.
+
+    Examples:
+      - lines "50,100p" on file.html → prints lines 50-100
+      - expression "s/foo/bar/g" on file.txt → find/replace
+      - expression "/BEGIN/,/END/p" → print between patterns
+    """
+    path = arguments.get("path", "")
+    expression = arguments.get("expression", "")
+    lines = arguments.get("lines", "")
+
+    if not path:
+        return {"error": "path is required"}
+    if not expression and not lines:
+        return {"error": "either 'expression' or 'lines' is required"}
+
+    if lines:
+        # Shorthand: "50,100" → sed -n '50,100p'
+        cmd = f"sed -n {_shell_quote(lines + 'p')} {_shell_quote(path)} 2>&1"
+    else:
+        cmd = f"sed -n {_shell_quote(expression)} {_shell_quote(path)} 2>&1"
+
+    result = await _run_cmd(["sh", "-c", cmd], timeout=10)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# shell_diff — compare two files
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_diff(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare two files and return the unified diff."""
+    file1 = arguments.get("file1", "")
+    file2 = arguments.get("file2", "")
+    context_lines = arguments.get("context_lines", 3)
+
+    if not file1 or not file2:
+        return {"error": "file1 and file2 are required"}
+    context_lines = min(max(0, context_lines), 20)
+
+    result = await _run_cmd(
+        ["sh", "-c", f"diff -u --color=never -U {context_lines} {_shell_quote(file1)} {_shell_quote(file2)} 2>&1"],
+        timeout=10,
+    )
+    # diff returns exit code 1 when files differ (not an error)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+        "files_identical": result["exit_code"] == 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# shell_awk — structured text extraction
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_awk(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Run an awk program on a file. Great for column extraction,
+    pattern-based ranges, and structured text processing.
+
+    Examples:
+      - program: '{print $1, $3}' — print columns 1 and 3
+      - program: '/BEGIN/,/END/' — print lines between patterns
+      - program: 'NR>=50 && NR<=100' — print line range
+      - program: -F',' '{print $2}' — CSV column extraction
+    """
+    path = arguments.get("path", "")
+    program = arguments.get("program", "")
+    separator = arguments.get("separator", "")
+
+    if not path:
+        return {"error": "path is required"}
+    if not program:
+        return {"error": "program is required"}
+
+    sep_flag = f"-F{_shell_quote(separator)} " if separator else ""
+    cmd = f"awk {sep_flag}{_shell_quote(program)} {_shell_quote(path)} 2>&1"
+
+    result = await _run_cmd(["sh", "-c", cmd], timeout=10)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# shell_jq — query JSON files
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_jq(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Run a jq query on a JSON file. Returns filtered/transformed JSON.
+
+    Examples:
+      - filter: '.dependencies' — extract a key
+      - filter: '.scripts | keys' — list script names
+      - filter: '.[] | select(.name == "foo")' — filter arrays
+      - filter: '{name: .name, version: .version}' — reshape
+    """
+    path = arguments.get("path", "")
+    filter_expr = arguments.get("filter", ".")
+
+    if not path:
+        return {"error": "path is required"}
+
+    cmd = f"jq {_shell_quote(filter_expr)} {_shell_quote(path)} 2>&1"
+
+    result = await _run_cmd(["sh", "-c", cmd], timeout=10)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }
