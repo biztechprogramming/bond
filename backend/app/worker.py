@@ -556,11 +556,15 @@ async def _run_agent_loop(
     agent_tools = config["tools"]
     max_iterations = config["max_iterations"]
 
-    # Auto-inject shell utility tools — they're read-only info-gathering tools
-    # that should always be available. No reason to gate behind agent config.
+    # Auto-inject filesystem + shell utility tools — read-only info-gathering
+    # and file buffer tools that should always be available.
     _SHELL_UTILITY_TOOLS = [
         "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree", "project_search",
+        "shell_wc", "shell_head", "shell_tail", "shell_tree",
+        "shell_sed", "shell_diff", "shell_awk", "shell_jq",
+        "project_search", "batch_head",
+        "file_open", "file_view", "file_search", "file_replace",
+        "file_smart_edit",
     ]
     for _util_tool in _SHELL_UTILITY_TOOLS:
         if _util_tool not in agent_tools:
