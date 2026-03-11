@@ -802,12 +802,13 @@ TOOL_DEFINITIONS: list[dict] = [
         "function": {
             "name": "project_search",
             "description": (
-                "Smart project search: finds files by combining filename matching, content search, "
-                "and path matching in one call. Use this FIRST when looking for a file, document, or "
-                "code reference — it tries multiple strategies automatically. Example: "
-                "project_search(query='design doc 27') finds docs/design/027-fragment-selection-roadmap.md "
-                "even though the filename doesn't contain 'design doc'. Falls back to content search "
-                "if filename matching fails. Prefer this over manual shell_find/shell_grep for discovery."
+                "Smart project search: finds files by searching EVERY word in the query independently "
+                "across filenames, directory paths (any depth), and file contents — all in one call. "
+                "Use this FIRST when looking for any file, document, or code reference. Returns full "
+                "paths with a preview of each file so you can confirm it's the right one. Example: "
+                "project_search(query='inspection defect entry blazor') finds files matching ANY of "
+                "those words in their name, parent directories, or contents. Never need shell_find or "
+                "shell_grep for discovery — this covers it all."
             ),
             "parameters": {
                 "type": "object",
