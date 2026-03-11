@@ -31,10 +31,15 @@ def build_native_registry() -> ToolRegistry:
         handle_batch_head,
         handle_git_info,
         handle_project_search,
+        handle_shell_awk,
+        handle_shell_diff,
         handle_shell_find,
         handle_shell_grep,
         handle_shell_head,
+        handle_shell_jq,
         handle_shell_ls,
+        handle_shell_sed,
+        handle_shell_tail,
         handle_shell_tree,
         handle_shell_wc,
     )
@@ -83,4 +88,9 @@ def build_native_registry() -> ToolRegistry:
     registry.register("shell_tree", handle_shell_tree)
     registry.register("project_search", handle_project_search)
     registry.register("batch_head", handle_batch_head)
+    registry.register("shell_tail", handle_shell_tail)
+    registry.register("shell_sed", handle_shell_sed)
+    registry.register("shell_diff", handle_shell_diff)
+    registry.register("shell_awk", handle_shell_awk)
+    registry.register("shell_jq", handle_shell_jq)
     return registry

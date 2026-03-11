@@ -707,3 +707,182 @@ async def handle_batch_head(
         results.append(entry)
 
     return {"files": results}
+
+
+# ---------------------------------------------------------------------------
+# shell_tail — read the last N lines of a file
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_tail(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the last N lines of a file."""
+    path = arguments.get("path", "")
+    lines = arguments.get("lines", 50)
+    if not path:
+        return {"error": "path is required"}
+    lines = min(max(1, lines), 500)
+
+    result = await _run_cmd(
+        ["sh", "-c", f"tail -n {lines} {_shell_quote(path)} 2>&1"],
+        timeout=10,
+    )
+    output: dict[str, Any] = {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }
+    # Include total line count for context
+    wc_result = await _run_cmd(
+        ["sh", "-c", f"wc -l < {_shell_quote(path)} 2>/dev/null"],
+        timeout=3,
+    )
+    if wc_result["exit_code"] == 0:
+        try:
+            output["total_lines"] = int(wc_result["stdout"].strip())
+        except ValueError:
+            pass
+    return output
+
+
+# ---------------------------------------------------------------------------
+# shell_sed — extract line ranges or transform text with sed
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_sed(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Run sed on a file or input. Most useful for extracting line ranges.
+
+    Examples:
+      - lines "50,100p" on file.html → prints lines 50-100
+      - expression "s/foo/bar/g" on file.txt → find/replace
+      - expression "/BEGIN/,/END/p" → print between patterns
+    """
+    path = arguments.get("path", "")
+    expression = arguments.get("expression", "")
+    lines = arguments.get("lines", "")
+
+    if not path:
+        return {"error": "path is required"}
+    if not expression and not lines:
+        return {"error": "either 'expression' or 'lines' is required"}
+
+    if lines:
+        # Shorthand: "50,100" → sed -n '50,100p'
+        cmd = f"sed -n {_shell_quote(lines + 'p')} {_shell_quote(path)} 2>&1"
+    else:
+        cmd = f"sed -n {_shell_quote(expression)} {_shell_quote(path)} 2>&1"
+
+    result = await _run_cmd(["sh", "-c", cmd], timeout=10)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# shell_diff — compare two files
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_diff(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare two files and return the unified diff."""
+    file1 = arguments.get("file1", "")
+    file2 = arguments.get("file2", "")
+    context_lines = arguments.get("context_lines", 3)
+
+    if not file1 or not file2:
+        return {"error": "file1 and file2 are required"}
+    context_lines = min(max(0, context_lines), 20)
+
+    result = await _run_cmd(
+        ["sh", "-c", f"diff -u --color=never -U {context_lines} {_shell_quote(file1)} {_shell_quote(file2)} 2>&1"],
+        timeout=10,
+    )
+    # diff returns exit code 1 when files differ (not an error)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+        "files_identical": result["exit_code"] == 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# shell_awk — structured text extraction
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_awk(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Run an awk program on a file. Great for column extraction,
+    pattern-based ranges, and structured text processing.
+
+    Examples:
+      - program: '{print $1, $3}' — print columns 1 and 3
+      - program: '/BEGIN/,/END/' — print lines between patterns
+      - program: 'NR>=50 && NR<=100' — print line range
+      - program: -F',' '{print $2}' — CSV column extraction
+    """
+    path = arguments.get("path", "")
+    program = arguments.get("program", "")
+    separator = arguments.get("separator", "")
+
+    if not path:
+        return {"error": "path is required"}
+    if not program:
+        return {"error": "program is required"}
+
+    sep_flag = f"-F{_shell_quote(separator)} " if separator else ""
+    cmd = f"awk {sep_flag}{_shell_quote(program)} {_shell_quote(path)} 2>&1"
+
+    result = await _run_cmd(["sh", "-c", cmd], timeout=10)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# shell_jq — query JSON files
+# ---------------------------------------------------------------------------
+
+
+async def handle_shell_jq(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Run a jq query on a JSON file. Returns filtered/transformed JSON.
+
+    Examples:
+      - filter: '.dependencies' — extract a key
+      - filter: '.scripts | keys' — list script names
+      - filter: '.[] | select(.name == "foo")' — filter arrays
+      - filter: '{name: .name, version: .version}' — reshape
+    """
+    path = arguments.get("path", "")
+    filter_expr = arguments.get("filter", ".")
+
+    if not path:
+        return {"error": "path is required"}
+
+    cmd = f"jq {_shell_quote(filter_expr)} {_shell_quote(path)} 2>&1"
+
+    result = await _run_cmd(["sh", "-c", cmd], timeout=10)
+    return {
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "exit_code": result["exit_code"],
+    }

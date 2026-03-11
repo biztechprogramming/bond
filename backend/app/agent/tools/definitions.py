@@ -889,6 +889,150 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "shell_tail",
+            "description": (
+                "Read the last N lines of a file. Complement to shell_head. "
+                "Great for log files, build output, recent changes. "
+                "Also returns total line count."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file.",
+                    },
+                    "lines": {
+                        "type": "integer",
+                        "description": "Number of lines from the end (default: 50, max: 500).",
+                        "default": 50,
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_sed",
+            "description": (
+                "Extract line ranges or transform text with sed. "
+                "Use 'lines' for quick range extraction (e.g. '50,100' for lines 50-100). "
+                "Use 'expression' for pattern-based extraction (e.g. '/BEGIN/,/END/p'). "
+                "Best tool for reading a specific section of a large file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file.",
+                    },
+                    "lines": {
+                        "type": "string",
+                        "description": "Line range shorthand, e.g. '50,100' to extract lines 50-100.",
+                    },
+                    "expression": {
+                        "type": "string",
+                        "description": "Full sed expression, e.g. '/pattern_start/,/pattern_end/p'.",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_diff",
+            "description": (
+                "Compare two files and return a unified diff. "
+                "Shows additions, deletions, and context. "
+                "Use to compare versions, check what changed after an edit, or diff configs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file1": {
+                        "type": "string",
+                        "description": "Path to the first file (original).",
+                    },
+                    "file2": {
+                        "type": "string",
+                        "description": "Path to the second file (changed).",
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Number of context lines around changes (default: 3).",
+                        "default": 3,
+                    },
+                },
+                "required": ["file1", "file2"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_awk",
+            "description": (
+                "Run an awk program on a file for structured text extraction. "
+                "Great for: column extraction ('{print $1, $3}'), "
+                "pattern ranges ('/BEGIN/,/END/'), line ranges ('NR>=50 && NR<=100'), "
+                "CSV/TSV processing (set separator=','). "
+                "More powerful than grep for structured data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file.",
+                    },
+                    "program": {
+                        "type": "string",
+                        "description": "The awk program/expression to run.",
+                    },
+                    "separator": {
+                        "type": "string",
+                        "description": "Field separator (default: whitespace). Use ',' for CSV, '\\t' for TSV.",
+                    },
+                },
+                "required": ["path", "program"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_jq",
+            "description": (
+                "Query and transform JSON files with jq. "
+                "Use to extract specific keys, filter arrays, reshape data. "
+                "Examples: '.dependencies', '.scripts | keys', "
+                "'.[] | select(.type == \"bug\")', '{name, version}'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the JSON file.",
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "jq filter expression (default: '.' for full file).",
+                        "default": ".",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "coding_agent",
             "description": "Spawn a coding sub-agent to perform complex coding tasks. The sub-agent will have access to the specified working directory and can read/write files, run commands, and commit changes. Use for tasks that require multi-step file exploration, writing code across multiple files, running tests, and iterating. This tool blocks until the sub-agent completes.",
             "parameters": {
