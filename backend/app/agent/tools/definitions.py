@@ -145,7 +145,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "file_read",
-            "description": "Read a file from the workspace. Supports full read, line ranges (head/tail), and outline mode. This is the ONLY tool you need for reading files — use it instead of shell_head, cat, head, or tail.",
+            "description": "Read a file from the workspace. Good for small/medium files. For large files (>500 lines or >50KB), prefer shell_grep to find relevant line numbers, then shell_sed to extract just that section — avoids loading the entire file into context. Supports line ranges (line_start/line_end) and outline mode.",
             "parameters": {
                 "type": "object",
                 "properties": {
