@@ -89,13 +89,14 @@ export class ChannelManager {
     return channels;
   }
 
-  configureTelegram(token: string): void {
+  configureTelegram(token: string, botInfo?: { id: number; username: string; firstName: string }): void {
     const existing = this.configs.get("telegram");
     this.configs.set("telegram", {
       type: "telegram",
       enabled: true,
       token,
       allowList: existing?.allowList || [],
+      botInfo: botInfo || existing?.botInfo,
     });
     this.saveConfigs();
   }
@@ -176,6 +177,11 @@ export class ChannelManager {
     await this.stopChannel(type);
     this.configs.delete(type);
     this.saveConfigs();
+
+    // Clean up auth state on disk to prevent stale pre-key accumulation
+    if (type === "whatsapp") {
+      WhatsAppChannel.cleanAuthDir(this.whatsappAuthDir);
+    }
   }
 
   isChannelRunning(type: string): boolean {
@@ -553,6 +559,15 @@ Session: ${chatKey}`;
   async autoStart(): Promise<void> {
     for (const [type, config] of this.configs) {
       if (config.enabled) {
+        // Don't auto-start WhatsApp with missing/corrupt credentials —
+        // it would just spin in a reconnect loop generating pre-keys.
+        if (type === "whatsapp" && !WhatsAppChannel.hasValidCreds(this.whatsappAuthDir)) {
+          console.warn(`[channels] Skipping WhatsApp auto-start: no valid credentials. Re-link via QR.`);
+          config.enabled = false;
+          this.saveConfigs();
+          continue;
+        }
+
         try {
           console.log(`[channels] Auto-starting ${type}`);
           await this.startChannel(type);
