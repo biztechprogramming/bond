@@ -16,11 +16,17 @@ logger = logging.getLogger(__name__)
 # Always included regardless of heuristics
 ALWAYS_INCLUDE = {"respond", "load_context"}
 
-# Shell utility tools — exempt from the non-utility cap.
-# Kept minimal: project_search + git_info for discovery, shell_grep for content search.
-# file_read handles all reading (including head/tail via line_start/line_end).
+# Filesystem toolkit — always included as a group in coding/file contexts.
+# ~2,000 tokens total. Cheaper than one wasted iteration.
+FILESYSTEM_TOOLKIT = frozenset({
+    "file_read", "project_search", "shell_grep", "shell_sed",
+    "shell_head", "shell_tail", "shell_awk", "shell_diff",
+    "shell_jq", "batch_head", "shell_ls",
+})
+
+# Additional shell utilities — included only when keyword-matched.
 SHELL_UTILITY_TOOLS = frozenset({
-    "project_search", "git_info", "shell_grep",
+    "git_info", "shell_find", "shell_tree", "shell_wc",
 })
 
 # Maximum *non-utility* tools to send per turn
@@ -73,7 +79,32 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "shell_wc": [
         "count lines", "how many lines", "line count", "word count", "wc ",
     ],
-    "shell_head": [],  # Deprecated: file_read with line_start/line_end covers head/tail
+    "shell_head": [
+        "head of", "first lines", "beginning of", "top of",
+    ],
+    "shell_tail": [
+        "tail", "last lines", "end of", "bottom of", "log file",
+        "recent output", "latest lines",
+    ],
+    "shell_sed": [
+        "sed ", "extract lines", "line range", "lines from",
+        "section of", "extract section",
+    ],
+    "shell_diff": [
+        "diff", "compare", "difference between", "what changed",
+        "changes between",
+    ],
+    "shell_awk": [
+        "awk ", "columns", "extract column", "csv", "tsv",
+        "structured", "tabular",
+    ],
+    "shell_jq": [
+        "jq ", "json query", "parse json", "json file",
+        "package.json", "tsconfig",
+    ],
+    "batch_head": [
+        "peek at", "preview files", "batch read", "multiple files",
+    ],
     "shell_tree": [
         "tree", "directory structure", "project structure", "folder structure",
         "show structure",
@@ -222,42 +253,42 @@ def select_tools(
         if "search_memory" in enabled_tools:
             selected.add("search_memory")
 
-    # Separate utility tools from regular tools for capping.
-    # Shell utility tools are exempt from the cap — they're tiny schemas
-    # that exist to REPLACE expensive code_execute calls.
-    enabled_utility = SHELL_UTILITY_TOOLS & set(enabled_tools)
-    regular_selected = selected - SHELL_UTILITY_TOOLS
-    utility_selected = selected & SHELL_UTILITY_TOOLS
+    # Filesystem toolkit: if ANY file/coding/search tool matched, include
+    # the full toolkit (~2,000 tokens). This is cheaper than one wasted
+    # iteration where the agent can't read a file it just found.
+    filesystem_trigger = (
+        coding_tools
+        | FILESYSTEM_TOOLKIT
+        | SHELL_UTILITY_TOOLS
+        | {"project_search", "shell_find", "shell_grep", "shell_ls"}
+    )
+    if filesystem_trigger & selected:
+        selected.update(FILESYSTEM_TOOLKIT & set(enabled_tools))
 
-    # Cap only non-utility tools at MAX_TOOLS_PER_TURN
+    # Additional shell utilities only when keyword-matched (not auto-included)
+    # git_info, shell_find, shell_tree, shell_wc are niche enough to gate.
+
+    # Separate filesystem tools from regular tools for capping.
+    regular_selected = selected - FILESYSTEM_TOOLKIT - SHELL_UTILITY_TOOLS
+    fs_selected = selected & (FILESYSTEM_TOOLKIT | SHELL_UTILITY_TOOLS)
+
+    # Cap only non-filesystem tools at MAX_TOOLS_PER_TURN
     if len(regular_selected) > MAX_TOOLS_PER_TURN:
         # Prioritize: always_include > keyword_matched > momentum
         prioritized = list(ALWAYS_INCLUDE & regular_selected)
-        prioritized += [t for t in keyword_matched if t not in prioritized and t not in SHELL_UTILITY_TOOLS]
+        prioritized += [t for t in keyword_matched if t not in prioritized and t not in FILESYSTEM_TOOLKIT and t not in SHELL_UTILITY_TOOLS]
         prioritized += [t for t in regular_selected if t not in prioritized]
         regular_selected = set(prioritized[:MAX_TOOLS_PER_TURN])
 
-    # Include only keyword-matched utility tools plus a small core set.
-    # Previously we included ALL 8 utilities on any coding context, which
-    # caused the model to "hedge" with 5-6 redundant discovery calls.
-    # Now: only pull in project_search + shell_grep as the core discovery
-    # pair, plus any utilities that actually keyword-matched.
-    CORE_UTILITY_TOOLS = frozenset({"project_search"})
-    has_coding_context = bool(
-        (coding_tools | {"shell_find", "shell_grep", "shell_ls", "git_info"}) & regular_selected
-    )
-    if has_coding_context:
-        utility_selected = (utility_selected | (CORE_UTILITY_TOOLS & enabled_utility))
-    # Don't expand to all utilities just because one matched
-
-    selected = regular_selected | utility_selected
+    selected = regular_selected | fs_selected
 
     result = [t for t in selected if t in enabled_tools]
+    fs_count = len(fs_selected)
     logger.info(
-        "Tool selection: %d/%d tools selected (keyword=%d, utility=%d, momentum=%d)",
+        "Tool selection: %d/%d tools selected (keyword=%d, filesystem=%d, momentum=%d)",
         len(result), len(enabled_tools),
-        len(keyword_matched), len(utility_selected),
-        len(selected) - len(keyword_matched) - len(utility_selected) - len(ALWAYS_INCLUDE & selected),
+        len(keyword_matched), fs_count,
+        len(selected) - len(keyword_matched) - fs_count - len(ALWAYS_INCLUDE & selected),
     )
     return result
 
@@ -296,6 +327,25 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
     ),
     "shell_ls": (
         " ONLY to explore an unknown directory. Never to verify a known path."
+    ),
+    "shell_tail": (
+        " Read the end of a file. Great for logs, build output, recent changes."
+    ),
+    "shell_sed": (
+        " Extract line ranges from large files. Use lines='50,100' for lines 50-100."
+        " Best tool when you know the line numbers."
+    ),
+    "shell_diff": (
+        " Compare two files. Use to see what changed between versions."
+    ),
+    "shell_awk": (
+        " Structured text extraction. Columns, pattern ranges, CSV/TSV processing."
+    ),
+    "shell_jq": (
+        " Query JSON files. Extract keys, filter arrays, reshape data."
+    ),
+    "batch_head": (
+        " Peek at first N lines of multiple files in one call. Use after project_search."
     ),
     "shell_wc": (
         " ONLY when you specifically need a line/word count, not as a pre-read step."
