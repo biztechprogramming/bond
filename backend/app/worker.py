@@ -1068,10 +1068,6 @@ async def _run_agent_loop(
     # ── Phase 1B: Batching nudge tracking ──
     _consecutive_single_info_iterations = 0
 
-    # ── Phase 2A: Adaptive iteration budget ──
-    _adaptive_budget_set = False
-    _adaptive_budget = max_iterations  # default: use configured budget
-
     # ── Phase 2B: Early termination for read-only tasks ──
     _has_made_consequential_call = False
 
@@ -1501,66 +1497,21 @@ async def _run_agent_loop(
         _cost_tracking["iterations_used"] = _iteration + 1
         logger.debug("Iteration %d cost: $%.4f (cumulative: $%.4f)", _iteration, _iter_cost, _cost_tracking["total_cost"])
 
-        # ── Phase 2A: Adaptive iteration budget ──
-        # Classify the task on first iteration and set a proportional budget.
-        # When approaching the budget, escalate remaining work to coding_agent.
-        if _iteration == 0 and not _adaptive_budget_set:
-            _adaptive_budget_set = True
-            if not llm_message.tool_calls:
-                _adaptive_budget = min(max_iterations, 2)
-                logger.info("Phase 2A: classified as simple Q&A, budget=%d", _adaptive_budget)
-            else:
-                _first_tool_names = [tc.function.name for tc in llm_message.tool_calls]
-                _has_edits = any(t in ("file_edit", "file_write") for t in _first_tool_names)
-                _has_plan = any(t == "work_plan" for t in _first_tool_names)
-                _has_reads = any(t in ("file_read", "shell_grep", "search_memory") for t in _first_tool_names)
-                if _has_plan and len(_first_tool_names) >= 5:
-                    _adaptive_budget = min(max_iterations, 50)
-                    logger.info("Phase 2A: classified as complex multi-file, budget=%d", _adaptive_budget)
-                elif _has_edits:
-                    _adaptive_budget = min(max_iterations, 30)
-                    logger.info("Phase 2A: classified as implementation, budget=%d", _adaptive_budget)
-                elif _has_reads and not _has_edits:
-                    _adaptive_budget = min(max_iterations, 15)
-                    logger.info("Phase 2A: classified as analysis, budget=%d", _adaptive_budget)
-                else:
-                    _adaptive_budget = min(max_iterations, 8)
-                    logger.info("Phase 2A: classified as file lookup, budget=%d", _adaptive_budget)
-            _cost_tracking["iteration_budget"] = _adaptive_budget
-
-        # ── Phase 2A escalation: approaching budget → delegate to coding_agent ──
-        # At 80% of the adaptive budget, if the agent has been making edits
-        # (implementation task), inject a system message telling it to hand off
-        # remaining work to the coding_agent tool.
-        if (_adaptive_budget_set
+        # ── Approaching budget: hand off to coding_agent ──
+        # At 80% of max_iterations, if the agent has been making edits,
+        # tell it to delegate remaining work to coding_agent.
+        _budget_threshold = int(max_iterations * 0.8)
+        if (_iteration >= _budget_threshold
             and _iteration > 2
-            and _iteration >= int(_adaptive_budget * 0.8)
             and _has_made_consequential_call
             and not any(tc.function.name == "coding_agent" for tc in (llm_message.tool_calls or []))):
-            # Build context of what's been done so far
-            _files_touched = set()
-            for _msg in messages:
-                if isinstance(_msg.get("content"), str):
-                    # Rough extraction of file paths from tool results
-                    for _token in _msg["content"].split():
-                        if "/" in _token and ("." in _token.split("/")[-1]):
-                            _clean = _token.strip("\"'`,;:(){}[]")
-                            if len(_clean) < 200:
-                                _files_touched.add(_clean)
-
-            _escalation_msg = (
-                f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget} of your budget. "
-                f"You have {_adaptive_budget - _iteration - 1} iterations remaining. "
-                f"Instead of continuing to make changes yourself, delegate the remaining work "
-                f"to the coding_agent tool. Summarize what you've done so far, what still needs "
-                f"to be done, and pass the full task context to coding_agent. "
-                f"The coding_agent can work independently in the background."
-            )
-            messages.append({"role": "user", "content": _escalation_msg})
-            logger.info(
-                "Phase 2A escalation: at iteration %d/%d, injecting coding_agent handoff",
-                _iteration + 1, _adaptive_budget,
-            )
+            _remaining = max_iterations - _iteration - 1
+            messages.append({"role": "user", "content": (
+                f"SYSTEM: You are at iteration {_iteration + 1}/{max_iterations}. "
+                f"You have {_remaining} iterations left. Hand off your remaining work "
+                f"to the coding_agent tool now. Summarize what's done and what's left."
+            )})
+            logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, max_iterations)
 
         if llm_message.tool_calls:
             _iter_tool_names = [tc.function.name for tc in llm_message.tool_calls]
