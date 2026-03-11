@@ -1530,7 +1530,6 @@ async def _run_agent_loop(
         _budget_threshold = int(_adaptive_budget * 0.8)
         if (_iteration >= _budget_threshold
             and _iteration > 2
-            and _has_made_consequential_call
             and not any(tc.function.name == "coding_agent" for tc in (llm_message.tool_calls or []))):
             _remaining = _adaptive_budget - _iteration - 1
             messages.append({"role": "user", "content": (
