@@ -62,8 +62,13 @@ async def _run_cmd(
     cmd: list[str],
     cwd: str | None = None,
     timeout: int = 15,
+    truncate: bool = True,
 ) -> dict[str, Any]:
-    """Run a command and return stdout/stderr/exit_code."""
+    """Run a command and return stdout/stderr/exit_code.
+
+    Set truncate=False for internal helpers (like file listing) where the
+    full output is processed in Python and never sent to the LLM.
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -72,8 +77,9 @@ async def _run_cmd(
             cwd=cwd or _safe_cwd(),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        stdout_str = stdout.decode(errors="replace")
         return {
-            "stdout": _truncate(stdout.decode(errors="replace")),
+            "stdout": _truncate(stdout_str) if truncate else stdout_str,
             "stderr": stderr.decode(errors="replace")[:2000],
             "exit_code": proc.returncode,
         }
@@ -359,7 +365,7 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
         # git ls-files: tracked files + untracked (but not ignored)
         # -c = cached (tracked), -o = others (untracked), --exclude-standard = respect .gitignore
         git_cmd = f"cd {_shell_quote(git_root)} && {{ git ls-files -co --exclude-standard; }} 2>/dev/null"
-        result = await _run_cmd(["sh", "-c", git_cmd], timeout=15)
+        result = await _run_cmd(["sh", "-c", git_cmd], timeout=30, truncate=False)
         if result["exit_code"] == 0 and result["stdout"].strip():
             raw_files = result["stdout"].strip().split("\n")
             # Convert to absolute paths
@@ -396,7 +402,7 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
         f"find {_shell_quote(path)} {prune_clause} {type_clause} "
         f"{include_filter} -print 2>/dev/null"
     )
-    result = await _run_cmd(["sh", "-c", find_cmd], timeout=15)
+    result = await _run_cmd(["sh", "-c", find_cmd], timeout=30, truncate=False)
     if result["exit_code"] == 0 and result["stdout"].strip():
         return result["stdout"].strip().split("\n")
     return []
@@ -418,7 +424,6 @@ async def handle_project_search(
     file_type = arguments.get("type")  # f, d — optional filter
     include = arguments.get("include")  # e.g. "*.md", "*.py"
     max_results = arguments.get("max_results", 30)
-    preview_chars = 200  # first N chars of each matched file
 
     if not query:
         return {"error": "query is required"}
@@ -564,14 +569,15 @@ async def handle_project_search(
             "score": file_scores[filepath]["score"],
             "matched": sorted(file_scores[filepath]["matched_tokens"]),
         }
+        # Add file size and last-modified instead of content preview
         try:
-            stat_cmd = f"head -c {preview_chars} {_shell_quote(filepath)} 2>/dev/null"
-            preview_result = await _run_cmd(["sh", "-c", stat_cmd], timeout=3)
-            if preview_result["exit_code"] == 0:
-                preview_text = preview_result["stdout"]
-                preview_text = re.sub(r'\n{3,}', '\n\n', preview_text).strip()
-                entry["preview"] = preview_text
-        except Exception:
+            stat_info = os.stat(filepath)
+            entry["size"] = stat_info.st_size
+            from datetime import datetime, timezone
+            entry["modified"] = datetime.fromtimestamp(
+                stat_info.st_mtime, tz=timezone.utc
+            ).strftime("%Y-%m-%d %H:%M:%S UTC")
+        except OSError:
             pass
         enriched.append(entry)
 
@@ -611,3 +617,57 @@ async def handle_project_search(
         )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# batch_head — peek at the first N lines of multiple files in one call
+# ---------------------------------------------------------------------------
+
+
+async def handle_batch_head(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Return the first N lines of multiple files in a single tool call.
+
+    Useful after project_search to quickly inspect several candidate files
+    without making one tool call per file.
+    """
+    files = arguments.get("files", [])
+    lines = arguments.get("lines", 40)
+
+    if not files:
+        return {"error": "files array is required"}
+    if not isinstance(files, list):
+        return {"error": "files must be an array of file paths"}
+
+    # Cap to avoid runaway output
+    max_files = 20
+    if len(files) > max_files:
+        files = files[:max_files]
+    lines = min(max(1, lines), 200)
+
+    results: list[dict[str, Any]] = []
+    for filepath in files:
+        entry: dict[str, Any] = {"path": filepath}
+        result = await _run_cmd(
+            ["sh", "-c", f"head -n {lines} {_shell_quote(filepath)} 2>&1"],
+            timeout=5,
+        )
+        if result["exit_code"] == 0:
+            entry["content"] = result["stdout"]
+            # Include line count for context
+            wc_result = await _run_cmd(
+                ["sh", "-c", f"wc -l < {_shell_quote(filepath)} 2>/dev/null"],
+                timeout=3,
+            )
+            if wc_result["exit_code"] == 0:
+                try:
+                    entry["total_lines"] = int(wc_result["stdout"].strip())
+                except ValueError:
+                    pass
+        else:
+            entry["error"] = result["stderr"] or result["stdout"]
+        results.append(entry)
+
+    return {"files": results}
