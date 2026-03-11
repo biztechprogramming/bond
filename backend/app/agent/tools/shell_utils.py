@@ -339,20 +339,79 @@ async def handle_shell_tree(
 # project_search — intelligent multi-strategy file/content search (Doc 029)
 # ---------------------------------------------------------------------------
 
+
+async def _get_file_listing(path: str, file_type: str | None, include: str | None) -> list[str]:
+    """Get file listing respecting .gitignore when inside a git repo.
+
+    Uses `git ls-files` (tracked + untracked-but-not-ignored) when inside a
+    git repo, falls back to `find` with hardcoded exclusions otherwise.
+    Returns absolute paths.
+    """
+    # Check if we're in a git repo
+    git_check = await _run_cmd(
+        ["sh", "-c", f"cd {_shell_quote(path)} && git rev-parse --show-toplevel 2>/dev/null"],
+        timeout=3,
+    )
+    is_git = git_check["exit_code"] == 0 and git_check["stdout"].strip()
+
+    if is_git:
+        git_root = git_check["stdout"].strip()
+        # git ls-files: tracked files + untracked (but not ignored)
+        # -c = cached (tracked), -o = others (untracked), --exclude-standard = respect .gitignore
+        git_cmd = f"cd {_shell_quote(git_root)} && {{ git ls-files -co --exclude-standard; }} 2>/dev/null"
+        result = await _run_cmd(["sh", "-c", git_cmd], timeout=15)
+        if result["exit_code"] == 0 and result["stdout"].strip():
+            raw_files = result["stdout"].strip().split("\n")
+            # Convert to absolute paths
+            files = [os.path.join(git_root, f) for f in raw_files if f]
+            # Filter to requested path (may be a subdirectory)
+            abs_path = os.path.abspath(path)
+            files = [f for f in files if f.startswith(abs_path)]
+            # Apply type filter
+            if file_type == "d":
+                # For directories, extract unique parent dirs
+                dirs: set[str] = set()
+                for f in files:
+                    rel = os.path.relpath(f, abs_path)
+                    parts = rel.split(os.sep)
+                    for i in range(1, len(parts)):
+                        dirs.add(os.path.join(abs_path, *parts[:i]))
+                files = sorted(dirs)
+            # Apply include filter (glob on basename)
+            if include:
+                import fnmatch
+                pattern = include  # e.g. "*.py"
+                files = [f for f in files if fnmatch.fnmatch(os.path.basename(f).lower(), pattern.lower())]
+            return files
+        # git ls-files returned nothing — fall through to find
+    # Fallback for non-git directories
+    prune_clause = (
+        r"\( -name .venv -o -name node_modules -o -name __pycache__ -o -name .git "
+        r"-o -name .next -o -name dist -o -name build -o -name .tox "
+        r"-o -name bin -o -name obj \) -prune -o"
+    )
+    type_clause = f"-type {file_type}" if file_type in ("f", "d") else "-type f"
+    include_filter = f"-iname {_shell_quote(include)}" if include else ""
+    find_cmd = (
+        f"find {_shell_quote(path)} {prune_clause} {type_clause} "
+        f"{include_filter} -print 2>/dev/null"
+    )
+    result = await _run_cmd(["sh", "-c", find_cmd], timeout=15)
+    if result["exit_code"] == 0 and result["stdout"].strip():
+        return result["stdout"].strip().split("\n")
+    return []
+
+
 async def handle_project_search(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Search the project using multiple strategies simultaneously.
 
-    Searches EVERY word in the query independently (OR logic) and matches
-    against: filenames, directory/path components at any depth, file contents,
-    and project/directory names. Returns full paths with a preview snippet
-    so the agent can confirm the right file without a follow-up read.
-
-    This is the preferred tool for "find me X" requests. Use shell_find or
-    shell_grep only when you need their specific features (glob patterns,
-    regex context lines, etc.).
+    Searches EVERY word in the query independently across filenames, directory
+    paths, and file contents. Results are ranked by relevance — files matching
+    MORE query terms sort first. Respects .gitignore when inside a git repo
+    so ignored files (bin/, obj/, etc.) are never returned.
     """
     query = arguments.get("query", "")
     path = arguments.get("path", "/workspace")
@@ -369,146 +428,165 @@ async def handle_project_search(
     numbers = re.findall(r'\d+', query)
     words = [w.lower() for w in re.findall(r'[a-zA-Z]+', query) if len(w) > 2]
 
-    # Collect all unique file paths across strategies, then enrich at the end
-    seen: set[str] = set()
-    filename_matches: list[str] = []
-    path_matches: list[str] = []
-    content_matches: list[str] = []
-
-    def _add(target: list[str], files: list[str]) -> None:
-        for f in files:
-            if f and f not in seen:
-                seen.add(f)
-                target.append(f)
-
-    # Build exclusion clause
-    prune_clause = r"\( -name .venv -o -name node_modules -o -name __pycache__ -o -name .git -o -name .next -o -name dist -o -name build -o -name .tox \) -prune -o"
-    type_clause = f"-type {file_type}" if file_type in ("f", "d") else "-type f"
-
-    # --- Build search tokens ---
-    filename_patterns: set[str] = set()
-    for word in words:
-        filename_patterns.add(f"*{word}*")
+    # All search tokens (words + numbers + zero-padded variants)
+    all_tokens: list[str] = list(words)
     for num in numbers:
-        filename_patterns.add(f"*{num}*")
+        all_tokens.append(num)
         if len(num) < 3:
-            filename_patterns.add(f"*{num.zfill(3)}*")  # 27 → 027
-    filename_patterns_list = list(filename_patterns)[:10]
+            all_tokens.append(num.zfill(3))
 
-    # --- Strategy 1: Filename matching (always runs) ---
-    if filename_patterns_list:
-        name_preds = " -o ".join(f'-iname {_shell_quote(p)}' for p in filename_patterns_list)
+    if not all_tokens:
+        return {"error": "query produced no searchable tokens"}
 
-        if include:
-            # Match include extension AND any name pattern
-            grep_patterns = "|".join(
-                p.replace("*", ".*") for p in filename_patterns_list
-            )
-            find_cmd = (
-                f"find {_shell_quote(path)} {prune_clause} {type_clause} "
-                f"-iname {_shell_quote(include)} -print 2>/dev/null "
-                f"| grep -iE '{grep_patterns}' | head -{max_results}"
-            )
-        else:
-            find_cmd = (
-                f"find {_shell_quote(path)} {prune_clause} {type_clause} "
-                f"\\( {name_preds} \\) -print 2>/dev/null | sort | head -{max_results}"
-            )
+    # --- Get file listing (respects .gitignore) ---
+    all_project_files = await _get_file_listing(path, file_type, include)
 
-        find_result = await _run_cmd(["sh", "-c", find_cmd], timeout=10)
-        if find_result["exit_code"] == 0 and find_result["stdout"].strip():
-            _add(filename_matches, find_result["stdout"].strip().split("\n"))
+    # --- Score every file by how many tokens match its path ---
+    # Each file gets points for tokens matching filename or path components.
+    # This is the core ranking: more matched tokens = higher relevance.
+    file_scores: dict[str, dict] = {}  # path -> {score, matched_tokens, categories}
 
-    # --- Strategy 2: Full path matching (always runs) ---
-    # Match query words against ANY path component (parent dirs, grandparent, etc.)
-    # e.g. "inspection defect" matches /app/inspection/components/DefectEntry.razor
-    if words:
-        # Find all files, then filter paths that contain ANY query word
-        path_grep_pattern = "|".join(re.escape(w) for w in words)
-        for num in numbers:
-            path_grep_pattern += "|" + re.escape(num)
-            if len(num) < 3:
-                path_grep_pattern += "|" + re.escape(num.zfill(3))
+    for filepath in all_project_files:
+        path_lower = filepath.lower()
+        basename_lower = os.path.basename(filepath).lower()
+        matched_tokens: set[str] = set()
 
-        include_filter = f"-iname {_shell_quote(include)}" if include else ""
-        path_cmd = (
-            f"find {_shell_quote(path)} {prune_clause} {type_clause} "
-            f"{include_filter} -print 2>/dev/null "
-            f"| grep -iE '{path_grep_pattern}' | sort | head -{max_results * 2}"
-        )
-        path_result = await _run_cmd(["sh", "-c", path_cmd], timeout=15)
-        if path_result["exit_code"] == 0 and path_result["stdout"].strip():
-            _add(path_matches, path_result["stdout"].strip().split("\n"))
+        for token in all_tokens:
+            if token in basename_lower:
+                matched_tokens.add(token)
+            elif token in path_lower:
+                matched_tokens.add(token)
 
-    # --- Strategy 3: Content search (always runs) ---
-    # Search file contents for ALL query terms (each word independently via OR)
-    grep_terms: list[str] = []
+        if matched_tokens:
+            # Score: filename matches worth more than path-only matches
+            score = 0
+            categories: set[str] = set()
+            for token in matched_tokens:
+                if token in basename_lower:
+                    score += 3  # filename match
+                    categories.add("filename")
+                else:
+                    score += 1  # path-only match
+                    categories.add("path")
+            # Bonus for matching a higher fraction of tokens
+            coverage = len(matched_tokens) / len(all_tokens)
+            score += int(coverage * 5)
+            file_scores[filepath] = {
+                "score": score,
+                "matched_tokens": matched_tokens,
+                "categories": categories,
+            }
+
+    # --- Strategy 3: Content search (for files not already found by path) ---
+    # Only search content for tokens that might appear inside files but not
+    # in the filename/path. This catches references to concepts inside code.
+    sorted_words = sorted(words, key=len, reverse=True)[:5]
+    grep_terms = list(sorted_words)
     for num in numbers:
         grep_terms.append(num)
         if len(num) < 3:
             grep_terms.append(num.zfill(3))
-    sorted_words = sorted(words, key=len, reverse=True)[:5]
-    grep_terms.extend(sorted_words)
 
     if grep_terms:
         grep_pattern = "\\|".join(grep_terms)
-        # Search all common file types when no include filter is specified
-        if include:
-            include_flags = f"--include={_shell_quote(include)}"
+
+        # Check if we're in a git repo for content search too
+        git_check = await _run_cmd(
+            ["sh", "-c", f"cd {_shell_quote(path)} && git rev-parse --show-toplevel 2>/dev/null"],
+            timeout=3,
+        )
+        is_git = git_check["exit_code"] == 0 and git_check["stdout"].strip()
+
+        if is_git:
+            git_root = git_check["stdout"].strip()
+            # Use git grep — inherently respects .gitignore
+            content_cmd = (
+                f"cd {_shell_quote(git_root)} && "
+                f"git grep -lni {_shell_quote(grep_pattern)} -- {_shell_quote(path)} 2>/dev/null "
+                f"| head -{max_results * 2}"
+            )
         else:
-            include_flags = (
-                "--include='*.md' --include='*.txt' --include='*.yaml' --include='*.yml' "
-                "--include='*.py' --include='*.ts' --include='*.tsx' --include='*.js' "
-                "--include='*.jsx' --include='*.cs' --include='*.razor' --include='*.cshtml' "
-                "--include='*.html' --include='*.css' --include='*.scss' --include='*.json' "
-                "--include='*.xml' --include='*.toml' --include='*.cfg' --include='*.ini' "
-                "--include='*.java' --include='*.go' --include='*.rs' --include='*.rb' "
-                "--include='*.php' --include='*.swift' --include='*.kt' --include='*.c' "
-                "--include='*.cpp' --include='*.h' --include='*.hpp' --include='*.sql' "
-                "--include='*.sh' --include='*.bash' --include='*.zsh' --include='*.vue' "
-                "--include='*.svelte' --include='*.astro' --include='*.tf' --include='*.hcl' "
-                "--include='*.proto' --include='*.graphql' --include='*.prisma' "
-                "--include='*.csproj' --include='*.sln' --include='*.fsproj'"
+            # Fallback: regular grep with hardcoded exclusions
+            if include:
+                include_flags = f"--include={_shell_quote(include)}"
+            else:
+                include_flags = (
+                    "--include='*.md' --include='*.txt' --include='*.yaml' --include='*.yml' "
+                    "--include='*.py' --include='*.ts' --include='*.tsx' --include='*.js' "
+                    "--include='*.jsx' --include='*.cs' --include='*.razor' --include='*.cshtml' "
+                    "--include='*.html' --include='*.css' --include='*.scss' --include='*.json' "
+                    "--include='*.xml' --include='*.toml' --include='*.cfg' --include='*.ini' "
+                    "--include='*.java' --include='*.go' --include='*.rs' --include='*.rb' "
+                    "--include='*.php' --include='*.swift' --include='*.kt' --include='*.c' "
+                    "--include='*.cpp' --include='*.h' --include='*.hpp' --include='*.sql' "
+                    "--include='*.sh' --include='*.bash' --include='*.zsh' --include='*.vue' "
+                    "--include='*.svelte' --include='*.astro' --include='*.tf' --include='*.hcl' "
+                    "--include='*.proto' --include='*.graphql' --include='*.prisma' "
+                    "--include='*.csproj' --include='*.sln' --include='*.fsproj'"
+                )
+            content_cmd = (
+                f"grep -rnil {include_flags} "
+                f"--exclude-dir=.venv --exclude-dir=node_modules "
+                f"--exclude-dir=__pycache__ --exclude-dir=.git --exclude-dir=.next "
+                f"--exclude-dir=dist --exclude-dir=build --exclude-dir=.tox "
+                f"--exclude-dir=bin --exclude-dir=obj "
+                f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
+                f"| head -{max_results * 2}"
             )
 
-        grep_cmd = (
-            f"grep -rnil {include_flags} "
-            f"--exclude-dir=.venv --exclude-dir=node_modules "
-            f"--exclude-dir=__pycache__ --exclude-dir=.git --exclude-dir=.next "
-            f"--exclude-dir=dist --exclude-dir=build --exclude-dir=.tox "
-            f"--exclude-dir=bin --exclude-dir=obj "
-            f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
-            f"| head -{max_results}"
-        )
-        grep_result = await _run_cmd(["sh", "-c", grep_cmd], timeout=15)
+        grep_result = await _run_cmd(["sh", "-c", content_cmd], timeout=15)
         if grep_result["exit_code"] == 0 and grep_result["stdout"].strip():
-            _add(content_matches, grep_result["stdout"].strip().split("\n"))
+            content_files = grep_result["stdout"].strip().split("\n")
+            for filepath in content_files:
+                if not filepath:
+                    continue
+                # Make absolute if git grep returned relative paths
+                if not os.path.isabs(filepath) and is_git:
+                    filepath = os.path.join(git_check["stdout"].strip(), filepath)
+                if filepath in file_scores:
+                    file_scores[filepath]["score"] += 2
+                    file_scores[filepath]["categories"].add("content")
+                else:
+                    file_scores[filepath] = {
+                        "score": 2,
+                        "matched_tokens": set(),
+                        "categories": {"content"},
+                    }
 
-    # --- Enrich results with previews ---
-    all_files = filename_matches + path_matches + content_matches
-    enriched: list[dict[str, str]] = []
-    for filepath in all_files[:max_results]:
-        entry: dict[str, str] = {"path": filepath}
-        # Add file size + preview
+    # --- Rank and enrich top results ---
+    ranked_paths = sorted(file_scores.keys(), key=lambda f: file_scores[f]["score"], reverse=True)
+    top_files = ranked_paths[:max_results]
+
+    enriched: list[dict[str, Any]] = []
+    for filepath in top_files:
+        entry: dict[str, Any] = {
+            "path": filepath,
+            "score": file_scores[filepath]["score"],
+            "matched": sorted(file_scores[filepath]["matched_tokens"]),
+        }
         try:
             stat_cmd = f"head -c {preview_chars} {_shell_quote(filepath)} 2>/dev/null"
             preview_result = await _run_cmd(["sh", "-c", stat_cmd], timeout=3)
             if preview_result["exit_code"] == 0:
                 preview_text = preview_result["stdout"]
-                # Replace excessive whitespace for readability
                 preview_text = re.sub(r'\n{3,}', '\n\n', preview_text).strip()
                 entry["preview"] = preview_text
         except Exception:
             pass
         enriched.append(entry)
 
-    # Build result
+    # Backward-compatible category lists (subsets of ranked results)
+    filename_set = {e["path"] for e in enriched if "filename" in file_scores.get(e["path"], {}).get("categories", set())}
+    path_set = {e["path"] for e in enriched if "path" in file_scores.get(e["path"], {}).get("categories", set())}
+    content_set = {e["path"] for e in enriched if "content" in file_scores.get(e["path"], {}).get("categories", set())}
+
     results: dict[str, Any] = {
         "query": query,
         "search_root": path,
-        "filename_matches": [e for e in enriched if e["path"] in set(filename_matches)],
-        "path_matches": [e for e in enriched if e["path"] in set(path_matches)],
-        "content_matches": [e for e in enriched if e["path"] in set(content_matches)],
+        "results": enriched,  # Primary: ranked by relevance
+        "filename_matches": [e for e in enriched if e["path"] in filename_set],
+        "path_matches": [e for e in enriched if e["path"] in path_set],
+        "content_matches": [e for e in enriched if e["path"] in content_set],
         "total_results": len(enriched),
     }
 
