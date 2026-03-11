@@ -4,7 +4,7 @@ from ulid import ULID
 import httpx
 
 from backend.app.core.spacetimedb import get_stdb
-from backend.app.agent.interrupts import register_turn, unregister_turn
+from backend.app.agent.interrupts import register_turn, unregister_turn, is_interrupted
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +28,10 @@ async def _stream_container_turn_stdb(
 
     try:
         logger.info(f"[TURN_STDB] Starting container turn for conversation={conversation_id}, agent={agent_id}, worker={worker_url}")
-        register_turn(conversation_id)
+        register_turn(conversation_id, worker_url=worker_url)
         yield _sse("status", {"state": "thinking", "conversation_id": conversation_id})
 
+        interrupted = False
         timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             logger.info(f"[TURN_STDB] Calling worker at {worker_url}/turn")
@@ -47,6 +48,11 @@ async def _stream_container_turn_stdb(
                 resp.raise_for_status()
                 logger.info(f"[TURN_STDB] Worker responded with status {resp.status_code}")
                 async for line in resp.aiter_lines():
+                    # Check if we've been interrupted — stop proxying
+                    if is_interrupted(conversation_id):
+                        logger.info(f"[TURN_STDB] Interrupt detected, stopping SSE proxy for {conversation_id}")
+                        interrupted = True
+                        break
                     if line.startswith("event:"):
                         event_type = line[len("event:"):].strip()
                         logger.info(f"[TURN_STDB] Received SSE event: {event_type}")
@@ -76,39 +82,44 @@ async def _stream_container_turn_stdb(
                             logger.info(f"[TURN_STDB] Worker error: {data}")
                             yield _sse("error", data)
 
-        # Save assistant message to SpacetimeDB
+        if interrupted:
+            # Save whatever partial response we got so far
+            logger.info(f"[TURN_STDB] Turn interrupted for {conversation_id}, saving partial response ({len(response_content)} chars)")
+            yield _sse("status", {"state": "interrupted", "conversation_id": conversation_id})
+
+        # Save assistant message to SpacetimeDB (even partial on interrupt)
         msg_id = str(ULID())
-        logger.info(f"[TURN_STDB] Saving assistant message to SpacetimeDB: id={msg_id}, conversation={conversation_id}, length={len(response_content)}")
-        logger.info(f"[TURN_STDB] Assistant message content (first 200 chars): {response_content[:200]}")
-        try:
-            success = await stdb.call_reducer("add_conversation_message", [
-                msg_id,
-                conversation_id,
-                "assistant",
-                response_content,
-                "", # tool_calls
-                "", # tool_call_id
-                0,  # token_count
-                "delivered"
-            ])
-            if success:
-                logger.info(f"[TURN_STDB] Successfully saved assistant message {msg_id} to SpacetimeDB")
-            else:
-                logger.error(f"[TURN_STDB] Failed to save assistant message {msg_id} to SpacetimeDB: reducer returned false")
-        except Exception as e:
-            logger.error(f"[TURN_STDB] Failed to save assistant message to SpacetimeDB: {e}", exc_info=True)
-            # Re-raise to trigger error handling
-            raise
+        if response_content.strip():
+            logger.info(f"[TURN_STDB] Saving assistant message to SpacetimeDB: id={msg_id}, conversation={conversation_id}, length={len(response_content)}")
+            try:
+                success = await stdb.call_reducer("add_conversation_message", [
+                    msg_id,
+                    conversation_id,
+                    "assistant",
+                    response_content,
+                    "", # tool_calls
+                    "", # tool_call_id
+                    0,  # token_count
+                    "delivered"
+                ])
+                if success:
+                    logger.info(f"[TURN_STDB] Successfully saved assistant message {msg_id} to SpacetimeDB")
+                else:
+                    logger.error(f"[TURN_STDB] Failed to save assistant message {msg_id} to SpacetimeDB: reducer returned false")
+            except Exception as e:
+                logger.error(f"[TURN_STDB] Failed to save assistant message to SpacetimeDB: {e}", exc_info=True)
+                raise
+        else:
+            logger.info(f"[TURN_STDB] No response content to save for {conversation_id}")
 
         logger.info(f"[TURN_STDB] Yielding final done event with message_id={msg_id}")
-        done_event = _sse("done", {
+        yield _sse("done", {
             "message_id": msg_id,
             "conversation_id": conversation_id,
             "tool_calls_made": tool_calls_made,
             "queued_count": 0,
+            "interrupted": interrupted,
         })
-        logger.info(f"[TURN_STDB] Done event content: {done_event[:100]}...")
-        yield done_event
     except Exception as e:
         logger.error(f"[TURN_STDB] Container turn error: conversation={conversation_id} error={e}", exc_info=True)
         yield _sse("error", {"message": str(e)})

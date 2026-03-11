@@ -29,7 +29,7 @@ export interface GatewayMessage {
   error?: string;
   conversationId?: string;
   messageId?: string;
-  agentStatus?: "idle" | "thinking" | "tool_calling" | "responding";
+  agentStatus?: "idle" | "thinking" | "tool_calling" | "responding" | "stopping" | "interrupted";
   agentId?: string;
   agentName?: string;
   queuePosition?: number;

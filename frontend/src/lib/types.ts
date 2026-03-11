@@ -25,7 +25,7 @@ export interface WorkPlan {
   items?: WorkItem[];
 }
 
-export type AgentStatus = "idle" | "thinking" | "tool_calling" | "responding";
+export type AgentStatus = "idle" | "thinking" | "tool_calling" | "responding" | "stopping" | "interrupted";
 
 export interface ChatMessage {
   id?: string;

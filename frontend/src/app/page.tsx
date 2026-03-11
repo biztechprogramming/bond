@@ -180,7 +180,10 @@ export default function Home() {
           const name = agents.find(a => a.id === selectedAgentId)?.display_name;
           if (name) currentAgentNameRef.current = name;
         }
-        if (status !== "idle") {
+        if (status === "interrupted") {
+          // Agent was stopped — keep loading true briefly so progress stays visible
+          // until the "done" event arrives to finalize
+        } else if (status !== "idle" && status !== "stopping") {
           setLoading(true);
         }
       } else if (msg.type === "tool_call" && msg.content) {
@@ -308,7 +311,9 @@ export default function Home() {
   const handleStop = useCallback(() => {
     if (!wsRef.current?.connected || !conversationId) return;
     wsRef.current.interrupt(conversationId);
-    setLoading(false);
+    // Don't setLoading(false) here — wait for the SSE stream to end
+    // with a "done" event. The agent status will update via status events.
+    setAgentStatus("stopping");
   }, [conversationId]);
 
   const handleNewConversation = async () => {
