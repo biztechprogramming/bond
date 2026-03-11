@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 # Always included regardless of heuristics
 ALWAYS_INCLUDE = {"respond", "load_context"}
 
-# Shell utility tools — always included alongside coding tools, exempt from cap.
-# These are tiny schemas that replace expensive code_execute calls.
+# Shell utility tools — exempt from the non-utility cap.
+# Kept minimal: project_search + git_info for discovery, shell_grep for content search.
+# file_read handles all reading (including head/tail via line_start/line_end).
 SHELL_UTILITY_TOOLS = frozenset({
-    "shell_find", "shell_ls", "shell_grep", "git_info",
-    "shell_wc", "shell_head", "shell_tree", "project_search",
+    "project_search", "git_info", "shell_grep",
 })
 
 # Maximum *non-utility* tools to send per turn
@@ -32,7 +32,9 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "file_read": [
         "file", "read", "look at", "show me", "open", "cat ", "source",
         "code in", "check the", "contents of", "what's in", "inspect",
-        "review", "examine", ".py", ".ts", ".js", ".md", ".json", ".yaml",
+        "review", "examine", "head ", "tail ", "first lines", "last lines",
+        "beginning of", "end of", "top of file", "bottom of file",
+        ".py", ".ts", ".js", ".md", ".json", ".yaml",
         ".yml", ".toml", ".cfg", ".txt", ".sh", ".sql",
     ],
     "file_write": [
@@ -54,12 +56,11 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "which file", "what file", "where's the", "can you find",
     ],
     "shell_find": [
-        "*.py", "*.ts", "*.js", "*.md", "*.json", "*.yaml", "*.yml",
-        "file named", "glob", "find -name", "-type f", "-type d",
+        "glob", "find -name", "-type f", "-type d",
     ],
     "shell_ls": [
-        "ls ", "list files", "list directory", "what files", "directory contents",
-        "what's in the folder", "show files",
+        "ls ", "list directory", "directory contents",
+        "what's in the folder",
     ],
     "shell_grep": [
         "grep", "search for", "find text", "where is", "pattern",
@@ -72,13 +73,10 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "shell_wc": [
         "count lines", "how many lines", "line count", "word count", "wc ",
     ],
-    "shell_head": [
-        "first lines", "last lines", "head ", "tail ", "beginning of",
-        "end of", "top of file", "bottom of file",
-    ],
+    "shell_head": [],  # Deprecated: file_read with line_start/line_end covers head/tail
     "shell_tree": [
         "tree", "directory structure", "project structure", "folder structure",
-        "show structure", "layout",
+        "show structure",
     ],
     "search_memory": [
         "remember", "recall", "search", "find", "what did", "do you know",
@@ -239,16 +237,18 @@ def select_tools(
         prioritized += [t for t in regular_selected if t not in prioritized]
         regular_selected = set(prioritized[:MAX_TOOLS_PER_TURN])
 
-    # Always include ALL shell utility tools when any coding/file tool is in play.
-    # They cost almost nothing in schema tokens and save full model calls.
+    # Include only keyword-matched utility tools plus a small core set.
+    # Previously we included ALL 8 utilities on any coding context, which
+    # caused the model to "hedge" with 5-6 redundant discovery calls.
+    # Now: only pull in project_search + shell_grep as the core discovery
+    # pair, plus any utilities that actually keyword-matched.
+    CORE_UTILITY_TOOLS = frozenset({"project_search"})
     has_coding_context = bool(
         (coding_tools | {"shell_find", "shell_grep", "shell_ls", "git_info"}) & regular_selected
     )
     if has_coding_context:
-        utility_selected = enabled_utility
-    # Also include them if any utility tool was keyword-matched
-    elif utility_selected:
-        utility_selected = enabled_utility
+        utility_selected = (utility_selected | (CORE_UTILITY_TOOLS & enabled_utility))
+    # Don't expand to all utilities just because one matched
 
     selected = regular_selected | utility_selected
 
@@ -275,6 +275,10 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
         " Use for: running commands (build, test, install, scripts). "
         "NOT for: multi-step coding tasks (use coding_agent)."
     ),
+    "file_read": (
+        " The ONLY reading tool. Supports full read, line ranges (head/tail), and outline mode."
+        " If you have the path, call this directly — never search/find/ls first."
+    ),
     "file_edit": (
         " Use for: targeted changes when you know exactly what to write."
     ),
@@ -283,6 +287,21 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
     ),
     "call_subordinate": (
         " Reserved for future use. Use coding_agent for coding delegation."
+    ),
+    "project_search": (
+        " ONLY when you don't have the exact path. If you have a path, use file_read directly."
+    ),
+    "shell_find": (
+        " ONLY for glob patterns when you don't have the exact path."
+    ),
+    "shell_ls": (
+        " ONLY to explore an unknown directory. Never to verify a known path."
+    ),
+    "shell_wc": (
+        " ONLY when you specifically need a line/word count, not as a pre-read step."
+    ),
+    "git_info": (
+        " For git status/log/diff/branch/show. NOT as a pre-read verification step."
     ),
 }
 
