@@ -33,7 +33,7 @@ _DEFAULTS: dict[str, Any] = {
     "database": {
         "path": str(BOND_HOME / "data" / "knowledge.db"),
     },
-    "sandbox_backend": "legacy",
+    "sandbox_backend": "opensandbox",
     "opensandbox": {
         "server_url": "http://localhost:8090",
         "api_key": "",
@@ -68,7 +68,7 @@ class Settings(BaseModel):
     vault_path: str = str(BOND_HOME / "data" / "credentials.enc")
 
     # Sandbox backend: "legacy" (Docker direct) or "opensandbox"
-    sandbox_backend: str = "legacy"
+    sandbox_backend: str = "opensandbox"
 
     # OpenSandbox settings (only used when sandbox_backend == "opensandbox")
     opensandbox_server_url: str = "http://localhost:8090"
@@ -120,7 +120,7 @@ def get_settings() -> Settings:
         frontend_port=int(os.environ.get("BOND_FRONTEND_PORT", frontend.get("port", 18788))),
         database_path=os.environ.get("BOND_DATABASE_PATH", database.get("path", str(BOND_HOME / "data" / "knowledge.db"))),
         vault_path=os.environ.get("BOND_VAULT_PATH", str(BOND_HOME / "data" / "credentials.enc")),
-        sandbox_backend=os.environ.get("BOND_SANDBOX_BACKEND", config.get("sandbox_backend", "legacy")),
+        sandbox_backend=os.environ.get("BOND_SANDBOX_BACKEND", config.get("sandbox_backend", "opensandbox")),
         opensandbox_server_url=os.environ.get("OPENSANDBOX_SERVER_URL", opensandbox.get("server_url", "http://localhost:8090")),
         opensandbox_api_key=os.environ.get("OPEN_SANDBOX_API_KEY", opensandbox.get("api_key", "")),
     )

@@ -1,5 +1,30 @@
 version: '3.8'
 
+configs:
+  opensandbox-config:
+    content: |
+      [server]
+      host = "0.0.0.0"
+      port = 8090
+      log_level = "INFO"
+
+      [runtime]
+      type = "docker"
+      execd_image = "opensandbox/execd:v1.0.6"
+
+      [egress]
+      image = "opensandbox/egress:v1.0.2"
+
+      [docker]
+      network_mode = "bridge"
+      host_ip = "host.docker.internal"
+      drop_capabilities = ["AUDIT_WRITE", "MKNOD", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_TIME", "SYS_TTY_CONFIG"]
+      no_new_privileges = true
+      pids_limit = 512
+
+      [ingress]
+      mode = "direct"
+
 services:
   spacetimedb:
     image: clockworklabs/spacetime:latest
@@ -16,6 +41,28 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+    networks:
+      - bond-network
+
+  opensandbox-server:
+    image: opensandbox/server:latest
+    container_name: bond-opensandbox
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    configs:
+      - source: opensandbox-config
+        target: /etc/opensandbox/config.toml
+    environment:
+      - SANDBOX_CONFIG_PATH=/etc/opensandbox/config.toml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     networks:
       - bond-network
 

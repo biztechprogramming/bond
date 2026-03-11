@@ -1,5 +1,6 @@
 .PHONY: dev backend gateway frontend setup install test lint clean images \
-	langfuse-up langfuse-down langfuse-logs langfuse-ps langfuse-restart langfuse-stop langfuse-start langfuse-health langfuse-reset
+	langfuse-up langfuse-down langfuse-logs langfuse-ps langfuse-restart langfuse-stop langfuse-start langfuse-health langfuse-reset \
+	opensandbox-health opensandbox-logs
 
 # Start all services for development
 dev:
@@ -173,6 +174,13 @@ spacetimedb-simple-up:
 
 spacetimedb-simple-down:
 	docker-compose -f docker-compose.spacetimedb-simple.yml down
+
+# OpenSandbox health (runs alongside SpacetimeDB in same compose)
+opensandbox-health:
+	@curl -sf http://localhost:8090/health && echo " OpenSandbox is healthy" || echo "OpenSandbox is not responding (start with: make spacetimedb-up)"
+
+opensandbox-logs:
+	docker logs -f bond-opensandbox
 
 # Check SpacetimeDB health
 spacetimedb-health:
