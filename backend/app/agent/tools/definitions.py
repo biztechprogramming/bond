@@ -145,13 +145,26 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "file_read",
-            "description": "Read the full contents of a file from the workspace.",
+            "description": "Read a file from the workspace. Supports full read, line ranges (head/tail), and outline mode. This is the ONLY tool you need for reading files — use it instead of shell_head, cat, head, or tail.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
                         "description": "Path to the file to read (relative to workspace root).",
+                    },
+                    "line_start": {
+                        "type": "integer",
+                        "description": "First line to read (1-indexed). Use for head: line_start=1, line_end=N. Use for mid-file ranges.",
+                    },
+                    "line_end": {
+                        "type": "integer",
+                        "description": "Last line to read (inclusive). Omit to read to end of file.",
+                    },
+                    "outline": {
+                        "type": "boolean",
+                        "description": "If true, return function/class signatures with line numbers instead of full content. Use on first read of unfamiliar files.",
+                        "default": False,
                     },
                 },
                 "required": ["path"],
@@ -804,11 +817,10 @@ TOOL_DEFINITIONS: list[dict] = [
             "description": (
                 "Smart project search: finds files by searching EVERY word in the query independently "
                 "across filenames, directory paths (any depth), and file contents — all in one call. "
-                "Use this FIRST when looking for any file, document, or code reference. Returns full "
-                "paths with a preview of each file so you can confirm it's the right one. Example: "
+                "Use ONLY when you do NOT already have the exact file path. If you have a path, use "
+                "file_read or shell_head directly — never search first. Example: "
                 "project_search(query='inspection defect entry blazor') finds files matching ANY of "
-                "those words in their name, parent directories, or contents. Never need shell_find or "
-                "shell_grep for discovery — this covers it all."
+                "those words in their name, parent directories, or contents."
             ),
             "parameters": {
                 "type": "object",
