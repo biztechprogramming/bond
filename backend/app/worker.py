@@ -1022,7 +1022,7 @@ async def _run_agent_loop(
     sse_events: list[str] = []  # collected for the SSE stream
 
     # File re-read dedup: avoid wasting tokens on identical file content
-    _file_read_cache: dict[str, dict] = {}  # path -> {"content_hash": str, "tool_call_num": int, "total_lines": int, "size": int}
+    # _file_read_cache removed — see comment at "File re-read dedup — DISABLED"
 
     # Adaptive max_tokens: start low (fast + cheap), escalate on truncation
     # Tiers: 32768 → 65536. Reset after each successful completion.
@@ -1860,64 +1860,12 @@ async def _run_agent_loop(
                         if _parsed is not None:
                             result = {**result, "stdout": _parsed, "_build_parsed": True}
 
-                # File re-read dedup: replace duplicate unchanged reads with a short reference.
-                # Tracks full file content by path. If the agent re-reads the same file
-                # (or a line range of it), we check against the cached content.
-                if tool_name == "file_read" and isinstance(result, dict) and "error" not in result:
-                    _fpath = result.get("path", result.get("file_path", ""))
-                    _fcontent = result.get("content", "")
-                    _flines_returned = result.get("total_lines", 0)
-                    _fsize = result.get("size", len(_fcontent) if isinstance(_fcontent, str) else 0)
-                    _fline_start = result.get("line_start")
-                    _fline_end = result.get("line_end")
-                    _is_partial = _fline_start is not None or _fline_end is not None
-                    _is_outline = bool(result.get("outline"))
-
-                    if _fpath and _fpath in _file_read_cache:
-                        cached = _file_read_cache[_fpath]
-                        # For full reads: hash-compare content
-                        # For partial/line-range reads: if we already read the full file, dedup
-                        # For outline reads: always dedup if we have the file cached
-                        if _is_outline:
-                            result = {
-                                "note": f"File already read at tool call #{cached['tool_call_num']} ({cached['total_lines']} lines, {cached['size']} bytes). Outline not needed — you already have the full content.",
-                                "path": _fpath,
-                                "total_lines": cached["total_lines"],
-                            }
-                            logger.info("File re-read dedup (outline): %s", _fpath)
-                        elif _is_partial and cached.get("has_full_content"):
-                            # Agent is re-reading a range of a file it already read in full
-                            result = {
-                                "note": f"File already read in full at tool call #{cached['tool_call_num']} ({cached['total_lines']} lines). You already have lines {_fline_start or 1}-{_fline_end or cached['total_lines']} from that read.",
-                                "path": _fpath,
-                                "total_lines": cached["total_lines"],
-                            }
-                            logger.info("File re-read dedup (partial of full): %s lines %s-%s", _fpath, _fline_start, _fline_end)
-                        elif not _is_partial:
-                            # Full read — hash compare
-                            _fhash = hashlib.md5(_fcontent.encode(errors="replace")).hexdigest() if isinstance(_fcontent, str) else ""
-                            if cached["content_hash"] == _fhash:
-                                result = {
-                                    "note": f"File already read at tool call #{cached['tool_call_num']} (unchanged, {cached['total_lines']} lines, {cached['size']} bytes).",
-                                    "path": _fpath,
-                                    "total_lines": cached["total_lines"],
-                                }
-                                logger.info("File re-read dedup (full, unchanged): %s saved ~%d tokens", _fpath, _fsize // 4)
-                            else:
-                                # File changed — update cache
-                                _ftotal = _fcontent.count("\n") + 1 if isinstance(_fcontent, str) and _fcontent else 0
-                                _file_read_cache[_fpath] = {"content_hash": _fhash, "tool_call_num": tool_calls_made, "total_lines": _ftotal, "size": _fsize, "has_full_content": True}
-                        # else: partial read of a file we only have partial cache for — allow it through
-                    elif _fpath:
-                        _fhash = hashlib.md5(_fcontent.encode(errors="replace")).hexdigest() if isinstance(_fcontent, str) else ""
-                        _ftotal = _flines_returned if _flines_returned else (_fcontent.count("\n") + 1 if isinstance(_fcontent, str) and _fcontent else 0)
-                        _file_read_cache[_fpath] = {"content_hash": _fhash, "tool_call_num": tool_calls_made, "total_lines": _ftotal, "size": _fsize, "has_full_content": not _is_partial}
-
-                # Invalidate file read cache on successful file_edit/file_write
-                if tool_name in ("file_edit", "file_write") and isinstance(result, dict) and "error" not in result:
-                    _epath = result.get("path", result.get("file_path", tool_args.get("path", "")))
-                    if _epath and _epath in _file_read_cache:
-                        del _file_read_cache[_epath]
+                # File re-read dedup — DISABLED.
+                # Previously blocked re-reads of files already in context, but combined
+                # with in-loop decay (also disabled), this trapped agents in an impossible
+                # loop. The agent should be free to re-read any file at any time.
+                # If we re-enable this, it MUST be aware of what's actually still in
+                # the message context, not just what was read at some point.
 
                 logger.info("Tool result [%d]: %s",  tool_calls_made,
                             {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in result.items()} if isinstance(result, dict) else result)

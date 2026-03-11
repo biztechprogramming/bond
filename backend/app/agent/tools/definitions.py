@@ -145,7 +145,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "file_read",
-            "description": "Read a file from the workspace. Good for small/medium files. For large files (>500 lines or >50KB), prefer shell_grep to find relevant line numbers, then shell_sed to extract just that section — avoids loading the entire file into context. Supports line ranges (line_start/line_end) and outline mode.",
+            "description": "Read a file from the workspace. Good for small/medium files (<500 lines). For large files, use file_open instead — it loads the file server-side and lets you view windows, search, and edit without filling context. Supports line ranges (line_start/line_end) and outline mode.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -224,6 +224,185 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": ["path", "edits"],
+            },
+        },
+    },
+    # --- Server-side file buffer tools ---
+    # These hold files in Python memory (not LLM context) and let the
+    # agent view windows, search, and edit large files efficiently.
+    {
+        "type": "function",
+        "function": {
+            "name": "file_open",
+            "description": (
+                "Open a file into a server-side buffer for efficient large-file operations. "
+                "The file is held in Python memory — NOT loaded into your context. "
+                "Returns a summary and first N lines. Use file_view to see other sections, "
+                "file_search to find patterns, file_replace to edit. "
+                "Best for files >500 lines. Up to 10 files can be open simultaneously."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to open.",
+                    },
+                    "preview_lines": {
+                        "type": "integer",
+                        "description": "Number of lines to preview from the start (default: 100, max: 300).",
+                        "default": 100,
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_view",
+            "description": (
+                "View a window of lines from a buffered file. Auto-opens the file if not already open. "
+                "Returns numbered lines for easy reference. Max window: 300 lines."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file.",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to show (1-indexed, default: 1).",
+                        "default": 1,
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to show (inclusive). Default: start_line + 99.",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_search",
+            "description": (
+                "Search for a regex pattern in a buffered file. Auto-opens if needed. "
+                "Returns matching line numbers and text. Use to find the exact lines "
+                "before calling file_replace or file_view."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file.",
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for (case-insensitive).",
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Number of context lines around each match (default: 2, max: 10).",
+                        "default": 2,
+                    },
+                    "max_matches": {
+                        "type": "integer",
+                        "description": "Maximum matches to return (default: 30).",
+                        "default": 30,
+                    },
+                },
+                "required": ["path", "pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_replace",
+            "description": (
+                "Replace a range of lines in a buffered file. Writes to disk immediately. "
+                "Use file_search or file_view first to confirm the exact line range. "
+                "Returns the old content that was replaced for verification."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file.",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to replace (1-indexed, inclusive).",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to replace (1-indexed, inclusive).",
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "New content to insert (replaces the specified line range).",
+                    },
+                },
+                "required": ["path", "start_line", "end_line", "new_content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_smart_edit",
+            "description": (
+                "Compound search + edit in ONE call. Finds a section of a file by pattern, "
+                "shows it (preview mode) or replaces it (edit mode). Replaces the typical "
+                "3-4 call sequence of search → view → edit. "
+                "Use 'search' to find the start, 'end_search' to find the end boundary. "
+                "Omit new_content to preview, include it to apply the edit. "
+                "The file is buffered server-side — only the selected section enters context."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file.",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Regex pattern to find the start of the section.",
+                    },
+                    "end_search": {
+                        "type": "string",
+                        "description": "Regex pattern for the end of the section (inclusive). Scans forward from the start match. If omitted, uses lines_after.",
+                    },
+                    "lines_before": {
+                        "type": "integer",
+                        "description": "Extra lines to include before the start match (default: 0).",
+                        "default": 0,
+                    },
+                    "lines_after": {
+                        "type": "integer",
+                        "description": "Lines after start match if no end_search (default: 20).",
+                        "default": 20,
+                    },
+                    "occurrence": {
+                        "type": "integer",
+                        "description": "Which occurrence of the search pattern to use (default: 1 = first).",
+                        "default": 1,
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": "Replacement content. If omitted, returns a preview of the matched section without editing.",
+                    },
+                },
+                "required": ["path", "search"],
             },
         },
     },

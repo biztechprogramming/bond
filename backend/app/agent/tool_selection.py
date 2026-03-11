@@ -22,6 +22,7 @@ FILESYSTEM_TOOLKIT = frozenset({
     "file_read", "project_search", "shell_grep", "shell_sed",
     "shell_head", "shell_tail", "shell_awk", "shell_diff",
     "shell_jq", "batch_head", "shell_ls",
+    "file_open", "file_view", "file_search", "file_replace", "file_smart_edit",
 })
 
 # Additional shell utilities — included only when keyword-matched.
@@ -307,10 +308,13 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
         "NOT for: multi-step coding tasks (use coding_agent)."
     ),
     "file_read": (
-        " Reads file content into context. Good for small/medium files (<500 lines)."
-        " For large files (>500 lines), prefer shell_grep to find line numbers then"
-        " shell_sed to extract just the section you need — avoids loading the whole file."
-        " If you have the path, call this directly — never search/find/ls first."
+        " Reads file content into context. Good for small files (<500 lines)."
+        " For large files, use file_smart_edit instead — it finds and edits a section"
+        " without loading the whole file into context."
+    ),
+    "file_smart_edit": (
+        " Compound search + edit in ONE call. Finds a section by pattern and replaces it."
+        " Omit new_content to preview. Best tool for editing large files."
     ),
     "file_edit": (
         " Use for: targeted changes when you know exactly what to write."
