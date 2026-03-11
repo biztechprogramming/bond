@@ -693,7 +693,7 @@ export class WebChatChannel {
     }
   }
 
-  private sendToConversation(conversationId: string, msg: OutgoingMessage): void {
+  public sendToConversation(conversationId: string, msg: OutgoingMessage): void {
     const payload = JSON.stringify(msg);
     const sockets = this.sessionManager.getSocketsForConversation(conversationId);
     for (const s of sockets) {
