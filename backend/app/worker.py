@@ -428,6 +428,68 @@ def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+@app.get("/coding-agent/events/{conversation_id}")
+async def coding_agent_events(conversation_id: str) -> StreamingResponse:
+    """SSE stream of incremental git diffs from an active coding agent.
+
+    The gateway subscribes to this endpoint when a coding agent is active.
+    Events: diff (per-file), done (summary), error, keepalive.
+    """
+    from backend.app.agent.tools.coding_agent import get_session_by_conversation
+
+    session = get_session_by_conversation(conversation_id)
+    if not session:
+        return StreamingResponse(
+            iter([_sse_event("error", {"message": "No active coding agent for this conversation"})]),
+            media_type="text/event-stream",
+        )
+
+    async def event_stream():
+        # Initial status
+        yield _sse_event("coding_agent_started", {
+            "agent_type": session.agent_type,
+            "baseline": session.baseline_commit[:8],
+            "conversation_id": conversation_id,
+        })
+
+        while True:
+            try:
+                event = await asyncio.wait_for(session.event_queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                # Keepalive — prevents connection timeout
+                yield _sse_event("keepalive", {"elapsed": round(session.process.elapsed, 1)})
+                continue
+
+            if event is None:
+                # Sentinel — stream is done
+                break
+
+            event_type = event.get("type", "unknown")
+
+            if event_type == "diff":
+                yield _sse_event("coding_agent_diff", {
+                    "file": event["file"],
+                    "diff": event["diff"],
+                    "conversation_id": conversation_id,
+                })
+            elif event_type == "done":
+                yield _sse_event("coding_agent_done", {
+                    "status": event["status"],
+                    "exit_code": event["exit_code"],
+                    "elapsed_seconds": event["elapsed_seconds"],
+                    "summary": event["summary"],
+                    "git_stat": event.get("git_stat", ""),
+                    "conversation_id": conversation_id,
+                })
+            elif event_type == "error":
+                yield _sse_event("coding_agent_error", {
+                    "message": event["message"],
+                    "conversation_id": conversation_id,
+                })
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 @app.post("/turn")
 async def turn(request: Request) -> StreamingResponse:
     """Execute an agent turn and stream SSE events."""
@@ -1840,6 +1902,17 @@ async def _run_agent_loop(
 
                 logger.info("Tool result [%d]: %s",  tool_calls_made,
                             {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in result.items()} if isinstance(result, dict) else result)
+
+                # Coding agent started — emit SSE event so gateway subscribes
+                # to the background diff stream
+                if (tool_name == "coding_agent"
+                    and isinstance(result, dict)
+                    and result.get("status") == "started"
+                    and event_queue is not None):
+                    await event_queue.put(_sse_event("coding_agent_started", {
+                        "agent_type": result.get("agent_type", "claude"),
+                        "conversation_id": conversation_id,
+                    }))
 
                 # Check for promotable memory -> emit SSE memory event
                 if "_promote" in result:

@@ -320,23 +320,14 @@ export class WebChatChannel {
               conversationId,
             });
             break;
-          case "coding_agent_output":
+          case "coding_agent_started":
             this.sendToConversation(conversationId, {
-              type: "coding_agent_output", sessionId,
-              content: JSON.stringify({ agent_type: data.agent_type, line: data.line }),
+              type: "coding_agent_started", sessionId,
+              content: JSON.stringify({ agent_type: data.agent_type }),
               conversationId,
             } as any);
-            break;
-          case "coding_agent_done":
-            this.sendToConversation(conversationId, {
-              type: "coding_agent_done", sessionId,
-              content: JSON.stringify({
-                status: data.status, exit_code: data.exit_code,
-                agent_type: data.agent_type, elapsed_seconds: data.elapsed_seconds,
-                git_changes: data.git_changes,
-              }),
-              conversationId,
-            } as any);
+            // Start background subscription to coding agent events
+            this.subscribeToCodingAgentEvents(conversationId, sessionId);
             break;
           case "error":
             this.sendToConversation(conversationId, {
@@ -539,24 +530,13 @@ export class WebChatChannel {
               planId: event.data.plan_id as string, planStatus: event.data.status as string, conversationId });
             break;
 
-          case "coding_agent_output":
+          case "coding_agent_started":
             this.sendToConversation(conversationId, {
-              type: "coding_agent_output", sessionId,
-              content: JSON.stringify({ agent_type: event.data.agent_type, line: event.data.line }),
+              type: "coding_agent_started", sessionId,
+              content: JSON.stringify({ agent_type: event.data.agent_type }),
               conversationId,
             } as any);
-            break;
-
-          case "coding_agent_done":
-            this.sendToConversation(conversationId, {
-              type: "coding_agent_done", sessionId,
-              content: JSON.stringify({
-                status: event.data.status, exit_code: event.data.exit_code,
-                agent_type: event.data.agent_type, elapsed_seconds: event.data.elapsed_seconds,
-                git_changes: event.data.git_changes,
-              }),
-              conversationId,
-            } as any);
+            this.subscribeToCodingAgentEvents(conversationId, sessionId);
             break;
 
           case "done":
@@ -733,6 +713,99 @@ export class WebChatChannel {
   private send(socket: WebSocket, msg: OutgoingMessage): void {
     if (socket.readyState === socket.OPEN) {
       socket.send(JSON.stringify(msg));
+    }
+  }
+
+  /**
+   * Subscribe to the coding agent's background diff stream via the backend
+   * API's SSE proxy. Forwards events to all sockets watching the conversation.
+   */
+  private async subscribeToCodingAgentEvents(
+    conversationId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const baseUrl = (this.backendClient as any).baseUrl;
+    if (!baseUrl) {
+      console.error("[webchat] Cannot subscribe to coding agent events: no backend URL");
+      return;
+    }
+
+    const url = `${baseUrl}/api/v1/conversations/${conversationId}/coding-agent/events`;
+    console.log(`[webchat] Subscribing to coding agent events: ${url}`);
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok || !res.body) {
+        console.error(`[webchat] Coding agent events failed: ${res.status}`);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          const lines = part.split("\n");
+          let eventType = "";
+          let eventData = "";
+
+          for (const line of lines) {
+            if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+            else if (line.startsWith("data: ")) eventData = line.slice(6);
+          }
+
+          if (!eventType || !eventData) continue;
+
+          try {
+            const data = JSON.parse(eventData);
+
+            switch (eventType) {
+              case "coding_agent_diff":
+                this.sendToConversation(conversationId, {
+                  type: "coding_agent_diff",
+                  sessionId,
+                  content: JSON.stringify(data),
+                  conversationId,
+                } as any);
+                break;
+
+              case "coding_agent_done":
+                this.sendToConversation(conversationId, {
+                  type: "coding_agent_done",
+                  sessionId,
+                  content: JSON.stringify(data),
+                  conversationId,
+                } as any);
+                break;
+
+              case "coding_agent_error":
+                this.sendToConversation(conversationId, {
+                  type: "error",
+                  sessionId,
+                  error: data.message,
+                  conversationId,
+                } as any);
+                break;
+
+              case "keepalive":
+                // Don't forward keepalives to frontend
+                break;
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[webchat] Coding agent events subscription error:", err);
     }
   }
 }
