@@ -954,6 +954,7 @@ async def _run_agent_loop(
         "agent_id": _state.agent_id,
         "conversation_id": conversation_id,
         "event_queue": event_queue,
+        "api_keys": injected_keys,
     }
 
     tool_calls_made = 0

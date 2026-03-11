@@ -85,6 +85,7 @@ def build_registry() -> ToolRegistry:
         handle_git_info, handle_shell_wc, handle_shell_head, handle_shell_tree,
         handle_project_search,
     )
+    from .coding_agent import handle_coding_agent
 
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
@@ -115,4 +116,5 @@ def build_registry() -> ToolRegistry:
     registry.register("shell_head", handle_shell_head)
     registry.register("shell_tree", handle_shell_tree)
     registry.register("project_search", handle_project_search)
+    registry.register("coding_agent", handle_coding_agent)
     return registry
