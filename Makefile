@@ -161,7 +161,9 @@ webhook-test:
 	if [ "$$STATUS" = "000" ]; then \
 		echo "❌ Gateway not running on port $$PORT. Start with: make gateway"; \
 	elif [ "$$STATUS" = "401" ] || [ "$$STATUS" = "400" ]; then \
-		echo "✅ Webhook endpoint is responding (got $$STATUS - expected without valid signature)"; \
+		echo "✅ Webhook endpoint responding, signature verification active"; \
+	elif [ "$$STATUS" = "200" ]; then \
+		echo "⚠️  Webhook responding but GITHUB_WEBHOOK_SECRET not set — signature verification disabled. Run: make webhook-setup"; \
 	else \
 		echo "⚠️  Unexpected status: $$STATUS"; \
 	fi

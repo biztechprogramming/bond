@@ -229,7 +229,20 @@ You can also run a quick connectivity check:
 make webhook-test
 ```
 
-This sends an unsigned POST to the webhook endpoint and checks the response code. A `400` or `401` means the endpoint is reachable (the request is rejected because it has no valid signature, which is expected). A `000` means the gateway isn't running.
+This sends an unsigned POST to the webhook endpoint and checks the response code:
+
+| Result | Meaning |
+|---|---|
+| `✅ Webhook endpoint responding, signature verification active` | `401`/`400` — endpoint reachable and `GITHUB_WEBHOOK_SECRET` is loaded |
+| `⚠️ Webhook responding but GITHUB_WEBHOOK_SECRET not set` | `200` — endpoint up but secret not loaded; run `make webhook-setup` |
+| `❌ Gateway not running` | `000` — no connection; start with `make gateway` |
+
+You can also verify delivery directly in GitHub:
+
+1. Go to **Repository Settings → Webhooks → your webhook**
+2. Scroll to **Recent Deliveries**
+3. Click any delivery to see the request headers, payload, and response
+4. A green tick means GitHub received a 2xx response; a red X means it failed
 
 ---
 
@@ -238,11 +251,13 @@ This sends an unsigned POST to the webhook endpoint and checks the response code
 | Problem | Fix |
 |---|---|
 | 502 Bad Gateway | Gateway isn't running. Start with `make gateway` |
-| 401 Invalid signature | Secret mismatch — make sure `GITHUB_WEBHOOK_SECRET` in `.env` exactly matches what's in GitHub webhook settings |
+| 401 Invalid signature | Secret mismatch — `GITHUB_WEBHOOK_SECRET` in `.env` must exactly match the secret in GitHub webhook settings |
+| `make webhook-test` shows 200 / "secret not set" | `GITHUB_WEBHOOK_SECRET` is missing from `gateway/.env`. Run `make webhook-setup` to generate and write it |
+| `make webhook-test` shows 000 | Gateway not running on port 18789. Start with `make gateway` |
 | DNS SERVFAIL from certbot | Your domain's A record doesn't point to this server yet. Update DNS and wait for propagation |
 | `gh` CLI not found | Install from https://cli.github.com/, then run `gh auth login`. Or use manual setup (Step 6) |
 | No `[webhook]` log entries | Check that nginx is proxying to port 18789, not another port |
-| Webhook shows "Recent Deliveries → failed" in GitHub | Check gateway logs for the error. Common cause: secret mismatch or gateway returned a non-2xx status |
+| Webhook shows "Recent Deliveries → failed" in GitHub | Open the delivery in GitHub (Settings → Webhooks → Recent Deliveries) to see the response. Common cause: secret mismatch or gateway not running |
 | `make webhook-setup` has no effect | Make sure you're running it from the `bond/` directory (project root) |
 
 ---
@@ -256,6 +271,19 @@ make webhook-status
 ```
 
 This shows your configured external URL, whether the secret is set, which repos are listed in `bond.json`, and whether the gateway is currently running.
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_WEBHOOK_SECRET` | Yes (for production) | HMAC secret used to verify webhook payloads. Must match the secret configured in GitHub webhook settings. Generate with `make webhook-secret`. |
+| `GATEWAY_EXTERNAL_URL` | Yes | The public HTTPS URL of your gateway (e.g., `https://bond.yourdomain.com`). Used by the `WebhookRegistrar` to construct the payload URL when auto-registering webhooks via `gh` CLI. |
+
+Both variables live in `gateway/.env` (gitignored). The `make webhook-setup` command writes them interactively.
+
+> **Tip:** If you change `GITHUB_WEBHOOK_SECRET`, update the secret in every affected GitHub webhook too — they must match exactly.
 
 ---
 
