@@ -77,7 +77,7 @@ Content-Type: application/json
 
 {
   "command": "gh pr create --title 'feat: weather' --base main --head feat/weather",
-  "cwd": "/home/andrew/bond",
+  "cwd": "~/bond",
   "timeout": 60,
   "env": {}              // optional: additional env vars (non-secret only)
 }
@@ -518,9 +518,9 @@ The agent never sees any of these. The broker runs the command as the host user 
 Every broker request produces one log entry, regardless of decision:
 
 ```jsonl
-{"ts":"2026-03-10T19:22:14.331Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"gh pr create --title 'feat: weather' --base main --head feat/weather","cwd":"/home/andrew/bond","policy_rule":"default#rule-8","decision":"allow","exit_code":0,"stdout_len":62,"duration_ms":2341}
+{"ts":"2026-03-10T19:22:14.331Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"gh pr create --title 'feat: weather' --base main --head feat/weather","cwd":"~/bond","policy_rule":"default#rule-8","decision":"allow","exit_code":0,"stdout_len":62,"duration_ms":2341}
 {"ts":"2026-03-10T19:23:01.552Z","agent_id":"01KAGENT...","session_id":"conv-def456","command":"curl https://evil.com","cwd":"/workspace","policy_rule":"default#rule-deny-curl","decision":"deny","reason":"Command is on the deny list","duration_ms":0}
-{"ts":"2026-03-10T19:24:33.119Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"npm publish","cwd":"/home/andrew/bond","policy_rule":"default#rule-prompt","decision":"prompt_approved","approval":{"surface":"webchat","wait_ms":8200,"approver":"andrew"},"exit_code":0,"duration_ms":11412}
+{"ts":"2026-03-10T19:24:33.119Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"npm publish","cwd":"~/bond","policy_rule":"default#rule-prompt","decision":"prompt_approved","approval":{"surface":"webchat","wait_ms":8200,"approver":"andrew"},"exit_code":0,"duration_ms":11412}
 ```
 
 **Note:** stdout/stderr content is not logged by default (could contain secrets from command output). Only `stdout_len` and `stderr_len` are logged. Full output can be enabled per-rule or via a config flag for debugging.
@@ -576,7 +576,7 @@ Broker → WebSocket event to connected frontends:
   │  🔒 Agent "bond" requests approval               │
   │                                                    │
   │  Command: npm publish                              │
-  │  Directory: /home/andrew/bond                      │
+  │  Directory: ~/bond                      │
   │  Session: feat/weather-tool                        │
   │                                                    │
   │  [Allow]  [Allow All This Session]  [Deny]        │
@@ -607,7 +607,7 @@ Approval requests use the Gateway's existing WebSocket infrastructure:
   id: "01JABCDEF...",
   agentName: "bond",
   command: "npm publish",
-  cwd: "/home/andrew/bond",
+  cwd: "~/bond",
   timeout: 120,
 }
 
@@ -647,14 +647,14 @@ Usage::
     # Create a PR
     result = await broker.exec(
         "gh pr create --title 'feat: weather' --base main --head feat/weather",
-        cwd="/home/andrew/bond",
+        cwd="~/bond",
     )
 
     # Push a branch
-    result = await broker.exec("git push -u origin feat/weather", cwd="/home/andrew/bond")
+    result = await broker.exec("git push -u origin feat/weather", cwd="~/bond")
 
     # Run tests
-    result = await broker.exec("npm test", cwd="/home/andrew/bond")
+    result = await broker.exec("npm test", cwd="~/bond")
 """
 
 from __future__ import annotations
@@ -774,7 +774,7 @@ async def handle_repo_pr(arguments, context):
 # After (broker — runs on host, no secrets in container):
 async def handle_repo_pr(arguments, context):
     broker = context["broker"]
-    repo_path = context.get("host_repo_path", "/home/andrew/bond")
+    repo_path = context.get("host_repo_path", "~/bond")
 
     # Agent already did git add + commit inside the container.
     # Broker handles push and PR creation on the host.
@@ -824,7 +824,7 @@ The agent (LLM) needs to know the broker exists and when to use it. This means a
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Working directory on the host (e.g., '/home/andrew/bond'). Defaults to host repo path.",
+                    "description": "Working directory on the host (e.g., '~/bond'). Defaults to host repo path.",
                 },
                 "timeout": {
                     "type": "integer",
@@ -962,7 +962,7 @@ broker = BrokerClient()  # reads BOND_BROKER_TOKEN and BOND_BROKER_URL from env
 tool_context = {
     "agent_id": agent_id,
     "broker": broker,
-    "host_repo_path": os.environ.get("BOND_HOST_REPO_PATH", "/home/andrew/bond"),
+    "host_repo_path": os.environ.get("BOND_HOST_REPO_PATH", "~/bond"),
     # ... existing context ...
 }
 ```

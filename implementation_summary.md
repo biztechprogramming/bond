@@ -1,5 +1,5 @@
 STATUS: done
-REPO: /home/andrew/bond
+REPO: bond
 BRANCH: feat/gemini-api-key-spacetimedb
 COMMITS: d3cb2d8, 4274cf2, efb5b67, d2587e1, 833c525, 726ef78, 6c6fbaf
 CHANGES: Implemented API key retrieval from SpacetimeDB for worker

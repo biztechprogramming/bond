@@ -601,7 +601,7 @@ Screenshots are saved to `/workspace/.bond/screenshots/` inside the container. B
 ```
 Container: /workspace/.bond/screenshots/browser_abc123.png
     ↕  (Docker bind mount)
-Host: /home/andrew/.bond/data/screenshots/browser_abc123.png
+Host: ~/.bond/data/screenshots/browser_abc123.png
 ```
 
 Screenshots can be:

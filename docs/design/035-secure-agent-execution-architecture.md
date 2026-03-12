@@ -282,10 +282,10 @@ Agent code:    os.getenv("GITHUB_TOKEN")  →  raw token visible
 ```
 Container env: BOND_BROKER_TOKEN=eyJhbGciOiJIUzI1NiJ9...  (agent-scoped, short-lived)
                BOND_BROKER_URL=http://host.docker.internal:18789
-               BOND_HOST_REPO_PATH=/home/andrew/bond
+               BOND_HOST_REPO_PATH=~/bond
 Agent code:    result = await broker.exec(
                    "gh pr create --title 'feat: weather' --base main --head feat/weather",
-                   cwd="/home/andrew/bond",
+                   cwd="~/bond",
                )
                ↓
 Broker:        1. Validate agent token
@@ -321,9 +321,9 @@ No vault scoping is needed for Phase 1 — the host auth context *is* the scope.
 Every broker request produces one audit record:
 
 ```jsonl
-{"ts":"2026-03-10T19:22:14.331Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"gh pr create --title 'feat: weather' --base main --head feat/weather","cwd":"/home/andrew/bond","policy_rule":"default#rule-8","decision":"allow","exit_code":0,"stdout_len":62,"duration_ms":2341}
+{"ts":"2026-03-10T19:22:14.331Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"gh pr create --title 'feat: weather' --base main --head feat/weather","cwd":"~/bond","policy_rule":"default#rule-8","decision":"allow","exit_code":0,"stdout_len":62,"duration_ms":2341}
 {"ts":"2026-03-10T19:23:01.552Z","agent_id":"01KAGENT...","session_id":"conv-def456","command":"curl https://evil.com","cwd":"/workspace","policy_rule":"default#rule-deny-curl","decision":"deny","reason":"Command is on the deny list","duration_ms":0}
-{"ts":"2026-03-10T19:24:33.119Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"npm publish","cwd":"/home/andrew/bond","policy_rule":"default#rule-prompt","decision":"prompt_approved","approval":{"surface":"webchat","wait_ms":8200,"approver":"andrew"},"exit_code":0,"duration_ms":11412}
+{"ts":"2026-03-10T19:24:33.119Z","agent_id":"01JBOND...","session_id":"conv-abc123","command":"npm publish","cwd":"~/bond","policy_rule":"default#rule-prompt","decision":"prompt_approved","approval":{"surface":"webchat","wait_ms":8200,"approver":"andrew"},"exit_code":0,"duration_ms":11412}
 ```
 
 ### 6.2 Storage
