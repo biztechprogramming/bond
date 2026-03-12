@@ -9,6 +9,8 @@ import { ulid } from "ulid";
 import { AllowList } from "./allowlist.js";
 import { TelegramChannel } from "./telegram.js";
 import { WhatsAppChannel } from "./whatsapp.js";
+import { DiscordChannel } from "./discord.js";
+import { SlackChannel } from "./slack.js";
 import type { ChannelMessage } from "./base.js";
 import type { BackendClient, AgentInfo } from "../backend/client.js";
 import type { MessagePipeline, PipelineContext, PipelineMessage } from "../pipeline/index.js";
@@ -17,6 +19,7 @@ interface ChannelConfig {
   type: string;
   enabled: boolean;
   token?: string;
+  appToken?: string;
   allowList: string[];
   botInfo?: { id: number; username: string; firstName: string };
 }
@@ -39,6 +42,8 @@ export class ChannelManager {
   private configs = new Map<string, ChannelConfig>();
   private telegram: TelegramChannel | null = null;
   private whatsapp: WhatsAppChannel | null = null;
+  private discord: DiscordChannel | null = null;
+  private slack: SlackChannel | null = null;
   private configPath: string;
   private backendClient: BackendClient;
   private qrSubscribers = new Set<(qr: string) => void>();
@@ -86,6 +91,28 @@ export class ChannelManager {
       channels.push({ type: "whatsapp", status: "not_linked", enabled: false });
     }
 
+    const discordConfig = this.configs.get("discord");
+    if (discordConfig) {
+      channels.push({
+        type: "discord",
+        status: this.discord?.isRunning() ? "linked" : "not_linked",
+        enabled: discordConfig.enabled,
+      });
+    } else {
+      channels.push({ type: "discord", status: "not_linked", enabled: false });
+    }
+
+    const slackConfig = this.configs.get("slack");
+    if (slackConfig) {
+      channels.push({
+        type: "slack",
+        status: this.slack?.isRunning() ? "linked" : "not_linked",
+        enabled: slackConfig.enabled,
+      });
+    } else {
+      channels.push({ type: "slack", status: "not_linked", enabled: false });
+    }
+
     return channels;
   }
 
@@ -97,6 +124,29 @@ export class ChannelManager {
       token,
       allowList: existing?.allowList || [],
       botInfo: botInfo || existing?.botInfo,
+    });
+    this.saveConfigs();
+  }
+
+  configureDiscord(token: string, botInfo?: { id: string; username: string }): void {
+    const existing = this.configs.get("discord");
+    this.configs.set("discord", {
+      type: "discord",
+      enabled: true,
+      token,
+      allowList: existing?.allowList || [],
+    });
+    this.saveConfigs();
+  }
+
+  configureSlack(botToken: string, appToken: string): void {
+    const existing = this.configs.get("slack");
+    this.configs.set("slack", {
+      type: "slack",
+      enabled: true,
+      token: botToken,
+      appToken,
+      allowList: existing?.allowList || [],
     });
     this.saveConfigs();
   }
@@ -154,6 +204,46 @@ export class ChannelManager {
       await this.whatsapp.start();
       config.enabled = true;
       this.saveConfigs();
+    } else if (type === "discord") {
+      const config = this.configs.get("discord");
+      if (!config?.token) throw new Error("Discord not configured — set up token first");
+
+      if (this.discord?.isRunning()) return;
+
+      const allowList = new AllowList(config.allowList);
+      this.discord = new DiscordChannel({
+        token: config.token,
+        allowList,
+        onMessage: (msg) => this.handleInboundMessage(msg),
+        persistFn: (ids) => {
+          config.allowList = ids;
+          this.saveConfigs();
+        },
+      });
+      await this.discord.start();
+      config.enabled = true;
+      this.saveConfigs();
+    } else if (type === "slack") {
+      const config = this.configs.get("slack");
+      if (!config?.token) throw new Error("Slack not configured — set up tokens first");
+      if (!config?.appToken) throw new Error("Slack not configured — app token missing");
+
+      if (this.slack?.isRunning()) return;
+
+      const allowList = new AllowList(config.allowList);
+      this.slack = new SlackChannel({
+        botToken: config.token,
+        appToken: config.appToken,
+        allowList,
+        onMessage: (msg) => this.handleInboundMessage(msg),
+        persistFn: (ids) => {
+          config.allowList = ids;
+          this.saveConfigs();
+        },
+      });
+      await this.slack.start();
+      config.enabled = true;
+      this.saveConfigs();
     } else {
       throw new Error(`Unknown channel type: ${type}`);
     }
@@ -169,6 +259,16 @@ export class ChannelManager {
       await this.whatsapp.stop();
       this.whatsapp = null;
       const config = this.configs.get("whatsapp");
+      if (config) { config.enabled = false; this.saveConfigs(); }
+    } else if (type === "discord" && this.discord) {
+      await this.discord.stop();
+      this.discord = null;
+      const config = this.configs.get("discord");
+      if (config) { config.enabled = false; this.saveConfigs(); }
+    } else if (type === "slack" && this.slack) {
+      await this.slack.stop();
+      this.slack = null;
+      const config = this.configs.get("slack");
       if (config) { config.enabled = false; this.saveConfigs(); }
     }
   }
@@ -187,6 +287,8 @@ export class ChannelManager {
   isChannelRunning(type: string): boolean {
     if (type === "telegram") return this.telegram?.isRunning() ?? false;
     if (type === "whatsapp") return this.whatsapp?.isRunning() ?? false;
+    if (type === "discord") return this.discord?.isRunning() ?? false;
+    if (type === "slack") return this.slack?.isRunning() ?? false;
     return false;
   }
 
@@ -522,6 +624,10 @@ Session: ${chatKey}`;
       await this.telegram.send(channelId, message);
     } else if (channelType === "whatsapp" && this.whatsapp) {
       await this.whatsapp.send(channelId, message);
+    } else if (channelType === "discord" && this.discord) {
+      await this.discord.send(channelId, message);
+    } else if (channelType === "slack" && this.slack) {
+      await this.slack.send(channelId, message);
     }
   }
 

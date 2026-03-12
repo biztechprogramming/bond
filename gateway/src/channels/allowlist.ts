@@ -22,6 +22,10 @@ export class AllowList {
     this.ids.delete(senderId.toLowerCase());
   }
 
+  isEmpty(): boolean {
+    return this.ids.size === 0;
+  }
+
   toArray(): string[] {
     return Array.from(this.ids);
   }
