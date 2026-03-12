@@ -101,56 +101,93 @@ This document describes a deployment agent architecture where:
 
 ## 3. Environments
 
-### 3.1 Storage: API-Managed, Database-Backed
+### 3.1 Storage: SpacetimeDB, API-Managed
 
-Environment definitions are **not stored in config files.** They are managed exclusively through the Gateway API, stored in the same database Bond uses (SQLite for single-node, PostgreSQL for production). This gives them the same security properties as promotion state — agents cannot read or modify them.
+Environment definitions are **not stored in config files.** They are managed exclusively through the Gateway API, stored in SpacetimeDB — the same database Bond uses for agents, conversations, settings, and everything else. This gives them the same security properties as promotion state — agents cannot read or modify them.
 
-**Why not YAML?** A config file on the host filesystem is the weakest link. If an agent ever gets host-level access (through a broker bug, exploit, or misconfigured policy), it could modify environment definitions — adding environments, changing approvers, removing deployment windows. API-managed config with user-session auth closes this gap.
+**Why SpacetimeDB?**
+- **One data layer.** Bond already uses SpacetimeDB for all state. Deployment state shouldn't be different.
+- **Real-time subscriptions.** The frontend gets instant updates when promotion state changes, approvals come in, deployments complete — no polling.
+- **Agents can't access it.** As of 2026-03-12, `SPACETIMEDB_TOKEN` is no longer injected into agent containers (§20.2). Only the Gateway process has the token.
 
-### 3.2 Environment Schema
+**Why not YAML?** A config file on the host filesystem is the weakest link. If an agent ever gets host-level access (through a broker bug, exploit, or misconfigured policy), it could modify environment definitions. API-managed config with user-session auth closes this gap.
 
-```sql
-CREATE TABLE deployment_environments (
-  name            TEXT PRIMARY KEY,       -- 'dev', 'qa', 'staging', 'uat', 'prod'
-  display_name    TEXT NOT NULL,          -- 'Development', 'QA', etc.
-  "order"         INTEGER NOT NULL UNIQUE,-- promotion order (1 = first)
-  is_active       BOOLEAN DEFAULT true,   -- soft delete
-  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+**Why not SQLite?** It would work for security, but it's a second data store. No real-time subscriptions for the frontend. And you'd eventually migrate to SpacetimeDB anyway.
 
-  -- Deployment settings
-  max_script_timeout  INTEGER DEFAULT 600,    -- seconds
-  health_check_interval INTEGER DEFAULT 300,  -- seconds
+### 3.2 Environment Schema (SpacetimeDB Tables)
 
-  -- Deployment window (NULL = no restrictions)
-  window_days     TEXT,                   -- JSON array: ["mon","tue","wed","thu","fri"]
-  window_start    TEXT,                   -- "06:00"
-  window_end      TEXT,                   -- "22:00"
-  window_timezone TEXT DEFAULT 'America/New_York',
+```rust
+// SpacetimeDB module — bond-core (or new deployment tables in existing module)
 
-  -- Approvals
-  required_approvals INTEGER DEFAULT 1    -- how many approvers needed to promote here
-);
+#[spacetimedb::table(name = deployment_environments, public)]
+pub struct DeploymentEnvironment {
+    #[primary_key]
+    pub name: String,                    // 'dev', 'qa', 'staging', 'uat', 'prod'
+    pub display_name: String,            // 'Development', 'QA', etc.
+    pub order: u32,                      // promotion order (1 = first)
+    pub is_active: bool,                 // soft delete
 
-CREATE TABLE deployment_environment_approvers (
-  environment_name TEXT NOT NULL REFERENCES deployment_environments(name),
-  user_id          TEXT NOT NULL,         -- Bond user ID or GitHub username
-  added_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  added_by         TEXT NOT NULL,         -- who added this approver
-  PRIMARY KEY (environment_name, user_id)
-);
+    // Deployment settings
+    pub max_script_timeout: u32,         // seconds (default 600)
+    pub health_check_interval: u32,      // seconds (default 300)
 
--- Every change is logged
-CREATE TABLE deployment_environment_history (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  environment_name TEXT NOT NULL,
-  action          TEXT NOT NULL,          -- 'created', 'updated', 'deactivated', 'approver_added', 'approver_removed'
-  changed_by      TEXT NOT NULL,          -- user session identity
-  changed_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  before_state    TEXT,                   -- JSON snapshot before change
-  after_state     TEXT                    -- JSON snapshot after change
-);
+    // Deployment window (empty string = no restrictions)
+    pub window_days: String,             // JSON array: '["mon","tue","wed","thu","fri"]'
+    pub window_start: String,            // "06:00" or ""
+    pub window_end: String,              // "22:00" or ""
+    pub window_timezone: String,         // "America/New_York"
+
+    // Approvals
+    pub required_approvals: u32,         // how many approvers needed (default 1)
+
+    pub created_at: u64,                 // unix millis
+    pub updated_at: u64,
+}
+
+#[spacetimedb::table(name = deployment_environment_approvers, public)]
+pub struct DeploymentEnvironmentApprover {
+    #[primary_key]
+    pub id: u64,                         // auto-increment
+    pub environment_name: String,
+    pub user_id: String,                 // Bond user ID or GitHub username
+    pub added_at: u64,
+    pub added_by: String,                // who added this approver
+}
+
+#[spacetimedb::table(name = deployment_environment_history, public)]
+pub struct DeploymentEnvironmentHistory {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub environment_name: String,
+    pub action: String,                  // 'created', 'updated', 'deactivated', etc.
+    pub changed_by: String,              // user session identity
+    pub changed_at: u64,
+    pub before_state: String,            // JSON snapshot
+    pub after_state: String,             // JSON snapshot
+}
 ```
+
+**Reducers** (write operations — called by Gateway only):
+
+```rust
+#[spacetimedb::reducer]
+pub fn create_deployment_environment(ctx: &ReducerContext, env: DeploymentEnvironment) -> Result<(), String> { ... }
+
+#[spacetimedb::reducer]
+pub fn update_deployment_environment(ctx: &ReducerContext, name: String, updates: String) -> Result<(), String> { ... }
+
+#[spacetimedb::reducer]
+pub fn deactivate_deployment_environment(ctx: &ReducerContext, name: String, changed_by: String) -> Result<(), String> { ... }
+
+#[spacetimedb::reducer]
+pub fn add_deployment_approver(ctx: &ReducerContext, environment_name: String, user_id: String, added_by: String) -> Result<(), String> { ... }
+
+#[spacetimedb::reducer]
+pub fn remove_deployment_approver(ctx: &ReducerContext, environment_name: String, user_id: String) -> Result<(), String> { ... }
+```
+
+**Note:** SpacetimeDB does not have per-table access control. Security is enforced at the Gateway API layer — only user session tokens can trigger these reducers via the Gateway. Agents don't have the SpacetimeDB token (removed from containers) so they can't call reducers directly.
 
 ### 3.3 Environment Management API
 
@@ -276,11 +313,11 @@ async function handleDeploy(req) {
   const agent = validateToken(req.token);
   const env = deriveEnvironment(agent.sub);
 
-  // Read environment config from database
-  const envConfig = await db.get(
-    "SELECT * FROM deployment_environments WHERE name = ? AND is_active = true",
-    [env]
+  // Read environment config from SpacetimeDB
+  const rows = await stdb.query(
+    `SELECT * FROM deployment_environments WHERE name = '${env}' AND is_active = true`
   );
+  const envConfig = rows[0];
 
   if (!envConfig) {
     return { status: "denied", reason: "Environment not found or deactivated" };
@@ -515,7 +552,7 @@ Hooks are optional. If a hook doesn't exist for an environment, it's skipped. Ho
 
 **Agents cannot promote scripts. Only users can.**
 
-The promotion state lives in a SQLite database (or JSON file) at `~/.bond/deployments/promotions/state.db`. Deployment agents have no write access to this file. The Gateway's Promotion API is the only writer, and it only accepts requests from authenticated UI sessions — not from agent broker tokens.
+The promotion state lives in SpacetimeDB — the same database Bond uses for everything else. Agents don't have the SpacetimeDB token (removed from containers as of §20.2), so they have no access. The Gateway's Promotion API is the only writer, and it only accepts requests from authenticated UI sessions — not from agent broker tokens.
 
 ### 6.2 Promotion Lifecycle
 
@@ -566,52 +603,66 @@ There are **no per-environment directories or symlinks.** Environment access is 
 
 The script content is immutable once snapshotted. The `.sha256` file contains a hash of the entire script bundle. The **broker** verifies this hash before execution (not the agent — the agent never sees the script). If someone tampers with the registry on the host filesystem, the hash check fails and the broker refuses to execute.
 
-### 6.4 Promotion State (Database-Backed)
+### 6.4 Promotion State (SpacetimeDB)
 
-Promotion state is stored in the same database as environment config — not in `state.json`. This keeps the security model consistent: all deployment state lives in the database, managed by the Gateway, inaccessible to agents.
+Promotion state lives in SpacetimeDB alongside environment config. Same security model: Gateway-only access, agents have no token.
 
-```sql
-CREATE TABLE deployment_promotions (
-  script_id        TEXT NOT NULL,
-  script_version   TEXT NOT NULL,
-  script_sha256    TEXT NOT NULL,
-  environment_name TEXT NOT NULL REFERENCES deployment_environments(name),
+```rust
+#[spacetimedb::table(name = deployment_promotions, public)]
+pub struct DeploymentPromotion {
+    #[primary_key]
+    pub id: u64,                         // auto-increment
+    pub script_id: String,
+    pub script_version: String,
+    pub script_sha256: String,
+    pub environment_name: String,
 
-  -- Promotion status
-  status           TEXT NOT NULL DEFAULT 'not_promoted',
-    -- 'not_promoted', 'awaiting_approvals', 'promoted', 'deploying',
-    -- 'success', 'failed', 'rolled_back'
+    // Status: 'not_promoted', 'awaiting_approvals', 'promoted',
+    //         'deploying', 'success', 'failed', 'rolled_back'
+    pub status: String,
 
-  -- Promotion metadata
-  initiated_by     TEXT,              -- user who started the promotion
-  initiated_at     TIMESTAMP,
-  promoted_at      TIMESTAMP,         -- when all approvals were met
-  deployed_at      TIMESTAMP,
-  receipt_id       TEXT,
+    // Promotion metadata
+    pub initiated_by: String,            // user who started the promotion
+    pub initiated_at: u64,               // unix millis
+    pub promoted_at: u64,                // when all approvals were met (0 = not yet)
+    pub deployed_at: u64,                // when deployment completed (0 = not yet)
+    pub receipt_id: String,              // link to receipt (empty = none)
+}
 
-  PRIMARY KEY (script_id, script_version, environment_name)
-);
+#[spacetimedb::table(name = deployment_approvals, public)]
+pub struct DeploymentApproval {
+    #[primary_key]
+    pub id: u64,
+    pub script_id: String,
+    pub script_version: String,
+    pub environment_name: String,
+    pub user_id: String,                 // who approved
+    pub approved_at: u64,
+}
 
-CREATE TABLE deployment_approvals (
-  script_id        TEXT NOT NULL,
-  script_version   TEXT NOT NULL,
-  environment_name TEXT NOT NULL,
-  user_id          TEXT NOT NULL,      -- who approved
-  approved_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (script_id, script_version, environment_name, user_id),
-  FOREIGN KEY (script_id, script_version, environment_name)
-    REFERENCES deployment_promotions(script_id, script_version, environment_name)
-);
+// Reducers (called by Gateway only)
+
+#[spacetimedb::reducer]
+pub fn initiate_promotion(ctx: &ReducerContext, script_id: String, script_version: String,
+    script_sha256: String, environment_name: String, initiated_by: String) -> Result<(), String> { ... }
+
+#[spacetimedb::reducer]
+pub fn record_approval(ctx: &ReducerContext, script_id: String, script_version: String,
+    environment_name: String, user_id: String) -> Result<(), String> { ... }
+
+#[spacetimedb::reducer]
+pub fn update_promotion_status(ctx: &ReducerContext, script_id: String, script_version: String,
+    environment_name: String, status: String, receipt_id: String) -> Result<(), String> { ... }
 ```
 
-The broker's `/deploy` endpoint reads from this database instead of `state.json`:
+The broker's `/deploy` endpoint queries SpacetimeDB to check promotion status:
 
 ```typescript
 // Broker deploy handler — checking promotion status
-const promotion = await db.get(
+const rows = await stdb.query(
   `SELECT status FROM deployment_promotions
-   WHERE script_id = ? AND script_version = ? AND environment_name = ?`,
-  [scriptId, version, env]
+   WHERE script_id = '${scriptId}' AND script_version = '${version}'
+   AND environment_name = '${env}'`
 );
 
 if (!promotion || promotion.status === 'not_promoted' || promotion.status === 'awaiting_approvals') {
@@ -799,7 +850,7 @@ async function handleDeploy(req) {
   const { script_id, action } = req.body;
 
   // Is this script promoted to this agent's environment?
-  const promotion = await readPromotionDB();      // queries database on host
+  const promotion = await stdb.query(...);         // queries SpacetimeDB
   const scriptState = state.scripts[script_id]?.environments[env];
 
   if (!scriptState || scriptState.status === "not_promoted") {
@@ -1494,9 +1545,11 @@ When multiple scripts are promoted to an environment simultaneously:
 ## 19. File Structure
 
 ```
-~/.bond/data/
-├── deployments.db                   # SQLite database (environments, promotions,
-│                                    #   approvals, history — Gateway-only access)
+SpacetimeDB (bond-core module):
+  Tables: deployment_environments, deployment_environment_approvers,
+          deployment_environment_history, deployment_promotions,
+          deployment_approvals
+  Access: Gateway process only (agents have no SPACETIMEDB_TOKEN)
 
 ~/.bond/deployments/                 # HOST-ONLY — NEVER MOUNTED INTO CONTAINERS
 ├── scripts/
@@ -1541,7 +1594,7 @@ gateway/src/
 │   ├── receipts.ts                  # Receipt generation + storage
 │   ├── locks.ts                     # Deployment lock management
 │   ├── events.ts                    # Event emission
-│   ├── db.ts                        # Database schema, migrations, queries
+│   ├── stdb.ts                      # SpacetimeDB queries + reducer calls for deployment state
 │   └── __tests__/
 │       ├── environments.test.ts
 │       ├── promotion.test.ts
@@ -1549,6 +1602,20 @@ gateway/src/
 │       ├── scripts.test.ts
 │       ├── deploy-handler.test.ts
 │       └── locks.test.ts
+
+gateway/src/spacetimedb/
+├── deployment_environments_table.ts     # Auto-generated SpacetimeDB bindings
+├── deployment_promotions_table.ts
+├── deployment_approvals_table.ts
+├── deployment_environment_approvers_table.ts
+├── deployment_environment_history_table.ts
+├── create_deployment_environment_reducer.ts
+├── update_deployment_environment_reducer.ts
+├── deactivate_deployment_environment_reducer.ts
+├── initiate_promotion_reducer.ts
+├── record_approval_reducer.ts
+├── update_promotion_status_reducer.ts
+└── ... (added to existing spacetimedb/ directory)
 
 frontend/
 ├── components/deployments/
@@ -1611,7 +1678,13 @@ backend/app/agent/
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 20.2 Key Invariants
+### 20.2 SpacetimeDB Token Removal (Completed)
+
+As of 2026-03-12, `SPACETIMEDB_TOKEN` injection into agent containers has been removed from both `SandboxManager` (`manager.py`) and `OpenSandboxAdapter` (`opensandbox_adapter.py`). The token was originally injected to debug an error but was never functional — containers don't have the SpacetimeDB CLI. Removing it closes a credential exposure risk identified in Doc 035 §3.2.
+
+Agents now have **zero database credentials.** All database operations go through the broker or Gateway API.
+
+### 20.3 Key Invariants
 
 1. **Agents cannot self-escalate.** The promotion database is managed by the Gateway process — not a file on disk that could be edited, but database tables that only the Promotion API and broker deploy handler can access. The Promotion API rejects agent broker tokens (different token type, different signing key). There is no filesystem path, broker command, or API endpoint through which an agent can grant itself access to a script.
 2. **Agents never see scripts.** The script registry is host-only. The broker reads scripts from the registry and executes them. The agent sends a script ID and receives stdout/stderr. It never sees the script content, file path, or supporting files.
@@ -1626,7 +1699,7 @@ backend/app/agent/
 
 ### Phase 1: Core Pipeline (~1.5 weeks)
 
-1. Database schema + migrations (`deployment_environments`, `deployment_promotions`, `deployment_approvals`, `deployment_environment_approvers`, history tables)
+1. SpacetimeDB tables + reducers (`deployment_environments`, `deployment_promotions`, `deployment_approvals`, `deployment_environment_approvers`, history tables — added to `bond-core` module)
 2. Environment Management API (`/api/v1/deployments/environments` — CRUD, user-session-auth only)
 3. Default environment seeding on first run (dev, qa, staging, uat, prod)
 4. CLI escape hatch (`bond environments import/export` for bootstrap + DR)
@@ -1634,7 +1707,7 @@ backend/app/agent/
 6. Promotion API (`/api/v1/deployments/promote` + `/promote/approve` — user-session-auth only)
 7. Approval workflow (record approvals, check thresholds, notify pending approvers)
 8. User session token system (separate signing key from broker tokens, Promotion API validates token type)
-9. **Broker `/deploy` endpoint** — queries promotion DB, loads scripts from registry, injects secrets, executes on host
+9. **Broker `/deploy` endpoint** — queries SpacetimeDB for promotion status, loads scripts from registry, injects secrets, executes on host
 10. Per-environment broker exec policies (lock down generic `/exec` to `gh issue create` only)
 11. Deployment agent container creation (RO workspace mounts only, NO deployment files mounted)
 12. Basic deployment execution flow (agent → broker `/deploy` → validate → execute → receipt)

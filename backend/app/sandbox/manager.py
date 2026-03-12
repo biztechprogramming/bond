@@ -410,11 +410,11 @@ class SandboxManager:
         except Exception:
             pass
 
-        # Forward SpacetimeDB token so sandbox can use work_plan, memory, etc.
-        from backend.app.core.spacetimedb import _resolve_token
-        stdb_token = _resolve_token()
-        if stdb_token:
-            cmd.extend(["-e", f"SPACETIMEDB_TOKEN={stdb_token}"])
+        # REMOVED: SpacetimeDB token injection (2026-03-12)
+        # Agents must NOT have direct SpacetimeDB access.
+        # The token was injected to debug an error but never actually used
+        # by containers (no spacetime CLI installed). Removing it closes
+        # a credential exposure risk — see design docs 035 §3.2, 039 §20.
 
         # --- Mounts (Task 2) ---
 
