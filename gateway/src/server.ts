@@ -19,6 +19,7 @@ import { createPersistenceRouter } from "./persistence/index.js";
 import { createConversationsRouter } from "./conversations/index.js";
 import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
+import { WebhookRegistrar } from "./webhooks/registrar.js";
 import { createBrokerRouter } from "./broker/router.js";
 import { EventBus, EventHistory, CompletionDispatcher, createEventsRouter } from "./events/index.js";
 import { ChannelManager } from "./channels/manager.js";
@@ -59,6 +60,17 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     });
   });
   eventBus.startCleanup();
+
+  // Auto-register GitHub webhooks (non-blocking — failures are logged, not fatal)
+  const registrar = new WebhookRegistrar({
+    externalUrl: process.env.GATEWAY_EXTERNAL_URL,
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+    repos: config.webhooks?.repos,
+    autoDiscover: config.webhooks?.autoDiscover ?? true,
+  });
+  registrar.ensureWebhooks().catch((err) => {
+    console.warn("[registrar] Unexpected error during webhook registration:", err);
+  });
 
   const app = express();
   app.use(express.json());

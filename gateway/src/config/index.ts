@@ -9,6 +9,13 @@ import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 
+export interface WebhooksConfig {
+  /** Explicit list of repos to register webhooks for (overrides autoDiscover). */
+  repos?: string[];
+  /** Auto-discover repos via `gh repo list` (default: true). */
+  autoDiscover?: boolean;
+}
+
 export interface GatewayConfig {
   host: string;
   port: number;
@@ -17,6 +24,7 @@ export interface GatewayConfig {
   spacetimedbUrl: string;
   spacetimedbModuleName: string;
   spacetimedbToken: string;
+  webhooks?: WebhooksConfig;
 }
 
 /** Walk up from cwd to find bond.json */
@@ -59,6 +67,15 @@ export function loadConfig(): GatewayConfig {
   const backendPort = process.env.BOND_BACKEND_PORT || String(be.port || 18790);
   const frontendPort = process.env.BOND_FRONTEND_PORT || String(fe.port || 18788);
 
+  const gwWebhooks = gw.webhooks as Record<string, any> | undefined;
+  const webhooks: WebhooksConfig | undefined = gwWebhooks
+    ? {
+        repos: Array.isArray(gwWebhooks.repos) ? gwWebhooks.repos : undefined,
+        autoDiscover:
+          typeof gwWebhooks.autoDiscover === "boolean" ? gwWebhooks.autoDiscover : true,
+      }
+    : undefined;
+
   return {
     host,
     port,
@@ -67,5 +84,6 @@ export function loadConfig(): GatewayConfig {
     spacetimedbUrl: process.env.BOND_SPACETIMEDB_URL || "http://localhost:18787",
     spacetimedbModuleName: process.env.BOND_SPACETIMEDB_MODULE || "bond-core-v2",
     spacetimedbToken: resolveSpacetimeToken(),
+    webhooks,
   };
 }
