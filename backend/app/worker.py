@@ -23,6 +23,7 @@ from typing import Any
 import hashlib
 
 import aiosqlite
+import httpx
 import litellm
 from litellm.cost_calculator import completion_cost as _litellm_completion_cost
 
