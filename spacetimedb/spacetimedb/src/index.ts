@@ -399,6 +399,21 @@ const spacetimedb = schema({
       approved_at: t.u64(),
     }
   ),
+
+  // -- System Events (background task completions, notifications) --
+  system_events: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      conversationId: t.string(),
+      agentId: t.string(),
+      eventType: t.string(),     // "coding_agent_done", "coding_agent_failed", etc.
+      summary: t.string(),       // human-readable summary
+      metadata: t.string(),      // JSON string with structured data
+      consumed: t.bool(),
+      createdAt: t.u64(),
+    }
+  ),
 });
 
 export default spacetimedb;
@@ -1409,5 +1424,35 @@ export const update_promotion_status = spacetimedb.reducer(
       deployed_at: args.deployed_at ?? existing.deployed_at,
       receipt_id: args.receipt_id ?? existing.receipt_id,
     });
+  }
+);
+
+// -- System Events --
+
+export const enqueueSystemEvent = spacetimedb.reducer(
+  {
+    id: t.string(),
+    conversationId: t.string(),
+    agentId: t.string(),
+    eventType: t.string(),
+    summary: t.string(),
+    metadata: t.string(),
+  },
+  (ctx, evt) => {
+    ctx.db.system_events.insert({
+      ...evt,
+      consumed: false,
+      createdAt: BigInt(Date.now()),
+    });
+  }
+);
+
+export const consumeSystemEvent = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const evt = ctx.db.system_events.id.find(id);
+    if (evt) {
+      ctx.db.system_events.id.delete(id);
+    }
   }
 );
