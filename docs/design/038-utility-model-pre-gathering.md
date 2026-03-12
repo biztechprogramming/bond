@@ -337,16 +337,151 @@ if plan["complexity"] == "simple":
     pass
 ```
 
-### Coding agent delegation
+### Coding agent delegation (two distinct cases)
 
-Phase 1 returns `delegate_to_coding_agent: true`. Phase 2 gathers just enough context for Opus to write a good task spec. Phase 3 is a short loop (1-3 iterations) where Opus writes the spec and spawns the agent.
+There are two ways a task ends up at a coding agent. They need different handling.
+
+#### Case A: Planned delegation (known upfront)
+
+Phase 1 returns `delegate_to_coding_agent: true`. The user said "build X" or "refactor Y" — Opus knows immediately this is coding agent work.
+
+In this case, **the entire loop is about writing a good task prompt**, not about understanding the code. Opus doesn't need to understand every line — it needs to understand *enough* to write a spec that Claude Code can execute.
 
 ```python
 if plan["delegate_to_coding_agent"]:
-    # Phase 2 still runs — gather the files Opus needs to write a good spec
-    # Phase 3 uses a reduced iteration budget (max 5)
-    max_iterations = 5
+    # Phase 2: Gather, but LESS aggressively
+    # Read only the files needed to understand the architecture and interfaces.
+    # Don't read implementation details — Claude Code will do that itself.
+    # The plan should request outlines, not full file contents.
+    
+    # Phase 3: Different system prompt — focus on spec writing
+    delegation_system_prompt = """
+    Your job is to write a detailed task specification for a coding agent.
+    You have pre-gathered context about the relevant files and architecture.
+    
+    Write a task prompt that includes:
+    1. What to build/change (specific, concrete)
+    2. Which files to modify (exact paths from the repo map)
+    3. Which files to reference for patterns/context (exact paths)
+    4. Constraints and edge cases
+    5. How to verify the work (tests, type checking, etc.)
+    
+    Do NOT:
+    - Read more files to understand implementation details
+    - Try to solve the problem yourself
+    - Write code in your response
+    
+    Spawn the coding_agent tool with your spec when ready.
+    """
+    
+    # Tight budget — spec writing shouldn't take more than 3 iterations
+    _adaptive_budget = min(max_iterations, 3)
 ```
+
+**Expected flow:**
+```
+Phase 0: Repo map                                    (~0ms, 0 tokens)
+Phase 1: Plan → "delegate, need to understand X"     (1 Opus call, $0.05)
+Phase 2: Gather outlines of 3-5 key files             (no LLM, $0.00)
+Phase 3: 
+  iter-0: Opus writes detailed task spec              ($0.08)
+  iter-1: Opus spawns coding_agent with spec          ($0.08)
+  [done — 2 iterations, total ~$0.21]
+```
+
+Compare to today: 15 iterations of Opus reading files, *then* spawning a coding agent with a vague prompt. ~$2.00.
+
+#### Case B: Emergency handoff (mid-loop budget escalation)
+
+The task started as direct work — Opus was reading files, maybe editing — but it's burning through the iteration budget. The existing `_budget_threshold` at 80% kicks in and injects a "hand off to coding_agent" message. This already exists in `worker.py`.
+
+The problem with the current handoff: **Opus has spent 15 iterations gathering context that it now has to re-summarize into a coding agent prompt.** The coding agent gets a half-baked spec because Opus is rushing to hand off before the budget runs out.
+
+**Fix: structured handoff context.**
+
+When the budget escalation fires, instead of just telling Opus to "hand off," we build a structured handoff package from what Opus has already done:
+
+```python
+if _iteration >= _budget_threshold and _iteration > 2:
+    # Build handoff context from the conversation so far
+    handoff_context = _build_handoff_context(messages)
+    
+    messages.append({"role": "user", "content": f"""
+SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}.
+Budget escalation — hand off to coding_agent NOW.
+
+Here is a summary of what you've gathered so far:
+
+**Files you've read:**
+{handoff_context['files_read']}
+
+**Changes you've made (if any):**
+{handoff_context['edits_made']}
+
+**What's left to do:**
+Based on your work so far, write a coding_agent task prompt that covers
+the remaining work. Include the file paths you've already identified.
+The coding agent has access to the same repo — reference files by path,
+don't paste their contents.
+
+Spawn coding_agent in your next response. Do not read more files.
+"""})
+
+
+def _build_handoff_context(messages: list[dict]) -> dict:
+    """Extract what the agent has done so far from the message history.
+    
+    Scans tool calls and results to build:
+    - List of files read (with paths)
+    - List of edits made (file paths + brief description)
+    - List of grep/search results
+    """
+    files_read = []
+    edits_made = []
+    
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in (msg.get("tool_calls") or []):
+            fn = tc.get("function", {})
+            name = fn.get("name", "")
+            args = json.loads(fn.get("arguments", "{}"))
+            
+            if name == "file_read":
+                files_read.append(args.get("path", "unknown"))
+            elif name in ("file_edit", "file_write"):
+                edits_made.append(args.get("path", "unknown"))
+    
+    return {
+        "files_read": "\n".join(f"- {f}" for f in files_read) or "None",
+        "edits_made": "\n".join(f"- {f}" for f in edits_made) or "None",
+    }
+```
+
+**Expected flow:**
+```
+Phase 0-2: Normal plan/gather/act                    
+Phase 3:
+  iter-0 to iter-6: Opus working on the task directly
+  iter-7: Budget at 80%, handoff fires
+  iter-7: Opus sees structured handoff context         ($0.15)
+  iter-8: Opus spawns coding_agent with detailed spec  ($0.15)
+  [coding agent picks up where Opus left off]
+```
+
+The key difference from today: the handoff message includes **what files were already read and what edits were already made**, so Opus can write a spec that says "continue from here" instead of starting from scratch.
+
+#### Summary: Two delegation paths
+
+| | Case A: Planned | Case B: Emergency |
+|---|---|---|
+| **When decided** | Phase 1 (before any work) | Mid-loop (budget threshold) |
+| **Info gathering** | Minimal — outlines only | Already done (it's why budget is depleted) |
+| **Loop purpose** | Write task spec | Finish urgent work, then hand off |
+| **Budget** | 3 iterations max | Remaining budget (usually 2-3) |
+| **Spec quality** | High — focused from the start | Medium — compressed from partial work |
+| **System prompt** | Spec-writing mode | Normal + handoff injection |
+| **Cost** | ~$0.21 | ~$1.50 (existing work) + $0.30 (handoff) |
 
 ### Plan misses files
 
