@@ -91,6 +91,7 @@ def build_registry() -> ToolRegistry:
         handle_shell_diff, handle_shell_awk, handle_shell_jq,
     )
     from .coding_agent import handle_coding_agent
+    from .deploy_tools import handle_deploy_tool
 
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
@@ -133,4 +134,7 @@ def build_registry() -> ToolRegistry:
     registry.register("shell_awk", handle_shell_awk)
     registry.register("shell_jq", handle_shell_jq)
     registry.register("coding_agent", handle_coding_agent)
+    # Deployment agent tools (Design Doc 039) — only available to deploy-* agents
+    registry.register("deploy_action", lambda args, ctx: handle_deploy_tool("deploy_action", args))
+    registry.register("file_bug_ticket", lambda args, ctx: handle_deploy_tool("file_bug_ticket", args))
     return registry

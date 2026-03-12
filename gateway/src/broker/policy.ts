@@ -92,8 +92,20 @@ const DEFAULT_RULES: PolicyRule[] = [
   { commands: ["*"], decision: "deny", reason: "Command not in allowlist" },
 ];
 
+// Deployment agent exec policy — only gh issue create is allowed
+// All deployment operations must go through /broker/deploy, not /exec
+const DEPLOY_AGENT_RULES: PolicyRule[] = [
+  { commands: ["gh issue create*"], decision: "allow" },
+  {
+    commands: ["*"],
+    decision: "deny",
+    reason: "Deployment agents use /broker/deploy for deployments. Only 'gh issue create' is allowed via /exec.",
+  },
+];
+
 export class PolicyEngine {
   private compiled: CompiledRule[];
+  private deployAgentCompiled: CompiledRule[];
 
   constructor() {
     this.compiled = DEFAULT_RULES.map((rule, index) => ({
@@ -105,10 +117,24 @@ export class PolicyEngine {
       index,
       policyName: "default",
     }));
+
+    this.deployAgentCompiled = DEPLOY_AGENT_RULES.map((rule, index) => ({
+      patterns: rule.commands.map(globToRegex),
+      decision: rule.decision,
+      reason: rule.reason,
+      timeout: rule.timeout,
+      index,
+      policyName: "deploy-agent",
+    }));
   }
 
-  evaluate(command: string, cwd: string | undefined, _agentId: string, _sessionId: string): PolicyDecision {
-    for (const rule of this.compiled) {
+  evaluate(command: string, cwd: string | undefined, agentId: string, _sessionId: string): PolicyDecision {
+    // Deployment agents (deploy-*) get a restricted exec policy
+    const rules = agentId.match(/^deploy-[a-z0-9-]+$/)
+      ? this.deployAgentCompiled
+      : this.compiled;
+
+    for (const rule of rules) {
       const commandMatches = rule.patterns.some((p) => p.test(command));
       if (!commandMatches) continue;
 

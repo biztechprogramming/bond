@@ -428,6 +428,20 @@ def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+@app.get("/coding-agent/status")
+async def coding_agent_status_endpoint():
+    """Return status of all active coding agent sessions."""
+    from backend.app.agent.tools.coding_agent import get_coding_agent_status
+    return get_coding_agent_status()
+
+
+@app.get("/coding-agent/status/{agent_id}")
+async def coding_agent_status_by_id(agent_id: str):
+    """Return status of a specific coding agent session."""
+    from backend.app.agent.tools.coding_agent import get_coding_agent_status
+    return get_coding_agent_status(agent_id)
+
+
 @app.get("/coding-agent/events/{conversation_id}")
 async def coding_agent_events(conversation_id: str) -> StreamingResponse:
     """SSE stream of incremental git diffs from an active coding agent.
@@ -479,6 +493,11 @@ async def coding_agent_events(conversation_id: str) -> StreamingResponse:
                     "elapsed_seconds": event["elapsed_seconds"],
                     "summary": event["summary"],
                     "git_stat": event.get("git_stat", ""),
+                    "conversation_id": conversation_id,
+                })
+            elif event_type == "output":
+                yield _sse_event("coding_agent_output", {
+                    "text": event["text"],
                     "conversation_id": conversation_id,
                 })
             elif event_type == "error":
@@ -992,6 +1011,18 @@ async def _run_agent_loop(
     # Use compact schemas to further reduce token usage
     tool_defs = [compact_tool_schema(TOOL_MAP[name]) for name in selected_tool_names if name in TOOL_MAP]
 
+    # Read coding agent settings from local DB (if available)
+    coding_agent_settings: dict[str, str] = {}
+    if _state.agent_db:
+        try:
+            async with _state.agent_db.execute(
+                "SELECT key, value FROM settings WHERE key LIKE 'coding_agent.%'"
+            ) as cursor:
+                async for row in cursor:
+                    coding_agent_settings[row[0]] = row[1]
+        except Exception:
+            pass  # Table may not exist yet — use defaults
+
     # Tool context: local agent_db instead of host SQLAlchemy session
     tool_context: dict[str, Any] = {
         "agent_db": _state.agent_db,
@@ -999,6 +1030,7 @@ async def _run_agent_loop(
         "conversation_id": conversation_id,
         "event_queue": event_queue,
         "api_keys": injected_keys,
+        "coding_agent_settings": coding_agent_settings,
     }
 
     tool_calls_made = 0

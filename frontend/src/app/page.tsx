@@ -71,6 +71,7 @@ export default function Home() {
   const [codingAgentActive, setCodingAgentActive] = useState(false);
   const [codingAgentDiffs, setCodingAgentDiffs] = useState<Record<string, { diff: string; count: number }>>({});
   const [codingAgentSummary, setCodingAgentSummary] = useState<string | null>(null);
+  const [codingAgentOutput, setCodingAgentOutput] = useState<string[]>([]);
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -199,6 +200,7 @@ export default function Home() {
       } else if (msg.type === "coding_agent_started" && msg.content) {
         setCodingAgentActive(true);
         setCodingAgentDiffs({});
+        setCodingAgentOutput([]);
         setCodingAgentSummary(null);
       } else if (msg.type === "coding_agent_diff" && msg.content) {
         try {
@@ -211,6 +213,18 @@ export default function Home() {
               count: (prev[file]?.count || 0) + 1,
             },
           }));
+        } catch { /* ignore */ }
+      } else if (msg.type === "coding_agent_output" && msg.content) {
+        try {
+          const data = JSON.parse(msg.content);
+          const text = data.text as string;
+          if (text) {
+            setCodingAgentOutput((prev) => {
+              const lines = [...prev, ...text.split("\n")];
+              // Keep last 200 lines in state to avoid memory bloat
+              return lines.length > 200 ? lines.slice(-200) : lines;
+            });
+          }
         } catch { /* ignore */ }
       } else if (msg.type === "coding_agent_done" && msg.content) {
         try {
@@ -586,6 +600,7 @@ export default function Home() {
           toolActivity={toolActivity}
           codingAgentActive={codingAgentActive}
           codingAgentDiffs={codingAgentDiffs}
+          codingAgentOutput={codingAgentOutput}
           compact={false}
           showToolActivityLog={true}
           emptyMessage={`Send a message to start chatting with ${selectedAgentName}.`}
