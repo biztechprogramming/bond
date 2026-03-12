@@ -460,6 +460,24 @@ async def handle_file_smart_edit(
             "hint": "Call again with new_content to apply the edit.",
         }
 
+    # Safety check: warn if replacement is dramatically smaller than selection
+    old_line_count = sel_end - sel_start + 1
+    new_line_count = len(new_content.splitlines()) if new_content.strip() else 0
+    if old_line_count > 10 and new_line_count < old_line_count * 0.25:
+        return {
+            "error": (
+                f"Safety check: you're replacing {old_line_count} lines with only "
+                f"{new_line_count} lines ({new_line_count / old_line_count * 100:.0f}% of original). "
+                f"This usually means you forgot to include the unchanged parts of the selection in new_content. "
+                f"new_content must be the COMPLETE replacement for lines {sel_start}-{sel_end}, not just the changed portion. "
+                f"Use preview mode first (omit new_content) to see the full selection, then provide the complete replacement."
+            ),
+            "path": buf.path,
+            "selection": selected,
+            "start_line": sel_start,
+            "end_line": sel_end,
+        }
+
     # Edit mode — replace and write to disk
     result = buf.replace(sel_start, sel_end, new_content)
     if "error" in result:
