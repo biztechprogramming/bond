@@ -255,8 +255,8 @@ export default function PromptsTab() {
           />}
 
           {/* Fragment list */}
-          {fragments.map((f) => (
-            <div key={f.id} style={s.card}>
+          {fragments.map((f, i) => (
+            <div key={f.id ?? `frag-${i}`} style={s.card}>
               {editing?.id === f.id ? (
                 <FragmentEditor fragment={editing} onSave={(upd) => saveFragment(upd, "Updated from UI")} onCancel={() => setEditing(null)} />
               ) : (
@@ -290,8 +290,8 @@ export default function PromptsTab() {
                     <strong style={{ color: "#e0e0e8" }}>Version History</strong>
                     <button style={s.btnSmall} onClick={() => setShowVersions(null)}>Close</button>
                   </div>
-                  {versions.map((v) => (
-                    <div key={v.id} style={s.versionRow}>
+                  {versions.map((v, vi) => (
+                    <div key={v.id ?? `ver-${vi}`} style={s.versionRow}>
                       <span style={{ color: "#6c8aff" }}>v{v.version}</span>
                       <span style={{ color: "#8888a0", flex: 1 }}>{v.change_reason}</span>
                       <span style={{ color: "#5a5a6e", fontSize: "0.8rem" }}>{v.changed_by} · {new Date(v.created_at).toLocaleDateString()}</span>
@@ -308,8 +308,8 @@ export default function PromptsTab() {
       {/* ═══ TEMPLATES TAB ═══ */}
       {subTab === "templates" && (
         <div>
-          {templates.map((t) => (
-            <div key={t.id} style={s.card}>
+          {templates.map((t, ti) => (
+            <div key={t.id ?? `tmpl-${ti}`} style={s.card}>
               {editingTemplate?.id === t.id ? (
                 <TemplateEditor template={editingTemplate} onSave={(upd) => saveTemplate(upd, "Updated from UI")} onCancel={() => setEditingTemplate(null)} />
               ) : (
@@ -339,8 +339,8 @@ export default function PromptsTab() {
                     <strong style={{ color: "#e0e0e8" }}>Version History</strong>
                     <button style={s.btnSmall} onClick={() => setShowVersions(null)}>Close</button>
                   </div>
-                  {versions.map((v) => (
-                    <div key={v.id} style={s.versionRow}>
+                  {versions.map((v, vi) => (
+                    <div key={v.id ?? `ver-${vi}`} style={s.versionRow}>
                       <span style={{ color: "#6c8aff" }}>v{v.version}</span>
                       <span style={{ color: "#8888a0", flex: 1 }}>{v.change_reason}</span>
                       <span style={{ color: "#5a5a6e", fontSize: "0.8rem" }}>{v.changed_by} · {new Date(v.created_at).toLocaleDateString()}</span>
@@ -366,7 +366,7 @@ function FragmentEditor({ fragment, isNew, onSave, onCancel }: {
   onCancel: () => void;
 }) {
   const [f, setF] = useState({ ...fragment });
-  const [name, setName] = useState(fragment.name);
+  const [name, setName] = useState(fragment?.name);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
