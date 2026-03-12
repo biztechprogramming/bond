@@ -74,44 +74,106 @@ Replace the current single-loop architecture with three distinct phases:
 ┌─────────────────────────────────────────────────────────┐
 │                   PROPOSED ARCHITECTURE                  │
 │                                                         │
-│  Phase 1: PLAN          Opus × 1 call (no tools)        │
-│  Phase 2: GATHER        Utility × 1-3 calls (tools)    │
-│  Phase 3: ACT           Opus × 2-8 iterations (tools)  │
+│  Phase 0: REPO MAP      git ls-files → JSON (~6K tok)  │
+│  Phase 1: PLAN           Opus × 1 call (no tools,      │
+│                          sees repo map + user request)  │
+│  Phase 2: GATHER         Direct tool exec (no LLM) +   │
+│                          optional utility compression   │
+│  Phase 3: ACT            Opus × 2-8 iterations (tools) │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Phase 1: Plan (Opus, 1 call, no tools)
+### Phase 0: Repo Map (generated, no LLM call)
 
-A single Opus call with `tool_choice: "none"` (or tools omitted entirely). Opus sees the user message and conversation history, thinks about what it needs, and outputs a structured plan.
+Before Phase 1, generate a compact JSON tree of the entire repository using `git ls-files`. This gives Opus a complete map of what exists — no guessing, no hallucinating file paths.
 
 ```python
-plan_prompt = """
-Analyze the user's request. Before taking any action, output a JSON plan:
+async def build_repo_map(repo_root: str) -> str:
+    """Build a compact JSON tree of all tracked files with sizes.
+    
+    Uses git ls-files to respect .gitignore. Output is ~6K tokens
+    for a 800-file repo. Files show size (e.g., "3.1K", "290B"),
+    directories are nested objects with trailing slash.
+    """
+    result = subprocess.run(
+        ["git", "ls-files"], capture_output=True, text=True, cwd=repo_root
+    )
+    files = result.stdout.strip().split("\n")
+    
+    SKIP_EXTS = {".png", ".jpg", ".lock", ".map", ".tsbuildinfo", ".wasm"}
+    SKIP_NAMES = {"package-lock.json", "pnpm-lock.yaml", "bun.lock", "uv.lock"}
+    
+    tree = {}
+    for filepath in sorted(files):
+        name = os.path.basename(filepath)
+        if os.path.splitext(name)[1].lower() in SKIP_EXTS or name in SKIP_NAMES:
+            continue
+        
+        parts = filepath.split("/")
+        node = tree
+        for part in parts[:-1]:
+            key = part + "/"
+            node = node.setdefault(key, {})
+        
+        size = os.path.getsize(os.path.join(repo_root, filepath))
+        node[name] = f"{size}B" if size < 1024 else f"{round(size/1024, 1)}K"
+    
+    return json.dumps(tree, separators=(",", ":"))
+```
 
+**Example output** (~6,400 tokens for Bond's 789 tracked files):
+
+```json
+{"backend/":{"app/":{"agent/":{"tools/":{"coding_agent.py":"21.6K",
+"definitions.py":"63.6K","native.py":"35.5K",...},"loop.py":"16.1K",
+"context_pipeline.py":"18.9K",...},...},...},"gateway/":{"src/":
+{"server.ts":"7.2K","spacetimedb/":{"subscription.ts":"4K",...},...},...},...}
+```
+
+Opus can see every file, its size, and its location. No more guessing that a file might exist, reading it, finding out it's wrong, and trying another path.
+
+### Phase 1: Plan (Opus, 1 call, no tools)
+
+A single Opus call with `tool_choice: "none"` (or tools omitted entirely). Opus sees the user message, conversation history, **and the repo map**, then outputs a structured plan.
+
+```python
+plan_system = """
+You are about to handle a task. Before taking any action, analyze what you need.
+
+Here is the complete repository file tree (with sizes):
+{repo_map}
+
+Output a JSON plan:
 {
   "complexity": "simple" | "moderate" | "complex",
   "approach": "brief description of how you'll handle this",
-  "information_needed": [
-    {"type": "file_read", "path": "backend/app/worker.py", "reason": "need to see agent loop"},
-    {"type": "file_read", "path": "backend/app/agent/tools/coding_agent.py", "reason": "..."},
-    {"type": "grep", "pattern": "utility_model", "directory": "backend/", "reason": "..."},
-    {"type": "project_search", "query": "system events", "reason": "..."},
-    {"type": "memory_search", "query": "prior decisions about model routing", "reason": "..."}
+  "files_to_read": [
+    "backend/app/worker.py",
+    "backend/app/agent/tools/coding_agent.py",
+    "gateway/src/server.ts"
+  ],
+  "grep_patterns": [
+    {"pattern": "utility_model", "directory": "backend/"}
   ],
   "delegate_to_coding_agent": true | false,
   "estimated_iterations": 3
 }
 
 Rules:
-- For simple questions (greetings, factual answers), set complexity to "simple" 
-  and information_needed to []. You'll answer directly in Phase 3.
-- For code tasks, list ALL files you expect to need. Over-estimate — it's cheap 
-  to read files you don't end up using.
-- If this should be delegated to a coding agent, say so upfront. Don't spend 
-  15 iterations gathering context only to delegate at the end.
+- For simple questions (greetings, factual answers), set complexity to "simple"
+  and files_to_read to []. You'll answer directly.
+- For code tasks, list ALL files you expect to need. Pick from the tree above.
+  Over-estimate — it's cheap to read extra files.
+- If this should be delegated to a coding agent, say so upfront. Don't spend
+  iterations gathering context only to delegate at the end.
+- You can see file sizes in the tree. Prefer reading smaller files over huge ones
+  when both contain what you need.
+"""
 ```
 
-**Cost:** ~$0.03-0.05 (one Opus call with conversation history, no tool results in context)
+**Cost:** ~$0.05-0.08 (one Opus call with conversation history + ~6K token repo map, no tool results)
+
+**Why include the repo map:** Without it, Opus has to *remember* or *guess* what files exist. With it, Opus picks from a concrete list. No wasted iterations discovering that a file doesn't exist or that the file it needs is actually named something slightly different.
 
 **Why Opus for planning:** This is the judgment call — figuring out *what* to read and *how* to approach the task. This is where the expensive model earns its cost. A cheap model might miss relevant files or misjudge the approach.
 
@@ -248,15 +310,16 @@ Anthropic's prompt caching works by caching prefix matches. The pre-gathered con
 |---|---|---|---|---|
 | Everything | Opus | 23 | ~80K avg | ~$2.15 |
 
-### Proposed: Plan → Gather → Act
+### Proposed: Repo Map → Plan → Gather → Act
 
 | Phase | Model | Calls | Avg Input | Cost |
 |---|---|---|---|---|
-| Plan | Opus | 1 | ~20K | $0.04 |
+| Repo Map | None (git ls-files) | 0 | 0 | $0.00 |
+| Plan | Opus | 1 | ~26K (history + 6K map) | $0.05 |
 | Gather | None (direct tool exec) | 0 | 0 | $0.00 |
 | Gather (compression) | Sonnet | 0-1 | ~50K | $0.00-0.02 |
 | Act | Opus | 5 | ~60K avg | $0.55 |
-| **Total** | | **6-7** | | **~$0.60** |
+| **Total** | | **6-7** | | **~$0.62** |
 
 **Estimated savings: 70-75% per turn.** The main savings come from:
 1. Fewer Opus iterations (5 vs 23)
@@ -267,21 +330,37 @@ Anthropic's prompt caching works by caching prefix matches. The pre-gathered con
 
 ## 5. Implementation Plan
 
-### Step 1: Plan phase (low risk, high signal)
+### Step 1: Repo map generation (zero risk)
 
-Add plan extraction before the main loop in `worker.py`:
+Build the `build_repo_map()` function. Run it once at turn start, cache it for the duration of the turn. Uses `git ls-files` — fast (~50ms), respects `.gitignore`, produces ~6K tokens.
+
+```python
+# At turn start, before any LLM calls:
+repo_map = await build_repo_map(working_directory)
+```
+
+**Effort:** ~0.25 days
+**Risk:** Zero — it's a subprocess call that produces a string. No LLM involved.
+
+### Step 2: Plan phase (low risk, high signal)
+
+Add plan extraction before the main loop in `worker.py`. Inject the repo map into the plan prompt:
 
 ```python
 # Before the main loop:
 if user_message and not _is_continuation:
+    plan_messages = [
+        {"role": "system", "content": plan_system.format(repo_map=repo_map)},
+        *windowed_history,
+        {"role": "user", "content": user_message},
+    ]
     plan_response = await _cancellable_llm_call(
         _state.interrupt_event,
         model=model,
-        messages=[*messages],  # same context as iteration 0
+        messages=plan_messages,
         tools=None,            # no tools — just think
         temperature=0.3,       # lower temp for structured output
         max_tokens=2000,
-        response_format={"type": "json_object"},  # if supported
     )
     plan = parse_plan(plan_response)
 ```
