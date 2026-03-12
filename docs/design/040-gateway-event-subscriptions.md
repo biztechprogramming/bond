@@ -90,6 +90,10 @@ GitHub ──webhook──▶ Gateway /webhooks/github
                     Agent responds → streamed to user via WebSocket
 ```
 
+> **Important distinction:**
+> - **Webhook registration** is infrastructure setup. It happens on gateway startup (reconciliation) and when a new repo is added to an agent. It tells GitHub "send events to this URL."
+> - **Event subscriptions** are per-conversation and ephemeral. They are created automatically when a `coding_agent` tool call is detected during a conversation turn. They tell the EventBus "when an event matching this filter arrives, notify this conversation."
+
 ### 3.2 Core Components
 
 #### 3.2.1 GatewayEvent (Normalized Event Model)
@@ -372,69 +376,88 @@ The gateway should automatically ensure webhooks are configured for all repos it
 
 ### 5.3 How It Works
 
-#### 5.3.1 Startup Flow
+#### 5.3.1 Trigger Points for Webhook Registration
+
+Webhook registration happens at two distinct points — both use the same `WebhookRegistrar.ensureWebhooks()` under the hood.
+
+**Trigger A: Gateway process startup (reconciliation)**
+
+When the gateway process starts, it reconciles webhooks for all repos it already knows about (from `bond.json` config or `agent_workspace_mounts` in SpacetimeDB):
 
 ```
-Gateway starts
+Gateway process starts
      │
-     ├── Load config (bond.json + env vars)
+     ├── Read repos from config (bond.json gateway.webhooks.repos)
+     │   + optionally from SpacetimeDB agent_workspace_mounts
      │
-     ├── Connect to SpacetimeDB
-     │
-     ├── Query agent_workspace_mounts table
-     │   → Extract unique repos from hostPath git remotes
-     │
-     ├── For each repo:
-     │   ├── GET /repos/{owner}/{repo}/hooks
-     │   │   → Check if our webhook already exists (match on URL)
-     │   │
-     │   ├── If missing:
-     │   │   POST /repos/{owner}/{repo}/hooks
-     │   │   {
-     │   │     "config": {
-     │   │       "url": "https://<gateway-host>/webhooks/github",
-     │   │       "content_type": "json",
-     │   │       "secret": "<GITHUB_WEBHOOK_SECRET>"
-     │   │     },
-     │   │     "events": ["push", "pull_request", "check_run"],
-     │   │     "active": true
-     │   │   }
-     │   │
-     │   └── If exists but misconfigured:
-     │       PATCH /repos/{owner}/{repo}/hooks/{hook_id}
-     │       → Update URL, events, or secret as needed
-     │
-     └── Log results: "Webhooks configured for N repos"
+     └── For each repo:
+         ├── GET /repos/{owner}/{repo}/hooks
+         │   → Check if our webhook already exists (match on URL)
+         │
+         ├── If missing:
+         │   POST /repos/{owner}/{repo}/hooks
+         │   {
+         │     "config": {
+         │       "url": "https://<gateway-host>/webhooks/github",
+         │       "content_type": "json",
+         │       "secret": "<GITHUB_WEBHOOK_SECRET>"
+         │     },
+         │     "events": ["push", "pull_request", "check_run"],
+         │     "active": true
+         │   }
+         │
+         └── If exists but misconfigured:
+             PATCH /repos/{owner}/{repo}/hooks/{hook_id}
+             → Update URL, events, or secret as needed
 ```
 
-#### 5.3.2 Accessing GitHub API from the Gateway Container
+This is **idempotent** — it checks existing webhooks and creates/updates only as needed. Purpose: catch cases where the gateway was restarted, a webhook was deleted from GitHub's side, or config drifted.
 
-The gateway runs in a Docker container. It needs to call the GitHub API to manage webhooks. Two approaches:
+> Note: This is **not** "container startup" — the gateway runs on the host as a long-running process, not inside a Docker container.
 
-**Option A: Shell out to `gh` on the host (via Docker socket or exec)**
-- The host has `gh` authenticated with full repo access
-- The gateway container could exec `gh` via a mounted Docker socket or a sidecar
-- Fragile, security concerns with Docker socket access
+**Trigger B: New repo added to an agent**
 
-**Option B: GitHub App or Personal Access Token (PAT) in the gateway** ✅ Recommended
-- Add `GITHUB_TOKEN` env var to the gateway container (from `.env` or secrets)
+When a user configures a new agent with a workspace pointing at a repo, the gateway registers the webhook for that specific repo immediately — without waiting for the next process restart:
+
+```
+User adds agent with workspace → /api/v1/agents  (or SpacetimeDB mutation)
+     │
+     └── Gateway detects new agent_workspace_mount (via SpacetimeDB subscription)
+             │
+             └── WebhookRegistrar.ensureWebhooks([newRepo])
+                 → Same create/update logic as startup reconciliation
+```
+
+This is the reactive/event-driven path. Log results: "Webhooks configured for N repos"
+
+#### 5.3.2 Accessing the GitHub API from the Gateway
+
+The gateway runs on the host as a long-running process — not inside a Docker container. This means it already has direct access to the host's `gh` CLI and its stored credentials. Two practical approaches:
+
+**Option B: GitHub App or Personal Access Token (PAT) in the environment** ✅ Recommended for production
+- Set `GITHUB_TOKEN` as an environment variable (from `.env` or a secrets manager)
 - Use the GitHub REST API directly via `fetch()` — no external dependencies
 - The same token that `gh` uses on the host (`gh auth token` outputs it)
 - Scopes needed: `admin:repo_hook` (to create/manage webhooks) + `repo` (to list repos)
 
-**Option C: Extract the token from `gh` at container startup**
-- The gateway's entrypoint script runs `gh auth token` on the host (via mounted config)
-- Injects it as an env var before starting the Node process
-- Combines the convenience of "use the host's auth" with the cleanliness of "just use a token"
+**Option C: Read the token from `gh auth token` at gateway startup** ✅ Recommended for development
+- Since the gateway runs on the host where `gh` is already authenticated, it can simply call `gh auth token` directly at startup — no mounted config or Docker socket tricks needed
+- Simpler than managing a separate PAT during local development
 
-**Recommendation:** Option B for production, Option C for development. In practice, add `GITHUB_TOKEN` to `docker-compose.dev.yml`:
+```typescript
+// In WebhookRegistrar or config loading (development convenience)
+import { execSync } from "child_process";
+const token = process.env.GITHUB_TOKEN
+  ?? execSync("gh auth token", { encoding: "utf-8" }).trim();
+```
 
-```yaml
-gateway:
-  environment:
-    - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-    - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-    - GATEWAY_EXTERNAL_URL=${GATEWAY_EXTERNAL_URL:-}
+**Recommendation:** Option B for production (explicit `GITHUB_TOKEN` env var), Option C for development (auto-read from `gh`). For local development, add to `.env`:
+
+```bash
+# .env
+GITHUB_TOKEN=$(gh auth token)       # or paste directly: GITHUB_TOKEN=ghp_xxxx
+GITHUB_WEBHOOK_SECRET=mysecret
+GATEWAY_EXTERNAL_URL=https://abc123.trycloudflare.com
 ```
 
 #### 5.3.3 Determining the Gateway's External URL
@@ -561,11 +584,9 @@ class WebhookRegistrar {
   }
 
   private async getGitRemote(path: string): Promise<string> {
-    // In the gateway container, we can't access host paths directly.
-    // Two approaches:
-    // 1. Read from SpacetimeDB agent config (if remote URL is stored)
-    // 2. Shell out to git on a mounted volume
-    // For v1, we'll require repos to be configured explicitly (see §5.4)
+    // The gateway runs on the host and can access workspace paths directly via
+    // the filesystem. For v1, we still require repos to be configured explicitly
+    // (see §5.4) for simplicity. v2 can auto-discover via `git remote get-url origin`.
     throw new Error("Not implemented — use explicit repo config for v1");
   }
 }
@@ -573,7 +594,7 @@ class WebhookRegistrar {
 
 ### 5.4 Repo Discovery: Practical Approach for v1
 
-The `discoverRepos` method above has a chicken-and-egg problem: the gateway container can't access host paths to run `git remote`. For v1, we solve this pragmatically:
+The `discoverRepos` method above has a practical bootstrapping problem: even though the gateway runs on the host and can access workspace paths, it doesn't inherently know which paths correspond to agent workspaces until SpacetimeDB is populated. For v1, we solve this pragmatically:
 
 **Option A: Explicit config in bond.json** ✅ Recommended for v1
 
@@ -617,39 +638,31 @@ Gateway process starts
      ├── 4. Initialize WebhookRegistrar
      │       ├── Read GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, GATEWAY_EXTERNAL_URL
      │       ├── Read repos from config (bond.json gateway.webhooks.repos)
-     │       └── For each repo: ensure webhook exists (create/update)
+     │       └── For each repo: ensure webhook exists (create/update) [idempotent]
      │           └── If GATEWAY_EXTERNAL_URL not set: skip, log warning
      │
      ├── 5. Wire EventBus into webhooks.ts
      │       └── createWebhookRouter({ eventBus, onMainMerge })
      │
-     ├── 6. Wire EventBus into TurnExecutor
-     │       └── TurnExecutor auto-subscribes on coding_agent_started events
+     ├── 6. Start HTTP/WS server (existing flow)
      │
-     ├── 7. Start HTTP/WS server (existing flow)
-     │
-     └── 8. Start EventBus cleanup interval (prune expired subscriptions)
+     └── 7. Start EventBus cleanup interval (prune expired subscriptions)
 ```
 
-### 6.2 Docker Compose Changes
+> **Note:** Event subscriptions are **not** created at startup. They are created at runtime, automatically, when the gateway detects a `coding_agent_started` SSE event during a conversation turn (see §4). The startup sequence only concerns itself with infrastructure — EventBus wiring and webhook reconciliation.
 
-```yaml
-# docker-compose.dev.yml additions
-gateway:
-  environment:
-    - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-    - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-    - GATEWAY_EXTERNAL_URL=${GATEWAY_EXTERNAL_URL:-}
-```
+### 6.2 Environment Configuration
 
-For local development, the user sets these in `.env`:
+The gateway runs as a host process, so environment variables are read from the host environment (or a `.env` file loaded at startup):
 
 ```bash
 # .env
-GITHUB_TOKEN=ghp_xxxx          # or: $(gh auth token)
+GITHUB_TOKEN=ghp_xxxx           # or: $(gh auth token) for development
 GITHUB_WEBHOOK_SECRET=mysecret  # shared secret for HMAC verification
 GATEWAY_EXTERNAL_URL=https://abc123.trycloudflare.com  # tunnel URL
 ```
+
+The gateway process loads these at startup (e.g., via `dotenv`). No Docker-level environment injection is needed since the gateway is not containerized.
 
 ### 6.3 Config Changes
 
@@ -805,7 +818,7 @@ This is a natural evolution — SpacetimeDB already provides real-time subscript
 - [ ] Add `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `GATEWAY_EXTERNAL_URL` to config
 - [ ] Add `gateway.webhooks.repos` to `bond.json` schema
 - [ ] Call `WebhookRegistrar.ensureWebhooks()` on gateway startup
-- [ ] Update `docker-compose.dev.yml` with new env vars
+- [ ] Document new env vars in `.env.example` (`GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `GATEWAY_EXTERNAL_URL`)
 
 ### Phase 4: Hardening
 - [ ] Webhook delivery deduplication (by `X-GitHub-Delivery` header)
