@@ -31,7 +31,8 @@ export interface ChatMessage {
   id?: string;
   role: "user" | "assistant" | "system";
   content: string;
-  status?: "sending" | "queued" | "delivered";
+  status?: "sending" | "queued" | "delivered" | "complete";
+  injected?: boolean;
   agentName?: string;
 }
 

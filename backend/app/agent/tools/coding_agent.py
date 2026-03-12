@@ -7,6 +7,12 @@ events to the frontend via a dedicated streaming endpoint on the worker.
 
 Design: each change is shown exactly once. The watcher tracks per-file diff
 hashes and only emits when a file's diff against the baseline changes.
+
+Stdout capture: agent stdout is captured and optionally (a) written to a log
+file on disk, and (b) streamed as ``output`` events through the SSE event
+queue.  Both channels are independently toggleable via settings:
+  - ``coding_agent.log_to_file``   (default: true)
+  - ``coding_agent.stream_output`` (default: true)
 """
 
 from __future__ import annotations
@@ -23,6 +29,22 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 logger = logging.getLogger("bond.agent.tools.coding_agent")
+
+# ---------------------------------------------------------------------------
+# Output-capture settings (read from env / settings DB at spawn time)
+# ---------------------------------------------------------------------------
+
+# Directory where per-session log files are written
+LOG_DIR = Path(os.environ.get("BOND_CODING_AGENT_LOG_DIR", "/tmp/bond-coding-agent-logs"))
+
+# Defaults — can be overridden per-session via settings DB or env vars
+DEFAULT_LOG_TO_FILE = True
+DEFAULT_STREAM_OUTPUT = True
+
+# Max bytes buffered before flushing a chunk to the event queue
+OUTPUT_CHUNK_SIZE = 4096
+# Max seconds between flushes (even if the buffer isn't full)
+OUTPUT_FLUSH_INTERVAL = 2.0
 
 # ---------------------------------------------------------------------------
 # Agent command templates
@@ -267,6 +289,15 @@ class CodingAgentProcess:
         self._pty_reader = reader
         self._pty_transport = transport
 
+    @property
+    def output_reader(self) -> asyncio.StreamReader | None:
+        """Return the stream reader for the sub-agent's stdout/pty output."""
+        if self._pty_reader:
+            return self._pty_reader
+        if self.process and self.process.stdout:
+            return self.process.stdout
+        return None
+
     def is_running(self) -> bool:
         return self.process is not None and self.process.returncode is None
 
@@ -329,6 +360,9 @@ class CodingAgentSession:
         agent_type: str,
         baseline_commit: str,
         branch: str | None = None,
+        *,
+        log_to_file: bool = DEFAULT_LOG_TO_FILE,
+        stream_output: bool = DEFAULT_STREAM_OUTPUT,
     ):
         self.process = process
         self.watcher = watcher
@@ -338,14 +372,123 @@ class CodingAgentSession:
         self.branch = branch
         self.event_queue: asyncio.Queue[dict | None] = asyncio.Queue()
         self._monitor_task: asyncio.Task | None = None
+        self._output_task: asyncio.Task | None = None
         self.started_at = time.time()
         self.finished = False
         self.exit_code: int | None = None
         self.final_summary: str = ""
 
+        # Output capture settings
+        self.log_to_file = log_to_file
+        self.stream_output = stream_output
+        self.log_path: Path | None = None
+        self._log_file_handle = None
+        self._output_buffer: list[str] = []  # In-memory rolling buffer (last N lines)
+        self._output_buffer_max = 500  # Keep last 500 lines in memory
+
     def start_monitor(self) -> None:
-        """Start the background diff watcher + process monitor."""
+        """Start the background diff watcher + process monitor + output reader."""
         self._monitor_task = asyncio.create_task(self._monitor())
+        # Start stdout reader if either capture mode is enabled
+        if self.log_to_file or self.stream_output:
+            self._output_task = asyncio.create_task(self._read_output())
+
+    async def _open_log_file(self) -> None:
+        """Create the log directory and open the log file for writing."""
+        if not self.log_to_file:
+            return
+        try:
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            self.log_path = LOG_DIR / f"{self.agent_type}-{self.conversation_id[:8]}-{ts}.log"
+            self._log_file_handle = open(self.log_path, "w", buffering=1)  # line-buffered
+            logger.info("Coding agent log: %s", self.log_path)
+        except Exception as e:
+            logger.warning("Failed to open coding agent log file: %s", e)
+            self._log_file_handle = None
+
+    def _close_log_file(self) -> None:
+        if self._log_file_handle:
+            try:
+                self._log_file_handle.close()
+            except Exception:
+                pass
+            self._log_file_handle = None
+
+    async def _read_output(self) -> None:
+        """Background task: read sub-agent stdout and dispatch to file / event queue."""
+        reader = self.process.output_reader
+        if not reader:
+            logger.debug("No output reader available for coding agent")
+            return
+
+        await self._open_log_file()
+
+        buffer = ""
+        last_flush = time.monotonic()
+
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(reader.read(OUTPUT_CHUNK_SIZE), timeout=OUTPUT_FLUSH_INTERVAL)
+                except asyncio.TimeoutError:
+                    # Flush whatever we have buffered
+                    if buffer:
+                        await self._emit_output(buffer)
+                        buffer = ""
+                        last_flush = time.monotonic()
+                    continue
+
+                if not chunk:
+                    # EOF — process has closed its stdout
+                    if buffer:
+                        await self._emit_output(buffer)
+                    break
+
+                text = chunk.decode("utf-8", errors="replace")
+                buffer += text
+
+                # Flush if buffer is big enough or enough time has passed
+                now = time.monotonic()
+                if len(buffer) >= OUTPUT_CHUNK_SIZE or (now - last_flush) >= OUTPUT_FLUSH_INTERVAL:
+                    await self._emit_output(buffer)
+                    buffer = ""
+                    last_flush = now
+
+        except asyncio.CancelledError:
+            if buffer:
+                await self._emit_output(buffer)
+        except Exception as e:
+            logger.debug("Output reader error: %s", e)
+        finally:
+            self._close_log_file()
+
+    async def _emit_output(self, text: str) -> None:
+        """Write output text to the log file and/or event queue."""
+        # Write to log file
+        if self.log_to_file and self._log_file_handle:
+            try:
+                self._log_file_handle.write(text)
+            except Exception as e:
+                logger.debug("Log write error: %s", e)
+
+        # Keep in-memory buffer
+        lines = text.splitlines(keepends=True)
+        self._output_buffer.extend(lines)
+        # Trim to max
+        if len(self._output_buffer) > self._output_buffer_max:
+            self._output_buffer = self._output_buffer[-self._output_buffer_max:]
+
+        # Stream to event queue
+        if self.stream_output:
+            await self.event_queue.put({
+                "type": "output",
+                "text": text,
+            })
+
+    def get_recent_output(self, lines: int = 50) -> str:
+        """Return the last N lines from the in-memory output buffer."""
+        return "".join(self._output_buffer[-lines:])
 
     async def _monitor(self) -> None:
         """Background task: poll git diffs and wait for process exit."""
@@ -368,6 +511,13 @@ class CodingAgentSession:
                     if not self.process.is_running():
                         break
                     await asyncio.sleep(1)
+
+            # Wait for the output reader to finish draining
+            if self._output_task and not self._output_task.done():
+                try:
+                    await asyncio.wait_for(self._output_task, timeout=5)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
 
             # Process finished — get exit code
             self.exit_code = self.process.process.returncode if self.process.process else -1
@@ -394,6 +544,8 @@ class CodingAgentSession:
             parts = [f"Coding agent ({self.agent_type}) {status} in {round(elapsed, 1)}s"]
             if self.branch:
                 parts.append(f"Branch: {self.branch}")
+            if self.log_path and self.log_path.exists():
+                parts.append(f"Log: {self.log_path}")
             if stat:
                 parts.append(f"\n```\n{stat}\n```")
             self.final_summary = "\n".join(parts)
@@ -405,6 +557,7 @@ class CodingAgentSession:
                 "elapsed_seconds": round(elapsed, 1),
                 "summary": self.final_summary,
                 "git_stat": stat,
+                "log_path": str(self.log_path) if self.log_path else None,
             })
 
             # Enqueue system event to SpacetimeDB so the gateway can
@@ -421,6 +574,7 @@ class CodingAgentSession:
                 "message": "Coding agent monitor crashed unexpectedly",
             })
         finally:
+            self._close_log_file()
             # Sentinel — signals end of event stream
             await self.event_queue.put(None)
 
@@ -465,13 +619,28 @@ class CodingAgentSession:
     async def stop(self) -> None:
         """Kill the process and cancel the monitor."""
         await self.process.kill()
+        if self._output_task and not self._output_task.done():
+            self._output_task.cancel()
+            try:
+                await self._output_task
+            except asyncio.CancelledError:
+                pass
         if self._monitor_task and not self._monitor_task.done():
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
             except asyncio.CancelledError:
                 pass
+        self._close_log_file()
         self.finished = True
+
+
+def _bool_setting(db_val: str | None, env_val: str | None, default: bool) -> bool:
+    """Return the first non-None setting, parsed as a boolean string."""
+    for val in (db_val, env_val):
+        if val is not None:
+            return val.lower() in ("true", "1", "yes", "on")
+    return default
 
 
 # Global registry: agent_id -> CodingAgentSession
@@ -578,6 +747,19 @@ async def handle_coding_agent(
     except (FileNotFoundError, ValueError) as e:
         return {"error": str(e)}
 
+    # Read output capture settings from context (injected by worker from settings DB)
+    coding_agent_settings: dict[str, str] = context.get("coding_agent_settings", {})
+    log_to_file = _bool_setting(
+        coding_agent_settings.get("coding_agent.log_to_file"),
+        os.environ.get("BOND_CODING_AGENT_LOG_TO_FILE"),
+        DEFAULT_LOG_TO_FILE,
+    )
+    stream_output = _bool_setting(
+        coding_agent_settings.get("coding_agent.stream_output"),
+        os.environ.get("BOND_CODING_AGENT_STREAM_OUTPUT"),
+        DEFAULT_STREAM_OUTPUT,
+    )
+
     # Create the session with diff watcher
     watcher = GitDiffWatcher(working_dir, baseline)
     session = CodingAgentSession(
@@ -587,27 +769,74 @@ async def handle_coding_agent(
         agent_type=agent_type,
         baseline_commit=baseline,
         branch=branch,
+        log_to_file=log_to_file,
+        stream_output=stream_output,
     )
     _active_sessions[agent_id] = session
     session.start_monitor()
 
     logger.info(
-        "Coding agent started: agent_id=%s type=%s baseline=%s dir=%s",
+        "Coding agent started: agent_id=%s type=%s baseline=%s dir=%s "
+        "log_to_file=%s stream_output=%s",
         agent_id, agent_type, baseline[:8], working_dir,
+        log_to_file, stream_output,
     )
 
     # Return immediately — non-blocking, non-terminal
+    log_msg = ""
+    if log_to_file:
+        log_msg = f" Output is being logged to disk."
+    if stream_output:
+        log_msg += f" Live output is streaming to the UI."
+
     return {
         "status": "started",
         "agent_type": agent_type,
         "working_directory": working_dir,
         "baseline_commit": baseline[:8],
+        "log_to_file": log_to_file,
+        "stream_output": stream_output,
         "message": (
             f"Coding agent ({agent_type}) started in {working_dir}. "
             f"It will work in the background — you can continue chatting. "
-            f"Changes will appear in the UI as they happen."
+            f"Changes will appear in the UI as they happen.{log_msg}"
         ),
     }
+
+
+def get_coding_agent_status(agent_id: str | None = None) -> dict[str, Any]:
+    """Return status info about active coding agent sessions.
+
+    If agent_id is given, return status for that specific session.
+    Otherwise, return a summary of all active sessions.
+    """
+    if agent_id and agent_id in _active_sessions:
+        session = _active_sessions[agent_id]
+        return {
+            "agent_id": agent_id,
+            "agent_type": session.agent_type,
+            "conversation_id": session.conversation_id,
+            "running": session.process.is_running(),
+            "finished": session.finished,
+            "exit_code": session.exit_code,
+            "elapsed_seconds": round(session.process.elapsed, 1),
+            "log_to_file": session.log_to_file,
+            "stream_output": session.stream_output,
+            "log_path": str(session.log_path) if session.log_path else None,
+            "recent_output": session.get_recent_output(30),
+        }
+
+    # All sessions
+    sessions = []
+    for aid, session in _active_sessions.items():
+        sessions.append({
+            "agent_id": aid,
+            "agent_type": session.agent_type,
+            "running": session.process.is_running(),
+            "finished": session.finished,
+            "elapsed_seconds": round(session.process.elapsed, 1),
+        })
+    return {"active_sessions": sessions, "count": len(sessions)}
 
 
 async def kill_coding_agent(agent_id: str) -> bool:

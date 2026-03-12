@@ -21,6 +21,8 @@ import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
 import { WebhookRegistrar } from "./webhooks/registrar.js";
 import { createBrokerRouter } from "./broker/router.js";
+import { createDeploymentsRouter } from "./deployments/router.js";
+import { initSessionTokens } from "./deployments/session-tokens.js";
 import { EventBus, EventHistory, CompletionDispatcher, createEventsRouter } from "./events/index.js";
 import { ChannelManager } from "./channels/manager.js";
 import { createChannelRouter } from "./channels/routes.js";
@@ -135,11 +137,17 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   // Event subscription API
   app.use("/api/v1/events", createEventsRouter(eventBus));
 
-  // Permission Broker
+  // Session token support for Promotion API
+  initSessionTokens(join(homedir(), ".bond", "data"));
+
+  // Permission Broker (with gateway config for /deploy endpoint)
   app.use("/api/v1/broker", createBrokerRouter({
     dataDir: join(homedir(), ".bond", "data"),
     policyDir: join(homedir(), ".bond", "policies"),
-  }));
+  }, config));
+
+  // Deployment API (environments, promotions, scripts, receipts)
+  app.use("/api/v1/deployments", createDeploymentsRouter(config));
 
   // Channel management API and lifecycle
   const channelManager = new ChannelManager("data/channels.json", backendClient);

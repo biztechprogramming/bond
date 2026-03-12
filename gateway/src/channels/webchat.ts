@@ -786,6 +786,15 @@ export class WebChatChannel {
                 } as any);
                 break;
 
+              case "coding_agent_output":
+                this.sendToConversation(conversationId, {
+                  type: "coding_agent_output",
+                  sessionId,
+                  content: JSON.stringify(data),
+                  conversationId,
+                } as any);
+                break;
+
               case "coding_agent_error":
                 this.sendToConversation(conversationId, {
                   type: "error",

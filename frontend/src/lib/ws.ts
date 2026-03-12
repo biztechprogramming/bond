@@ -24,7 +24,7 @@ export interface GatewayMessage {
     | "queued" | "status" | "tool_call" | "done" | "new_input"
     | "plan_created" | "plan_updated" | "item_updated" | "plan_completed"
     | "user_message" | "pong"
-    | "coding_agent_started" | "coding_agent_diff" | "coding_agent_done";
+    | "coding_agent_started" | "coding_agent_diff" | "coding_agent_done" | "coding_agent_output";
   sessionId?: string;
   content?: string;
   error?: string;

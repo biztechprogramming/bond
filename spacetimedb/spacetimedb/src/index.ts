@@ -323,6 +323,96 @@ const spacetimedb = schema({
       createdAt: t.u64(),
     }
   ),
+  // ─── Deployment Agent Tables (Design Doc 039) ─────────────────────────────
+
+  // -- Deployment Environments --
+  deployment_environments: table(
+    { public: true },
+    {
+      name: t.string().primaryKey(),        // 'dev', 'qa', 'staging', 'uat', 'prod'
+      display_name: t.string(),             // 'Development', 'QA', etc.
+      order: t.u32(),                       // promotion order (1 = first)
+      is_active: t.bool(),                  // soft delete
+
+      // Deployment settings
+      max_script_timeout: t.u32(),          // seconds (default 600)
+      health_check_interval: t.u32(),       // seconds (default 300)
+
+      // Deployment window (empty string = no restrictions)
+      window_days: t.string().default('[]'),    // JSON array: '["mon","tue","wed","thu","fri"]'
+      window_start: t.string().default(''),     // "06:00" or ""
+      window_end: t.string().default(''),       // "22:00" or ""
+      window_timezone: t.string().default(''),  // "America/New_York"
+
+      // Approvals
+      required_approvals: t.u32().default(1),  // how many approvers needed
+
+      created_at: t.u64(),
+      updated_at: t.u64(),
+    }
+  ),
+
+  // -- Deployment Environment Approvers --
+  deployment_environment_approvers: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),           // ULID
+      environment_name: t.string(),
+      user_id: t.string(),                   // Bond user ID or GitHub username
+      added_at: t.u64(),
+      added_by: t.string(),
+    }
+  ),
+
+  // -- Deployment Environment History --
+  deployment_environment_history: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),           // ULID
+      environment_name: t.string(),
+      action: t.string(),                    // 'created', 'updated', 'deactivated', 'reactivated'
+      changed_by: t.string(),
+      changed_at: t.u64(),
+      before_state: t.string().default(''), // JSON snapshot
+      after_state: t.string(),              // JSON snapshot
+    }
+  ),
+
+  // -- Deployment Promotions --
+  deployment_promotions: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),           // ULID
+      script_id: t.string(),
+      script_version: t.string(),
+      script_sha256: t.string(),
+      environment_name: t.string(),
+
+      // Status: 'not_promoted', 'awaiting_approvals', 'promoted',
+      //         'deploying', 'success', 'failed', 'rolled_back'
+      status: t.string(),
+
+      initiated_by: t.string(),
+      initiated_at: t.u64(),
+      promoted_at: t.u64().default(0n),
+      deployed_at: t.u64().default(0n),
+      receipt_id: t.string().default(''),
+    }
+  ),
+
+  // -- Deployment Approvals --
+  deployment_approvals: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),           // ULID
+      promotion_id: t.string(),              // FK → deployment_promotions.id
+      script_id: t.string(),
+      script_version: t.string(),
+      environment_name: t.string(),
+      user_id: t.string(),
+      approved_at: t.u64(),
+    }
+  ),
 });
 
 export default spacetimedb;
@@ -1164,5 +1254,203 @@ export const consumeSystemEvent = spacetimedb.reducer(
     if (evt) {
       ctx.db.system_events.id.delete(id);
     }
+  }
+);
+// ─── Deployment Reducers (Design Doc 039) ──────────────────────────────────
+
+// -- Deployment Environments --
+
+export const create_deployment_environment = spacetimedb.reducer(
+  {
+    name: t.string(),
+    display_name: t.string(),
+    order: t.u32(),
+    max_script_timeout: t.u32(),
+    health_check_interval: t.u32(),
+    window_days: t.string().default('[]'),
+    window_start: t.string().default(''),
+    window_end: t.string().default(''),
+    window_timezone: t.string().default(''),
+    required_approvals: t.u32().default(1),
+    history_id: t.string(),
+    changed_by: t.string(),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    ctx.db.deployment_environments.insert({
+      name: args.name,
+      display_name: args.display_name,
+      order: args.order,
+      is_active: true,
+      max_script_timeout: args.max_script_timeout,
+      health_check_interval: args.health_check_interval,
+      window_days: args.window_days,
+      window_start: args.window_start,
+      window_end: args.window_end,
+      window_timezone: args.window_timezone,
+      required_approvals: args.required_approvals,
+      created_at: now,
+      updated_at: now,
+    });
+    ctx.db.deployment_environment_history.insert({
+      id: args.history_id,
+      environment_name: args.name,
+      action: 'created',
+      changed_by: args.changed_by,
+      changed_at: now,
+      before_state: '',
+      after_state: JSON.stringify({ name: args.name, display_name: args.display_name }),
+    });
+  }
+);
+
+export const update_deployment_environment = spacetimedb.reducer(
+  {
+    name: t.string(),
+    display_name: t.string().optional(),
+    order: t.u32().optional(),
+    max_script_timeout: t.u32().optional(),
+    health_check_interval: t.u32().optional(),
+    window_days: t.string().optional(),
+    window_start: t.string().optional(),
+    window_end: t.string().optional(),
+    window_timezone: t.string().optional(),
+    required_approvals: t.u32().optional(),
+    is_active: t.bool().optional(),
+    history_id: t.string(),
+    changed_by: t.string(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.deployment_environments.name.find(args.name);
+    if (!existing) return;
+    const now = BigInt(Date.now());
+    const before = JSON.stringify(existing);
+    const updated = {
+      ...existing,
+      display_name: args.display_name ?? existing.display_name,
+      order: args.order ?? existing.order,
+      max_script_timeout: args.max_script_timeout ?? existing.max_script_timeout,
+      health_check_interval: args.health_check_interval ?? existing.health_check_interval,
+      window_days: args.window_days ?? existing.window_days,
+      window_start: args.window_start ?? existing.window_start,
+      window_end: args.window_end ?? existing.window_end,
+      window_timezone: args.window_timezone ?? existing.window_timezone,
+      required_approvals: args.required_approvals ?? existing.required_approvals,
+      is_active: args.is_active ?? existing.is_active,
+      updated_at: now,
+    };
+    ctx.db.deployment_environments.name.update(updated);
+    ctx.db.deployment_environment_history.insert({
+      id: args.history_id,
+      environment_name: args.name,
+      action: args.is_active === false ? 'deactivated' : args.is_active === true ? 'reactivated' : 'updated',
+      changed_by: args.changed_by,
+      changed_at: now,
+      before_state: before,
+      after_state: JSON.stringify(updated),
+    });
+  }
+);
+
+export const add_deployment_approver = spacetimedb.reducer(
+  {
+    id: t.string(),
+    environment_name: t.string(),
+    user_id: t.string(),
+    added_by: t.string(),
+  },
+  (ctx, args) => {
+    ctx.db.deployment_environment_approvers.insert({
+      id: args.id,
+      environment_name: args.environment_name,
+      user_id: args.user_id,
+      added_at: BigInt(Date.now()),
+      added_by: args.added_by,
+    });
+  }
+);
+
+export const remove_deployment_approver = spacetimedb.reducer(
+  {
+    id: t.string(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.deployment_environment_approvers.id.find(args.id);
+    if (existing) {
+      ctx.db.deployment_environment_approvers.id.delete(args.id);
+    }
+  }
+);
+
+// -- Deployment Promotions --
+
+export const initiate_promotion = spacetimedb.reducer(
+  {
+    id: t.string(),
+    script_id: t.string(),
+    script_version: t.string(),
+    script_sha256: t.string(),
+    environment_name: t.string(),
+    status: t.string(),
+    initiated_by: t.string(),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    ctx.db.deployment_promotions.insert({
+      id: args.id,
+      script_id: args.script_id,
+      script_version: args.script_version,
+      script_sha256: args.script_sha256,
+      environment_name: args.environment_name,
+      status: args.status,
+      initiated_by: args.initiated_by,
+      initiated_at: now,
+      promoted_at: 0n,
+      deployed_at: 0n,
+      receipt_id: '',
+    });
+  }
+);
+
+export const record_approval = spacetimedb.reducer(
+  {
+    id: t.string(),
+    promotion_id: t.string(),
+    script_id: t.string(),
+    script_version: t.string(),
+    environment_name: t.string(),
+    user_id: t.string(),
+  },
+  (ctx, args) => {
+    ctx.db.deployment_approvals.insert({
+      id: args.id,
+      promotion_id: args.promotion_id,
+      script_id: args.script_id,
+      script_version: args.script_version,
+      environment_name: args.environment_name,
+      user_id: args.user_id,
+      approved_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const update_promotion_status = spacetimedb.reducer(
+  {
+    id: t.string(),
+    status: t.string(),
+    promoted_at: t.u64().optional(),
+    deployed_at: t.u64().optional(),
+    receipt_id: t.string().optional(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.deployment_promotions.id.find(args.id);
+    if (!existing) return;
+    ctx.db.deployment_promotions.id.update({
+      ...existing,
+      status: args.status,
+      promoted_at: args.promoted_at ?? existing.promoted_at,
+      deployed_at: args.deployed_at ?? existing.deployed_at,
+      receipt_id: args.receipt_id ?? existing.receipt_id,
+    });
   }
 );
