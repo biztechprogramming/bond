@@ -63,6 +63,15 @@ export default function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [showToolLog, setShowToolLog] = React.useState(false);
   const [expandedFiles, setExpandedFiles] = React.useState<Set<string>>(new Set());
+  const [copiedIdx, setCopiedIdx] = React.useState<number | null>(null);
+  const [hoveredIdx, setHoveredIdx] = React.useState<number | null>(null);
+
+  const copyMessage = (content: string, idx: number) => {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 1500);
+    });
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -113,7 +122,32 @@ export default function ChatPanel({
               ...(msg.role === "system" ? s.chatMsgSystem : {}),
               position: "relative" as const,
             }}
+            onMouseEnter={() => setHoveredIdx(i)}
+            onMouseLeave={() => setHoveredIdx(null)}
           >
+            {!deleteMode && (
+              <button
+                onClick={() => copyMessage(msg.content, i)}
+                title="Copy message"
+                style={{
+                  position: "absolute",
+                  top: "6px",
+                  right: "6px",
+                  background: "none",
+                  border: "none",
+                  color: copiedIdx === i ? "#4ec994" : "#5a5a6e",
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                  borderRadius: "4px",
+                  opacity: hoveredIdx === i ? 1 : 0.4,
+                  transition: "opacity 0.15s, color 0.15s",
+                  lineHeight: 1,
+                }}
+              >
+                {copiedIdx === i ? "✓" : "⧉"}
+              </button>
+            )}
             {deleteMode && (
               <div style={{ position: "absolute", top: "6px", right: "6px", display: "flex", gap: "4px" }}>
                 {msg.role === "user" && onResendMessage && (
