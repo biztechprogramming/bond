@@ -419,7 +419,7 @@ function TemplateEditor({ template, onSave, onCancel }: {
 const s: Record<string, React.CSSProperties> = {
   subTabBar: { display: "flex", gap: "4px" },
   subTab: {
-    background: "none", border: "1px solid #2a2a3e", borderRadius: "8px",
+    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
     color: "#8888a0", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer",
   },
   subTabActive: { color: "#6c8aff", borderColor: "#6c8aff", backgroundColor: "#1a1a2e" },
