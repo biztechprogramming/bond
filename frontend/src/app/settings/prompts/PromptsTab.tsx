@@ -1,11 +1,24 @@
-          {/* Creating new fragment */}
-          {creating && <FragmentEditor
-            key="__new_fragment__"
-            fragment={editing || { id: "", name: "", display_name: "", category: "behavior", content: "", description: "", is_active: 1, is_system: 0, agent_count: 0, version: 0 } as Fragment}
-            isNew
-            onSave={(f) => createFragment({ name: f.name, display_name: f.display_name, category: f.category, content: f.content, description: f.description })}
-            onCancel={() => { setCreating(false); setEditing(null); }}
-          />}
+"use client";
+
+import React, { useEffect, useState, useCallback } from "react";
+import { BACKEND_API } from "@/lib/config";
+
+const API = `${BACKEND_API}/prompts`;
+
+interface Fragment {
+  id: string;
+  name: string;
+  display_name: string;
+  category: string;
+  content: string;
+  description: string;
+  is_active: number;
+  is_system: number;
+  agent_count: number;
+  version: number;
+}
+
+interface Template {
   id: string;
   name: string;
   display_name: string;
@@ -191,7 +204,7 @@ export default function PromptsTab() {
 
       {/* ═══ FRAGMENTS TAB ═══ */}
       {subTab === "fragments" && (
-        <>
+        <div>
           {/* AI generate bar */}
           <div style={s.genBar}>
             <input style={{ ...s.input, flex: 1 }} placeholder="Describe a fragment to generate with AI..." value={genPurpose} onChange={(e) => setGenPurpose(e.target.value)} />
@@ -289,12 +302,12 @@ export default function PromptsTab() {
               )}
             </div>
           ))}
-        </>
+        </div>
       )}
 
       {/* ═══ TEMPLATES TAB ═══ */}
       {subTab === "templates" && (
-        <>
+        <div>
           {templates.map((t) => (
             <div key={t.id} style={s.card}>
               {editingTemplate?.id === t.id ? (
@@ -338,7 +351,7 @@ export default function PromptsTab() {
               )}
             </div>
           ))}
-        </>
+        </div>
       )}
     </div>
   );
