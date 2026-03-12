@@ -87,10 +87,12 @@ Replace the current single-loop architecture with three distinct phases:
 
 Before Phase 1, generate a compact minified JSON tree of the entire repository using `git ls-files`. This gives Opus a complete map of what exists — no guessing, no hallucinating file paths.
 
-**Target: ~5,000 tokens** for a 800-file repo (Bond measured at 5,002 tokens / 20KB minified).
+**Target: ~3,900 tokens** for a 800-file repo (Bond measured at 15.7KB).
+
+The format is an indented tree — no JSON, no braces, no quotes, no commas, no file sizes. Just filenames and indentation for nesting. Directories end with `/`.
 
 ```python
-import os, json, subprocess
+import os, subprocess
 
 # Extensions to exclude (binary, generated, locks)
 SKIP_EXTS = {
@@ -103,7 +105,6 @@ SKIP_EXTS = {
 SKIP_NAMES = {"package-lock.json", "pnpm-lock.yaml", "bun.lock", "uv.lock"}
 
 # Directories whose individual files are auto-generated — collapse to a summary.
-# The model doesn't need to see 40 individual reducer/table files.
 COLLAPSE_DIRS = {
     "gateway/src/spacetimedb/",
     "frontend/src/lib/spacetimedb/",
@@ -111,16 +112,16 @@ COLLAPSE_DIRS = {
 
 
 async def build_repo_map(repo_root: str) -> str:
-    """Build a compact minified JSON tree of all tracked files with sizes.
+    """Build a compact indented tree of all tracked files.
     
     Uses git ls-files (respects .gitignore, ~50ms). Output rules:
-    - Directories are nested objects with trailing slash as key
-    - Files show human-readable size: "3.1K", "290B", "1.2M"
-    - Empty files (0 bytes) are dropped — __init__.py etc. aren't useful for planning
-    - Auto-generated directories are collapsed to "[generated: N files]"
-    - Output is minified (no whitespace) to minimize token count
+    - Directories use indentation for nesting, names end with /
+    - Files are bare filenames, one per line
+    - Empty files (0 bytes) are dropped
+    - Auto-generated directories are collapsed to [generated: N files]
+    - No JSON syntax — no braces, quotes, commas, or colons
     
-    Returns: minified JSON string (~5K tokens for a 800-file repo)
+    Returns: indented tree string (~3,900 tokens for a 800-file repo)
     """
     result = subprocess.run(
         ["git", "ls-files"], capture_output=True, text=True, cwd=repo_root
@@ -139,7 +140,7 @@ async def build_repo_map(repo_root: str) -> str:
         except OSError:
             continue
         
-        # Drop empty files (e.g., __init__.py with no content)
+        # Drop empty files
         if size == 0:
             continue
         
@@ -149,19 +150,13 @@ async def build_repo_map(repo_root: str) -> str:
             key = part + "/"
             node = node.setdefault(key, {})
         
-        # Human-readable size
-        if size < 1024:
-            node[name] = f"{size}B"
-        elif size < 1024 * 1024:
-            node[name] = f"{round(size / 1024, 1)}K"
-        else:
-            node[name] = f"{round(size / (1024 * 1024), 1)}M"
+        node[name] = True  # leaf node — just marks existence
     
-    # Collapse auto-generated directories into summaries
+    # Collapse auto-generated directories
     tree = _collapse_generated(tree)
     
-    # Minified — no whitespace, minimal separators
-    return json.dumps(tree, separators=(",", ":"))
+    # Render as indented text
+    return "\n".join(_render_tree(tree))
 
 
 def _collapse_generated(tree: dict, path: str = "") -> dict:
@@ -171,7 +166,7 @@ def _collapse_generated(tree: dict, path: str = "") -> dict:
         full_path = path + key
         if isinstance(value, dict):
             if full_path in COLLAPSE_DIRS:
-                file_count = sum(1 for v in value.values() if isinstance(v, str))
+                file_count = sum(1 for v in value.values() if not isinstance(v, dict))
                 result[key] = f"[generated: {file_count} files]"
             else:
                 collapsed = _collapse_generated(value, full_path)
@@ -180,30 +175,66 @@ def _collapse_generated(tree: dict, path: str = "") -> dict:
         else:
             result[key] = value
     return result
+
+
+def _render_tree(tree: dict, indent: int = 0) -> list[str]:
+    """Render tree as indented lines. Directories show as 'name/', files as 'name'."""
+    lines = []
+    prefix = " " * indent
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            lines.append(f"{prefix}{key}")
+            lines.extend(_render_tree(value, indent + 1))
+        elif isinstance(value, str):
+            # Collapsed directory summary
+            lines.append(f"{prefix}{key} {value}")
+        else:
+            lines.append(f"{prefix}{key}")
+    return lines
 ```
 
-**Example output** (~5,000 tokens for Bond's 628 entries after optimization):
+**Example output** (~3,900 tokens for Bond's 628 entries):
 
-```json
-{"AGENTS.md":"3.1K","Makefile":"6.5K","backend/":{"app/":{"worker.py":"101.6K",
-"agent/":{"tools/":{"coding_agent.py":"21.6K","definitions.py":"63.6K",
-"native.py":"35.5K",...},"loop.py":"16.1K","context_pipeline.py":"18.9K",...},
-...},...},"gateway/":{"src/":{"server.ts":"7.2K","spacetimedb/":
-"[generated: 42 files]","completion/":{"handler.ts":"7.5K"},...},...},...}
+```
+AGENTS.md
+Makefile
+backend/
+ app/
+  worker.py
+  agent/
+   tools/
+    coding_agent.py
+    definitions.py
+    native.py
+   loop.py
+   context_pipeline.py
+  api/
+   v1/
+    agent.py
+    conversations.py
+gateway/
+ src/
+  server.ts
+  spacetimedb/ [generated: 42 files]
+  completion/
+   handler.ts
 ```
 
-**Optimizations applied:**
+**Token savings vs original JSON approach:**
 | Optimization | Tokens saved |
 |---|---|
-| Minified JSON (no whitespace) | ~1,100 |
-| Drop empty files (`0B`) | ~160 |
-| Collapse generated SpacetimeDB bindings | ~800 |
-| Skip binary/lock files | ~300 |
-| **Total savings** | **~2,400 tokens** |
+| No braces `{ }` | ~278 |
+| No commas | ~628 |
+| No quotes | ~1,396 |
+| No colons | ~631 |
+| No file sizes | ~631 |
+| Drop empty files | ~160 |
+| Collapse generated dirs | ~800 |
+| **Total savings vs naive JSON** | **~4,500 tokens** |
 
-Opus can see every file, its size, and its location. No more guessing that a file might exist, reading it, finding out it's wrong, and trying another path.
+Opus can see every file and its location. No more guessing paths. The format is trivially parseable — directories end with `/`, files don't, nesting is by indentation.
 
-See `docs/design/038-repo-map-sample.json` for the full pretty-printed output.
+See `docs/design/038-repo-map-sample.txt` for the full output.
 
 ### Phase 1: Plan (Opus, 1 call, no tools)
 
