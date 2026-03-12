@@ -88,6 +88,37 @@ async def list_fragments():
     ]
 
 
+@router.get("/fragments/{fragment_path:path}")
+async def get_fragment(fragment_path: str):
+    """Read a fragment file's content from disk."""
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    file_path = (prompts_dir / fragment_path).resolve()
+    # Safety: ensure path stays inside prompts/
+    if not str(file_path).startswith(str(prompts_dir.resolve())):
+        raise HTTPException(status_code=403, detail="Path traversal not allowed")
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Fragment not found")
+    return {"path": fragment_path, "content": file_path.read_text(encoding="utf-8")}
+
+
+class FragmentUpdate(BaseModel):
+    content: str
+
+
+@router.put("/fragments/{fragment_path:path}")
+async def update_fragment(fragment_path: str, body: FragmentUpdate):
+    """Write updated content to a fragment file on disk."""
+    prompts_dir = Path(__file__).parent.parent.parent.parent.parent / "prompts"
+    file_path = (prompts_dir / fragment_path).resolve()
+    if not str(file_path).startswith(str(prompts_dir.resolve())):
+        raise HTTPException(status_code=403, detail="Path traversal not allowed")
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Fragment not found")
+    file_path.write_text(body.content, encoding="utf-8")
+    logger.info("Fragment updated via UI: %s", fragment_path)
+    return {"path": fragment_path, "status": "saved"}
+
+
 # ── Template CRUD ─────────────────────────────────────────────────────────
 
 

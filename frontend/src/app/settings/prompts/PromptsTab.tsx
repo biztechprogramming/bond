@@ -6,16 +6,11 @@ import { BACKEND_API } from "@/lib/config";
 const API = `${BACKEND_API}/prompts`;
 
 interface Fragment {
-  id: string;
-  name: string;
-  display_name: string;
-  category: string;
-  content: string;
-  description: string;
-  is_active: number;
-  is_system: number;
-  agent_count: number;
-  version: number;
+  path: string;
+  tier: number;
+  phase: string | null;
+  utterances: string[];
+  token_estimate: number;
 }
 
 interface Template {
@@ -41,25 +36,28 @@ interface Version {
 
 type SubTab = "fragments" | "templates";
 
-const CATEGORY_COLORS: Record<string, string> = {
-  behavior: "#6cffa0",
-  tools: "#6c8aff",
-  safety: "#ff6c8a",
-  context: "#ffcc44",
+const TIER_COLORS: Record<number, string> = {
+  1: "#6cffa0",
+  2: "#6c8aff",
+  3: "#ffcc44",
+};
+
+const TIER_LABELS: Record<number, string> = {
+  1: "Always-on",
+  2: "Lifecycle",
+  3: "Semantic",
 };
 
 export default function PromptsTab() {
   const [subTab, setSubTab] = useState<SubTab>("fragments");
   const [fragments, setFragments] = useState<Fragment[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [editing, setEditing] = useState<Fragment | null>(null);
+  const [editingFragment, setEditingFragment] = useState<string | null>(null); // path of fragment being edited
+  const [fragmentContent, setFragmentContent] = useState("");
+  const [fragmentLoading, setFragmentLoading] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [showVersions, setShowVersions] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [genPurpose, setGenPurpose] = useState("");
-  const [genCategory, setGenCategory] = useState("behavior");
   const [msg, setMsg] = useState("");
 
   // AI generation state
@@ -85,38 +83,33 @@ export default function PromptsTab() {
 
   const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(""), 3000); };
 
-  const saveFragment = async (frag: Fragment, changeReason: string) => {
-    const res = await fetch(`${API}/fragments/${frag.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        display_name: frag.display_name,
-        category: frag.category,
-        content: frag.content,
-        description: frag.description,
-        is_active: !!frag.is_active,
-        change_reason: changeReason,
-      }),
-    });
-    if (res.ok) { showMsg("Fragment saved"); setEditing(null); await fetchAll(); }
-    else showMsg("Failed to save");
+  const openFragmentEditor = async (path: string) => {
+    setFragmentLoading(true);
+    try {
+      const res = await fetch(`${API}/fragments/${path}`);
+      if (res.ok) {
+        const data = await res.json();
+        setFragmentContent(data.content);
+        setEditingFragment(path);
+      } else showMsg("Failed to load fragment");
+    } catch { showMsg("Failed to load fragment"); }
+    setFragmentLoading(false);
   };
 
-  const createFragment = async (frag: { name: string; display_name: string; category: string; content: string; description: string }) => {
-    const res = await fetch(`${API}/fragments`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(frag),
-    });
-    if (res.ok) { showMsg("Fragment created"); setCreating(false); await fetchAll(); }
-    else { const d = await res.json(); showMsg(`Error: ${d.detail}`); }
-  };
-
-  const deleteFragment = async (id: string) => {
-    if (!confirm("Delete this fragment?")) return;
-    const res = await fetch(`${API}/fragments/${id}`, { method: "DELETE" });
-    if (res.ok) { showMsg("Deleted"); await fetchAll(); }
-    else { const d = await res.json(); showMsg(`Error: ${d.detail}`); }
+  const saveFragment = async () => {
+    if (!editingFragment) return;
+    try {
+      const res = await fetch(`${API}/fragments/${editingFragment}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: fragmentContent }),
+      });
+      if (res.ok) {
+        showMsg("Fragment saved");
+        setEditingFragment(null);
+        await fetchAll();
+      } else showMsg("Failed to save");
+    } catch { showMsg("Failed to save"); }
   };
 
   const loadVersions = async (type: "fragments" | "templates", id: string) => {
@@ -127,29 +120,6 @@ export default function PromptsTab() {
   const rollback = async (type: "fragments" | "templates", id: string, version: number) => {
     const res = await fetch(`${API}/${type}/${id}/rollback/${version}`, { method: "POST" });
     if (res.ok) { showMsg(`Rolled back to v${version}`); await fetchAll(); loadVersions(type, id); }
-  };
-
-  const generateFragment = async () => {
-    if (!genPurpose.trim()) return;
-    setGenerating(true);
-    try {
-      const res = await fetch(`${API}/generate/fragment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ purpose: genPurpose, category: genCategory }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setEditing({
-          id: "", name: "", display_name: genPurpose, category: genCategory,
-          content: data.generated_fragment, description: "",
-          is_active: 1, is_system: 0, agent_count: 0, version: 0,
-        } as Fragment);
-        setCreating(true);
-        setGenPurpose("");
-      } else showMsg("Generation failed");
-    } catch { showMsg("Generation failed"); }
-    setGenerating(false);
   };
 
   const generateSystemPrompt = async () => {
@@ -205,19 +175,13 @@ export default function PromptsTab() {
       {/* ═══ FRAGMENTS TAB ═══ */}
       {subTab === "fragments" && (
         <div>
-          {/* AI generate bar */}
-          <div style={s.genBar}>
-            <input style={{ ...s.input, flex: 1 }} placeholder="Describe a fragment to generate with AI..." value={genPurpose} onChange={(e) => setGenPurpose(e.target.value)} />
-            <select style={{ ...s.select, width: "140px" }} value={genCategory} onChange={(e) => setGenCategory(e.target.value)}>
-              <option value="behavior">Behavior</option>
-              <option value="tools">Tools</option>
-              <option value="safety">Safety</option>
-              <option value="context">Context</option>
-            </select>
-            <button style={{ ...s.btn, opacity: generating ? 0.5 : 1 }} onClick={generateFragment} disabled={generating || !genPurpose.trim()}>
-              {generating ? "✨ Generating..." : "✨ Generate"}
-            </button>
-            <button style={s.btnSecondary} onClick={() => setCreating(true)}>+ New</button>
+          {/* Info banner */}
+          <div style={{ ...s.section, marginBottom: "12px", display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "1.1rem" }}>📁</span>
+            <span style={{ color: "#8888a0", fontSize: "0.85rem" }}>
+              Fragments are managed as files in <code style={{ color: "#6c8aff" }}>prompts/</code> and versioned in git.
+              Tier 1 = always-on, Tier 2 = lifecycle-triggered, Tier 3 = semantic router.
+            </span>
           </div>
 
           {/* System prompt generator */}
@@ -245,71 +209,58 @@ export default function PromptsTab() {
             )}
           </div>
 
-          {/* Creating new fragment */}
-          {creating && <FragmentEditor
-            key="__new_fragment__"
-            fragment={editing || { id: "", name: "", display_name: "", category: "behavior", content: "", description: "", is_active: 1, is_system: 0, agent_count: 0, version: 0 } as Fragment}
-            isNew
-            onSave={(f) => createFragment({ name: f.name, display_name: f.display_name, category: f.category, content: f.content, description: f.description })}
-            onCancel={() => { setCreating(false); setEditing(null); }}
-          />}
-
           {/* Fragment list */}
-          {fragments.map((f) => (
-            <div key={f.id} style={s.card}>
-              {editing?.id === f.id ? (
-                <FragmentEditor fragment={editing} onSave={(upd) => saveFragment(upd, "Updated from UI")} onCancel={() => setEditing(null)} />
-              ) : (
-                <>
-                  <div style={s.cardHeader}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <span style={{ ...s.badge, backgroundColor: CATEGORY_COLORS[f.category] || "#888" }}>{f.category}</span>
-                      <strong style={{ color: "#e0e0e8" }}>{f.display_name}</strong>
-                      <span style={{ color: "#5a5a6e", fontSize: "0.8rem" }}>v{f.version}</span>
-                      {f.is_system ? <span style={{ ...s.badge, backgroundColor: "#555" }}>system</span> : null}
-                      {!f.is_active ? <span style={{ ...s.badge, backgroundColor: "#aa4444" }}>disabled</span> : null}
-                    </div>
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      <button style={s.btnSmall} onClick={() => setEditing({ ...f })}>Edit</button>
-                      <button style={s.btnSmall} onClick={() => loadVersions("fragments", f.id)}>History</button>
-                      {!f.is_system && <button style={{ ...s.btnSmall, color: "#ff6c8a" }} onClick={() => deleteFragment(f.id)}>Delete</button>}
-                    </div>
+          {fragments.map((f, i) => {
+            const name = f.path.split("/").pop()?.replace(".md", "") || f.path;
+            const category = f.path.split("/")[0];
+            const isEditing = editingFragment === f.path;
+            return (
+              <div key={f.path ?? `frag-${i}`} style={s.card}>
+                <div style={s.cardHeader}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ ...s.badge, backgroundColor: TIER_COLORS[f.tier] || "#888" }}>Tier {f.tier}</span>
+                    <strong style={{ color: "#e0e0e8" }}>{name}</strong>
+                    <span style={{ color: "#5a5a6e", fontSize: "0.8rem" }}>{category}</span>
                   </div>
-                  <p style={{ color: "#8888a0", fontSize: "0.85rem", margin: "4px 0" }}>{f.description}</p>
-                  <div style={s.cardMeta}>
-                    Used by {f.agent_count} agent{f.agent_count !== 1 ? "s" : ""}
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <span style={{ ...s.badge, backgroundColor: "#2a2a3e", color: "#8888a0" }}>{TIER_LABELS[f.tier] || `Tier ${f.tier}`}</span>
+                    {!isEditing && (
+                      <button style={s.btnSmall} onClick={() => openFragmentEditor(f.path)} disabled={fragmentLoading}>
+                        {fragmentLoading && editingFragment === null ? "..." : "Edit"}
+                      </button>
+                    )}
                   </div>
-                  <pre style={s.pre}>{f.content.substring(0, 300)}{f.content.length > 300 ? "..." : ""}</pre>
-                </>
-              )}
-
-              {/* Version history */}
-              {showVersions === f.id && (
-                <div style={s.versionPanel}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <strong style={{ color: "#e0e0e8" }}>Version History</strong>
-                    <button style={s.btnSmall} onClick={() => setShowVersions(null)}>Close</button>
-                  </div>
-                  {versions.map((v) => (
-                    <div key={v.id} style={s.versionRow}>
-                      <span style={{ color: "#6c8aff" }}>v{v.version}</span>
-                      <span style={{ color: "#8888a0", flex: 1 }}>{v.change_reason}</span>
-                      <span style={{ color: "#5a5a6e", fontSize: "0.8rem" }}>{v.changed_by} · {new Date(v.created_at).toLocaleDateString()}</span>
-                      <button style={s.btnSmall} onClick={() => rollback("fragments", f.id, v.version)}>Restore</button>
-                    </div>
-                  ))}
                 </div>
-              )}
-            </div>
-          ))}
+                <div style={{ color: "#5a5a6e", fontSize: "0.8rem", fontFamily: "monospace", margin: "4px 0" }}>{f.path}</div>
+                <div style={s.cardMeta}>
+                  ~{f.token_estimate} tokens
+                  {f.phase && <> · phase: {f.phase}</>}
+                  {f.utterances.length > 0 && <> · triggers: {f.utterances.join(", ")}</>}
+                </div>
+                {isEditing && (
+                  <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <textarea
+                      style={{ ...s.textarea, height: "300px" }}
+                      value={fragmentContent}
+                      onChange={(e) => setFragmentContent(e.target.value)}
+                    />
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button style={s.btn} onClick={saveFragment}>Save</button>
+                      <button style={s.btnSecondary} onClick={() => setEditingFragment(null)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
       {/* ═══ TEMPLATES TAB ═══ */}
       {subTab === "templates" && (
         <div>
-          {templates.map((t) => (
-            <div key={t.id} style={s.card}>
+          {templates.map((t, ti) => (
+            <div key={t.id ?? `tmpl-${ti}`} style={s.card}>
               {editingTemplate?.id === t.id ? (
                 <TemplateEditor template={editingTemplate} onSave={(upd) => saveTemplate(upd, "Updated from UI")} onCancel={() => setEditingTemplate(null)} />
               ) : (
@@ -339,8 +290,8 @@ export default function PromptsTab() {
                     <strong style={{ color: "#e0e0e8" }}>Version History</strong>
                     <button style={s.btnSmall} onClick={() => setShowVersions(null)}>Close</button>
                   </div>
-                  {versions.map((v) => (
-                    <div key={v.id} style={s.versionRow}>
+                  {versions.map((v, vi) => (
+                    <div key={v.id ?? `ver-${vi}`} style={s.versionRow}>
                       <span style={{ color: "#6c8aff" }}>v{v.version}</span>
                       <span style={{ color: "#8888a0", flex: 1 }}>{v.change_reason}</span>
                       <span style={{ color: "#5a5a6e", fontSize: "0.8rem" }}>{v.changed_by} · {new Date(v.created_at).toLocaleDateString()}</span>
@@ -353,41 +304,6 @@ export default function PromptsTab() {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-// ── Fragment Editor ──
-
-function FragmentEditor({ fragment, isNew, onSave, onCancel }: {
-  fragment: Fragment;
-  isNew?: boolean;
-  onSave: (f: Fragment) => void;
-  onCancel: () => void;
-}) {
-  const [f, setF] = useState({ ...fragment });
-  const [name, setName] = useState(fragment.name);
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-      {isNew && (
-        <input style={s.input} placeholder="fragment-slug-name" value={name} onChange={(e) => setName(e.target.value)} />
-      )}
-      <input style={s.input} placeholder="Display Name" value={f.display_name} onChange={(e) => setF({ ...f, display_name: e.target.value })} />
-      <select style={s.select} value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
-        <option value="behavior">Behavior</option>
-        <option value="tools">Tools</option>
-        <option value="safety">Safety</option>
-        <option value="context">Context</option>
-      </select>
-      <input style={s.input} placeholder="Description" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
-      <textarea style={{ ...s.textarea, height: "250px" }} value={f.content} onChange={(e) => setF({ ...f, content: e.target.value })} />
-      <div style={{ display: "flex", gap: "8px" }}>
-        <button style={s.btn} onClick={() => onSave(isNew ? { ...f, name } as Fragment : f)}>
-          {isNew ? "Create" : "Save"}
-        </button>
-        <button style={s.btnSecondary} onClick={onCancel}>Cancel</button>
-      </div>
     </div>
   );
 }
@@ -419,7 +335,7 @@ function TemplateEditor({ template, onSave, onCancel }: {
 const s: Record<string, React.CSSProperties> = {
   subTabBar: { display: "flex", gap: "4px" },
   subTab: {
-    background: "none", border: "1px solid #2a2a3e", borderRadius: "8px",
+    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
     color: "#8888a0", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer",
   },
   subTabActive: { color: "#6c8aff", borderColor: "#6c8aff", backgroundColor: "#1a1a2e" },
