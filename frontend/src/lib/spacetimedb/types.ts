@@ -211,6 +211,18 @@ export const Settings = __t.object("Settings", {
 });
 export type Settings = __Infer<typeof Settings>;
 
+export const SystemEvents = __t.object("SystemEvents", {
+  id: __t.string(),
+  conversationId: __t.string(),
+  agentId: __t.string(),
+  eventType: __t.string(),
+  summary: __t.string(),
+  metadata: __t.string(),
+  consumed: __t.bool(),
+  createdAt: __t.u64(),
+});
+export type SystemEvents = __Infer<typeof SystemEvents>;
+
 export const ToolLogs = __t.object("ToolLogs", {
   id: __t.string(),
   agentId: __t.string(),

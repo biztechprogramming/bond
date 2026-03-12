@@ -46,6 +46,7 @@ import AddPromptTemplateReducer from "./add_prompt_template_reducer";
 import AddPromptTemplateVersionReducer from "./add_prompt_template_version_reducer";
 import AddProviderReducer from "./add_provider_reducer";
 import AddWorkItemReducer from "./add_work_item_reducer";
+import ConsumeSystemEventReducer from "./consume_system_event_reducer";
 import CreateConversationReducer from "./create_conversation_reducer";
 import CreateWorkPlanReducer from "./create_work_plan_reducer";
 import DeleteAgentPromptFragmentReducer from "./delete_agent_prompt_fragment_reducer";
@@ -59,6 +60,7 @@ import DeleteProviderAliasReducer from "./delete_provider_alias_reducer";
 import DeleteProviderApiKeyReducer from "./delete_provider_api_key_reducer";
 import DeleteSettingReducer from "./delete_setting_reducer";
 import DeleteWorkPlanReducer from "./delete_work_plan_reducer";
+import EnqueueSystemEventReducer from "./enqueue_system_event_reducer";
 import ImportConversationReducer from "./import_conversation_reducer";
 import ImportConversationMessageReducer from "./import_conversation_message_reducer";
 import ImportWorkItemReducer from "./import_work_item_reducer";
@@ -95,6 +97,7 @@ import ProviderAliasesRow from "./provider_aliases_table";
 import ProviderApiKeysRow from "./provider_api_keys_table";
 import ProvidersRow from "./providers_table";
 import SettingsRow from "./settings_table";
+import SystemEventsRow from "./system_events_table";
 import ToolLogsRow from "./tool_logs_table";
 import WorkItemsRow from "./work_items_table";
 import WorkPlansRow from "./work_plans_table";
@@ -290,6 +293,17 @@ const tablesSchema = __schema({
       { name: 'settings_key_key', constraint: 'unique', columns: ['key'] },
     ],
   }, SettingsRow),
+  system_events: __table({
+    name: 'system_events',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'system_events_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, SystemEventsRow),
   tool_logs: __table({
     name: 'tool_logs',
     indexes: [
@@ -339,6 +353,7 @@ const reducersSchema = __reducers(
   __reducerSchema("add_prompt_template_version", AddPromptTemplateVersionReducer),
   __reducerSchema("add_provider", AddProviderReducer),
   __reducerSchema("add_work_item", AddWorkItemReducer),
+  __reducerSchema("consume_system_event", ConsumeSystemEventReducer),
   __reducerSchema("create_conversation", CreateConversationReducer),
   __reducerSchema("create_work_plan", CreateWorkPlanReducer),
   __reducerSchema("delete_agent_prompt_fragment", DeleteAgentPromptFragmentReducer),
@@ -352,6 +367,7 @@ const reducersSchema = __reducers(
   __reducerSchema("delete_provider_api_key", DeleteProviderApiKeyReducer),
   __reducerSchema("delete_setting", DeleteSettingReducer),
   __reducerSchema("delete_work_plan", DeleteWorkPlanReducer),
+  __reducerSchema("enqueue_system_event", EnqueueSystemEventReducer),
   __reducerSchema("import_conversation", ImportConversationReducer),
   __reducerSchema("import_conversation_message", ImportConversationMessageReducer),
   __reducerSchema("import_work_item", ImportWorkItemReducer),
