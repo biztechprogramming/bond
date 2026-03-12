@@ -16,6 +16,7 @@ Failing to delegate when the task requires it is the same as not doing the task 
 | You'd need 10+ tool calls to do it yourself | **MUST delegate** |
 | User says "use Claude Code / Codex / have an agent do it" | **MUST delegate** |
 | New feature with tests, build verification, iteration | **MUST delegate** |
+| User asks you to implement a design doc | **MUST delegate** — design docs describe multi-file features by definition |
 | You've finished discovery and have a plan but haven't written code | **MUST delegate NOW** |
 | Simple 1-3 file edit, you know exactly what to write | Do it yourself with `file_edit` |
 | Just need to read/understand code | Use `file_read` / `shell_grep` |
