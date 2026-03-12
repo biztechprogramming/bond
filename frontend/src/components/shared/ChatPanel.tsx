@@ -21,6 +21,8 @@ interface ChatPanelProps {
   codingAgentActive?: boolean;
   /** Per-file diffs from the coding agent: { filepath: { diff, count } } */
   codingAgentDiffs?: Record<string, { diff: string; count: number }>;
+  /** Live stdout/stderr output from the coding agent */
+  codingAgentOutput?: string[];
   /** Compact mode for board sidebar */
   compact?: boolean;
   /** Show pause/resume/cancel controls */
@@ -55,6 +57,7 @@ export default function ChatPanel({
   emptyMessage,
   codingAgentActive = false,
   codingAgentDiffs = {},
+  codingAgentOutput = [],
   deleteMode = false,
   onDeleteMessage,
   onResendMessage,
@@ -62,7 +65,9 @@ export default function ChatPanel({
 }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [showToolLog, setShowToolLog] = React.useState(false);
+  const [showAgentOutput, setShowAgentOutput] = React.useState(false);
   const [expandedFiles, setExpandedFiles] = React.useState<Set<string>>(new Set());
+  const outputEndRef = useRef<HTMLDivElement | null>(null);
   const [copiedIdx, setCopiedIdx] = React.useState<number | null>(null);
   const [hoveredIdx, setHoveredIdx] = React.useState<number | null>(null);
 
@@ -105,6 +110,13 @@ export default function ChatPanel({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
+
+  // Auto-scroll agent output when new lines arrive (only if panel is open)
+  useEffect(() => {
+    if (showAgentOutput) {
+      outputEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [codingAgentOutput, showAgentOutput]);
 
   const toggleFile = (filepath: string) => {
     setExpandedFiles((prev) => {
@@ -342,6 +354,47 @@ export default function ChatPanel({
                   </div>
                 ))}
               </div>
+            )}
+            {/* Live agent output log */}
+            {codingAgentOutput.length > 0 && (
+              <>
+                <button
+                  onClick={() => setShowAgentOutput((prev) => !prev)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "6px",
+                    width: "100%", padding: "6px 12px",
+                    background: "none", border: "none",
+                    borderTop: "1px solid #1e1e2e",
+                    color: "#8888a0", fontSize: "0.75rem", cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ fontSize: "0.7rem" }}>
+                    {showAgentOutput ? "▼" : "▶"}
+                  </span>
+                  <span>Agent Output</span>
+                  <span style={{ color: "#5a5a6e", marginLeft: "auto", fontSize: "0.68rem" }}>
+                    {codingAgentOutput.length} line{codingAgentOutput.length !== 1 ? "s" : ""}
+                  </span>
+                </button>
+                {showAgentOutput && (
+                  <div style={{
+                    maxHeight: "300px", overflowY: "auto", overflowX: "auto",
+                    padding: "8px 12px",
+                    backgroundColor: "#08080d",
+                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    fontSize: "0.7rem", lineHeight: 1.4,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
+                    color: "#a0a0b8",
+                  }}>
+                    {codingAgentOutput.map((line, i) => (
+                      <div key={i}>{line || "\u00A0"}</div>
+                    ))}
+                    <div ref={outputEndRef} />
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

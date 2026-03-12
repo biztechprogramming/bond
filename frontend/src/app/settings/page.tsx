@@ -240,6 +240,66 @@ export default function SettingsPage() {
                 <span style={{ color: "#8888a0", fontSize: "0.9rem", alignSelf: "center" }}>minutes</span>
               </div>
             </div>
+
+            {/* Coding Agent Output Settings */}
+            <div style={{ borderTop: "1px solid #1e1e2e", marginTop: "24px", paddingTop: "20px" }}>
+              <h3 style={{ color: "#e0e0e8", fontSize: "0.95rem", marginBottom: "12px" }}>Coding Agent Output</h3>
+              <p style={{ color: "#5a5a6e", fontSize: "0.8rem", margin: "0 0 16px 0" }}>
+                Control how coding agent (Claude Code, Codex, etc.) output is captured while running in the background.
+              </p>
+
+              <div style={s.field}>
+                <label style={{ ...s.label, display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={allSettings["coding_agent.log_to_file"] !== "false"}
+                    onChange={async (e) => {
+                      const val = e.target.checked ? "true" : "false";
+                      try {
+                        const res = await fetch(`${API_BASE}/coding_agent.log_to_file`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ value: val }),
+                        });
+                        if (res.ok) { setSaveMsg("Saved."); await fetchSettings(); }
+                        else setSaveMsg("Failed to save.");
+                      } catch { setSaveMsg("Failed to save."); }
+                    }}
+                    style={{ accentColor: "#6c8aff", width: "16px", height: "16px" }}
+                  />
+                  <span style={{ color: "#e0e0e8", fontSize: "0.9rem" }}>Log output to file</span>
+                </label>
+                <p style={{ color: "#5a5a6e", fontSize: "0.78rem", margin: "4px 0 0 26px" }}>
+                  Write agent stdout to a log file on disk. Useful for debugging and post-mortem analysis.
+                </p>
+              </div>
+
+              <div style={s.field}>
+                <label style={{ ...s.label, display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={allSettings["coding_agent.stream_output"] !== "false"}
+                    onChange={async (e) => {
+                      const val = e.target.checked ? "true" : "false";
+                      try {
+                        const res = await fetch(`${API_BASE}/coding_agent.stream_output`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ value: val }),
+                        });
+                        if (res.ok) { setSaveMsg("Saved."); await fetchSettings(); }
+                        else setSaveMsg("Failed to save.");
+                      } catch { setSaveMsg("Failed to save."); }
+                    }}
+                    style={{ accentColor: "#6c8aff", width: "16px", height: "16px" }}
+                  />
+                  <span style={{ color: "#e0e0e8", fontSize: "0.9rem" }}>Stream output to UI</span>
+                </label>
+                <p style={{ color: "#5a5a6e", fontSize: "0.78rem", margin: "4px 0 0 26px" }}>
+                  Show live agent output in the chat panel. Disabling reduces network traffic for long-running agents.
+                </p>
+              </div>
+            </div>
           </section>
         )}
 

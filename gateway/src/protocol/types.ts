@@ -21,7 +21,7 @@ export interface OutgoingMessage {
   error?: string;
   conversationId?: string;
   messageId?: string;
-  agentStatus?: "idle" | "thinking" | "tool_calling" | "responding";
+  agentStatus?: "idle" | "thinking" | "tool_calling" | "responding" | "stopping";
   agentName?: string;
   queuePosition?: number;
   queuedCount?: number;

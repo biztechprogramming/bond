@@ -9,6 +9,8 @@ import { initTokens, issueToken, validateToken } from "./tokens.js";
 import { AuditLogger } from "./audit.js";
 import { PolicyEngine } from "./policy.js";
 import { executeCommand } from "./executor.js";
+import { handleDeploy } from "./deploy-handler.js";
+import type { GatewayConfig } from "../config/index.js";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -37,7 +39,7 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-export function createBrokerRouter(config: BrokerConfig): Router {
+export function createBrokerRouter(config: BrokerConfig, gatewayConfig?: GatewayConfig): Router {
   initTokens(config.dataDir);
 
   const router = Router();
@@ -127,6 +129,37 @@ export function createBrokerRouter(config: BrokerConfig): Router {
     const agent = req.agentToken!;
     const newToken = issueToken(agent.sub, agent.sid);
     res.json({ token: newToken });
+  });
+
+  // POST /deploy — deployment agent endpoint
+  // Environment is derived from the agent's token (sub: "deploy-qa" → env: "qa")
+  // Agents send a script_id + action — broker does everything else
+  router.post("/deploy", async (req: Request, res: Response) => {
+    const agent = req.agentToken!;
+
+    if (!gatewayConfig) {
+      res.status(503).json({ status: "error", reason: "Gateway config not available" });
+      return;
+    }
+
+    const body = req.body || {};
+
+    audit.log({
+      timestamp: new Date().toISOString(),
+      agent_id: agent.sub,
+      session_id: agent.sid,
+      command: `deploy:${body.action}:${body.script_id || ""}`,
+      decision: "allow",
+      policy_rule: "deploy-handler",
+    });
+
+    try {
+      const result = await handleDeploy(gatewayConfig, agent, body);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[broker/deploy] Error:", err.message);
+      res.status(500).json({ status: "error", reason: err.message });
+    }
   });
 
   return router;

@@ -1277,6 +1277,122 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    # ── Deployment agent tools (Design Doc 039) ───────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "deploy_action",
+            "description": (
+                "Execute a deployment action via the permission broker. "
+                "The broker validates promotion status, loads secrets, and executes scripts on the host. "
+                "You never see script content, file paths, or secrets — only stdout/stderr results. "
+                "Environment is automatically derived from your agent identity."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "info",
+                            "validate",
+                            "dry-run",
+                            "pre-hook",
+                            "deploy",
+                            "post-hook",
+                            "health-check",
+                            "rollback",
+                            "receipt",
+                            "status",
+                            "lock-status",
+                        ],
+                        "description": "The deployment action to execute.",
+                    },
+                    "script_id": {
+                        "type": "string",
+                        "description": "Script ID (e.g., '001-migrate-user-table'). Required for most actions.",
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Script version (e.g., 'v1'). Defaults to 'v1'.",
+                        "default": "v1",
+                    },
+                    "environment": {
+                        "type": "string",
+                        "description": "For 'receipt' action only — which environment's receipt to fetch.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Override script timeout in seconds (capped at environment maximum).",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_bug_ticket",
+            "description": (
+                "Create a detailed GitHub issue for a deployment failure or environment problem. "
+                "Include enough context for a developer to reproduce and fix the issue. "
+                "The issue will be created in the configured repository with appropriate labels. "
+                "Use this when a deployment fails or a health check detects a problem."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Clear, specific issue title describing the problem.",
+                    },
+                    "environment": {
+                        "type": "string",
+                        "description": "Which environment this affects (e.g., 'qa', 'staging').",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low"],
+                        "description": "Impact severity level.",
+                    },
+                    "script_id": {
+                        "type": "string",
+                        "description": "Deployment script that failed (if applicable).",
+                    },
+                    "error_output": {
+                        "type": "string",
+                        "description": "Relevant stdout/stderr from the failure.",
+                    },
+                    "code_context": {
+                        "type": "string",
+                        "description": "Relevant code snippets from the workspace (read-only access).",
+                    },
+                    "steps_to_reproduce": {
+                        "type": "string",
+                        "description": "How to reproduce the issue.",
+                    },
+                    "expected_behavior": {
+                        "type": "string",
+                        "description": "What should have happened.",
+                    },
+                    "actual_behavior": {
+                        "type": "string",
+                        "description": "What actually happened.",
+                    },
+                    "suggested_fix": {
+                        "type": "string",
+                        "description": "Agent's analysis and suggested fix (from reading the code).",
+                    },
+                    "receipt_id": {
+                        "type": "string",
+                        "description": "Deployment receipt ID for full context.",
+                    },
+                },
+                "required": ["title", "environment", "severity", "actual_behavior"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
