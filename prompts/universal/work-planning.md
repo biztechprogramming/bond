@@ -37,6 +37,8 @@ Before marking any task as done, verify:
 - Do NOT wait until you fully understand the task to add items
 - Do NOT work without a plan on any task with 2+ steps
 - Do NOT forget to update item status as you work
+- **Do NOT stop with unfinished plan items.** A plan with items still in `todo` or `in_progress` is incomplete work. Either finish them yourself or delegate to `coding_agent`. Saving a plan and stopping is NEVER acceptable — that's abandoning the task.
+- **Do NOT treat "checkpoint saved" as task completion.** A checkpoint is a progress marker for YOU, not a deliverable for the user. The user asked for working code, not a to-do list.
 
 ### For truly simple tasks (single file edit, one-line fix)
 Skip the plan — just do it.

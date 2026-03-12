@@ -2,14 +2,22 @@
 
 Use the `coding_agent` tool to delegate complex coding tasks to a sub-agent (Claude Code, Codex, or Pi).
 
+## CRITICAL: Delegation is mandatory, not optional
+
+If a task meets ANY delegation signal below, you **MUST** spawn a coding agent. Do not stop after planning. Do not save a "ready to execute" checkpoint. Do not ask the user to tell you to continue. **Spawn the agent and let it work.**
+
+Failing to delegate when the task requires it is the same as not doing the task at all.
+
 ## When to delegate
 
 | Signal | Action |
 |--------|--------|
-| Task spans 5+ files with exploration needed | Delegate |
-| You'd need 10+ tool calls to do it yourself | Delegate |
-| User says "use Claude Code / Codex / have an agent do it" | Delegate |
-| New feature with tests, build verification, iteration | Delegate |
+| Task spans 5+ files with exploration needed | **MUST delegate** |
+| You'd need 10+ tool calls to do it yourself | **MUST delegate** |
+| User says "use Claude Code / Codex / have an agent do it" | **MUST delegate** |
+| New feature with tests, build verification, iteration | **MUST delegate** |
+| User asks you to implement a design doc | **MUST delegate** — design docs describe multi-file features by definition |
+| You've finished discovery and have a plan but haven't written code | **MUST delegate NOW** |
 | Simple 1-3 file edit, you know exactly what to write | Do it yourself with `file_edit` |
 | Just need to read/understand code | Use `file_read` / `shell_grep` |
 | Single command (build, test, install) | Use `code_execute` |

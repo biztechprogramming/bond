@@ -169,10 +169,8 @@ class OpenSandboxAdapter:
 
         # Environment variables — merge agent-specific env with system env
         env = dict(agent.get("env", {}))
-        # Auto-inject SPACETIMEDB_TOKEN so sandbox containers can use work_plan
-        spacetimedb_token = os.environ.get("SPACETIMEDB_TOKEN", "")
-        if spacetimedb_token and "SPACETIMEDB_TOKEN" not in env:
-            env["SPACETIMEDB_TOKEN"] = spacetimedb_token
+        # REMOVED: SpacetimeDB token injection (2026-03-12)
+        # Agents must NOT have direct SpacetimeDB access — see design docs 035, 039.
         if env:
             create_body["env"] = env
 

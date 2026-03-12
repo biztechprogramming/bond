@@ -635,7 +635,7 @@ class ResolvedSandbox:
 
 @dataclass
 class WorkspaceMount:
-    host_path: str             # /home/andrew/projects/bond
+    host_path: str             # ~/projects/bond
     mount_name: str            # "bond" → /workspace/bond
     readonly: bool
 
@@ -729,15 +729,15 @@ Each agent has a list of workspace directory mappings (configured in the UI). Th
 
 ```
 Agent "coder" workspace mounts:
-  /home/andrew/projects/bond    → /workspace/bond     (rw)
-  /home/andrew/projects/webapp  → /workspace/webapp    (rw)
-  /home/andrew/docs             → /workspace/docs      (ro)
+  ~/projects/bond    → /workspace/bond     (rw)
+  ~/projects/webapp  → /workspace/webapp    (rw)
+  ~/docs             → /workspace/docs      (ro)
 
 Becomes:
   docker create ... \
-    -v /home/andrew/projects/bond:/workspace/bond:rw \
-    -v /home/andrew/projects/webapp:/workspace/webapp:rw \
-    -v /home/andrew/docs:/workspace/docs:ro \
+    -v ~/projects/bond:/workspace/bond:rw \
+    -v ~/projects/webapp:/workspace/webapp:rw \
+    -v ~/docs:/workspace/docs:ro \
     ...
 ```
 
@@ -839,7 +839,7 @@ CREATE TABLE agents (
 CREATE TABLE agent_workspace_mounts (
     id TEXT PRIMARY KEY,                    -- ULID
     agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    host_path TEXT NOT NULL,                -- e.g., '/home/andrew/projects/bond'
+    host_path TEXT NOT NULL,                -- e.g., '~/projects/bond'
     mount_name TEXT NOT NULL,               -- e.g., 'bond' → /workspace/bond
     readonly INTEGER NOT NULL DEFAULT 0,    -- mount as read-only?
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -896,7 +896,7 @@ The Settings UI gets a new **Agents** section (`/settings/agents`) where the use
    - **Sandbox image dropdown** — "None (host execution)" + list of available Docker images (pulled from `docker images` or pre-configured). User can also type a custom image name.
    - **Tools checklist** — all 14 tools listed with checkboxes. All checked by default. Each tool shows its name and one-line description.
    - **Workspace directories** — add/remove host paths with a mount name for each:
-     - Host path: file picker or text input (e.g., `/home/andrew/projects/bond`)
+     - Host path: file picker or text input (e.g., `~/projects/bond`)
      - Mount name: auto-derived from last path segment, editable (e.g., `bond`)
      - Read-only toggle
      - Multiple directories supported — each becomes `/workspace/{mount_name}` in the container
@@ -912,19 +912,19 @@ When the agent's sandbox container starts, each workspace mount becomes a subdir
 
 ```bash
 # Agent "coder" has two workspace mounts:
-#   /home/andrew/projects/bond → mount_name: "bond"
-#   /home/andrew/projects/webapp → mount_name: "webapp"
+#   ~/projects/bond → mount_name: "bond"
+#   ~/projects/webapp → mount_name: "webapp"
 
 docker run --rm \
-  -v /home/andrew/projects/bond:/workspace/bond:rw \
-  -v /home/andrew/projects/webapp:/workspace/webapp:rw \
+  -v ~/projects/bond:/workspace/bond:rw \
+  -v ~/projects/webapp:/workspace/webapp:rw \
   bond-sandbox-coding \
   ...
 
 # Inside the container:
 # /workspace/
-# ├── bond/        ← /home/andrew/projects/bond
-# └── webapp/      ← /home/andrew/projects/webapp
+# ├── bond/        ← ~/projects/bond
+# └── webapp/      ← ~/projects/webapp
 ```
 
 The agent sees a clean `/workspace` with named subdirectories. It can work across multiple projects. The host paths are validated on save (must exist, must be absolute).

@@ -3,10 +3,11 @@ import express from "express";
 import { createServer, type Server } from "http";
 import crypto from "node:crypto";
 import { createWebhookRouter } from "../webhooks.js";
+import { EventBus } from "../events/event-bus.js";
 
 // ---------- helpers ----------
 
-function buildApp(opts: { onMainMerge?: () => void; secret?: string } = {}) {
+function buildApp(opts: { onMainMerge?: () => void; secret?: string; eventBus?: EventBus } = {}) {
   const app = express();
 
   // Raw body capture (mirrors server.ts middleware)
@@ -30,7 +31,7 @@ function buildApp(opts: { onMainMerge?: () => void; secret?: string } = {}) {
     delete process.env.GITHUB_WEBHOOK_SECRET;
   }
 
-  const router = createWebhookRouter({ onMainMerge: opts.onMainMerge });
+  const router = createWebhookRouter({ onMainMerge: opts.onMainMerge, eventBus: opts.eventBus });
   app.use("/webhooks", router);
   return app;
 }
@@ -156,5 +157,84 @@ describe("webhooks", () => {
 
     expect(res.status).toBe(200);
     expect(onMainMerge).not.toHaveBeenCalled();
+  });
+
+  it("emits to eventBus when provided", async () => {
+    const eventBus = new EventBus();
+    const handler = vi.fn();
+    eventBus.onMatch(handler);
+    // Subscribe to all push events
+    eventBus.subscribe({
+      conversationId: "conv-1",
+      agentId: "agent-1",
+      filter: { source: "github", type: "push" },
+      context: "test",
+      expiresAt: Date.now() + 3600_000,
+      maxDeliveries: 10,
+    });
+
+    const app = buildApp({ eventBus });
+    const s = await listen(app);
+    server = s.server;
+
+    const res = await post(
+      s.port,
+      "/webhooks/github",
+      { ref: "refs/heads/feature/x", repository: { full_name: "org/repo" }, sender: { login: "alice" } },
+      { "x-github-event": "push" }
+    );
+
+    expect(res.status).toBe(200);
+    expect(handler).toHaveBeenCalledOnce();
+    const [event] = handler.mock.calls[0];
+    expect(event.source).toBe("github");
+    expect(event.type).toBe("push");
+    expect(event.repo).toBe("org/repo");
+    expect(event.branch).toBe("feature/x");
+    expect(event.actor).toBe("alice");
+  });
+
+  it("normalizes pull_request event with branch from PR head ref", async () => {
+    const eventBus = new EventBus();
+    const emitted: any[] = [];
+    const origEmit = eventBus.emit.bind(eventBus);
+    vi.spyOn(eventBus, "emit").mockImplementation((ev) => {
+      emitted.push(ev);
+      origEmit(ev);
+    });
+
+    const app = buildApp({ eventBus });
+    const s = await listen(app);
+    server = s.server;
+
+    const payload = {
+      action: "opened",
+      pull_request: { head: { ref: "feature/pr-branch" }, number: 42 },
+      repository: { full_name: "org/repo" },
+      sender: { login: "bob" },
+    };
+
+    await post(s.port, "/webhooks/github", payload, { "x-github-event": "pull_request" });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].type).toBe("pull_request");
+    expect(emitted[0].branch).toBe("feature/pr-branch");
+    expect(emitted[0].actor).toBe("bob");
+  });
+
+  it("does not emit to eventBus when no eventBus provided", async () => {
+    // Just verifies the old behavior still works without eventBus
+    const app = buildApp({});
+    const s = await listen(app);
+    server = s.server;
+
+    const res = await post(
+      s.port,
+      "/webhooks/github",
+      { ref: "refs/heads/feature/x" },
+      { "x-github-event": "push" }
+    );
+
+    expect(res.status).toBe(200);
   });
 });

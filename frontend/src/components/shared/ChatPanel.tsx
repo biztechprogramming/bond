@@ -63,6 +63,44 @@ export default function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const [showToolLog, setShowToolLog] = React.useState(false);
   const [expandedFiles, setExpandedFiles] = React.useState<Set<string>>(new Set());
+  const [copiedIdx, setCopiedIdx] = React.useState<number | null>(null);
+  const [hoveredIdx, setHoveredIdx] = React.useState<number | null>(null);
+
+  const copyMessage = (content: string, idx: number) => {
+    const onSuccess = () => {
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 1500);
+    };
+
+    // Prefer Clipboard API, fall back to execCommand for non-secure contexts / older mobile browsers
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(content).then(onSuccess).catch(() => {
+        fallbackCopy(content) && onSuccess();
+      });
+    } else {
+      fallbackCopy(content) && onSuccess();
+    }
+  };
+
+  const fallbackCopy = (text: string): boolean => {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } catch {
+      ok = false;
+    }
+    document.body.removeChild(textarea);
+    return ok;
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -113,7 +151,31 @@ export default function ChatPanel({
               ...(msg.role === "system" ? s.chatMsgSystem : {}),
               position: "relative" as const,
             }}
+            onMouseEnter={() => setHoveredIdx(i)}
+            onMouseLeave={() => setHoveredIdx(null)}
           >
+            {!deleteMode && (
+              <button
+                onClick={() => copyMessage(msg.content, i)}
+                title="Copy message"
+                style={{
+                  position: "absolute",
+                  top: "6px",
+                  right: "6px",
+                  background: copiedIdx === i ? "rgba(78,201,148,0.15)" : "rgba(90,90,110,0.2)",
+                  border: "none",
+                  color: copiedIdx === i ? "#4ec994" : hoveredIdx === i ? "#a0a0b8" : "#6e6e85",
+                  fontSize: "0.85rem",
+                  cursor: "pointer",
+                  padding: "4px 6px",
+                  borderRadius: "6px",
+                  transition: "color 0.15s, background 0.15s",
+                  lineHeight: 1,
+                }}
+              >
+                {copiedIdx === i ? "✓" : "⧉"}
+              </button>
+            )}
             {deleteMode && (
               <div style={{ position: "absolute", top: "6px", right: "6px", display: "flex", gap: "4px" }}>
                 {msg.role === "user" && onResendMessage && (
