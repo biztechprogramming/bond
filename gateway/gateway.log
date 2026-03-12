@@ -1,5 +1,5 @@
 
-> bond-gateway@0.1.0 dev /home/andrew/bond/gateway
+> bond-gateway@0.1.0 dev ~/bond/gateway
 > tsx watch src/index.ts
 
 [persistence] Using SpacetimeDB HTTP API at http://localhost:18787 module bond-core-v2

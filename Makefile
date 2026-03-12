@@ -14,11 +14,11 @@ dev:
 
 # Backend (FastAPI)
 backend:
-	cd /home/andrew/bond && uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload
+	uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload
 
 # Gateway (TypeScript WebSocket server)
 gateway:
-	cd /home/andrew/bond/gateway && \
+	cd gateway && \
 	  SPACETIMEDB_TOKEN=$(grep 'spacetimedb_token' ~/.config/spacetime/cli.toml 2>/dev/null | cut -d'"' -f2) \
 	  BOND_SPACETIMEDB_URL=http://localhost:18787 \
 	  BOND_SPACETIMEDB_MODULE=bond-core-v2 \
@@ -26,7 +26,7 @@ gateway:
 
 # Frontend (Next.js)
 frontend:
-	cd /home/andrew/bond/frontend && pnpm dev
+	cd frontend && pnpm dev
 
 # First-run setup wizard
 setup:
@@ -37,8 +37,8 @@ install:
 	@chmod +x ./scripts/setup-spacetimedb.sh
 	@./scripts/setup-spacetimedb.sh
 	uv sync
-	cd /home/andrew/bond/gateway && $$(grep -oP '"package_manager":\s*"\K[^"]+' ~/.bond/config.json || echo "pnpm") install
-	cd /home/andrew/bond/frontend && $$(grep -oP '"package_manager":\s*"\K[^"]+' ~/.bond/config.json || echo "pnpm") install
+	cd gateway && $$(grep -oP '"package_manager":\s*"\K[^"]+' ~/.bond/config.json || echo "pnpm") install
+	cd frontend && $$(grep -oP '"package_manager":\s*"\K[^"]+' ~/.bond/config.json || echo "pnpm") install
 
 # Run tests
 test:
@@ -47,8 +47,8 @@ test:
 # Lint
 lint:
 	uv run ruff check backend/
-	cd /home/andrew/bond/gateway && pnpm lint
-	cd /home/andrew/bond/frontend && pnpm lint
+	cd gateway && pnpm lint
+	cd frontend && pnpm lint
 
 # Run migrations (Docker)
 # Run migrations (tries local first, falls back to Docker)
