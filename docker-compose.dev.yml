@@ -29,6 +29,8 @@ services:
     environment:
       - BOND_BACKEND_URL=http://backend:18790
       - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}
+      - GATEWAY_EXTERNAL_URL=${GATEWAY_EXTERNAL_URL:-}
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
 
   frontend:
     build:

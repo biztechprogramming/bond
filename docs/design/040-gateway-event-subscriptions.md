@@ -90,6 +90,10 @@ GitHub ──webhook──▶ Gateway /webhooks/github
                     Agent responds → streamed to user via WebSocket
 ```
 
+> **Important distinction:**
+> - **Webhook registration** is infrastructure setup. It happens on gateway startup (reconciliation) and when a new repo is added to an agent. It tells GitHub "send events to this URL."
+> - **Event subscriptions** are per-conversation and ephemeral. They are created automatically when a `coding_agent` tool call is detected during a conversation turn. They tell the EventBus "when an event matching this filter arrives, notify this conversation."
+
 ### 3.2 Core Components
 
 #### 3.2.1 GatewayEvent (Normalized Event Model)
@@ -366,75 +370,166 @@ But if `branch` is omitted, the coding agent creates its own branch name (usuall
 
 Currently, GitHub webhooks must be manually configured per-repo (Settings → Webhooks → Add webhook). This is error-prone and doesn't scale.
 
-### 5.2 Solution: Gateway Registers Webhooks on Startup
+### 5.2 Solution: UI-Driven Repo Discovery + SpacetimeDB TrackedRepo Table
 
-The gateway should automatically ensure webhooks are configured for all repos it cares about. It knows which repos agents work with from the `agent_workspace_mounts` table in SpacetimeDB (each mount has a `hostPath` that maps to a git repo).
+Repo discovery is a **one-time UI interaction** when a user adds or edits a workspace mount for an agent. The repos the user selects are stored in SpacetimeDB. The gateway reads from SpacetimeDB at startup — no filesystem scanning at all.
+
+#### Repo Discovery Flow (UI Interaction)
+
+When a user adds or edits a workspace mount for an agent in the UI:
+
+1. The UI calls `POST /api/v1/repos/scan` with the mount path
+2. The gateway runs `discoverRepos(mountPath)` — finds all `.git` directories with GitHub remotes
+3. Discovered repos are returned to the UI as a list
+4. The UI presents a checkbox list: the user selects which repos to track
+5. The confirmed selections are saved to the `TrackedRepo` table in SpacetimeDB
+6. The gateway registers webhooks for the newly selected repos and sets `webhook_registered = true`
+
+**If new repos are added to the directory later**, the user can trigger a re-scan via a "Re-scan" button on the agent settings page, or add repos manually.
+
+#### discoverRepos() — UI Scan Endpoint Only
+
+The `discoverRepos()` function is **only** called from the UI scan flow. It is exposed as an API endpoint:
+
+```
+POST /api/v1/repos/scan
+Body: { "path": "/workspace/bond" }
+Response: { "repos": [{ "localPath": "...", "remote": "...", "owner": "...", "name": "..." }] }
+```
+
+It is **not** called on gateway startup.
+
+Given a workspace path (e.g., `/workspace`), `discoverRepos(workspacePath)`:
+
+1. Check if `workspacePath` itself is a git repo (has a `.git` directory at its root)
+2. Scan immediate subdirectories for `.git` directories (max depth 2–3 levels, avoiding `node_modules`, etc.)
+3. Skip git submodules — `.git` entries that are **files** (pointing to `../.git/modules/`) rather than directories
+4. For each discovered `.git` directory, run `git -C <path> remote get-url origin` to get the remote URL
+5. Filter to GitHub remotes only — parse `owner/repo` from `git@github.com:owner/repo.git` or `https://github.com/owner/repo.git` URLs; log and skip non-GitHub remotes
+6. Deduplicate (multiple paths may point to the same repo)
+
+```typescript
+interface DiscoveredRepo {
+  localPath: string;   // absolute path to the repo root
+  remote: string;      // raw remote URL
+  owner: string;       // "biztechprogramming"
+  repo: string;        // "bond"
+}
+
+// Called only from POST /api/v1/repos/scan (UI flow — not startup)
+async function discoverRepos(workspacePath: string): Promise<DiscoveredRepo[]>
+```
+
+#### TrackedRepo — SpacetimeDB Table
+
+Repos selected by the user are stored in a dedicated SpacetimeDB table — **not** as a JSON field on the mount. A single mount can have zero, one, or many tracked repos (one-to-many relationship).
+
+```
+TrackedRepo table:
+  - id: u64 (autoinc, primary key)
+  - agent_id: u64 (FK to agent)
+  - owner: string (GitHub org/user, e.g. "biztechprogramming")
+  - name: string (repo name, e.g. "bond")
+  - remote_url: string (e.g. "git@github.com:biztechprogramming/bond.git")
+  - local_path: string (e.g. "/workspace/bond")
+  - webhook_registered: bool (tracks whether webhook was successfully created)
+  - created_at: Timestamp
+```
+
+Workspace paths come from **agent configurations** (the mount path selected in the UI). Repos are never hard-coded in config files.
 
 ### 5.3 How It Works
 
-#### 5.3.1 Startup Flow
+#### 5.3.1 Trigger Points for Webhook Registration
+
+Webhook registration happens at two distinct points — both use the same `WebhookRegistrar.ensureWebhooks()` under the hood.
+
+**Trigger A: Gateway process startup (reconciliation)**
+
+When the gateway process starts, it queries SpacetimeDB for all tracked repos and reconciles webhooks — no filesystem scanning:
 
 ```
-Gateway starts
+Gateway process starts
      │
      ├── Load config (bond.json + env vars)
+     ├── Initialize EventBus + EventHistory
      │
-     ├── Connect to SpacetimeDB
+     ├── Query SpacetimeDB TrackedRepo table
+     │   (all rows — webhook_registered may be true or false)
      │
-     ├── Query agent_workspace_mounts table
-     │   → Extract unique repos from hostPath git remotes
-     │
-     ├── For each repo:
-     │   ├── GET /repos/{owner}/{repo}/hooks
-     │   │   → Check if our webhook already exists (match on URL)
-     │   │
-     │   ├── If missing:
-     │   │   POST /repos/{owner}/{repo}/hooks
-     │   │   {
-     │   │     "config": {
-     │   │       "url": "https://<gateway-host>/webhooks/github",
-     │   │       "content_type": "json",
-     │   │       "secret": "<GITHUB_WEBHOOK_SECRET>"
-     │   │     },
-     │   │     "events": ["push", "pull_request", "check_run"],
-     │   │     "active": true
-     │   │   }
-     │   │
-     │   └── If exists but misconfigured:
-     │       PATCH /repos/{owner}/{repo}/hooks/{hook_id}
-     │       → Update URL, events, or secret as needed
-     │
-     └── Log results: "Webhooks configured for N repos"
+     └── WebhookRegistrar.ensureWebhooks(trackedRepos)
+         └── For each repo:
+             ├── GET /repos/{owner}/{repo}/hooks
+             │   → Check if our webhook already exists (match on URL)
+             │
+             ├── If missing:
+             │   POST /repos/{owner}/{repo}/hooks
+             │   {
+             │     "config": {
+             │       "url": "https://<gateway-host>/webhooks/github",
+             │       "content_type": "json",
+             │       "secret": "<GITHUB_WEBHOOK_SECRET>"
+             │     },
+             │     "events": ["push", "pull_request", "check_run"],
+             │     "active": true
+             │   }
+             │   → Set webhook_registered = true in SpacetimeDB
+             │
+             └── If exists but misconfigured:
+                 PATCH /repos/{owner}/{repo}/hooks/{hook_id}
+                 → Update URL, events, or secret as needed
 ```
 
-#### 5.3.2 Accessing GitHub API from the Gateway Container
+This is **idempotent** — it checks existing webhooks and creates/updates only as needed. Purpose: catch webhook drift (deleted from GitHub's side, config changed, gateway restarted after a new repo was added).
 
-The gateway runs in a Docker container. It needs to call the GitHub API to manage webhooks. Two approaches:
+**Trigger B: User selects repos in the UI (after mount scan)**
 
-**Option A: Shell out to `gh` on the host (via Docker socket or exec)**
-- The host has `gh` authenticated with full repo access
-- The gateway container could exec `gh` via a mounted Docker socket or a sidecar
-- Fragile, security concerns with Docker socket access
+When a user confirms their checkbox selections after scanning a workspace mount, the gateway registers webhooks for the newly selected repos:
 
-**Option B: GitHub App or Personal Access Token (PAT) in the gateway** ✅ Recommended
-- Add `GITHUB_TOKEN` env var to the gateway container (from `.env` or secrets)
+```
+User confirms repo selections in agent settings UI
+     │
+     └── POST /api/v1/repos/register  (or SpacetimeDB mutation)
+             │
+             ├── Save each selected repo to TrackedRepo in SpacetimeDB
+             │   (webhook_registered = false initially)
+             │
+             └── WebhookRegistrar.ensureWebhooks(selectedRepos)
+                 │   → Same create/update logic as startup reconciliation
+                 │
+                 └── Set webhook_registered = true for each success
+```
+
+Log results: "Webhooks configured for N repos"
+
+#### 5.3.2 Accessing the GitHub API from the Gateway
+
+The gateway runs on the host as a long-running process — not inside a Docker container. This means it already has direct access to the host's `gh` CLI and its stored credentials. Two practical approaches:
+
+**Option B: GitHub App or Personal Access Token (PAT) in the environment** ✅ Recommended for production
+- Set `GITHUB_TOKEN` as an environment variable (from `.env` or a secrets manager)
 - Use the GitHub REST API directly via `fetch()` — no external dependencies
 - The same token that `gh` uses on the host (`gh auth token` outputs it)
 - Scopes needed: `admin:repo_hook` (to create/manage webhooks) + `repo` (to list repos)
 
-**Option C: Extract the token from `gh` at container startup**
-- The gateway's entrypoint script runs `gh auth token` on the host (via mounted config)
-- Injects it as an env var before starting the Node process
-- Combines the convenience of "use the host's auth" with the cleanliness of "just use a token"
+**Option C: Read the token from `gh auth token` at gateway startup** ✅ Recommended for development
+- Since the gateway runs on the host where `gh` is already authenticated, it can simply call `gh auth token` directly at startup — no mounted config or Docker socket tricks needed
+- Simpler than managing a separate PAT during local development
 
-**Recommendation:** Option B for production, Option C for development. In practice, add `GITHUB_TOKEN` to `docker-compose.dev.yml`:
+```typescript
+// In WebhookRegistrar or config loading (development convenience)
+import { execSync } from "child_process";
+const token = process.env.GITHUB_TOKEN
+  ?? execSync("gh auth token", { encoding: "utf-8" }).trim();
+```
 
-```yaml
-gateway:
-  environment:
-    - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-    - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-    - GATEWAY_EXTERNAL_URL=${GATEWAY_EXTERNAL_URL:-}
+**Recommendation:** Option B for production (explicit `GITHUB_TOKEN` env var), Option C for development (auto-read from `gh`). For local development, add to `.env`:
+
+```bash
+# .env
+GITHUB_TOKEN=$(gh auth token)       # or paste directly: GITHUB_TOKEN=ghp_xxxx
+GITHUB_WEBHOOK_SECRET=mysecret
+GATEWAY_EXTERNAL_URL=https://abc123.trycloudflare.com
 ```
 
 #### 5.3.3 Determining the Gateway's External URL
@@ -456,7 +551,9 @@ class WebhookRegistrar {
   ) {}
 
   /**
-   * Called on gateway startup. Ensures webhooks exist for all known repos.
+   * Called on gateway startup or when a new workspace is added.
+   * Ensures webhooks exist for all discovered repos.
+   * repos: "owner/repo" strings (already parsed by discoverRepos)
    */
   async ensureWebhooks(repos: string[]): Promise<void> {
     const webhookUrl = `${this.externalUrl}/webhooks/github`;
@@ -485,22 +582,72 @@ class WebhookRegistrar {
   }
 
   /**
-   * Discover repos from agent workspace mounts.
-   * Reads git remote origin URL from each mount path.
+   * Discover all GitHub repos under a workspace path.
+   * Called ONLY from POST /api/v1/repos/scan (UI flow — not gateway startup).
+   *
+   * Strategy:
+   *   1. Check if workspacePath itself is a git repo (.git directory at root)
+   *   2. Scan subdirectories up to MAX_DEPTH for .git directories
+   *   3. Skip submodules (.git files pointing to ../.git/modules/)
+   *   4. Run `git -C <path> remote get-url origin` for each discovered repo
+   *   5. Filter to GitHub remotes; log and skip non-GitHub or missing remotes
+   *   6. Deduplicate by owner/repo
+   *   7. Don't follow symlinks (avoids cycles)
    */
-  async discoverRepos(mounts: Array<{ hostPath: string }>): Promise<string[]> {
-    const repos = new Set<string>();
-    for (const mount of mounts) {
+  async discoverRepos(workspacePath: string): Promise<DiscoveredRepo[]> {
+    const MAX_DEPTH = 3;
+    const results = new Map<string, DiscoveredRepo>(); // keyed by "owner/repo" to deduplicate
+
+    const scan = async (dir: string, depth: number): Promise<void> => {
+      if (depth > MAX_DEPTH) return;
+
+      let entries: fs.Dirent[];
       try {
-        // Parse "git@github.com:owner/repo.git" or "https://github.com/owner/repo.git"
-        const remote = await this.getGitRemote(mount.hostPath);
-        const parsed = this.parseGitHubUrl(remote);
-        if (parsed) repos.add(parsed);
-      } catch {
-        // Not a git repo or no remote — skip
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      } catch (err) {
+        console.warn(`[webhooks] Cannot read directory ${dir}: ${err}`);
+        return;
       }
-    }
-    return [...repos];
+
+      for (const entry of entries) {
+        if (entry.name === ".git") {
+          // Don't follow symlinks
+          if (entry.isSymbolicLink()) continue;
+
+          if (entry.isDirectory()) {
+            // Real git repo — not a submodule
+            const repoPath = dir;
+            try {
+              const remote = this.getGitRemote(repoPath);
+              const parsed = this.parseGitHubUrl(remote);
+              if (parsed) {
+                const [owner, repo] = parsed.split("/");
+                results.set(parsed, { localPath: repoPath, remote, owner, repo });
+              } else {
+                console.debug(`[webhooks] Non-GitHub remote at ${repoPath}: ${remote} — skipping`);
+              }
+            } catch (err) {
+              console.debug(`[webhooks] No remote for repo at ${repoPath}: ${err}`);
+            }
+          } else if (entry.isFile()) {
+            // .git file → submodule — skip
+            console.debug(`[webhooks] Skipping submodule at ${dir}`);
+          }
+          // Found .git — don't recurse deeper into this repo
+          continue;
+        }
+
+        // Skip node_modules and other common non-repo directories
+        if (entry.name === "node_modules" || entry.name === ".cache") continue;
+
+        if (entry.isDirectory() && !entry.isSymbolicLink()) {
+          await scan(path.join(dir, entry.name), depth + 1);
+        }
+      }
+    };
+
+    await scan(workspacePath, 0);
+    return [...results.values()];
   }
 
   private async listHooks(repo: string): Promise<any[]> {
@@ -560,44 +707,52 @@ class WebhookRegistrar {
     return null;
   }
 
-  private async getGitRemote(path: string): Promise<string> {
-    // In the gateway container, we can't access host paths directly.
-    // Two approaches:
-    // 1. Read from SpacetimeDB agent config (if remote URL is stored)
-    // 2. Shell out to git on a mounted volume
-    // For v1, we'll require repos to be configured explicitly (see §5.4)
-    throw new Error("Not implemented — use explicit repo config for v1");
+  /**
+   * Returns the remote URL for the git repo at repoPath.
+   * The gateway runs on the host with full filesystem access, so we can
+   * call git directly via child_process.
+   * Throws if the path has no remote or is not a git repo.
+   */
+  private getGitRemote(repoPath: string): string {
+    return execSync(`git -C ${JSON.stringify(repoPath)} remote get-url origin`, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
   }
 }
 ```
 
-### 5.4 Repo Discovery: Practical Approach for v1
+### 5.4 Edge Cases
 
-The `discoverRepos` method above has a chicken-and-egg problem: the gateway container can't access host paths to run `git remote`. For v1, we solve this pragmatically:
+The `discoverRepos` function must handle several filesystem and git edge cases gracefully:
 
-**Option A: Explicit config in bond.json** ✅ Recommended for v1
+#### Workspace IS a repo root
 
-```json
-{
-  "gateway": {
-    "webhooks": {
-      "repos": [
-        "biztechprogramming/bond",
-        "biztechprogramming/ecoinspector",
-        "biztechprogramming/openclaw"
-      ]
-    }
-  }
-}
-```
+`discoverRepos("/workspace/bond")` — the workspace path itself contains `.git` at its root. The scanner checks for `.git` at depth 0 before recursing into subdirectories. Result: `[{ localPath: "/workspace/bond", owner: "org", repo: "bond" }]`.
 
-**Option B: Derive from SpacetimeDB on agent_workspace_mounts changes**
+#### Workspace contains multiple repos
 
-When a new mount is added/removed in SpacetimeDB, the gateway receives a subscription update. It can then query the worker (which has access to the mount) for the git remote URL. This is the v2 approach — fully automatic, but requires a worker API endpoint.
+`discoverRepos("/workspace")` — subdirectories `/workspace/bond`, `/workspace/ecoinspector`, `/workspace/openclaw` each have their own `.git`. The scanner finds all three. Result: three entries.
 
-**Option C: Scan at startup via the worker**
+#### Git submodules
 
-On startup, the gateway calls each worker's health endpoint to discover what repos they're serving. Workers already know their workspace paths.
+A `.git` **file** (not a directory) indicates a submodule — the file contains a pointer like `gitdir: ../.git/modules/submodule-name`. These are **skipped** with a debug log. Only `.git` directories indicate standalone repos.
+
+#### No remote configured
+
+`git remote get-url origin` throws if no remote is configured (local-only repo). These are silently skipped (caught and ignored in `scan()`).
+
+#### Non-GitHub remotes
+
+If `parseGitHubUrl` returns `null` (e.g., GitLab, Bitbucket, or a bare filesystem remote), log a debug message and skip: `[webhooks] Non-GitHub remote at <path>: <url> — skipping`. GitHub-only for now; other platforms can be added later.
+
+#### Permission errors
+
+If `readdir` fails on a directory (e.g., `EACCES`), log a warning and skip that subtree: `[webhooks] Cannot read directory <path>: <err>`. Continues scanning other paths.
+
+#### Symlinks
+
+`entry.isSymbolicLink()` is checked before `entry.isDirectory()`. Symlinked directories are not followed during the scan to avoid infinite cycles (e.g., a symlink pointing to a parent directory).
 
 ---
 
@@ -616,40 +771,33 @@ Gateway process starts
      │
      ├── 4. Initialize WebhookRegistrar
      │       ├── Read GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, GATEWAY_EXTERNAL_URL
-     │       ├── Read repos from config (bond.json gateway.webhooks.repos)
-     │       └── For each repo: ensure webhook exists (create/update)
+     │       ├── Query SpacetimeDB TrackedRepo table for all registered repos
+     │       │   + merge in bond.json gateway.webhooks.additionalRepos (if any)
+     │       └── WebhookRegistrar.ensureWebhooks(trackedRepos) [idempotent]
      │           └── If GATEWAY_EXTERNAL_URL not set: skip, log warning
      │
      ├── 5. Wire EventBus into webhooks.ts
      │       └── createWebhookRouter({ eventBus, onMainMerge })
      │
-     ├── 6. Wire EventBus into TurnExecutor
-     │       └── TurnExecutor auto-subscribes on coding_agent_started events
+     ├── 6. Start HTTP/WS server (existing flow)
      │
-     ├── 7. Start HTTP/WS server (existing flow)
-     │
-     └── 8. Start EventBus cleanup interval (prune expired subscriptions)
+     └── 7. Start EventBus cleanup interval (prune expired subscriptions)
 ```
 
-### 6.2 Docker Compose Changes
+> **Note:** Event subscriptions are **not** created at startup. They are created at runtime, automatically, when the gateway detects a `coding_agent_started` SSE event during a conversation turn (see §4). The startup sequence only concerns itself with infrastructure — EventBus wiring and webhook reconciliation.
 
-```yaml
-# docker-compose.dev.yml additions
-gateway:
-  environment:
-    - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-    - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
-    - GATEWAY_EXTERNAL_URL=${GATEWAY_EXTERNAL_URL:-}
-```
+### 6.2 Environment Configuration
 
-For local development, the user sets these in `.env`:
+The gateway runs as a host process, so environment variables are read from the host environment (or a `.env` file loaded at startup):
 
 ```bash
 # .env
-GITHUB_TOKEN=ghp_xxxx          # or: $(gh auth token)
+GITHUB_TOKEN=ghp_xxxx           # or: $(gh auth token) for development
 GITHUB_WEBHOOK_SECRET=mysecret  # shared secret for HMAC verification
 GATEWAY_EXTERNAL_URL=https://abc123.trycloudflare.com  # tunnel URL
 ```
+
+The gateway process loads these at startup (e.g., via `dotenv`). No Docker-level environment injection is needed since the gateway is not containerized.
 
 ### 6.3 Config Changes
 
@@ -660,7 +808,7 @@ export interface GatewayConfig {
   githubToken: string;
   githubWebhookSecret: string;
   gatewayExternalUrl: string;
-  webhookRepos: string[];       // from bond.json gateway.webhooks.repos
+  webhookAdditionalRepos: string[];  // from bond.json gateway.webhooks.additionalRepos (edge cases)
 }
 ```
 
@@ -794,26 +942,36 @@ This is a natural evolution — SpacetimeDB already provides real-time subscript
 - [ ] `CompletionDispatcher` to trigger agent turns
 - [ ] Wire EventBus into `server.ts` startup
 - [ ] Event history API endpoint
+- [ ] `TrackedRepo` table in SpacetimeDB (schema + reducers)
 
-### Phase 2: Auto-Subscribe on Coding Agent Start
+### Phase 2: UI Repo Scan Flow + Webhook Registration
+- [ ] `discoverRepos(workspacePath)` implementation in `WebhookRegistrar`
+- [ ] `POST /api/v1/repos/scan` endpoint — calls `discoverRepos()`, returns repo list to UI
+- [ ] `POST /api/v1/repos/register` endpoint (or SpacetimeDB mutation) — saves selected repos to `TrackedRepo`, calls `WebhookRegistrar.ensureWebhooks()`
+- [ ] UI: checkbox list of discovered repos in agent settings / workspace mount editor
+- [ ] UI: "Re-scan" button to re-trigger scan for an existing mount
+- [ ] Add `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `GATEWAY_EXTERNAL_URL` to config
+- [ ] Add `gateway.webhooks.additionalRepos` to `bond.json` schema (optional edge-case list)
+- [ ] Document new env vars in `.env.example`
+
+### Phase 3: Startup Reconciliation
+- [ ] On gateway startup: query SpacetimeDB `TrackedRepo` table, call `WebhookRegistrar.ensureWebhooks()` (Trigger A)
+- [ ] `getGitRemote` implementation (used by `discoverRepos`)
+- [ ] Merge `bond.json gateway.webhooks.additionalRepos` into startup reconciliation
+
+### Phase 4: Auto-Subscribe on Coding Agent Start
 - [ ] Modify worker `coding_agent_started` SSE event to include `repo` + `branch`
 - [ ] Modify `TurnExecutor` to auto-create subscription on `coding_agent_started`
 - [ ] Add `coding_agent_pushed` SSE event from worker (for branch name refinement)
 
-### Phase 3: Automatic Webhook Registration
-- [ ] `WebhookRegistrar` class
-- [ ] Add `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET`, `GATEWAY_EXTERNAL_URL` to config
-- [ ] Add `gateway.webhooks.repos` to `bond.json` schema
-- [ ] Call `WebhookRegistrar.ensureWebhooks()` on gateway startup
-- [ ] Update `docker-compose.dev.yml` with new env vars
-
-### Phase 4: Hardening
+### Phase 5: Hardening
 - [ ] Webhook delivery deduplication (by `X-GitHub-Delivery` header)
 - [ ] Rate limiting on CompletionDispatcher
 - [ ] Subscription cleanup on conversation delete
 - [ ] Tests for EventBus matching, webhook normalization, auto-subscribe flow
+- [ ] Tests for `discoverRepos()` (submodule detection, symlink handling, non-GitHub remotes)
 
-### Phase 5: Persistence & Scaling (v2)
+### Phase 6: Persistence & Scaling (v2)
 - [ ] Move subscriptions to SpacetimeDB
 - [ ] Move event history to SpacetimeDB
 - [ ] Multi-gateway fan-out via SpacetimeDB subscriptions
@@ -827,6 +985,7 @@ This is a natural evolution — SpacetimeDB already provides real-time subscript
 2. **Webhook events scope** — Starting with `push`, `pull_request`, `check_run`. Should we subscribe to everything (`"*"`) and filter server-side?
 3. **Tunnel auto-detection** — Should the gateway auto-detect cloudflared/ngrok tunnel URLs, or always require `GATEWAY_EXTERNAL_URL`?
 4. **Worker-to-gateway push notifications** — For `coding_agent_done`/`coding_agent_error`, should the worker call the gateway's event API directly, or should the gateway detect these from the SSE stream?
+5. **Re-scan workspace button** — Should there be a "Re-scan workspace" button in the UI for when new repos are added to an existing mount? Or should the user add repos manually in that case?
 
 ---
 
@@ -838,15 +997,15 @@ This is a natural evolution — SpacetimeDB already provides real-time subscript
     "host": "0.0.0.0",
     "port": 18789,
     "webhooks": {
-      "repos": [
-        "biztechprogramming/bond",
-        "biztechprogramming/ecoinspector",
-        "biztechprogramming/openclaw"
-      ]
+      "additionalRepos": ["biztechprogramming/private-tool"]
     }
   }
 }
 ```
+
+Repos are discovered via the UI (see §5.2) and stored in SpacetimeDB — they are **not** listed in `bond.json`. The gateway queries SpacetimeDB at startup for all `TrackedRepo` rows.
+
+`additionalRepos` is optional and covers edge cases where a repo that should receive webhooks is **not** checked out locally in any agent workspace (e.g., a repo owned by the team but worked on elsewhere, or a repo you want to track without a local clone).
 
 ```bash
 # .env

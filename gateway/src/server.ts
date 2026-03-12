@@ -19,7 +19,9 @@ import { createPersistenceRouter } from "./persistence/index.js";
 import { createConversationsRouter } from "./conversations/index.js";
 import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
+import { WebhookRegistrar } from "./webhooks/registrar.js";
 import { createBrokerRouter } from "./broker/router.js";
+import { EventBus, EventHistory, CompletionDispatcher, createEventsRouter } from "./events/index.js";
 import { ChannelManager } from "./channels/manager.js";
 import { createChannelRouter } from "./channels/routes.js";
 import {
@@ -44,6 +46,31 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   const backendClient = new BackendClient(config.backendUrl);
   const webchat = new WebChatChannel(sessionManager, backendClient);
   webchat.setConfig(config);
+
+  // Event subscription system
+  const eventHistory = new EventHistory();
+  const eventBus = new EventBus(eventHistory);
+  const completionDispatcher = new CompletionDispatcher(
+    backendClient,
+    (conversationId, msg) => (webchat as any).sendToConversation(conversationId, msg),
+  );
+  eventBus.onMatch((event, sub) => {
+    completionDispatcher.dispatch(event, sub).catch((err) => {
+      console.error("[events] CompletionDispatcher error:", err);
+    });
+  });
+  eventBus.startCleanup();
+
+  // Auto-register GitHub webhooks (non-blocking — failures are logged, not fatal)
+  const registrar = new WebhookRegistrar({
+    externalUrl: process.env.GATEWAY_EXTERNAL_URL,
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+    repos: config.webhooks?.repos,
+    autoDiscover: config.webhooks?.autoDiscover ?? true,
+  });
+  registrar.ensureWebhooks().catch((err) => {
+    console.warn("[registrar] Unexpected error during webhook registration:", err);
+  });
 
   const app = express();
   app.use(express.json());
@@ -95,12 +122,16 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   });
 
   const webhookRouter = createWebhookRouter({
+    eventBus,
     onMainMerge: async () => {
       // Notify all known workers to reload
       console.log("[webhook] TODO: notify connected workers to /reload");
     },
   });
   app.use("/webhooks", webhookRouter);
+
+  // Event subscription API
+  app.use("/api/v1/events", createEventsRouter(eventBus));
 
   // Permission Broker
   app.use("/api/v1/broker", createBrokerRouter({
@@ -184,6 +215,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   return {
     close() {
+      eventBus.stopCleanup();
       wss.close();
       httpServer.close();
     },
