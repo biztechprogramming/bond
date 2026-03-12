@@ -38,6 +38,8 @@ import {
   ResponseFanOut,
 } from "./pipeline/index.js";
 import type { AllowListProvider } from "./pipeline/index.js";
+import { initSubscription } from "./spacetimedb/subscription.js";
+import { CompletionHandler } from "./completion/handler.js";
 
 export interface GatewayServer {
   close(): void;
@@ -219,6 +221,35 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   httpServer.listen(config.port, config.host, () => {
     console.log(`[gateway] Bond gateway listening on ws://${config.host}:${config.port}/ws`);
     console.log(`[gateway] Backend URL: ${config.backendUrl}`);
+
+    // Initialize SpacetimeDB real-time subscription for system events.
+    // This enables the completion loop: when a background coding agent finishes,
+    // the worker writes a system_event row → SpacetimeDB pushes it here via
+    // WebSocket → CompletionHandler triggers an agent turn → user gets a summary.
+    if (config.spacetimedbToken && config.spacetimedbUrl) {
+      const completionHandler = new CompletionHandler(
+        config,
+        backendClient,
+        (conversationId, message) => {
+          webchat.sendToConversation(conversationId, message as any);
+        },
+      );
+
+      initSubscription(config, (event) => {
+        completionHandler.handleEvent(event).catch((err) => {
+          console.error("[gateway] Completion handler error:", err);
+        });
+      })
+        .then(() => {
+          console.log("[gateway] SpacetimeDB subscription active — system events will trigger completion turns");
+        })
+        .catch((err) => {
+          // Non-fatal: gateway works without subscriptions, just no auto-completions
+          console.warn("[gateway] SpacetimeDB subscription failed (completion turns disabled):", err?.message ?? err);
+        });
+    } else {
+      console.warn("[gateway] SpacetimeDB not configured — completion turns disabled");
+    }
   });
 
   return {

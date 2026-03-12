@@ -560,6 +560,11 @@ class CodingAgentSession:
                 "log_path": str(self.log_path) if self.log_path else None,
             })
 
+            # Enqueue system event to SpacetimeDB so the gateway can
+            # trigger a completion turn — the LLM will summarize results
+            # and respond to the user automatically.
+            await self._enqueue_system_event(status, stat)
+
         except asyncio.CancelledError:
             pass
         except Exception:
@@ -572,6 +577,44 @@ class CodingAgentSession:
             self._close_log_file()
             # Sentinel — signals end of event stream
             await self.event_queue.put(None)
+
+    async def _enqueue_system_event(self, status: str, git_stat: str) -> None:
+        """Write a system event to SpacetimeDB for the gateway to pick up."""
+        try:
+            import uuid
+            from backend.app.core.spacetimedb import get_stdb
+
+            stdb = get_stdb()
+            event_type = "coding_agent_done" if self.exit_code == 0 else "coding_agent_failed"
+            metadata_json = json.dumps({
+                "agent_type": self.agent_type,
+                "exit_code": self.exit_code,
+                "elapsed_seconds": round(self.process.elapsed, 1),
+                "git_stat": git_stat,
+                "baseline_commit": self.baseline_commit,
+                "branch": self.branch,
+                "working_directory": self.process.working_directory,
+            })
+            success = await stdb.call_reducer("enqueue_system_event", [
+                str(uuid.uuid4()),       # id
+                self.conversation_id,    # conversationId
+                "",                      # agentId (resolved by gateway)
+                event_type,              # eventType
+                self.final_summary,      # summary
+                metadata_json,           # metadata
+            ])
+            if success:
+                logger.info(
+                    "System event enqueued: %s for conversation %s",
+                    event_type, self.conversation_id,
+                )
+            else:
+                logger.warning(
+                    "Failed to enqueue system event (reducer returned false) for %s",
+                    self.conversation_id,
+                )
+        except Exception as e:
+            logger.warning("Failed to enqueue system event to SpacetimeDB: %s", e)
 
     async def stop(self) -> None:
         """Kill the process and cancel the monitor."""
