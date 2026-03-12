@@ -63,6 +63,24 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
       console.error("[events] CompletionDispatcher error:", err);
     });
   });
+
+  // Broadcast push events to all connected webchat clients as toast notifications
+  eventBus.getHistory(); // ensure history is initialized
+  const originalEmit = eventBus.emit.bind(eventBus);
+  eventBus.emit = (event) => {
+    originalEmit(event);
+    if (event.type === "push" && event.branch) {
+      webchat.broadcast({
+        type: "webhook_push" as any,
+        content: JSON.stringify({
+          repo: event.repo,
+          branch: event.branch,
+          actor: event.actor,
+        }),
+      });
+    }
+  };
+
   eventBus.startCleanup();
 
   // Auto-register GitHub webhooks (non-blocking — failures are logged, not fatal)

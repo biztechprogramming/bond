@@ -73,6 +73,8 @@ export default function Home() {
   const [codingAgentSummary, setCodingAgentSummary] = useState<string | null>(null);
   const [codingAgentOutput, setCodingAgentOutput] = useState<string[]>([]);
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
+  const [toasts, setToasts] = useState<{ id: number; message: string; repo: string; branch: string; actor?: string }[]>([]);
+  const toastIdRef = useRef(0);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
@@ -307,6 +309,24 @@ export default function Home() {
         // User message sent from another window/tab
         setMessages((prev) => [...prev, { role: "user", content: msg.content! }]);
       }
+      // Webhook push toast
+      if (msg.type === "webhook_push" && msg.content) {
+        try {
+          const data = JSON.parse(msg.content);
+          const id = ++toastIdRef.current;
+          setToasts((prev) => [...prev, {
+            id,
+            message: `Branch pushed: ${data.branch}`,
+            repo: data.repo || "",
+            branch: data.branch || "",
+            actor: data.actor,
+          }]);
+          setTimeout(() => {
+            setToasts((prev) => prev.filter((t) => t.id !== id));
+          }, 6000);
+        } catch { /* ignore parse errors */ }
+      }
+
       // Plan events
       if (msg.type === "plan_created" && msg.planId && msg.planTitle) {
         setActivePlan({ id: msg.planId, title: msg.planTitle, status: "active", items: [] });
@@ -610,6 +630,58 @@ export default function Home() {
           selectedAgentName={selectedAgentName}
         />
       </div>
+
+      {/* Toast notifications */}
+      {toasts.length > 0 && (
+        <div style={{
+          position: "fixed",
+          top: "16px",
+          right: "16px",
+          zIndex: 9999,
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
+          pointerEvents: "none",
+        }}>
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              style={{
+                background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
+                border: "1px solid #6c8aff44",
+                borderRadius: "12px",
+                padding: "12px 16px",
+                color: "#e0e0e8",
+                fontSize: "0.85rem",
+                boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+                pointerEvents: "auto",
+                animation: "toastSlideIn 0.3s ease-out",
+                maxWidth: "360px",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "10px",
+              }}
+            >
+              <span style={{ fontSize: "1.1rem", flexShrink: 0 }}>🔀</span>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: "2px" }}>
+                  {toast.branch}
+                </div>
+                <div style={{ color: "#8888a0", fontSize: "0.78rem" }}>
+                  {toast.actor && <span>{toast.actor} pushed to </span>}
+                  {toast.repo}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <style>{`
+        @keyframes toastSlideIn {
+          from { opacity: 0; transform: translateX(40px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+      `}</style>
     </div>
   );
 }
