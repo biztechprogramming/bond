@@ -12,8 +12,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@slack/bolt": "^3.22.0",
+    "@slack/web-api": "^7.9.0",
     "@types/express": "^5.0.6",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "discord.js": "^14.18.0",
     "express": "^5.2.1",
     "grammy": "^1.41.1",
     "qrcode": "^1.5.4",
