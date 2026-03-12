@@ -204,7 +204,7 @@ export default function PromptsTab() {
 
       {/* ═══ FRAGMENTS TAB ═══ */}
       {subTab === "fragments" && (
-        <>
+        <div>
           {/* AI generate bar */}
           <div style={s.genBar}>
             <input style={{ ...s.input, flex: 1 }} placeholder="Describe a fragment to generate with AI..." value={genPurpose} onChange={(e) => setGenPurpose(e.target.value)} />
@@ -302,12 +302,12 @@ export default function PromptsTab() {
               )}
             </div>
           ))}
-        </>
+        </div>
       )}
 
       {/* ═══ TEMPLATES TAB ═══ */}
       {subTab === "templates" && (
-        <>
+        <div>
           {templates.map((t) => (
             <div key={t.id} style={s.card}>
               {editingTemplate?.id === t.id ? (
@@ -351,7 +351,7 @@ export default function PromptsTab() {
               )}
             </div>
           ))}
-        </>
+        </div>
       )}
     </div>
   );
