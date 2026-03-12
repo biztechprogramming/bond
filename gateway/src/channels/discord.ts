@@ -1,7 +1,7 @@
 /**
  * Discord channel adapter using discord.js (WebSocket Gateway, no webhooks).
  */
-import { Client, GatewayIntentBits, Events, Message } from "discord.js";
+import { Client, GatewayIntentBits, Events, type Message } from "discord.js";
 import type { ChannelAdapter, ChannelMessage } from "./base.js";
 import { AllowList } from "./allowlist.js";
 

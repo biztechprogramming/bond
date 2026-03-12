@@ -1,7 +1,8 @@
 /**
  * Slack channel adapter using @slack/bolt (Socket Mode, no public URL required).
  */
-import { App } from "@slack/bolt";
+import Bolt from "@slack/bolt";
+const { App } = Bolt;
 import type { ChannelAdapter, ChannelMessage } from "./base.js";
 import { AllowList } from "./allowlist.js";
 
@@ -23,7 +24,7 @@ export interface SlackChannelOptions {
 
 export class SlackChannel implements ChannelAdapter {
   readonly channelType = "slack";
-  private app: App;
+  private app: InstanceType<typeof App>;
   private allowList: AllowList;
   private onMessageCb: (msg: ChannelMessage) => void;
   private persistFn?: (allowList: string[]) => void;
