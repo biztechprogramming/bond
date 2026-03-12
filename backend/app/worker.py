@@ -1190,6 +1190,50 @@ async def _run_agent_loop(
             if _langfuse_meta:
                 _langfuse_meta.setdefault("tags", []).append("cost:high")
 
+    # ── Phase 0-2: Pre-gathering (Design Doc 038) ──
+    _pre_gather_result = None
+    if not _is_continuation:
+        try:
+            from backend.app.agent.pre_gather_integration import run_pre_gather, PreGatherResult
+            _repo_root = os.environ.get("WORKSPACE_DIR", "/workspace")
+            _pre_gather_result = await run_pre_gather(
+                user_message=user_message,
+                history=compressed_history or [],
+                conversation_id=conversation_id,
+                model=model,
+                api_key=extra_kwargs.get("api_key"),
+                extra_kwargs=extra_kwargs,
+                utility_model=utility_model,
+                utility_kwargs=utility_kwargs,
+                tool_registry=registry,
+                tool_context=tool_context,
+                repo_root=_repo_root,
+                max_iterations=max_iterations,
+                event_queue=event_queue,
+                langfuse_meta=_langfuse_meta if _langfuse_meta else None,
+                interrupt_event=_state.interrupt_event,
+                is_continuation=False,
+            )
+
+            if _pre_gather_result and _pre_gather_result.context_bundle:
+                # Inject gathered context as a user message before the loop
+                messages.append({
+                    "role": "user",
+                    "content": f"[Pre-gathered context for this task]\n\n{_pre_gather_result.context_bundle}",
+                })
+                logger.info(
+                    "Pre-gather: injected %d tokens of context",
+                    len(_pre_gather_result.context_bundle) // 4,
+                )
+
+            if _pre_gather_result and _pre_gather_result.adaptive_budget is not None:
+                _adaptive_budget = min(max_iterations, _pre_gather_result.adaptive_budget)
+                _adaptive_budget_set = True
+                _cost_tracking["iteration_budget"] = _adaptive_budget
+                logger.info("Pre-gather: set adaptive budget to %d", _adaptive_budget)
+        except Exception as e:
+            logger.warning("Pre-gather phase failed, falling through to normal loop: %s", e)
+
     for _iteration in range(max_iterations):
         # Check interrupt: if pending messages, inject them and continue.
         # If no messages, this is a pure pause signal — break the loop.
@@ -1488,17 +1532,35 @@ async def _run_agent_loop(
                     logger.info("Phase 2A: file lookup, budget=%d", _adaptive_budget)
             _cost_tracking["iteration_budget"] = _adaptive_budget
 
-        # ── Approaching budget: hand off to coding_agent ──
+        # ── Approaching budget: hand off to coding_agent (enhanced with Doc 038 handoff context) ──
         _budget_threshold = int(_adaptive_budget * 0.8)
         if (_iteration >= _budget_threshold
             and _iteration > 2
             and not any(tc.function.name == "coding_agent" for tc in (llm_message.tool_calls or []))):
             _remaining = _adaptive_budget - _iteration - 1
-            messages.append({"role": "user", "content": (
-                f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}. "
-                f"You have {_remaining} iterations left. Hand off your remaining work "
-                f"to the coding_agent tool now. Summarize what's done and what's left."
-            )})
+            # Build structured handoff context from what the agent has done so far
+            try:
+                from backend.app.agent.pre_gather import build_handoff_context
+                _handoff_ctx = build_handoff_context(messages)
+                _handoff_msg = (
+                    f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}. "
+                    f"You have {_remaining} iterations left. Hand off your remaining work "
+                    f"to the coding_agent tool NOW.\n\n"
+                    f"**Files you've read:**\n{_handoff_ctx['files_read']}\n\n"
+                    f"**Changes you've made:**\n{_handoff_ctx['edits_made']}\n\n"
+                    f"Write a coding_agent task prompt that covers the remaining work. "
+                    f"Include the file paths you've already identified. "
+                    f"The coding agent has access to the same repo — reference files by path, "
+                    f"don't paste their contents.\n\n"
+                    f"Spawn coding_agent in your next response. Do not read more files."
+                )
+            except Exception:
+                _handoff_msg = (
+                    f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}. "
+                    f"You have {_remaining} iterations left. Hand off your remaining work "
+                    f"to the coding_agent tool now. Summarize what's done and what's left."
+                )
+            messages.append({"role": "user", "content": _handoff_msg})
             logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, _adaptive_budget)
 
         if llm_message.tool_calls:
