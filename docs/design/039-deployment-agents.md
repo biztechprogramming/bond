@@ -27,43 +27,60 @@ This document describes a deployment agent architecture where:
 
 ## 2. Architecture Overview
 
+**Core security principle: The entire `~/.bond/deployments/` directory is HOST-ONLY. It is never mounted into any agent container. The broker and Promotion API are the only code paths that touch deployment scripts, secrets, and promotion state. Agents interact exclusively through the broker's `/deploy` endpoint by sending a script ID — never a command string, never a file path.**
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  BOND HOST                                                               │
 │                                                                          │
 │  ┌──────────────────────────────────────────────────────────────────┐    │
-│  │  Gateway + Permission Broker                                     │    │
-│  │                                                                  │    │
-│  │  ┌────────────────┐  ┌────────────────┐  ┌──────────────────┐   │    │
-│  │  │ Broker Router   │  │ Policy Engine   │  │ Promotion API    │   │    │
-│  │  │ /api/v1/broker  │  │ (per-env rules) │  │ /api/v1/promote  │   │    │
-│  │  └────────────────┘  └────────────────┘  └──────────────────┘   │    │
-│  │                                                                  │    │
-│  │  ┌──────────────────────────────────────────────────────────┐   │    │
-│  │  │ Deployment Script Store                                   │   │    │
-│  │  │ ~/.bond/deployments/scripts/     (immutable snapshots)    │   │    │
-│  │  │ ~/.bond/deployments/promotions/  (promotion state DB)     │   │    │
-│  │  │ ~/.bond/deployments/receipts/    (deployment receipts)    │   │    │
-│  │  └──────────────────────────────────────────────────────────┘   │    │
+│  │  Gateway Process                                                  │    │
+│  │                                                                   │    │
+│  │  ┌─────────────────────┐    ┌──────────────────────────────┐     │    │
+│  │  │  Promotion API       │    │  Broker /deploy endpoint      │    │    │
+│  │  │  POST /promote       │    │  POST /broker/deploy          │    │    │
+│  │  │                      │    │                               │    │    │
+│  │  │  Auth: user session  │    │  Auth: agent broker token     │    │    │
+│  │  │  (rejects agent      │──►│  Reads: promotion DB          │    │    │
+│  │  │   tokens)            │    │  Reads: script from registry  │    │    │
+│  │  │                      │    │  Reads: env secrets           │    │    │
+│  │  │  Writes: promotion DB │    │  Executes: script on host    │    │    │
+│  │  │  Writes: env config  │    │  Returns: stdout/stderr      │    │    │
+│  │  └─────────────────────┘    └──────────────────────────────┘     │    │
+│  │              │                              │                      │    │
+│  │              ▼                              ▼                      │    │
+│  │  ┌───────────────────────────────────────────────────────────┐    │    │
+│  │  │  ~/.bond/deployments/  (HOST ONLY — NEVER MOUNTED)        │    │    │
+│  │  │  ├── scripts/registry/   (immutable snapshots)            │    │    │
+│  │  │  Database: environments, promotions, approvals (Gateway)   │    │    │
+│  │  │  ├── secrets/{env}.yaml  (encrypted at rest)              │    │    │
+│  │  │  ├── receipts/{env}/     (append-only)                    │    │    │
+│  │  │  └── locks/{env}.lock                                     │    │    │
+│  │  └───────────────────────────────────────────────────────────┘    │    │
 │  └──────────────────────────────────────────────────────────────────┘    │
 │                                                                          │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
 │  │ Deploy Agent  │ │ Deploy Agent  │ │ Deploy Agent  │ │ Deploy Agent  │  │
 │  │ ENV: dev      │ │ ENV: qa       │ │ ENV: staging  │ │ ENV: uat      │  │
 │  │               │ │               │ │               │ │               │  │
-│  │ RO: all agent │ │ RO: all agent │ │ RO: all agent │ │ RO: all agent │  │
-│  │   workspaces  │ │   workspaces  │ │   workspaces  │ │   workspaces  │  │
+│  │ RO: code only │ │ RO: code only │ │ RO: code only │ │ RO: code only │  │
+│  │ (workspaces)  │ │ (workspaces)  │ │ (workspaces)  │ │ (workspaces)  │  │
 │  │               │ │               │ │               │ │               │  │
-│  │ Broker policy:│ │ Broker policy:│ │ Broker policy:│ │ Broker policy:│  │
-│  │ scripts(dev)  │ │ scripts(qa)   │ │ scripts(stg)  │ │ scripts(uat)  │  │
+│  │ NO scripts    │ │ NO scripts    │ │ NO scripts    │ │ NO scripts    │  │
+│  │ NO secrets    │ │ NO secrets    │ │ NO secrets    │ │ NO secrets    │  │
+│  │ NO deploy DB  │ │ NO deploy DB  │ │ NO deploy DB  │ │ NO deploy DB  │  │
+│  │               │ │               │ │               │ │               │  │
+│  │ Talks to      │ │ Talks to      │ │ Talks to      │ │ Talks to      │  │
+│  │ broker only   │ │ broker only   │ │ broker only   │ │ broker only   │  │
 │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘   │
 │                                                                          │
 │  ┌──────────────┐                                                        │
 │  │ Deploy Agent  │    ┌────────────────────────────────────────────┐     │
 │  │ ENV: prod     │    │ Code Agents (existing)                     │     │
 │  │               │    │ Workspaces mounted RO into deploy agents   │     │
-│  │ Broker policy:│    │ No access to deployment scripts            │     │
-│  │ scripts(prod) │    └────────────────────────────────────────────┘     │
+│  │ NO scripts    │    │ No access to deployment broker endpoints   │     │
+│  │ NO secrets    │    └────────────────────────────────────────────┘     │
+│  │ broker only   │                                                       │
 │  └──────────────┘                                                        │
 └──────────────────────────────────────────────────────────────────────────┘
 
@@ -84,84 +101,204 @@ This document describes a deployment agent architecture where:
 
 ## 3. Environments
 
-### 3.1 Default Configuration
+### 3.1 Storage: API-Managed, Database-Backed
 
-Environments are ordered. Promotion flows left to right. Each environment is a separate deployment agent.
+Environment definitions are **not stored in config files.** They are managed exclusively through the Gateway API, stored in the same database Bond uses (SQLite for single-node, PostgreSQL for production). This gives them the same security properties as promotion state — agents cannot read or modify them.
 
-```yaml
-# ~/.bond/deployments/config.yaml
-environments:
-  - name: dev
-    display_name: Development
-    order: 1
-    auto_promote: false
-    deployment_window: null          # no restrictions
-    health_check_interval: 300       # seconds (5 min)
-    max_script_timeout: 600          # 10 min
-    approvers: []                    # empty = owner only
+**Why not YAML?** A config file on the host filesystem is the weakest link. If an agent ever gets host-level access (through a broker bug, exploit, or misconfigured policy), it could modify environment definitions — adding environments, changing approvers, removing deployment windows. API-managed config with user-session auth closes this gap.
 
-  - name: qa
-    display_name: QA
-    order: 2
-    auto_promote: false
-    deployment_window: null
-    health_check_interval: 300
-    max_script_timeout: 900          # 15 min
-    approvers: []
+### 3.2 Environment Schema
 
-  - name: staging
-    display_name: Staging
-    order: 3
-    auto_promote: false
-    deployment_window:
-      days: [mon, tue, wed, thu, fri]
-      start: "06:00"
-      end: "22:00"
-      timezone: America/New_York
-    health_check_interval: 600
-    max_script_timeout: 1200
-    approvers: []
+```sql
+CREATE TABLE deployment_environments (
+  name            TEXT PRIMARY KEY,       -- 'dev', 'qa', 'staging', 'uat', 'prod'
+  display_name    TEXT NOT NULL,          -- 'Development', 'QA', etc.
+  "order"         INTEGER NOT NULL UNIQUE,-- promotion order (1 = first)
+  is_active       BOOLEAN DEFAULT true,   -- soft delete
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-  - name: uat
-    display_name: UAT
-    order: 4
-    auto_promote: false
-    deployment_window:
-      days: [mon, tue, wed, thu, fri]
-      start: "06:00"
-      end: "22:00"
-      timezone: America/New_York
-    health_check_interval: 600
-    max_script_timeout: 1200
-    approvers: []
+  -- Deployment settings
+  max_script_timeout  INTEGER DEFAULT 600,    -- seconds
+  health_check_interval INTEGER DEFAULT 300,  -- seconds
 
-  - name: prod
-    display_name: Production
-    order: 5
-    auto_promote: false
-    deployment_window:
-      days: [tue, wed, thu]
-      start: "09:00"
-      end: "16:00"
-      timezone: America/New_York
-    health_check_interval: 60        # 1 min — tighter monitoring
-    max_script_timeout: 1800         # 30 min
-    approvers: []
+  -- Deployment window (NULL = no restrictions)
+  window_days     TEXT,                   -- JSON array: ["mon","tue","wed","thu","fri"]
+  window_start    TEXT,                   -- "06:00"
+  window_end      TEXT,                   -- "22:00"
+  window_timezone TEXT DEFAULT 'America/New_York',
+
+  -- Approvals
+  required_approvals INTEGER DEFAULT 1    -- how many approvers needed to promote here
+);
+
+CREATE TABLE deployment_environment_approvers (
+  environment_name TEXT NOT NULL REFERENCES deployment_environments(name),
+  user_id          TEXT NOT NULL,         -- Bond user ID or GitHub username
+  added_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  added_by         TEXT NOT NULL,         -- who added this approver
+  PRIMARY KEY (environment_name, user_id)
+);
+
+-- Every change is logged
+CREATE TABLE deployment_environment_history (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  environment_name TEXT NOT NULL,
+  action          TEXT NOT NULL,          -- 'created', 'updated', 'deactivated', 'approver_added', 'approver_removed'
+  changed_by      TEXT NOT NULL,          -- user session identity
+  changed_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  before_state    TEXT,                   -- JSON snapshot before change
+  after_state     TEXT                    -- JSON snapshot after change
+);
 ```
 
-### 3.2 Adding/Removing Environments
+### 3.3 Environment Management API
 
-The environment list is user-configurable. Adding an environment:
+All endpoints require **user session auth** — agent broker tokens are rejected.
 
-1. Add entry to `config.yaml`
-2. Bond spawns a new deployment agent container with the appropriate broker policy
-3. The new environment appears in the promotion pipeline UI
+```
+# List all environments (ordered)
+GET /api/v1/deployments/environments
+→ [{ name, display_name, order, is_active, window, approvers, required_approvals, ... }]
 
-Removing an environment:
+# Create a new environment
+POST /api/v1/deployments/environments
+Authorization: Bearer <user-session-token>
+{
+  "name": "staging",
+  "display_name": "Staging",
+  "order": 3,
+  "max_script_timeout": 1200,
+  "health_check_interval": 600,
+  "deployment_window": {
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "start": "06:00",
+    "end": "22:00",
+    "timezone": "America/New_York"
+  },
+  "required_approvals": 1,
+  "approvers": []
+}
 
-1. Remove from `config.yaml`
-2. Bond tears down the agent container
-3. Any scripts promoted to that environment are orphaned (visible in UI, can be cleaned up)
+# Update an environment
+PUT /api/v1/deployments/environments/:name
+Authorization: Bearer <user-session-token>
+{ "max_script_timeout": 1800, "required_approvals": 2 }
+
+# Deactivate an environment (soft delete — preserves history)
+DELETE /api/v1/deployments/environments/:name
+Authorization: Bearer <user-session-token>
+
+# Manage approvers
+POST   /api/v1/deployments/environments/:name/approvers   { "user_id": "sarah" }
+DELETE /api/v1/deployments/environments/:name/approvers/:user_id
+```
+
+**Validation on create/update:**
+- `name` must be lowercase alphanumeric + hyphens, unique
+- `order` must be unique across active environments
+- `deployment_window` times must be valid, end > start
+- `required_approvals` must be ≤ number of approvers (or 1 if no approvers = owner-only)
+- History record written for every mutation
+
+### 3.4 Default Environments (Bootstrap)
+
+On first run (empty database), the Gateway seeds default environments:
+
+```typescript
+const DEFAULT_ENVIRONMENTS = [
+  { name: "dev",     display_name: "Development", order: 1, max_script_timeout: 600,  health_check_interval: 300 },
+  { name: "qa",      display_name: "QA",          order: 2, max_script_timeout: 900,  health_check_interval: 300 },
+  { name: "staging", display_name: "Staging",      order: 3, max_script_timeout: 1200, health_check_interval: 600,
+    window_days: '["mon","tue","wed","thu","fri"]', window_start: "06:00", window_end: "22:00" },
+  { name: "uat",     display_name: "UAT",          order: 4, max_script_timeout: 1200, health_check_interval: 600,
+    window_days: '["mon","tue","wed","thu","fri"]', window_start: "06:00", window_end: "22:00" },
+  { name: "prod",    display_name: "Production",    order: 5, max_script_timeout: 1800, health_check_interval: 60,
+    window_days: '["tue","wed","thu"]', window_start: "09:00", window_end: "16:00" },
+];
+```
+
+These can be modified or deleted immediately via the UI/API. They're just starting points.
+
+### 3.5 CLI Escape Hatch (Bootstrap & Disaster Recovery)
+
+For initial setup, migration, or recovery when the system isn't running:
+
+```bash
+# Export current config to YAML (backup / human review)
+bond environments export > environments-backup.yaml
+
+# Import from YAML (bootstrap / restore)
+bond environments import environments-backup.yaml
+
+# Quick-add from command line
+bond environments add staging --display-name "Staging" --order 3
+```
+
+The CLI writes directly to the database — same validation as the API. Export/import is for backup and portability, not day-to-day management.
+
+### 3.6 Adding/Removing Environments
+
+**Adding** (via UI or API):
+
+1. User creates environment via `POST /api/v1/deployments/environments`
+2. Gateway validates and stores in database
+3. Gateway spawns a new deployment agent container with the appropriate broker token
+4. Broker registers the new environment in its deploy handler (reads from DB)
+5. New environment appears in the promotion pipeline UI
+6. History record: `{ action: "created", changed_by: "andrew", after_state: {...} }`
+
+**Removing** (via UI or API):
+
+1. User deactivates environment via `DELETE /api/v1/deployments/environments/:name`
+2. Gateway soft-deletes (sets `is_active = false`) — preserves all history and receipts
+3. Gateway tears down the deployment agent container
+4. Broker stops accepting deploy requests for this environment
+5. Environment grayed out in UI with "Deactivated" label — receipts still viewable
+6. History record: `{ action: "deactivated", changed_by: "andrew", before_state: {...} }`
+
+**Reactivating:**
+
+```
+PUT /api/v1/deployments/environments/staging
+{ "is_active": true }
+```
+
+Brings back the environment, spawns a new agent, resumes accepting deploys. Full history preserved.
+
+### 3.7 How the Broker Reads Environment Config
+
+The broker's `/deploy` endpoint needs to know environment settings (deployment windows, timeouts, etc.). It reads from the database, not from a file:
+
+```typescript
+// In broker deploy handler
+async function handleDeploy(req) {
+  const agent = validateToken(req.token);
+  const env = deriveEnvironment(agent.sub);
+
+  // Read environment config from database
+  const envConfig = await db.get(
+    "SELECT * FROM deployment_environments WHERE name = ? AND is_active = true",
+    [env]
+  );
+
+  if (!envConfig) {
+    return { status: "denied", reason: "Environment not found or deactivated" };
+  }
+
+  // Check deployment window
+  if (envConfig.window_days && !isWithinWindow(envConfig)) {
+    return { status: "denied", reason: "Outside deployment window" };
+  }
+
+  // Check script timeout against environment max
+  const timeout = Math.min(req.body.timeout || 60, envConfig.max_script_timeout);
+
+  // ... continue with promotion check, execution, etc.
+}
+```
+
+The database is on the host, read by the Gateway process. Agents never see it.
 
 ---
 
@@ -200,22 +337,17 @@ Examples: deploy-dev, deploy-qa, deploy-staging, deploy-uat, deploy-prod
 ```yaml
 # Per deployment agent container
 volumes:
-  # Read-only access to all unique agent workspace mounts
+  # Read-only access to all unique agent workspace mounts (for troubleshooting)
   - /home/andrew/bond:/workspaces/bond:ro
   - /home/andrew/other-repo:/workspaces/other-repo:ro
   # ... (deduplicated — if 3 agents mount /bond, it appears once)
 
-  # Environment-specific deployment scripts (read-only — populated by promotion)
-  - ~/.bond/deployments/scripts/{env}/:/deploy/scripts:ro
+  # Agent's own scratch space (writable — for temp files, local logs)
+  - deploy-{env}-data:/data:rw
 
-  # Environment-specific hooks
-  - ~/.bond/deployments/hooks/{env}/:/deploy/hooks:ro
-
-  # Receipts from all environments (read-only — for context)
-  - ~/.bond/deployments/receipts/:/deploy/receipts:ro
-
-  # Agent's own scratch space (writable — for temp files, logs)
-  - deploy-{env}-data:/deploy/data:rw
+  # NOTHING from ~/.bond/deployments/
+  # No scripts. No state. No secrets. No registry. No receipts.
+  # All deployment operations go through the broker.
 
 environment:
   BOND_DEPLOY_ENV: "{env}"
@@ -223,7 +355,18 @@ environment:
   BOND_BROKER_URL: "http://host.docker.internal:18789"
 ```
 
-### 4.5 Workspace Mount Deduplication
+### 4.5 What The Agent Can See vs. What It Can't
+
+| Visible to agent | NOT visible to agent |
+|---|---|
+| Code workspaces (read-only) | Deployment scripts (host-only) |
+| Its own scratch space (writable) | Promotion state (host-only) |
+| Broker URL + its own token | Environment secrets (host-only) |
+| Its environment name | Other environments' secrets |
+| Deployment receipts (via broker) | Script registry (host-only) |
+| Health check results (via broker) | Other agents' tokens |
+
+### 4.6 Workspace Mount Deduplication
 
 Multiple code agents may mount the same host directory. Deployment agents receive a deduplicated set:
 
@@ -273,7 +416,8 @@ DB_URL="${DEPLOY_DB_URL:?Database URL not set}"
 
 # The actual work
 echo "Applying migration..."
-psql "$DB_URL" -f /deploy/scripts/sql/001-add-email-verified.sql
+# SCRIPT_DIR is set by the broker to the script's registry directory on the host
+psql "$DB_URL" -f "$SCRIPT_DIR/sql/001-add-email-verified.sql"
 
 echo "Verifying..."
 RESULT=$(psql "$DB_URL" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='email_verified'")
@@ -394,81 +538,90 @@ User can click [Promote to All] to advance through all remaining environments.
 
 ### 6.3 Script Snapshots (Immutability)
 
-When a script is first registered (placed in the scripts directory), the system creates an immutable snapshot:
+When a script is registered, the Gateway creates an immutable snapshot in the host-only registry:
 
 ```
 ~/.bond/deployments/scripts/
-├── registry/
-│   ├── 001-migrate-user-table/
-│   │   ├── v1/
-│   │   │   ├── deploy.sh           # the script
-│   │   │   ├── rollback.sh         # rollback script
-│   │   │   ├── sql/                # supporting files
-│   │   │   │   └── 001-add-email-verified.sql
-│   │   │   ├── manifest.json       # parsed metadata + SHA-256 hash
-│   │   │   └── .sha256             # hash of all files in this version
-│   │   └── v2/                     # new version = new snapshot
-│   │       └── ...
-│   └── 002-add-notifications/
-│       └── v1/
-│           └── ...
-├── dev/                             # symlinks to registry versions
-│   ├── 001-migrate-user-table -> ../registry/001-migrate-user-table/v1/
-│   └── 002-add-notifications -> ../registry/002-add-notifications/v1/
-├── qa/                              # populated on promotion
-│   └── 001-migrate-user-table -> ../registry/001-migrate-user-table/v1/
-├── staging/                         # empty until promoted
-├── uat/
-└── prod/
+└── registry/                        # HOST-ONLY — never mounted into containers
+    ├── 001-migrate-user-table/
+    │   ├── v1/
+    │   │   ├── deploy.sh           # the script
+    │   │   ├── rollback.sh         # rollback script
+    │   │   ├── sql/                # supporting files
+    │   │   │   └── 001-add-email-verified.sql
+    │   │   ├── manifest.json       # parsed metadata + SHA-256 hash
+    │   │   └── .sha256             # hash of all files in this version
+    │   └── v2/                     # new version = new snapshot
+    │       └── ...
+    └── 002-add-notifications/
+        └── v1/
+            └── ...
 ```
 
-Each environment directory contains symlinks to the registry. Promotion = creating a symlink. The actual script content is immutable in the registry. What ran in Dev is byte-for-byte what runs in QA.
+There are **no per-environment directories or symlinks.** Environment access is controlled entirely by the promotion database — which only the Gateway writes via the Promotion API. When an agent asks the broker to deploy script `001-migrate`, the broker:
 
-The `.sha256` file contains a hash of the entire script bundle. The agent verifies this hash before execution. If someone tampers with the registry, the hash check fails.
+1. Queries the `deployment_promotions` table to check if that script is promoted to the agent's environment
+2. If yes, reads the script from the registry and executes it on the host
+3. If no, denies the request
 
-### 6.4 Promotion State
+The script content is immutable once snapshotted. The `.sha256` file contains a hash of the entire script bundle. The **broker** verifies this hash before execution (not the agent — the agent never sees the script). If someone tampers with the registry on the host filesystem, the hash check fails and the broker refuses to execute.
 
-```json
-// ~/.bond/deployments/promotions/state.json
-{
-  "scripts": {
-    "001-migrate-user-table": {
-      "version": "v1",
-      "sha256": "a1b2c3d4...",
-      "environments": {
-        "dev": {
-          "promoted_at": "2026-03-12T09:00:00Z",
-          "promoted_by": "system",
-          "deployed_at": "2026-03-12T09:01:23Z",
-          "status": "success",
-          "receipt_id": "receipt-001-dev-20260312"
-        },
-        "qa": {
-          "promoted_at": "2026-03-12T10:15:00Z",
-          "promoted_by": "andrew",
-          "deployed_at": null,
-          "status": "pending",
-          "receipt_id": null
-        },
-        "staging": {
-          "promoted_at": null,
-          "status": "not_promoted"
-        },
-        "uat": {
-          "promoted_at": null,
-          "status": "not_promoted"
-        },
-        "prod": {
-          "promoted_at": null,
-          "status": "not_promoted"
-        }
-      }
-    }
-  }
+### 6.4 Promotion State (Database-Backed)
+
+Promotion state is stored in the same database as environment config — not in `state.json`. This keeps the security model consistent: all deployment state lives in the database, managed by the Gateway, inaccessible to agents.
+
+```sql
+CREATE TABLE deployment_promotions (
+  script_id        TEXT NOT NULL,
+  script_version   TEXT NOT NULL,
+  script_sha256    TEXT NOT NULL,
+  environment_name TEXT NOT NULL REFERENCES deployment_environments(name),
+
+  -- Promotion status
+  status           TEXT NOT NULL DEFAULT 'not_promoted',
+    -- 'not_promoted', 'awaiting_approvals', 'promoted', 'deploying',
+    -- 'success', 'failed', 'rolled_back'
+
+  -- Promotion metadata
+  initiated_by     TEXT,              -- user who started the promotion
+  initiated_at     TIMESTAMP,
+  promoted_at      TIMESTAMP,         -- when all approvals were met
+  deployed_at      TIMESTAMP,
+  receipt_id       TEXT,
+
+  PRIMARY KEY (script_id, script_version, environment_name)
+);
+
+CREATE TABLE deployment_approvals (
+  script_id        TEXT NOT NULL,
+  script_version   TEXT NOT NULL,
+  environment_name TEXT NOT NULL,
+  user_id          TEXT NOT NULL,      -- who approved
+  approved_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (script_id, script_version, environment_name, user_id),
+  FOREIGN KEY (script_id, script_version, environment_name)
+    REFERENCES deployment_promotions(script_id, script_version, environment_name)
+);
+```
+
+The broker's `/deploy` endpoint reads from this database instead of `state.json`:
+
+```typescript
+// Broker deploy handler — checking promotion status
+const promotion = await db.get(
+  `SELECT status FROM deployment_promotions
+   WHERE script_id = ? AND script_version = ? AND environment_name = ?`,
+  [scriptId, version, env]
+);
+
+if (!promotion || promotion.status === 'not_promoted' || promotion.status === 'awaiting_approvals') {
+  return { status: "denied", reason: "Script not promoted to this environment" };
 }
 ```
 
-### 6.5 Promotion API
+### 6.5 Promotion API (With Approvals)
+
+**Initiating a promotion:**
 
 ```
 POST /api/v1/deployments/promote
@@ -483,18 +636,55 @@ Content-Type: application/json
 }
 ```
 
+**What happens depends on `required_approvals` for the target environment:**
+
+```
+required_approvals = 1, approvers = [] (owner only):
+  → You click Promote → promotion executes immediately
+  → Same as today — single click, done
+
+required_approvals = 1, approvers = ["andrew", "sarah"]:
+  → Either of you clicks Promote → promotion executes immediately
+  → Any listed approver is sufficient
+
+required_approvals = 2, approvers = ["andrew", "sarah", "mike"]:
+  → You click Promote → your approval is recorded
+  → Status becomes "awaiting_approvals" (1/2)
+  → Notification sent to remaining approvers
+  → Sarah clicks Approve → threshold met (2/2)
+  → Status becomes "promoted", agent notified
+```
+
+**Approving a pending promotion:**
+
+```
+POST /api/v1/deployments/promote/approve
+Authorization: Bearer <user-session-token>
+
+{
+  "script_id": "001-migrate-user-table",
+  "version": "v1",
+  "environment": "prod"
+}
+```
+
 **Validation before promotion:**
 
 1. Script exists in registry at specified version
 2. Script has been successfully deployed in the previous environment (unless `force: true`)
-3. Target environment health check is passing
-4. No active deployment lock on target environment
-5. Within deployment window (if configured)
-6. Request comes from a user session, not an agent token
+3. Target environment is active
+4. Target environment health check is passing
+5. No active deployment lock on target environment
+6. Within deployment window (if configured) — warns if outside, doesn't block promotion (blocks execution)
+7. Request comes from a user session, not an agent token
+8. User is in the approvers list (or is the owner if approvers list is empty)
+9. User hasn't already approved this promotion (no double-counting)
+10. Required approval threshold check
 
-**Response:**
+**Response (immediate promotion — threshold met):**
 ```json
 {
+  "status": "promoted",
   "promoted": ["qa"],
   "skipped": [],
   "errors": [],
@@ -502,19 +692,145 @@ Content-Type: application/json
 }
 ```
 
+**Response (awaiting more approvals):**
+```json
+{
+  "status": "awaiting_approvals",
+  "environment": "prod",
+  "approvals": { "received": 1, "required": 2 },
+  "approved_by": ["andrew"],
+  "pending_approvers": ["sarah", "mike"],
+  "message": "Approval recorded. 1 more approval needed for prod."
+}
+```
+
 ### 6.6 Promote-to-All
 
-When the user clicks "Promote to All," the API processes each environment sequentially in order. If any environment fails validation (e.g., previous environment hasn't completed), it stops and reports which environments were promoted and which were skipped.
+When the user clicks "Promote to All," the API processes each environment sequentially in order:
 
-This is not automatic deployment — it's automatic *access*. The script becomes available in each environment, and each environment's agent picks it up and runs it. The user is giving permission for the script to be available, not triggering immediate execution.
+1. For each target environment (in promotion order):
+   a. Run validation checks
+   b. If `required_approvals` = 1 and user is authorized → promote immediately
+   c. If `required_approvals` > 1 → record user's approval, set status to "awaiting_approvals"
+   d. If previous environment hasn't completed → skip (can't promote to Staging if QA hasn't deployed)
+
+2. Response shows per-environment results:
+
+```json
+{
+  "results": {
+    "qa": { "status": "promoted", "message": "Promoted (1/1 approvals)" },
+    "staging": { "status": "promoted", "message": "Promoted (1/1 approvals)" },
+    "uat": { "status": "awaiting_approvals", "message": "Approval recorded (1/2 needed)" },
+    "prod": { "status": "awaiting_approvals", "message": "Approval recorded (1/2 needed)" }
+  }
+}
+```
+
+This is not automatic deployment — it's automatic *access*. The script becomes available in each environment (once approvals are met), and each environment's agent picks it up and runs it. The user is giving permission for the script to be available, not triggering immediate execution.
+
+For environments that require multiple approvals, "Promote to All" records the initiator's approval for every environment at once. Other approvers still need to approve each environment individually (or use their own "Approve All" action).
 
 ---
 
-## 7. Broker Policies (Per-Environment)
+## 7. Authentication Separation: Why Agents Can't Self-Promote
 
-### 7.1 Policy Scoping
+This is the most important security property of the system. There are two completely separate authentication paths that never cross.
 
-Each deployment agent gets a broker policy that restricts which scripts it can execute.
+### 7.1 Two Token Types, Two Signing Keys
+
+```
+USER SESSION TOKEN                     AGENT BROKER TOKEN
+─────────────────                      ──────────────────
+Issued by: Gateway on user login       Issued by: Gateway at container creation
+Signed with: User session secret       Signed with: Broker HMAC secret
+  (~/.bond/data/.session_secret)         (~/.bond/data/.broker_secret)
+Payload: { user_id, role, exp }        Payload: { sub: "deploy-qa", sid, exp }
+Accepted by: Promotion API             Accepted by: Broker /deploy + /exec
+Rejected by: Broker endpoints          Rejected by: Promotion API
+```
+
+The tokens are structurally different (different payload schemas, different signing keys). An agent cannot forge a user session token because it doesn't have the session signing secret. The session secret is in a host-only file that is never mounted into containers.
+
+### 7.2 What Each Token Grants
+
+| Action | User Session Token | Agent Broker Token |
+|---|---|---|
+| Promote a script | ✅ | ❌ 403 Forbidden |
+| Request script deployment | ❌ | ✅ (if promoted to agent's env) |
+| Pause/resume an agent | ✅ | ❌ |
+| View promotion state | ✅ (via UI) | ❌ (only broker reads it internally) |
+| File a bug ticket | ❌ (use GitHub directly) | ✅ (via broker exec) |
+| Override deployment window | ✅ | ❌ |
+
+### 7.3 What If an Agent Tries to Self-Promote
+
+| Attack Vector | Why It Fails |
+|---|---|
+| Call Promotion API directly | API validates token type → agent token rejected → 403 |
+| Forge a user session token | Different signing key (`session_secret` vs `broker_secret`). Agent doesn't have `session_secret` — it's a host-only file, never mounted. |
+| Modify promotion database via broker exec | Database is managed by Gateway process. No SQL client available via broker exec. Catch-all deny on generic exec. |
+| Modify promotion database via filesystem | Database file is on the host, not mounted. Agent's container has no path to it. |
+| Ask broker to manipulate promotion records | `/broker/deploy` only reads the database — it has no write path for promotion status. Only the Promotion API writes promotions. |
+| Call broker /deploy with a non-promoted script | Broker queries promotion DB → script not promoted to this env → denied. |
+| Call broker /deploy pretending to be another environment | Environment derived from token payload (`sub: "deploy-qa"` → env: "qa"). Token is HMAC-signed. Agent can't modify it. |
+
+---
+
+## 8. Broker Endpoint Policies (Per-Environment)
+
+### 8.1 Two Broker Endpoints, Two Policy Layers
+
+Deployment agents interact with two broker endpoints:
+
+1. **`POST /broker/deploy`** — The dedicated deployment endpoint. Access control is handled internally by the broker: it validates the agent's token, derives the environment, and queries the promotion database for status. No glob-pattern policy needed — the broker code IS the policy.
+
+2. **`POST /broker/exec`** — The generic command executor (from Doc 036). Used only for non-deployment tasks like filing bug tickets (`gh issue create`). This endpoint still uses glob-pattern policies.
+
+### 8.2 /broker/deploy Access Control (Built Into Broker Code)
+
+The `/deploy` endpoint does NOT use the glob-pattern policy engine. It has its own hardcoded access control:
+
+```typescript
+// Pseudocode — broker deploy handler
+async function handleDeploy(req) {
+  const agent = validateToken(req.token);        // → { sub: "deploy-qa", sid: "..." }
+  const env = deriveEnvironment(agent.sub);      // → "qa"
+  const { script_id, action } = req.body;
+
+  // Is this script promoted to this agent's environment?
+  const promotion = await readPromotionDB();      // queries database on host
+  const scriptState = state.scripts[script_id]?.environments[env];
+
+  if (!scriptState || scriptState.status === "not_promoted") {
+    return { status: "denied", reason: "Script not promoted to this environment" };
+  }
+
+  // Environment derived from token, NOT from request body.
+  // Agent cannot override its environment.
+  switch (action) {
+    case "deploy":   return executeScript(script_id, env);
+    case "rollback": return executeRollback(script_id, env);
+    case "dry-run":  return executeDryRun(script_id, env);
+    case "validate": return validateScript(script_id, env);
+    case "pre-hook": return executeHook("pre", env);
+    case "post-hook":return executeHook("post", env);
+    case "health-check": return executeHealthCheck(env);
+    case "info":     return getScriptInfo(script_id, env);
+    case "receipt":  return getReceipt(script_id, req.body.environment);
+  }
+}
+```
+
+The agent cannot:
+- Specify a different environment (derived from token)
+- Run a script that hasn't been promoted (checked against promotion DB)
+- Access the script content (only the broker reads and executes it)
+- Access secrets (only the broker loads and injects them)
+
+### 8.3 /broker/exec Policy (For Non-Deployment Commands)
+
+The generic exec endpoint is locked down for deployment agents. They can only use it for bug tickets and read-only diagnostics:
 
 ```yaml
 # ~/.bond/policies/agents/deploy-dev.yaml
@@ -523,34 +839,15 @@ name: deploy-dev
 agent_id: "deploy-dev"
 
 rules:
-  # Can execute scripts in the dev environment directory
-  - commands: ["bash /deploy/scripts/*", "sh /deploy/scripts/*"]
-    decision: allow
-
-  # Can execute hooks
-  - commands: ["bash /deploy/hooks/*", "sh /deploy/hooks/*"]
-    decision: allow
-
-  # Can run health checks
-  - commands: ["bash /deploy/health/*", "sh /deploy/health/*"]
-    decision: allow
-
-  # Can read files (troubleshooting)
-  - commands: ["cat *", "head *", "tail *", "grep *", "find *", "ls *"]
-    decision: allow
-
-  # Can run diagnostic tools
-  - commands: ["psql*--command*", "curl http://localhost*", "curl http://dev.*"]
-    decision: allow
-
   # Can create GitHub issues (bug tickets)
   - commands: ["gh issue create*"]
     decision: allow
 
-  # Deny everything else
+  # Deny everything else on the generic exec endpoint
+  # All deployment operations go through /broker/deploy, not /broker/exec
   - commands: ["*"]
     decision: deny
-    reason: "Deployment agents can only run promoted scripts and diagnostics"
+    reason: "Deployment agents use /broker/deploy for deployments. Generic exec denied."
 ```
 
 ```yaml
@@ -560,33 +857,19 @@ name: deploy-prod
 agent_id: "deploy-prod"
 
 rules:
-  # Same structure but scoped to prod
-  - commands: ["bash /deploy/scripts/*", "sh /deploy/scripts/*"]
-    decision: allow
-
-  - commands: ["bash /deploy/hooks/*", "sh /deploy/hooks/*"]
-    decision: allow
-
-  - commands: ["bash /deploy/health/*", "sh /deploy/health/*"]
-    decision: allow
-
-  # More restrictive diagnostics — no direct DB access in prod
-  - commands: ["curl http://prod.*"]
-    decision: allow
-
-  - commands: ["psql*"]
-    decision: deny
-    reason: "Direct database access not allowed in production — use deployment scripts"
-
+  # Can create GitHub issues (bug tickets)
   - commands: ["gh issue create*"]
     decision: allow
 
+  # Deny everything else
   - commands: ["*"]
     decision: deny
-    reason: "Deployment agents can only run promoted scripts and diagnostics"
+    reason: "Deployment agents use /broker/deploy for deployments. Generic exec denied."
 ```
 
-### 7.2 Environment Secrets
+**Note:** Deployment agents do NOT get `cat`, `curl`, `psql`, or any other diagnostic commands via the generic exec endpoint. If they need to run diagnostics, that capability is added to the `/broker/deploy` endpoint as a specific action (e.g., `action: "diagnose"`) with its own access control — not as a raw shell command.
+
+### 8.4 Environment Secrets
 
 The broker injects environment-specific secrets when executing deployment scripts. The agent never sees the raw values — they appear as environment variables only during script execution.
 
@@ -606,80 +889,107 @@ The broker reads the appropriate secrets file based on the agent's environment a
 
 ---
 
-## 8. Deployment Execution Flow
+## 9. Deployment Execution Flow
 
-### 8.1 Happy Path
+### 9.1 Happy Path
 
 ```
 1. User promotes script "001-migrate-user-table" to QA via UI
-   └── Promotion API creates symlink in ~/.bond/deployments/scripts/qa/
+   └── Promotion API updates promotion DB: qa.status = "promoted"
    └── Sends notification to deploy-qa agent: "New script available"
 
-2. deploy-qa agent picks up the new script
-   └── Reads script metadata (name, version, depends_on, timeout, dry_run)
-   └── Reads deployment receipt from Dev (context passing)
+2. deploy-qa agent receives notification
+   └── Agent calls broker: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "info" }
+   └── Broker queries promotion DB → promoted to qa → returns metadata
+         (name, version, depends_on, timeout, dry_run support)
+   └── Agent calls broker: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "receipt",
+           environment: "dev" }
+   └── Broker returns Dev deployment receipt (context passing)
 
-3. Validation phase
-   └── Syntax check: bash -n /deploy/scripts/001-migrate-user-table/deploy.sh
-   └── Dependency check: no dependencies → pass
-   └── Hash check: SHA-256 matches registry → pass
-   └── Deployment window check: within allowed hours → pass
-   └── Deployment lock: acquire lock for QA environment
+3. Validation phase (ALL done by the broker, not the agent)
+   └── Agent calls: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "validate" }
+   └── Broker performs:
+       - Syntax check: bash -n on the script (host-side)
+       - Dependency check: depends_on scripts deployed in qa? → pass
+       - Hash check: SHA-256 matches manifest → pass
+       - Deployment window check: within allowed hours → pass
+       - Deployment lock: acquire lock for QA environment
+   └── Broker returns validation result to agent
 
-4. Pre-deploy hook
-   └── broker.exec("bash /deploy/hooks/pre_deploy.sh")
+4. Pre-deploy hook (broker executes on host)
+   └── Agent calls: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "pre-hook" }
+   └── Broker runs hooks/qa/pre_deploy.sh on host
    └── (e.g., snapshot database)
 
 5. Dry-run (if script supports it)
-   └── broker.exec("bash /deploy/scripts/001-migrate-user-table/deploy.sh --dry-run")
-   └── Agent reviews output for warnings
+   └── Agent calls: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "dry-run" }
+   └── Broker runs the script with --dry-run flag on host
+   └── Agent reviews returned output for warnings
 
 6. Execution
-   └── broker.exec("bash /deploy/scripts/001-migrate-user-table/deploy.sh")
-   └── Broker injects DEPLOY_DB_URL, DEPLOY_API_URL from qa secrets
+   └── Agent calls: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "deploy" }
+   └── Broker loads secrets/qa.yaml, injects as env vars
+   └── Broker runs the script on host with secrets
    └── Script runs, exits 0
+   └── Broker returns stdout/stderr/exit_code to agent
 
 7. Post-deploy hook
-   └── broker.exec("bash /deploy/hooks/post_deploy.sh")
+   └── Agent calls: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "post-hook" }
+   └── Broker runs hooks/qa/post_deploy.sh on host
    └── (e.g., run integration tests)
 
 8. Health check
-   └── broker.exec("bash /deploy/health/check.sh")
+   └── Agent calls: POST /broker/deploy
+         { script_id: "001-migrate-user-table", action: "health-check" }
+   └── Broker runs health/qa/check.sh on host
    └── All checks pass
 
-9. Generate deployment receipt
-   └── Write receipt to ~/.bond/deployments/receipts/qa/001-migrate-user-table-v1-20260312.json
+9. Receipt generated (by the broker, not the agent)
+   └── Broker writes receipt to receipts/qa/ on host
+   └── Broker updates promotion DB: qa.status = "success"
+   └── Broker returns receipt summary to agent
 
-10. Release deployment lock
+10. Deployment lock released (by the broker)
 
-11. Report to user
+11. Agent reports to user
     └── "Script 001-migrate-user-table deployed successfully to QA"
     └── Receipt summary: duration, checks passed, environment health status
 ```
 
-### 8.2 Failure Path
+**Note:** Every step goes through the broker. The agent sends a script ID and an action. The broker does everything else — reads the script, loads secrets, executes on the host, generates receipts, updates state. The agent never sees file paths, script content, or secrets.
+
+### 9.2 Failure Path
 
 ```
-1. Script execution fails (non-zero exit)
-2. Agent captures stdout/stderr
-3. If rollback script exists:
-   └── Agent executes rollback script
-   └── Agent verifies rollback succeeded
-4. Post-deploy hook still runs (cleanup)
-5. Health check runs (verify environment is stable after rollback)
-6. Agent generates failure receipt
+1. Broker returns non-zero exit code from script execution
+2. Agent receives stdout/stderr from broker response
+3. Agent calls: POST /broker/deploy
+     { script_id: "001-migrate", action: "rollback" }
+   └── Broker checks: rollback script exists? If yes, executes on host
+   └── Broker returns rollback result to agent
+4. Agent calls post-hook and health-check via broker (same as happy path)
+5. Broker generates failure receipt, updates promotion DB: qa.status = "failed"
+6. Broker releases deployment lock
 7. Agent files bug ticket (GitHub issue) with:
-   └── Script name and version
+   └── Script name and version (from broker info response)
    └── Environment
-   └── Error output (stdout + stderr)
+   └── Error output (stdout + stderr from broker response)
    └── Relevant code context (agent reads source files from RO workspace mounts)
-   └── Deployment receipt from previous environment (what worked there)
+   └── Deployment receipt from previous environment (retrieved via broker)
    └── Suggested fix (if agent can determine one from reading the code)
-8. Release deployment lock
-9. Report failure to user with receipt link
+8. Agent reports failure to user
 ```
 
-### 8.3 Rollback
+**Key distinction:** The agent's value-add in failure scenarios is *diagnosis* — it reads the code from its RO workspace mounts, correlates the error output with the codebase, and writes a detailed bug ticket. It does NOT retry, modify, or fix anything. It files a ticket and reports.
+
+### 9.3 Rollback
 
 Rollback can be triggered in three ways:
 
@@ -691,9 +1001,9 @@ Rollback scripts go through the same broker policy checks and produce their own 
 
 ---
 
-## 9. Health Checks
+## 10. Health Checks
 
-### 9.1 Structure
+### 10.1 Structure
 
 Each environment has a health check script that the deployment agent runs periodically.
 
@@ -713,7 +1023,7 @@ Each environment has a health check script that the deployment agent runs period
     └── check.sh
 ```
 
-### 9.2 Health Check Output Format
+### 10.2 Health Check Output Format
 
 Health checks output structured JSON for machine parsing:
 
@@ -732,7 +1042,7 @@ Health checks output structured JSON for machine parsing:
 }
 ```
 
-### 9.3 Periodic Health Checks
+### 10.3 Periodic Health Checks
 
 Each deployment agent runs health checks at the interval configured for its environment. If a check fails:
 
@@ -740,7 +1050,7 @@ Each deployment agent runs health checks at the interval configured for its envi
 2. Agent reports to user via configured Bond surface
 3. Deployment lock is set (no new deployments until healthy)
 
-### 9.4 Environment Drift Detection
+### 10.4 Environment Drift Detection
 
 Between deployments, the agent periodically compares the environment state against expected state:
 
@@ -757,9 +1067,9 @@ Drift detection runs as part of the regular health check cycle. If drift is dete
 
 ---
 
-## 10. Bug Ticket Tool
+## 11. Bug Ticket Tool
 
-### 10.1 Tool Definition
+### 11.1 Tool Definition
 
 Deployment agents have a `file_bug_ticket` tool that creates GitHub issues with structured information.
 
@@ -828,7 +1138,7 @@ Deployment agents have a `file_bug_ticket` tool that creates GitHub issues with 
 }
 ```
 
-### 10.2 Issue Template
+### 11.2 Issue Template
 
 The tool generates a GitHub issue via the broker:
 
@@ -876,9 +1186,9 @@ Labels: `deployment`, `env:{environment}`, `severity:{severity}`, `automated`
 
 ---
 
-## 11. Deployment Receipts
+## 12. Deployment Receipts
 
-### 11.1 Receipt Format
+### 12.1 Receipt Format
 
 Every deployment (success or failure) produces an immutable receipt:
 
@@ -918,12 +1228,14 @@ Every deployment (success or failure) produces an immutable receipt:
 }
 ```
 
-### 11.2 Context Passing
+### 12.2 Context Passing
 
 When a deployment agent picks up a script, it reads the receipt from the previous environment:
 
 ```
-deploy-qa agent reads: /deploy/receipts/dev/receipt-001-dev-20260312.json
+deploy-qa agent calls: POST /broker/deploy { script_id: "001-migrate", action: "receipt", environment: "dev" }
+Broker reads receipt from host: ~/.bond/deployments/receipts/dev/receipt-001-dev-20260312.json
+Broker returns receipt content to agent (agent never sees the file path)
 ```
 
 This gives the QA agent:
@@ -935,9 +1247,9 @@ The agent uses this context to make better decisions — e.g., if Dev had a warn
 
 ---
 
-## 12. Deployment Locks & Concurrency
+## 13. Deployment Locks & Concurrency
 
-### 12.1 Lock Mechanism
+### 13.1 Lock Mechanism
 
 Each environment has a simple file-based lock:
 
@@ -954,7 +1266,7 @@ Rules:
 - If an agent crashes mid-deployment, the lock has a TTL (2x the script timeout). Stale locks are auto-released.
 - Lock state is visible in the UI
 
-### 12.2 Queue
+### 13.2 Queue
 
 If a second script is promoted to an environment while a deployment is in progress:
 
@@ -965,24 +1277,24 @@ If a second script is promoted to an environment while a deployment is in progre
 
 ---
 
-## 13. Deployment Windows
+## 14. Deployment Windows
 
-### 13.1 Enforcement
+### 14.1 Enforcement
 
 Deployment windows are enforced at two levels:
 
 1. **Promotion API** — warns the user if promoting outside a window (but doesn't block — the script becomes available, just won't execute until the window opens)
 2. **Agent execution** — the agent checks the window before starting a deployment. If outside the window, it reports "Deployment queued — window opens at {time}" and waits
 
-### 13.2 Emergency Override
+### 14.2 Emergency Override
 
 The user can override deployment windows via the UI with an explicit "Deploy Outside Window" button. This is logged as an escalation in the audit trail.
 
 ---
 
-## 14. Manual Intervention Escape Hatch
+## 15. Manual Intervention Escape Hatch
 
-### 14.1 Pause/Resume
+### 15.1 Pause/Resume
 
 Each deployment agent supports a pause state:
 
@@ -997,7 +1309,7 @@ When paused:
 - Health checks continue running
 - Agent reports its paused state in the UI
 
-### 14.2 Force Stop
+### 15.2 Force Stop
 
 If a deployment is hanging:
 
@@ -1013,7 +1325,7 @@ This:
 5. Releases the deployment lock
 6. Agent remains active for future deployments
 
-### 14.3 Manual Takeover
+### 15.3 Manual Takeover
 
 If the user needs to intervene directly:
 
@@ -1037,9 +1349,9 @@ The receipt for a manual intervention is logged as:
 
 ---
 
-## 15. Frontend — Promotion UI
+## 16. Frontend — Promotion UI
 
-### 15.1 Pipeline View
+### 16.1 Pipeline View
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1071,7 +1383,7 @@ The receipt for a manual intervention is logged as:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 15.2 Environment Health Dashboard
+### 16.2 Environment Health Dashboard
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -1088,7 +1400,7 @@ The receipt for a manual intervention is logged as:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 15.3 Receipt Viewer
+### 16.3 Receipt Viewer
 
 Clicking "View Receipt" shows the full deployment receipt with expandable phases:
 
@@ -1115,9 +1427,9 @@ Clicking "View Receipt" shows the full deployment receipt with expandable phases
 
 ---
 
-## 16. Notifications & Events
+## 17. Notifications & Events
 
-### 16.1 Event Types
+### 17.1 Event Types
 
 Every significant action produces an event delivered through Bond's channel infrastructure:
 
@@ -1135,7 +1447,7 @@ Every significant action produces an event delivered through Bond's channel infr
 | Manual intervention needed | User (all surfaces) | Critical |
 | Deployment lock stale / auto-released | User (UI) | Warning |
 
-### 16.2 Event Format
+### 17.2 Event Format
 
 ```json
 {
@@ -1152,9 +1464,9 @@ Every significant action produces an event delivered through Bond's channel infr
 
 ---
 
-## 17. Script Dependencies & Ordering
+## 18. Script Dependencies & Ordering
 
-### 17.1 Dependency Resolution
+### 18.1 Dependency Resolution
 
 Scripts can declare dependencies via `depends_on` metadata:
 
@@ -1168,7 +1480,7 @@ Before executing a script, the agent checks:
 
 If dependencies aren't met, the script is queued until they are.
 
-### 17.2 Execution Order
+### 18.2 Execution Order
 
 When multiple scripts are promoted to an environment simultaneously:
 
@@ -1179,24 +1491,22 @@ When multiple scripts are promoted to an environment simultaneously:
 
 ---
 
-## 18. File Structure
+## 19. File Structure
 
 ```
-~/.bond/deployments/
-├── config.yaml                      # Environment definitions
+~/.bond/data/
+├── deployments.db                   # SQLite database (environments, promotions,
+│                                    #   approvals, history — Gateway-only access)
+
+~/.bond/deployments/                 # HOST-ONLY — NEVER MOUNTED INTO CONTAINERS
 ├── scripts/
-│   ├── registry/                    # Immutable script snapshots
-│   │   └── {script-id}/
-│   │       └── v{n}/
-│   │           ├── deploy.sh
-│   │           ├── rollback.sh
-│   │           ├── manifest.json
-│   │           └── .sha256
-│   ├── dev/                         # Symlinks to registry (per-env access)
-│   ├── qa/
-│   ├── staging/
-│   ├── uat/
-│   └── prod/
+│   └── registry/                    # Immutable script snapshots
+│       └── {script-id}/
+│           └── v{n}/
+│               ├── deploy.sh
+│               ├── rollback.sh
+│               ├── manifest.json
+│               └── .sha256
 ├── hooks/
 │   └── {env}/
 │       ├── pre_deploy.sh
@@ -1207,8 +1517,6 @@ When multiple scripts are promoted to an environment simultaneously:
 │       └── check.sh
 ├── secrets/
 │   └── {env}.yaml                   # Encrypted at rest
-├── promotions/
-│   └── state.json                   # Promotion state (UI-controlled)
 ├── receipts/
 │   └── {env}/
 │       └── {receipt-id}.json
@@ -1220,24 +1528,37 @@ When multiple scripts are promoted to an environment simultaneously:
 
 gateway/src/
 ├── broker/                          # Existing
+│   ├── router.ts                    # Existing — add /deploy endpoint here
+│   ├── deploy-handler.ts            # NEW — /deploy endpoint logic
+│   │                                #   reads promotion DB, executes scripts,
+│   │                                #   loads secrets, generates receipts
+│   └── ...                          # Existing broker modules
 ├── deployments/
-│   ├── router.ts                    # Promotion API + agent management
-│   ├── promotion.ts                 # Promotion logic + state management
+│   ├── router.ts                    # Promotion API + Environment Management API (user-auth only)
+│   ├── environments.ts              # Environment CRUD + approver management
+│   ├── promotion.ts                 # Promotion logic + approval workflow
 │   ├── scripts.ts                   # Script registry + snapshot management
 │   ├── receipts.ts                  # Receipt generation + storage
 │   ├── locks.ts                     # Deployment lock management
 │   ├── events.ts                    # Event emission
+│   ├── db.ts                        # Database schema, migrations, queries
 │   └── __tests__/
+│       ├── environments.test.ts
 │       ├── promotion.test.ts
+│       ├── approvals.test.ts
 │       ├── scripts.test.ts
+│       ├── deploy-handler.test.ts
 │       └── locks.test.ts
 
 frontend/
 ├── components/deployments/
 │   ├── PipelineView.tsx             # Main pipeline visualization
 │   ├── EnvironmentCard.tsx          # Per-environment status
+│   ├── EnvironmentSettings.tsx      # Environment management (add/edit/deactivate)
+│   ├── ApproverManager.tsx          # Manage approvers per environment
+│   ├── ApprovalStatus.tsx           # Show approval progress (1/2 needed, etc.)
 │   ├── ReceiptViewer.tsx            # Deployment receipt detail
-│   ├── PromoteButton.tsx            # Promotion action
+│   ├── PromoteButton.tsx            # Promotion action (with approval awareness)
 │   └── HealthDashboard.tsx          # Environment health overview
 
 backend/app/agent/
@@ -1248,89 +1569,113 @@ backend/app/agent/
 
 ---
 
-## 19. Security Model
+## 20. Security Model
 
-### 19.1 Trust Boundaries
+### 20.1 Trust Boundaries
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ USER (trusted)                                               │
 │ Can: promote scripts, pause/resume agents, override windows  │
 │ Via: Frontend UI → Gateway API (user session auth)           │
+│ Token type: user session JWT (Gateway login)                 │
 └─────────────────────────┬───────────────────────────────────┘
                           │ User session token
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ GATEWAY (trusted)                                            │
-│ Promotion API: only accepts user session tokens              │
-│ Broker: validates agent tokens, enforces policy              │
-│ State DB: only Gateway writes promotion state                │
+│ Promotion API: ONLY accepts user session tokens              │
+│ /broker/deploy: ONLY accepts agent broker tokens             │
+│ Database: ONLY Gateway process writes env config + promotions │
+│ Script registry: ONLY Gateway process reads scripts          │
+│ Secrets: ONLY Gateway process loads and injects secrets      │
+│                                                              │
+│ ~/.bond/deployments/ lives HERE, never mounted anywhere      │
 └──────────┬──────────────────────────────────────────────────┘
-           │ Agent broker token (scoped)
+           │ Agent broker token (HMAC-signed, env-scoped)
            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ DEPLOYMENT AGENT (constrained)                               │
-│ Can: execute promoted scripts, read code, file bugs          │
-│ Cannot: promote scripts, access other env secrets,           │
-│         modify code, write to promotion state                │
+│ Can: request deployment of promoted scripts (via broker)     │
+│ Can: read code workspaces (RO mounts, for troubleshooting)  │
+│ Can: file bug tickets (via broker exec → gh issue create)    │
+│ Can: receive deployment results (stdout/stderr from broker)  │
+│                                                              │
+│ Cannot: see script content (broker reads + executes)         │
+│ Cannot: see secrets (broker loads + injects)                 │
+│ Cannot: see promotion DB or env config (broker reads it)     │
+│ Cannot: promote scripts (Promotion API rejects agent tokens) │
+│ Cannot: run scripts not promoted to its env (broker denies)  │
+│ Cannot: pretend to be a different environment (token-bound)  │
+│ Cannot: modify code (all mounts are read-only)               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 19.2 Key Invariants
+### 20.2 Key Invariants
 
-1. **Agents cannot self-escalate.** The promotion database is outside agent-writable paths. The Promotion API rejects agent tokens.
-2. **Script immutability.** Once snapshotted, a script version cannot be modified. SHA-256 verified before execution.
-3. **Secret isolation.** Each environment's secrets are only loaded by the broker when executing commands for that environment's agent.
-4. **Audit everything.** Every promotion, deployment, rollback, health check, and bug ticket is logged with timestamps and actor identity.
+1. **Agents cannot self-escalate.** The promotion database is managed by the Gateway process — not a file on disk that could be edited, but database tables that only the Promotion API and broker deploy handler can access. The Promotion API rejects agent broker tokens (different token type, different signing key). There is no filesystem path, broker command, or API endpoint through which an agent can grant itself access to a script.
+2. **Agents never see scripts.** The script registry is host-only. The broker reads scripts from the registry and executes them. The agent sends a script ID and receives stdout/stderr. It never sees the script content, file path, or supporting files.
+3. **Agents never see secrets.** Environment secrets are host-only. The broker loads secrets and injects them as environment variables during script execution. The agent receives command output, not the environment that produced it.
+4. **Environment is identity.** The agent's environment is derived from its cryptographic token, not from request parameters. An agent cannot request deployment to a different environment.
+5. **Script immutability.** Once snapshotted, a script version cannot be modified. SHA-256 verified by the broker before execution.
+6. **Audit everything.** Every promotion, deployment, rollback, health check, and bug ticket is logged with timestamps and actor identity.
 
 ---
 
-## 20. Build Order
+## 21. Build Order
 
-### Phase 1: Core Pipeline (~1 week)
+### Phase 1: Core Pipeline (~1.5 weeks)
 
-1. Deployment config schema + loader (`config.yaml`)
-2. Script registry + snapshot mechanism (registry, SHA-256, manifest)
-3. Promotion state management (state.json, symlink creation)
-4. Promotion API in Gateway (`/api/v1/deployments/promote`)
-5. Per-environment broker policies
-6. Deployment agent container creation (RO workspace mounts, env scoping)
-7. Basic deployment execution flow (validate → execute → receipt)
-8. Receipt generation
-9. `file_bug_ticket` tool (wraps `gh issue create`)
+1. Database schema + migrations (`deployment_environments`, `deployment_promotions`, `deployment_approvals`, `deployment_environment_approvers`, history tables)
+2. Environment Management API (`/api/v1/deployments/environments` — CRUD, user-session-auth only)
+3. Default environment seeding on first run (dev, qa, staging, uat, prod)
+4. CLI escape hatch (`bond environments import/export` for bootstrap + DR)
+5. Script registry + snapshot mechanism (registry, SHA-256, manifest)
+6. Promotion API (`/api/v1/deployments/promote` + `/promote/approve` — user-session-auth only)
+7. Approval workflow (record approvals, check thresholds, notify pending approvers)
+8. User session token system (separate signing key from broker tokens, Promotion API validates token type)
+9. **Broker `/deploy` endpoint** — queries promotion DB, loads scripts from registry, injects secrets, executes on host
+10. Per-environment broker exec policies (lock down generic `/exec` to `gh issue create` only)
+11. Deployment agent container creation (RO workspace mounts only, NO deployment files mounted)
+12. Basic deployment execution flow (agent → broker `/deploy` → validate → execute → receipt)
+13. Receipt generation (broker-side, written to host-only receipts directory)
+14. `file_bug_ticket` tool (wraps `gh issue create` via broker `/exec`)
 
 ### Phase 2: Safety & Observability (~1 week)
 
-10. Rollback scripts + automatic rollback on failure
-11. Health checks (periodic + post-deployment)
-12. Deployment locks + queue
-13. Deployment windows
-14. Pre/post hooks
-15. Dry-run support
-16. Script validation (syntax check, dependency resolution)
-17. Event notifications through Bond channels
+15. Rollback scripts + automatic rollback on failure
+16. Health checks (periodic + post-deployment)
+17. Deployment locks + queue
+18. Deployment windows (read from DB, enforce in broker)
+19. Pre/post hooks
+20. Dry-run support
+21. Script validation (syntax check, dependency resolution)
+22. Event notifications through Bond channels
 
-### Phase 3: Frontend (~1 week)
+### Phase 3: Frontend (~1.5 weeks)
 
-18. Pipeline view (script promotion visualization)
-19. Promote button (single + promote-all)
-20. Environment health dashboard
-21. Receipt viewer
-22. Pause/resume/abort controls
-23. Deployment window override
+23. Environment management settings page (add/edit/deactivate environments)
+24. Approver management per environment
+25. Pipeline view (script promotion visualization)
+26. Promote button (single + promote-all) with approval status
+27. Environment health dashboard
+28. Receipt viewer
+29. Pause/resume/abort controls
+30. Deployment window override UI
 
 ### Phase 4: Hardening (~3-5 days)
 
-24. Context passing between environment agents
-25. Script dependency ordering
-26. Environment drift detection
-27. Secret encryption at rest
-28. Stale lock auto-release
-29. Deployment log streaming to UI
+31. Context passing between environment agents
+32. Script dependency ordering
+33. Environment drift detection
+34. Secret encryption at rest
+35. Stale lock auto-release
+36. Deployment log streaming to UI
+37. Environment history/changelog viewer in UI
 
 ---
 
-## 21. Open Questions
+## 22. Open Questions
 
 1. **Script authoring.** Who writes deployment scripts — code agents or humans? If code agents, they'd need write access to the registry (only Dev). If humans, there should be a CLI or UI for script submission.
 
