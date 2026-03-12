@@ -85,28 +85,62 @@ Replace the current single-loop architecture with three distinct phases:
 
 ### Phase 0: Repo Map (generated, no LLM call)
 
-Before Phase 1, generate a compact JSON tree of the entire repository using `git ls-files`. This gives Opus a complete map of what exists — no guessing, no hallucinating file paths.
+Before Phase 1, generate a compact minified JSON tree of the entire repository using `git ls-files`. This gives Opus a complete map of what exists — no guessing, no hallucinating file paths.
+
+**Target: ~5,000 tokens** for a 800-file repo (Bond measured at 5,002 tokens / 20KB minified).
 
 ```python
+import os, json, subprocess
+
+# Extensions to exclude (binary, generated, locks)
+SKIP_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
+    ".woff", ".woff2", ".ttf", ".eot",
+    ".map", ".tsbuildinfo", ".lock", ".wasm", ".pyc",
+}
+
+# Specific filenames to exclude
+SKIP_NAMES = {"package-lock.json", "pnpm-lock.yaml", "bun.lock", "uv.lock"}
+
+# Directories whose individual files are auto-generated — collapse to a summary.
+# The model doesn't need to see 40 individual reducer/table files.
+COLLAPSE_DIRS = {
+    "gateway/src/spacetimedb/",
+    "frontend/src/lib/spacetimedb/",
+}
+
+
 async def build_repo_map(repo_root: str) -> str:
-    """Build a compact JSON tree of all tracked files with sizes.
+    """Build a compact minified JSON tree of all tracked files with sizes.
     
-    Uses git ls-files to respect .gitignore. Output is ~6K tokens
-    for a 800-file repo. Files show size (e.g., "3.1K", "290B"),
-    directories are nested objects with trailing slash.
+    Uses git ls-files (respects .gitignore, ~50ms). Output rules:
+    - Directories are nested objects with trailing slash as key
+    - Files show human-readable size: "3.1K", "290B", "1.2M"
+    - Empty files (0 bytes) are dropped — __init__.py etc. aren't useful for planning
+    - Auto-generated directories are collapsed to "[generated: N files]"
+    - Output is minified (no whitespace) to minimize token count
+    
+    Returns: minified JSON string (~5K tokens for a 800-file repo)
     """
     result = subprocess.run(
         ["git", "ls-files"], capture_output=True, text=True, cwd=repo_root
     )
     files = result.stdout.strip().split("\n")
     
-    SKIP_EXTS = {".png", ".jpg", ".lock", ".map", ".tsbuildinfo", ".wasm"}
-    SKIP_NAMES = {"package-lock.json", "pnpm-lock.yaml", "bun.lock", "uv.lock"}
-    
-    tree = {}
+    tree: dict = {}
     for filepath in sorted(files):
         name = os.path.basename(filepath)
-        if os.path.splitext(name)[1].lower() in SKIP_EXTS or name in SKIP_NAMES:
+        ext = os.path.splitext(name)[1].lower()
+        if ext in SKIP_EXTS or name in SKIP_NAMES:
+            continue
+        
+        try:
+            size = os.path.getsize(os.path.join(repo_root, filepath))
+        except OSError:
+            continue
+        
+        # Drop empty files (e.g., __init__.py with no content)
+        if size == 0:
             continue
         
         parts = filepath.split("/")
@@ -115,22 +149,61 @@ async def build_repo_map(repo_root: str) -> str:
             key = part + "/"
             node = node.setdefault(key, {})
         
-        size = os.path.getsize(os.path.join(repo_root, filepath))
-        node[name] = f"{size}B" if size < 1024 else f"{round(size/1024, 1)}K"
+        # Human-readable size
+        if size < 1024:
+            node[name] = f"{size}B"
+        elif size < 1024 * 1024:
+            node[name] = f"{round(size / 1024, 1)}K"
+        else:
+            node[name] = f"{round(size / (1024 * 1024), 1)}M"
     
+    # Collapse auto-generated directories into summaries
+    tree = _collapse_generated(tree)
+    
+    # Minified — no whitespace, minimal separators
     return json.dumps(tree, separators=(",", ":"))
+
+
+def _collapse_generated(tree: dict, path: str = "") -> dict:
+    """Replace auto-generated directories with a file count summary."""
+    result = {}
+    for key, value in tree.items():
+        full_path = path + key
+        if isinstance(value, dict):
+            if full_path in COLLAPSE_DIRS:
+                file_count = sum(1 for v in value.values() if isinstance(v, str))
+                result[key] = f"[generated: {file_count} files]"
+            else:
+                collapsed = _collapse_generated(value, full_path)
+                if collapsed:
+                    result[key] = collapsed
+        else:
+            result[key] = value
+    return result
 ```
 
-**Example output** (~6,400 tokens for Bond's 789 tracked files):
+**Example output** (~5,000 tokens for Bond's 628 entries after optimization):
 
 ```json
-{"backend/":{"app/":{"agent/":{"tools/":{"coding_agent.py":"21.6K",
-"definitions.py":"63.6K","native.py":"35.5K",...},"loop.py":"16.1K",
-"context_pipeline.py":"18.9K",...},...},...},"gateway/":{"src/":
-{"server.ts":"7.2K","spacetimedb/":{"subscription.ts":"4K",...},...},...},...}
+{"AGENTS.md":"3.1K","Makefile":"6.5K","backend/":{"app/":{"worker.py":"101.6K",
+"agent/":{"tools/":{"coding_agent.py":"21.6K","definitions.py":"63.6K",
+"native.py":"35.5K",...},"loop.py":"16.1K","context_pipeline.py":"18.9K",...},
+...},...},"gateway/":{"src/":{"server.ts":"7.2K","spacetimedb/":
+"[generated: 42 files]","completion/":{"handler.ts":"7.5K"},...},...},...}
 ```
 
+**Optimizations applied:**
+| Optimization | Tokens saved |
+|---|---|
+| Minified JSON (no whitespace) | ~1,100 |
+| Drop empty files (`0B`) | ~160 |
+| Collapse generated SpacetimeDB bindings | ~800 |
+| Skip binary/lock files | ~300 |
+| **Total savings** | **~2,400 tokens** |
+
 Opus can see every file, its size, and its location. No more guessing that a file might exist, reading it, finding out it's wrong, and trying another path.
+
+See `docs/design/038-repo-map-sample.json` for the full pretty-printed output.
 
 ### Phase 1: Plan (Opus, 1 call, no tools)
 
