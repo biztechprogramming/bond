@@ -1,24 +1,11 @@
-"use client";
-
-import React, { useEffect, useState, useCallback } from "react";
-import { BACKEND_API } from "@/lib/config";
-
-const API = `${BACKEND_API}/prompts`;
-
-interface Fragment {
-  id: string;
-  name: string;
-  display_name: string;
-  category: string;
-  content: string;
-  description: string;
-  is_active: number;
-  is_system: number;
-  agent_count: number;
-  version: number;
-}
-
-interface Template {
+          {/* Creating new fragment */}
+          {creating && <FragmentEditor
+            key="__new_fragment__"
+            fragment={editing || { id: "", name: "", display_name: "", category: "behavior", content: "", description: "", is_active: 1, is_system: 0, agent_count: 0, version: 0 } as Fragment}
+            isNew
+            onSave={(f) => createFragment({ name: f.name, display_name: f.display_name, category: f.category, content: f.content, description: f.description })}
+            onCancel={() => { setCreating(false); setEditing(null); }}
+          />}
   id: string;
   name: string;
   display_name: string;
@@ -247,6 +234,7 @@ export default function PromptsTab() {
 
           {/* Creating new fragment */}
           {creating && <FragmentEditor
+            key="__new_fragment__"
             fragment={editing || { id: "", name: "", display_name: "", category: "behavior", content: "", description: "", is_active: 1, is_system: 0, agent_count: 0, version: 0 } as Fragment}
             isNew
             onSave={(f) => createFragment({ name: f.name, display_name: f.display_name, category: f.category, content: f.content, description: f.description })}

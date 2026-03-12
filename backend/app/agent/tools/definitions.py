@@ -365,6 +365,9 @@ TOOL_DEFINITIONS: list[dict] = [
                 "3-4 call sequence of search → view → edit. "
                 "Use 'search' to find the start, 'end_search' to find the end boundary. "
                 "Omit new_content to preview, include it to apply the edit. "
+                "IMPORTANT: new_content REPLACES the ENTIRE matched section (start through end). "
+                "It must include ALL code for that range — unchanged lines too — not just the diff. "
+                "Keep search/end_search tight around the lines you actually want to change. "
                 "The file is buffered server-side — only the selected section enters context."
             ),
             "parameters": {
@@ -399,7 +402,7 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "new_content": {
                         "type": "string",
-                        "description": "Replacement content. If omitted, returns a preview of the matched section without editing.",
+                        "description": "COMPLETE replacement for the matched section. Must include ALL lines for the range — both changed and unchanged. If omitted, returns a preview of the matched section without editing. Always preview first for large sections.",
                     },
                 },
                 "required": ["path", "search"],
