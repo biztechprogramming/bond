@@ -7,6 +7,7 @@ import type { GatewayEvent } from "./events/index.js";
 export interface WebhookRouterOptions {
   onMainMerge?: () => void;
   eventBus?: EventBus;
+  onPush?: (repo: string, branch: string, actor?: string) => void;
 }
 
 /**
@@ -90,6 +91,11 @@ export function createWebhookRouter(opts: WebhookRouterOptions = {}): Router {
     if (event && opts.eventBus) {
       const gatewayEvent = normalizeGitHubEvent(event, payload, deliveryId);
       opts.eventBus.emit(gatewayEvent);
+
+      // Notify push events via callback
+      if (event === "push" && gatewayEvent.branch && opts.onPush) {
+        opts.onPush(gatewayEvent.repo, gatewayEvent.branch, gatewayEvent.actor);
+      }
     }
 
     // Backward-compatible: notify workers on push to main
