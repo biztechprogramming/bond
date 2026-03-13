@@ -1,0 +1,75 @@
+# Bond Deployment Agent — minimal container for deploy-{env} agents.
+# Design doc: 039-deployment-agents.md §4.4
+#
+# Usage:
+#   docker build -f docker/Dockerfile.deploy -t bond-deploy-agent .
+#
+# What's IN:
+#   - Python 3.12 (worker runtime)
+#   - git, curl (read-only code browsing, health checks)
+#   - gh CLI (filing bug tickets via broker exec)
+#   - Minimal Python deps (worker + broker client only)
+#
+# What's OUT (vs bond-agent-worker):
+#   - Node.js, Claude Code, Codex, Pi (no code writing)
+#   - beautifulsoup4, trafilatura, duckduckgo-search (no web scraping)
+#   - semantic-router, fastembed, numpy (no RAG/embedding)
+#   - OpenSandbox execd (no code interpreter)
+#   - Jupyter (no notebooks)
+#   - SSH keys setup (no git push)
+
+FROM python:3.12-slim
+
+# System deps: git (RO code browsing), curl (broker comms + health checks)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        git curl gosu sudo && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# gh CLI — for filing bug tickets (the only broker/exec command allowed)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends gh && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Mark common dirs as git-safe
+RUN git config --global --add safe.directory /bond && \
+    git config --global --add safe.directory /workspace
+
+# Python dependencies — absolute minimum for the worker + broker interaction
+RUN pip install --no-cache-dir \
+    aiosqlite \
+    cryptography \
+    fastapi \
+    uvicorn \
+    litellm \
+    python-ulid \
+    pydantic \
+    httpx
+
+# ---------------------------------------------------------------------------
+# Non-root user (same pattern as Dockerfile.agent)
+# ---------------------------------------------------------------------------
+RUN useradd -m -s /bin/bash bond-agent && \
+    echo 'bond-agent ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    usermod -aG sudo bond-agent
+
+# Create directories the worker expects
+RUN mkdir -p /data /data/shared /config /workspace
+
+# Copy entrypoint (deploy-specific, slimmer than full agent entrypoint)
+COPY scripts/deploy-entrypoint.sh /deploy-entrypoint.sh
+RUN chmod +x /deploy-entrypoint.sh
+
+# Bond library is mounted at /bond at runtime (read-only)
+ENV PYTHONPATH=/bond
+
+WORKDIR /bond
+
+EXPOSE 18791
+
+ENTRYPOINT ["/deploy-entrypoint.sh"]
+CMD ["--port", "18791", "--data-dir", "/data", "--config", "/config/agent.json"]
