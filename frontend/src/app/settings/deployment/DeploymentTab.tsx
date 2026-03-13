@@ -5,6 +5,7 @@ import AgentCardGrid from "./AgentCardGrid";
 import SharedSettingsForm from "./SharedSettingsForm";
 import SingleAgentEditor from "./SingleAgentEditor";
 import PipelineSection from "./PipelineSection";
+import QuickDeployForm from "./QuickDeployForm";
 
 interface WorkspaceMount {
   id?: string;
@@ -46,7 +47,7 @@ const DEFAULT_ENVIRONMENTS: Environment[] = [
   { name: "prod", display_name: "Production" },
 ];
 
-type ViewMode = "loading" | "empty" | "dashboard" | "edit-one" | "edit-all";
+type ViewMode = "loading" | "empty" | "dashboard" | "edit-one" | "edit-all" | "quick-deploy";
 
 export default function DeploymentTab() {
   const [view, setView] = useState<ViewMode>("loading");
@@ -234,15 +235,33 @@ export default function DeploymentTab() {
     return <div style={{ color: "#8888a0", padding: "24px" }}>Loading deployment agents...</div>;
   }
 
+  if (view === "quick-deploy") {
+    return (
+      <QuickDeployForm
+        environments={environments}
+        onBack={() => setView(agents.length > 0 ? "dashboard" : "empty")}
+        onDeployed={() => fetchData()}
+      />
+    );
+  }
+
   if (view === "empty") {
     return (
-      <SetupWizard
-        environments={environments}
-        availableModels={availableModels}
-        sandboxImages={sandboxImages}
-        existingMounts={existingMounts}
-        onCreated={() => fetchData()}
-      />
+      <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <SetupWizard
+          environments={environments}
+          availableModels={availableModels}
+          sandboxImages={sandboxImages}
+          existingMounts={existingMounts}
+          onCreated={() => fetchData()}
+        />
+        <div style={{ borderTop: "1px solid #1e1e2e", paddingTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
+          <span style={{ fontSize: "0.85rem", color: "#8888a0" }}>Just want to deploy quickly?</span>
+          <button style={styles.secondaryButton} onClick={() => setView("quick-deploy")}>
+            Quick Deploy
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -289,6 +308,12 @@ export default function DeploymentTab() {
       {(view === "dashboard" || view === "edit-all") && (
         <>
           {view === "dashboard" && (
+            <>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "-8px" }}>
+              <button style={styles.secondaryButton} onClick={() => setView("quick-deploy")}>
+                Quick Deploy
+              </button>
+            </div>
             <AgentCardGrid
               agents={agents}
               environments={environments}
@@ -298,6 +323,7 @@ export default function DeploymentTab() {
               onEditAgent={(agent) => { const full = agents.find((a) => a.id === agent.id); if (full) { setEditingAgent(full); setView("edit-one"); } }}
               onEditAll={() => setView("edit-all")}
             />
+            </>
           )}
 
           <PipelineSection environmentNames={envNames} />
