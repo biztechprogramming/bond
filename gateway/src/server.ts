@@ -95,7 +95,12 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   });
 
   const app = express();
-  app.use(express.json());
+  app.use(express.json({
+    verify: (req: any, _res, buf) => {
+      // Capture raw body for webhook signature verification
+      req.rawBody = buf;
+    },
+  }));
 
   // CORS — allow frontend origin
   app.use((_req: any, res: any, next: any) => {
@@ -127,27 +132,18 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   app.use("/api/v1", createPlansRouter(config));
 
   // GitHub webhook handler for repo update notifications
-  // Raw body capture middleware for signature verification
-  app.use("/webhooks/github", (req: any, _res: any, next: any) => {
-    let data: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => data.push(chunk));
-    req.on("end", () => {
-      (req as any).rawBody = Buffer.concat(data);
-      // Parse JSON body manually since express.json() may have already consumed it
-      try {
-        req.body = JSON.parse((req as any).rawBody.toString());
-      } catch {
-        // body will be parsed by express.json() fallback
-      }
-      next();
-    });
-  });
 
   const webhookRouter = createWebhookRouter({
     eventBus,
     onMainMerge: async () => {
       // Notify all known workers to reload
       console.log("[webhook] TODO: notify connected workers to /reload");
+    },
+    onPush: (repo, branch, actor) => {
+      webchat.broadcast({
+        type: "webhook_push" as any,
+        content: JSON.stringify({ repo, branch, actor }),
+      });
     },
   });
   app.use("/webhooks", webhookRouter);
