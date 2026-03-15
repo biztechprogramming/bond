@@ -11,6 +11,7 @@ import type { GatewayConfig } from "../config/index.js";
 import { registerScript } from "./scripts.js";
 import { initiatePromotion } from "./stdb.js";
 import { emitScriptPromoted } from "./events.js";
+import { createTrigger } from "./trigger-handler.js";
 
 export interface QuickDeployRequest {
   repo_url: string;
@@ -36,6 +37,7 @@ export interface QuickDeployResult {
   environment: string;
   promoted: boolean;
   message: string;
+  trigger_created?: boolean;
 }
 
 function extractRepoName(repoUrl: string): string {
@@ -357,11 +359,30 @@ export async function handleQuickDeploy(
     console.warn("[quick-deploy] Promotion failed (non-fatal):", err.message);
   }
 
+  // Create deployment trigger if requested
+  let triggerCreated = false;
+  if (request.trigger?.on_push) {
+    try {
+      await createTrigger(config, {
+        script_id: scriptId,
+        repo_url: request.repo_url,
+        branch: request.trigger.branch || request.branch,
+        tag_pattern: request.trigger.tag_pattern,
+        environment: request.environment,
+        enabled: true,
+      });
+      triggerCreated = true;
+    } catch (err: any) {
+      console.warn("[quick-deploy] Trigger creation failed (non-fatal):", err.message);
+    }
+  }
+
   return {
     script_id: scriptId,
     version,
     environment: request.environment,
     promoted: true,
     message: `Quick deploy script registered and promoted to ${request.environment}`,
+    trigger_created: triggerCreated || undefined,
   };
 }

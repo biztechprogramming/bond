@@ -31,6 +31,11 @@ import { getEnvironmentHistory } from "./stdb.js";
 import { handleQuickDeploy } from "./quick-deploy.js";
 import { detectBuildStrategy } from "./build-detector.js";
 import { createResourceRouter } from "./resource-router.js";
+import {
+  getTriggers, createTrigger, deleteTrigger,
+  disableTrigger, enableTrigger, handleWebhookPush,
+} from "./trigger-handler.js";
+import { SCRIPT_TEMPLATES } from "./script-templates.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -209,6 +214,90 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       res.json(result);
     } catch (err: any) {
       console.error("[detect-build] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Script templates
+  router.get("/script-templates", (_req: any, res: any) => {
+    res.json(SCRIPT_TEMPLATES);
+  });
+
+  // Trigger management
+  router.get("/triggers", async (_req: any, res: any) => {
+    try {
+      const triggers = await getTriggers(config);
+      res.json(triggers);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/triggers", async (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    try {
+      const { script_id, repo_url, branch, tag_pattern, environment, cron_schedule, enabled } = req.body;
+      if (!script_id || !repo_url || !branch || !environment) {
+        return res.status(400).json({ error: "script_id, repo_url, branch, and environment are required" });
+      }
+      const id = await createTrigger(config, {
+        script_id, repo_url, branch,
+        tag_pattern: tag_pattern || undefined,
+        environment,
+        cron_schedule: cron_schedule || undefined,
+        enabled: enabled !== false,
+      });
+      res.json({ id, success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.delete("/triggers/:id", async (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    try {
+      await deleteTrigger(config, req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.put("/triggers/:id/disable", async (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    try {
+      await disableTrigger(config, req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.put("/triggers/:id/enable", async (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    try {
+      await enableTrigger(config, req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Webhook receiver — no user auth (receives GitHub payloads)
+  router.post("/webhook/push", async (req: any, res: any) => {
+    try {
+      const payload = req.body;
+      if (!payload?.repository?.clone_url || !payload?.ref) {
+        return res.status(400).json({ error: "Invalid webhook payload" });
+      }
+      const result = await handleWebhookPush(config, payload);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[webhook] push handler failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
