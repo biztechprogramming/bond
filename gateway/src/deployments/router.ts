@@ -28,6 +28,8 @@ import { getHealthStatus } from "./health-scheduler.js";
 import { loadSecrets, encryptSecrets } from "./secrets.js";
 import { listLogDates, readLog } from "./log-stream.js";
 import { getEnvironmentHistory } from "./stdb.js";
+import { handleQuickDeploy } from "./quick-deploy.js";
+import { detectBuildStrategy } from "./build-detector.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -175,6 +177,34 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       const history = await getEnvironmentHistory(config, name, limit);
       res.json(history);
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Quick Deploy endpoint
+  router.post("/quick-deploy", async (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+
+    try {
+      const result = await handleQuickDeploy(req.body, DEPLOYMENTS_DIR, config, identity.user_id);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[quick-deploy] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Build detection endpoint
+  router.post("/detect-build", async (req: any, res: any) => {
+    const { repo_url, branch = "main" } = req.body || {};
+    if (!repo_url) return res.status(400).json({ error: "repo_url is required" });
+
+    try {
+      const result = await detectBuildStrategy(repo_url, branch);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[detect-build] failed:", err.message);
       res.status(500).json({ error: err.message });
     }
   });

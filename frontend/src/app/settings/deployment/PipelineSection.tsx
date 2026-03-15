@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { GATEWAY_API } from "@/lib/config";
 import PipelineRow from "./PipelineRow";
 import StatusIndicator, { DeployStatus } from "./StatusIndicator";
 import PipelineStepView, { PipelineStep } from "./PipelineStepView";
 import PipelineRunHistory from "./PipelineRunHistory";
 import PipelineYamlEditor from "./PipelineYamlEditor";
+import ReceiptViewer from "./ReceiptViewer";
 
 interface Promotion {
   script_name: string;
@@ -31,32 +32,23 @@ export default function PipelineSection({ environmentNames }: Props) {
   const [pipeline, setPipeline] = useState<PipelineInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [showYamlEditor, setShowYamlEditor] = useState(false);
+  const [receiptView, setReceiptView] = useState<{ environment: string; scriptId?: string } | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      // Fetch promotions
-      try {
-        const res = await fetch(`${GATEWAY_API}/deployments/promotions`);
-        if (res.ok) {
-          setPromotions(await res.json());
-        }
-      } catch {
-        // API may not exist yet
-      }
+  const fetchPipelineData = useCallback(async () => {
+    try {
+      const res = await fetch(`${GATEWAY_API}/deployments/promotions`);
+      if (res.ok) setPromotions(await res.json());
+    } catch { /* API may not exist yet */ }
 
-      // Fetch pipeline info (Tier 2)
-      try {
-        const res = await fetch(`${GATEWAY_API}/deployments/pipeline`);
-        if (res.ok) {
-          setPipeline(await res.json());
-        }
-      } catch {
-        // API may not exist yet
-      }
+    try {
+      const res = await fetch(`${GATEWAY_API}/deployments/pipeline`);
+      if (res.ok) setPipeline(await res.json());
+    } catch { /* API may not exist yet */ }
 
-      setLoaded(true);
-    })();
+    setLoaded(true);
   }, []);
+
+  useEffect(() => { fetchPipelineData(); }, [fetchPipelineData]);
 
   if (!loaded) return null;
 
@@ -108,6 +100,8 @@ export default function PipelineSection({ environmentNames }: Props) {
                   scriptName={p.script_name}
                   version={p.version}
                   environments={p.environments}
+                  onRefresh={fetchPipelineData}
+                  onStatusClick={(env) => setReceiptView({ environment: env, scriptId: p.script_name })}
                 />
               ))}
             </div>
@@ -145,6 +139,14 @@ export default function PipelineSection({ environmentNames }: Props) {
             repoUrl={pipeline?.repo}
           />
         </div>
+      )}
+
+      {receiptView && (
+        <ReceiptViewer
+          environment={receiptView.environment}
+          scriptId={receiptView.scriptId}
+          onClose={() => setReceiptView(null)}
+        />
       )}
     </div>
   );

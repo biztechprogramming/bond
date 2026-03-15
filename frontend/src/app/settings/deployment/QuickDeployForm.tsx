@@ -152,7 +152,7 @@ export default function QuickDeployForm({ environments, onBack, onDeployed }: Pr
           setMsg("Quick Deploy API not available yet. Export the YAML and configure manually.");
         } else {
           const data = await res.json().catch(() => ({}));
-          setMsg(data.detail || "Deployment failed.");
+          setMsg(data.error || data.detail || "Deployment failed.");
         }
       } else {
         setMsg("Deployment started successfully!");

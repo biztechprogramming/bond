@@ -6,6 +6,7 @@ import SharedSettingsForm from "./SharedSettingsForm";
 import SingleAgentEditor from "./SingleAgentEditor";
 import PipelineSection from "./PipelineSection";
 import QuickDeployForm from "./QuickDeployForm";
+import ScriptRegistration from "./ScriptRegistration";
 
 interface WorkspaceMount {
   id?: string;
@@ -47,7 +48,7 @@ const DEFAULT_ENVIRONMENTS: Environment[] = [
   { name: "prod", display_name: "Production" },
 ];
 
-type ViewMode = "loading" | "empty" | "dashboard" | "edit-one" | "edit-all" | "quick-deploy";
+type ViewMode = "loading" | "empty" | "dashboard" | "edit-one" | "edit-all" | "quick-deploy" | "register-script";
 
 export default function DeploymentTab() {
   const [view, setView] = useState<ViewMode>("loading");
@@ -245,6 +246,15 @@ export default function DeploymentTab() {
     );
   }
 
+  if (view === "register-script") {
+    return (
+      <ScriptRegistration
+        onBack={() => setView(agents.length > 0 ? "dashboard" : "empty")}
+        onRegistered={() => fetchData()}
+      />
+    );
+  }
+
   if (view === "empty") {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
@@ -309,7 +319,10 @@ export default function DeploymentTab() {
         <>
           {view === "dashboard" && (
             <>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "-8px" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginBottom: "-8px" }}>
+              <button style={styles.secondaryButton} onClick={() => setView("register-script")}>
+                Register Script
+              </button>
               <button style={styles.secondaryButton} onClick={() => setView("quick-deploy")}>
                 Quick Deploy
               </button>

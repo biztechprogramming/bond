@@ -35,9 +35,11 @@ export default function BuildStrategyDetector({ repoUrl, strategy, onDetected }:
       setError("");
       setResult(null);
       try {
-        const res = await fetch(
-          `${GATEWAY_API}/deployments/detect-build?repo=${encodeURIComponent(repoUrl)}`
-        );
+        const res = await fetch(`${GATEWAY_API}/deployments/detect-build`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo_url: repoUrl, branch: "main" }),
+        });
         if (!res.ok) {
           if (res.status === 404) {
             setError("Build detection API not available yet. Select a strategy manually.");
