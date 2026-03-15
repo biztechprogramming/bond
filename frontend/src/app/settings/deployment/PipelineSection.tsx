@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { GATEWAY_API } from "@/lib/config";
 import PipelineRow from "./PipelineRow";
 import StatusIndicator, { DeployStatus } from "./StatusIndicator";
 import PipelineStepView, { PipelineStep } from "./PipelineStepView";
@@ -36,7 +36,7 @@ export default function PipelineSection({ environmentNames }: Props) {
     (async () => {
       // Fetch promotions
       try {
-        const res = await fetch(`${BACKEND_API}/deployments/promotions`);
+        const res = await fetch(`${GATEWAY_API}/deployments/promotions`);
         if (res.ok) {
           setPromotions(await res.json());
         }
@@ -46,7 +46,7 @@ export default function PipelineSection({ environmentNames }: Props) {
 
       // Fetch pipeline info (Tier 2)
       try {
-        const res = await fetch(`${BACKEND_API}/deployments/pipeline`);
+        const res = await fetch(`${GATEWAY_API}/deployments/pipeline`);
         if (res.ok) {
           setPipeline(await res.json());
         }

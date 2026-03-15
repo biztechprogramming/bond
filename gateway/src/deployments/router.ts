@@ -23,6 +23,11 @@ import { createScriptsRouter } from "./scripts-router.js";
 import { createReceiptsRouter } from "./receipts-router.js";
 import { issueSessionToken, extractUserIdentity } from "./session-tokens.js";
 import { seedDefaultEnvironments } from "./stdb.js";
+import { getQueue, removeFromQueue } from "./queue.js";
+import { getHealthStatus } from "./health-scheduler.js";
+import { loadSecrets, encryptSecrets } from "./secrets.js";
+import { listLogDates, readLog } from "./log-stream.js";
+import { getEnvironmentHistory } from "./stdb.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -96,6 +101,82 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     const flagPath = path.join(DEPLOYMENTS_DIR, "locks", `${agentId}.abort`);
     fs.writeFileSync(flagPath, JSON.stringify({ aborted_at: new Date().toISOString(), by: identity.user_id }));
     res.json({ success: true, message: `Abort signal sent to ${agentId}` });
+  });
+
+  // Queue endpoints
+  router.get("/queue/:env", (_req: any, res: any) => {
+    const { env } = _req.params;
+    const queue = getQueue(env);
+    res.json({ environment: env, queue, length: queue.length });
+  });
+
+  router.delete("/queue/:env/:scriptId/:version", (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    const { env, scriptId, version } = req.params;
+    const removed = removeFromQueue(env, scriptId, version);
+    if (removed) {
+      res.json({ success: true, message: `Removed ${scriptId}@${version} from ${env} queue` });
+    } else {
+      res.status(404).json({ error: `${scriptId}@${version} not found in ${env} queue` });
+    }
+  });
+
+  // Health status endpoint
+  router.get("/health/:env", (_req: any, res: any) => {
+    const { env } = _req.params;
+    const status = getHealthStatus(env);
+    if (status) {
+      res.json(status);
+    } else {
+      res.json({ environment: env, status: "unknown", message: "No health check data available yet" });
+    }
+  });
+
+  // Secrets encryption endpoint
+  router.post("/secrets/:env/encrypt", (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    const { env } = req.params;
+    try {
+      const secrets = loadSecrets(env);
+      if (Object.keys(secrets).length === 0) {
+        return res.status(404).json({ error: `No secrets found for environment '${env}'` });
+      }
+      encryptSecrets(env, secrets);
+      res.json({ success: true, message: `Secrets for '${env}' encrypted`, keys: Object.keys(secrets).length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Log streaming endpoints
+  router.get("/logs/:env", (_req: any, res: any) => {
+    const { env } = _req.params;
+    const dates = listLogDates(env);
+    res.json({ environment: env, dates });
+  });
+
+  router.get("/logs/:env/:date", (_req: any, res: any) => {
+    const { env, date } = _req.params;
+    const offset = parseInt(_req.query.offset as string || "0", 10);
+    const result = readLog(env, date, offset);
+    if (!result) {
+      return res.status(404).json({ error: `No log found for ${env} on ${date}` });
+    }
+    res.json({ environment: env, date, ...result });
+  });
+
+  // Environment history endpoint
+  router.get("/environments/:name/history", async (req: any, res: any) => {
+    const { name } = req.params;
+    const limit = parseInt(req.query.limit as string || "50", 10);
+    try {
+      const history = await getEnvironmentHistory(config, name, limit);
+      res.json(history);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   return router;

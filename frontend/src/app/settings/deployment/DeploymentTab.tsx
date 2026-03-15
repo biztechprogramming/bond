@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API, GATEWAY_API } from "@/lib/config";
 import SetupWizard from "./SetupWizard";
 import AgentCardGrid from "./AgentCardGrid";
 import SharedSettingsForm from "./SharedSettingsForm";
@@ -78,7 +78,7 @@ export default function DeploymentTab() {
 
       // Fetch environments
       try {
-        const envRes = await fetch(`${BACKEND_API}/deployments/environments`);
+        const envRes = await fetch(`${GATEWAY_API}/deployments/environments`);
         if (envRes.ok) {
           const envData = await envRes.json();
           if (Array.isArray(envData) && envData.length > 0) {

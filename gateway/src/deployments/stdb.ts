@@ -309,6 +309,43 @@ export async function seedDefaultEnvironments(cfg: GatewayConfig): Promise<void>
   }
 }
 
+// ── Environment history ───────────────────────────────────────────────────────
+
+export interface DeploymentEnvironmentHistory {
+  id: string;
+  environment_name: string;
+  action: string;
+  changed_by: string;
+  changed_at: number;
+  before_snapshot: string;
+  after_snapshot: string;
+}
+
+export async function getEnvironmentHistory(
+  cfg: GatewayConfig,
+  envName: string,
+  limit = 50,
+): Promise<DeploymentEnvironmentHistory[]> {
+  const rows = await sqlQuery(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    `SELECT * FROM deployment_environment_history WHERE environment_name = '${esc(envName)}' ORDER BY changed_at DESC LIMIT ${limit}`,
+    cfg.spacetimedbToken,
+  );
+  return rows.map(normalizeHistory);
+}
+
+function normalizeHistory(r: any): DeploymentEnvironmentHistory {
+  return {
+    id: r.id,
+    environment_name: r.environment_name,
+    action: r.action,
+    changed_by: r.changed_by,
+    changed_at: Number(r.changed_at),
+    before_snapshot: r.before_snapshot || "",
+    after_snapshot: r.after_snapshot || "",
+  };
+}
+
 // ── SQL escaping ──────────────────────────────────────────────────────────────
 
 function esc(s: string): string {

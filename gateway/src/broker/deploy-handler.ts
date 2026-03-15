@@ -27,6 +27,18 @@ import {
 import type { GatewayConfig } from "../config/index.js";
 import { sqlQuery, callReducer } from "../spacetimedb/client.js";
 import { ulid } from "ulid";
+import {
+  emitDeploymentStarted,
+  emitDeploymentSucceeded,
+  emitDeploymentFailed,
+  emitRollbackTriggered,
+} from "../deployments/events.js";
+import { enqueue, dequeue, peek, getQueue, removeFromQueue, type QueueEntry } from "../deployments/queue.js";
+import { loadSecrets } from "../deployments/secrets.js";
+import { getEnvironments } from "../deployments/stdb.js";
+import { writeDeployLog } from "../deployments/log-stream.js";
+import { saveBaseline } from "../deployments/drift-detector.js";
+import { executeHealthCheck } from "../deployments/health-scheduler.js";
 
 const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -41,7 +53,9 @@ export type DeployAction =
   | "info"
   | "receipt"
   | "status"
-  | "lock-status";
+  | "lock-status"
+  | "queue-status"
+  | "dependencies";
 
 export interface DeployRequest {
   script_id?: string;
@@ -52,7 +66,7 @@ export interface DeployRequest {
 }
 
 export interface DeployResult {
-  status: "ok" | "denied" | "error";
+  status: "ok" | "denied" | "error" | "queued";
   action: DeployAction;
   environment?: string;
   script_id?: string;
@@ -65,6 +79,8 @@ export interface DeployResult {
   receipt?: DeploymentReceipt;
   info?: any;
   reason?: string;
+  queue_position?: number;
+  next_queued?: { script_id: string; version: string };
 }
 
 /**
@@ -76,30 +92,7 @@ function deriveEnvironment(agentSub: string): string | null {
   return match ? match[1]! : null;
 }
 
-/**
- * Load environment secrets from ~/.bond/deployments/secrets/{env}.yaml
- * Returns a flat Record<string, string> of env vars.
- * Never exposes secrets to the agent — only injects them during exec.
- */
-function loadSecrets(env: string): Record<string, string> {
-  const secretsPath = path.join(DEPLOYMENTS_DIR, "secrets", `${env}.yaml`);
-  if (!fs.existsSync(secretsPath)) return {};
-
-  try {
-    const content = fs.readFileSync(secretsPath, "utf8");
-    // Simple YAML key: value parser (no nested objects)
-    const result: Record<string, string> = {};
-    for (const line of content.split("\n")) {
-      const match = line.match(/^([A-Z_][A-Z0-9_]*):\s*"?([^"#\n]*)"?\s*$/);
-      if (match) {
-        result[match[1]!] = match[2]!.trim();
-      }
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
+// loadSecrets is now imported from ../deployments/secrets.js
 
 /**
  * Query SpacetimeDB for promotion status.
@@ -184,6 +177,15 @@ export async function handleDeploy(
       action,
       environment: env,
       info: lock ? { locked: true, ...lock } : { locked: false },
+    };
+  }
+  if (action === "queue-status") {
+    const q = getQueue(env);
+    return {
+      status: "ok",
+      action,
+      environment: env,
+      info: { queue: q, length: q.length },
     };
   }
 
@@ -276,6 +278,11 @@ export async function handleDeploy(
     };
   }
 
+  // dependencies action — return dependency graph for a script
+  if (action === "dependencies") {
+    return getDependencyStatus(cfg, script_id, ver, env);
+  }
+
   // validate action — syntax check, hash check, dependency check, window check
   if (action === "validate") {
     return runValidation(cfg, script_id, ver, env, envConfig, promotion);
@@ -366,6 +373,26 @@ async function runValidation(
     }
   }
 
+  // 6. Dependency check — verify depends_on scripts are deployed
+  if (manifest.depends_on && manifest.depends_on.length > 0) {
+    for (const depId of manifest.depends_on) {
+      try {
+        const depRows = await sqlQuery(
+          cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+          `SELECT status FROM deployment_promotions WHERE script_id = '${depId.replace(/'/g, "''")}' AND environment_name = '${env.replace(/'/g, "''")}' AND status = 'success'`,
+          cfg.spacetimedbToken,
+        );
+        if (depRows.length === 0) {
+          errors.push(`Dependency ${depId} has not been deployed to ${env}`);
+        } else {
+          checks.push(`Dependency ${depId} deployed`);
+        }
+      } catch {
+        errors.push(`Could not verify dependency ${depId}`);
+      }
+    }
+  }
+
   if (errors.length > 0) {
     return {
       status: "error",
@@ -385,6 +412,41 @@ async function runValidation(
     script_id: scriptId,
     version,
     info: { checks, valid: true },
+  };
+}
+
+async function getDependencyStatus(
+  cfg: GatewayConfig,
+  scriptId: string,
+  version: string,
+  env: string,
+): Promise<DeployResult> {
+  const manifest = getManifest(DEPLOYMENTS_DIR, scriptId, version || "v1");
+  if (!manifest) {
+    return { status: "error", action: "dependencies", environment: env, script_id: scriptId, reason: "Script not found" };
+  }
+
+  const deps: Array<{ script_id: string; status: string }> = [];
+  for (const depId of manifest.depends_on || []) {
+    try {
+      const rows = await sqlQuery(
+        cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+        `SELECT status FROM deployment_promotions WHERE script_id = '${depId.replace(/'/g, "''")}' AND environment_name = '${env.replace(/'/g, "''")}' ORDER BY initiated_at DESC LIMIT 1`,
+        cfg.spacetimedbToken,
+      );
+      deps.push({ script_id: depId, status: rows.length ? rows[0].status : "not_deployed" });
+    } catch {
+      deps.push({ script_id: depId, status: "unknown" });
+    }
+  }
+
+  return {
+    status: "ok",
+    action: "dependencies",
+    environment: env,
+    script_id: scriptId,
+    version: version || "v1",
+    info: { depends_on: deps },
   };
 }
 
@@ -503,17 +565,45 @@ async function runDeploy(
   const lockAcquired = acquireLock(DEPLOYMENTS_DIR, env, agent.sub, scriptId, scriptTimeout * 2);
   if (!lockAcquired) {
     const existingLock = getLock(DEPLOYMENTS_DIR, env);
+    const position = enqueue(env, {
+      script_id: scriptId,
+      version,
+      agent_sub: agent.sub,
+      queued_at: new Date().toISOString(),
+      priority: 0,
+    });
     return {
-      status: "denied",
+      status: "queued",
       action: "deploy",
       environment: env,
       script_id: scriptId,
-      reason: `Environment ${env} is locked (deploying ${existingLock?.script || "unknown"} since ${existingLock?.since || "unknown"})`,
+      version,
+      queue_position: position,
+      reason: `Environment ${env} is locked (deploying ${existingLock?.script || "unknown"} since ${existingLock?.since || "unknown"}). Queued at position ${position}.`,
     };
+  }
+
+  // Fetch context from previous environment in promotion chain
+  let previousEnvReceipt: DeploymentReceipt | undefined;
+  try {
+    const allEnvs = await getEnvironments(cfg);
+    const sorted = allEnvs.filter(e => e.is_active).sort((a, b) => a.order - b.order);
+    const currentIdx = sorted.findIndex(e => e.name === env);
+    if (currentIdx > 0) {
+      const prevEnv = sorted[currentIdx - 1]!;
+      const prevReceipts = listReceipts(DEPLOYMENTS_DIR, prevEnv.name, 100);
+      previousEnvReceipt = prevReceipts.find(
+        r => r.script_id === scriptId && r.status === "success"
+      );
+    }
+  } catch {
+    // non-fatal — context passing is best-effort
   }
 
   // Update promotion to "deploying"
   await updatePromotionStatus(cfg, promotion.id, "deploying");
+
+  emitDeploymentStarted(env, scriptId, agent.sub);
 
   const receiptId = buildReceiptId(scriptId, env);
   const timestampStart = new Date().toISOString();
@@ -550,6 +640,9 @@ async function runDeploy(
     const success = execResult.exit_code === 0;
     const finalStatus = success ? "success" : "failed";
 
+    // Write deploy log
+    writeDeployLog(env, scriptId, version, agent.sub, execResult.stdout, execResult.stderr, execResult.exit_code, execDuration);
+
     // Write receipt
     const receipt: DeploymentReceipt = {
       receipt_id: receiptId,
@@ -565,7 +658,10 @@ async function runDeploy(
       phases,
       rollback_triggered: false,
       bug_ticket_filed: false,
-      context: { promoted_by: promotion.id },
+      context: {
+        promoted_by: promotion.id,
+        previous_environment_receipt: previousEnvReceipt?.receipt_id,
+      },
     };
     if (!success) {
       receipt.error_output = `${execResult.stdout}\n${execResult.stderr}`.trim();
@@ -578,7 +674,26 @@ async function runDeploy(
       receipt_id: receiptId,
     });
 
-    return {
+    if (success) {
+      emitDeploymentSucceeded(env, scriptId, agent.sub, receiptId, execDuration);
+
+      // Save drift baseline after successful deployment
+      try {
+        const healthStatus = await executeHealthCheck(env);
+        saveBaseline(env, scriptId, version, healthStatus.results);
+      } catch {
+        // non-fatal — drift baseline is best-effort
+      }
+    } else {
+      emitDeploymentFailed(env, scriptId, agent.sub, receiptId,
+        `${execResult.stdout}\n${execResult.stderr}`.trim());
+    }
+
+    // Check queue for next entry
+    const nextQueued = peek(env);
+
+    // Build result with context from previous environment
+    const result: DeployResult = {
       status: success ? "ok" : "error",
       action: "deploy",
       environment: env,
@@ -589,7 +704,19 @@ async function runDeploy(
       stderr: execResult.stderr,
       duration_ms: execDuration,
       receipt_id: receiptId,
+      next_queued: nextQueued ? { script_id: nextQueued.script_id, version: nextQueued.version } : undefined,
     };
+    if (previousEnvReceipt) {
+      result.info = {
+        context: {
+          previous_environment: previousEnvReceipt.environment,
+          previous_receipt_id: previousEnvReceipt.receipt_id,
+          previous_status: previousEnvReceipt.status,
+          previous_deployed_at: previousEnvReceipt.timestamp_end,
+        },
+      };
+    }
+    return result;
   } catch (err: any) {
     phases.execution = { status: "fail", duration_ms: 0, output_summary: err.message };
 
@@ -611,6 +738,8 @@ async function runDeploy(
     };
     writeReceipt(DEPLOYMENTS_DIR, receipt);
     await updatePromotionStatus(cfg, promotion.id, "failed", { receipt_id: receiptId });
+
+    emitDeploymentFailed(env, scriptId, agent.sub, receiptId, err.message);
 
     return {
       status: "error",
@@ -653,6 +782,8 @@ async function runRollback(
   if (!fs.existsSync(rollbackPath)) {
     return { status: "error", action: "rollback", environment: env, reason: `Rollback script not found: ${manifest.rollback}` };
   }
+
+  emitRollbackTriggered(env, scriptId, agent.sub);
 
   const secrets = loadSecrets(env);
   const timeout = Math.min(manifest.timeout ?? 120, Number(envConfig.max_script_timeout) || 600);
@@ -700,8 +831,7 @@ async function runRollback(
   };
 }
 
-function runHealthCheck(env: string): DeployResult {
-  // Run health check scripts if they exist
+async function runHealthCheck(env: string): Promise<DeployResult> {
   const commonCheck = path.join(DEPLOYMENTS_DIR, "health", "common", "check.sh");
   const envCheck = path.join(DEPLOYMENTS_DIR, "health", env, "check.sh");
 
@@ -722,16 +852,32 @@ function runHealthCheck(env: string): DeployResult {
     };
   }
 
-  // Return async execution (we run synchronously here for simplicity)
-  // Full async health check is handled by the agent worker
+  const secrets = loadSecrets(env);
+  const results: Array<{ script: string; exit_code: number; output: any; duration_ms: number }> = [];
+  let allHealthy = true;
+
+  for (const script of scripts) {
+    const start = Date.now();
+    const result = await executeCommand(`bash '${script}'`, {
+      timeout: 30,
+      env: { ...secrets, BOND_DEPLOY_ENV: env },
+    });
+    const duration_ms = Date.now() - start;
+
+    let output: any = result.stdout;
+    try { output = JSON.parse(result.stdout); } catch { /* keep raw */ }
+
+    results.push({ script, exit_code: result.exit_code, output, duration_ms });
+    if (result.exit_code !== 0) allHealthy = false;
+  }
+
   return {
-    status: "ok",
+    status: allHealthy ? "ok" : "error",
     action: "health-check",
     environment: env,
     info: {
-      status: "pending",
-      message: `Health check scripts found: ${scripts.join(", ")}`,
-      scripts,
+      status: allHealthy ? "healthy" : "unhealthy",
+      checks: results,
     },
   };
 }

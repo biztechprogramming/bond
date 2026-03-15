@@ -418,15 +418,25 @@ class SandboxManager:
 
         # --- Mounts (Task 2) ---
 
-        # Bond repo: named volume per agent (read-write clone)
         project_root = _PROJECT_ROOT
-        bond_volume = f"bond-clone-{agent_id}"
-        await asyncio.create_subprocess_exec(
-            "docker", "volume", "create", bond_volume,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        cmd.extend(["-v", f"{bond_volume}:/bond:rw"])
+        agent_name = agent.get("name", "")
+        is_deploy_agent = agent_name.startswith("deploy-")
+
+        if is_deploy_agent:
+            # Deploy agents get the host repo mounted read-only at /bond.
+            # deploy-entrypoint.sh requires /bond/.git to exist — it does
+            # NOT clone. See design doc 039 §4.4.
+            cmd.extend(["-v", f"{project_root}:/bond:ro"])
+            logger.info("Agent %s is a deploy agent — mounting host repo at /bond:ro", agent_id)
+        else:
+            # Regular agents get a named volume for cloning (read-write)
+            bond_volume = f"bond-clone-{agent_id}"
+            await asyncio.create_subprocess_exec(
+                "docker", "volume", "create", bond_volume,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            cmd.extend(["-v", f"{bond_volume}:/bond:rw"])
 
         # Workspace mounts
         workspace_mounts = agent.get("workspace_mounts", [])
