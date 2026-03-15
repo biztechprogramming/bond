@@ -30,6 +30,7 @@ import { listLogDates, readLog } from "./log-stream.js";
 import { getEnvironmentHistory } from "./stdb.js";
 import { handleQuickDeploy } from "./quick-deploy.js";
 import { detectBuildStrategy } from "./build-detector.js";
+import { createResourceRouter } from "./resource-router.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -66,6 +67,9 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
   // Receipts
   router.use("/receipts", createReceiptsRouter(config));
+
+  // Resources
+  router.use("/resources", createResourceRouter(config));
 
   // Session token issue — Phase 1 helper for testing
   // In production this would be behind proper auth
