@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow } from '@/lib/spacetimedb-client';
+import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, getSettings, getProviderApiKeys, getProviders, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow, type SettingRow, type ProviderApiKeyRow, type ProviderRow } from '@/lib/spacetimedb-client';
 
 /**
  * useSpacetimeDB React hook.
@@ -93,4 +93,16 @@ export function useAgentMounts(agentId: string): AgentMountRow[] {
  */
 export function useAvailableModels(): { id: string; name: string }[] {
   return useSpacetimeDB(() => getAvailableModels());
+}
+
+export function useSettings(): SettingRow[] {
+  return useSpacetimeDB(() => getSettings());
+}
+
+export function useProviderApiKeys(): ProviderApiKeyRow[] {
+  return useSpacetimeDB(() => getProviderApiKeys());
+}
+
+export function useProviders(): ProviderRow[] {
+  return useSpacetimeDB(() => getProviders());
 }

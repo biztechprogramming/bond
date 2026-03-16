@@ -131,7 +131,14 @@ export async function connectToSpacetimeDB(
               "SELECT * FROM agent_workspace_mounts",
               "SELECT * FROM llm_models",
               "SELECT * FROM providers",
-              "SELECT * FROM provider_aliases"
+              "SELECT * FROM provider_aliases",
+              "SELECT * FROM settings",
+              "SELECT * FROM provider_api_keys",
+              "SELECT * FROM prompt_fragments",
+              "SELECT * FROM prompt_templates",
+              "SELECT * FROM prompt_fragment_versions",
+              "SELECT * FROM prompt_template_versions",
+              "SELECT * FROM agent_prompt_fragments"
             ]);
         })
         .onConnectError((ctx, err) => {
@@ -190,6 +197,18 @@ export async function connectToSpacetimeDB(
         conn.db.providers.onInsert(() => notifyListeners());
         conn.db.providers.onUpdate(() => notifyListeners());
         conn.db.providers.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.settings) {
+        conn.db.settings.onInsert(() => notifyListeners());
+        conn.db.settings.onUpdate(() => notifyListeners());
+        conn.db.settings.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.provider_api_keys) {
+        conn.db.provider_api_keys.onInsert(() => notifyListeners());
+        conn.db.provider_api_keys.onUpdate(() => notifyListeners());
+        conn.db.provider_api_keys.onDelete(() => notifyListeners());
       }
 
     } catch (err) {
@@ -358,6 +377,48 @@ export function getProviders(): ProviderRow[] {
   for (const row of db.db.providers.iter()) {
     const p = row as unknown as ProviderRow;
     if (p.isEnabled) rows.push(p);
+  }
+  return rows;
+}
+
+// Settings
+export interface SettingRow {
+  key: string;
+  value: string;
+  keyType: string;
+  createdAt: bigint;
+  updatedAt: bigint;
+}
+
+export function getSettings(): SettingRow[] {
+  if (!db || !db.db.settings) return [];
+  const rows: SettingRow[] = [];
+  for (const row of db.db.settings.iter()) {
+    rows.push(row as unknown as SettingRow);
+  }
+  return rows;
+}
+
+export function getSetting(key: string): string | null {
+  if (!db || !db.db.settings) return null;
+  const row = db.db.settings.key.find(key);
+  return row ? (row as unknown as SettingRow).value : null;
+}
+
+// Provider API Keys
+export interface ProviderApiKeyRow {
+  providerId: string;
+  encryptedValue: string;
+  keyType: string;
+  createdAt: bigint;
+  updatedAt: bigint;
+}
+
+export function getProviderApiKeys(): ProviderApiKeyRow[] {
+  if (!db || !db.db.provider_api_keys) return [];
+  const rows: ProviderApiKeyRow[] = [];
+  for (const row of db.db.provider_api_keys.iter()) {
+    rows.push(row as unknown as ProviderApiKeyRow);
   }
   return rows;
 }
