@@ -4,9 +4,10 @@ import { EventEmitter } from "node:events";
 // Mock child_process before importing the module under test (vi.mock is hoisted)
 vi.mock("node:child_process", () => ({
   spawn: vi.fn(),
+  execSync: vi.fn(),
 }));
 
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { WebhookRegistrar } from "../webhooks/registrar.js";
 
 // ---------- helpers ----------
@@ -42,87 +43,168 @@ function enoentError(): Error {
   return Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" });
 }
 
+/** Mock a successful SpacetimeDB SQL response with host_path rows. */
+function mockStdbResponse(hostPaths: string[]) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => [{
+      schema: { elements: [{ name: { some: "host_path" } }] },
+      rows: hostPaths.map((p) => [p]),
+    }],
+    text: async () => "",
+  };
+}
+
+function mockStdbEmptyResponse() {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => [],
+    text: async () => "",
+  };
+}
+
+function mockStdbErrorResponse(status: number, body: string) {
+  return {
+    ok: false,
+    status,
+    json: async () => ({}),
+    text: async () => body,
+  };
+}
+
 // ---------- tests ----------
 
 describe("WebhookRegistrar", () => {
   let spawnMock: ReturnType<typeof vi.fn>;
+  let execSyncMock: ReturnType<typeof vi.fn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let logSpy: ReturnType<typeof vi.spyOn>;
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
+  const stdbConfig = {
+    url: "http://localhost:18787",
+    module: "bond-core-v2",
+    token: "test-token",
+  };
 
   beforeEach(() => {
     spawnMock = vi.mocked(spawn);
     spawnMock.mockReset();
+    execSyncMock = vi.mocked(execSync);
+    execSyncMock.mockReset();
     warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response());
   });
 
   afterEach(() => {
     warnSpy.mockRestore();
     logSpy.mockRestore();
+    fetchSpy.mockRestore();
   });
 
-  // ── discoverRepos ─────────────────────────────────────────────────────────
+  // ── discoverReposFromMounts ───────────────────────────────────────────────
 
-  describe("discoverRepos", () => {
-    it("returns repos discovered via gh repo list", async () => {
-      spawnMock.mockReturnValueOnce(
-        mockProcess({ stdout: "owner/repo1\nowner/repo2\n" })
-      );
+  describe("discoverReposFromMounts", () => {
+    it("queries SpacetimeDB and resolves host paths to GitHub repos", async () => {
+      fetchSpy.mockResolvedValueOnce(mockStdbResponse(["/home/user/project1", "/home/user/project2"]) as any);
+      execSyncMock
+        .mockReturnValueOnce("git@github.com:owner/project1.git\n")
+        .mockReturnValueOnce("https://github.com/owner/project2.git\n");
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      const repos = await registrar.discoverRepos();
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        spacetimedb: stdbConfig,
+      });
+      const repos = await registrar.discoverReposFromMounts();
 
-      expect(repos).toEqual(["owner/repo1", "owner/repo2"]);
-      expect(spawnMock).toHaveBeenCalledWith(
-        "gh",
-        expect.arrayContaining(["repo", "list", "--json", "nameWithOwner"]),
-        expect.any(Object)
+      expect(repos).toEqual(["owner/project1", "owner/project2"]);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        `${stdbConfig.url}/v1/database/${stdbConfig.module}/sql`,
+        expect.objectContaining({
+          method: "POST",
+          body: "SELECT DISTINCT host_path FROM agent_workspace_mounts",
+        })
       );
     });
 
-    it("returns empty array and warns when gh is not found (ENOENT)", async () => {
-      spawnMock.mockReturnValueOnce(mockProcess({ spawnError: enoentError() }));
+    it("deduplicates repos when multiple mounts point to the same repo", async () => {
+      fetchSpy.mockResolvedValueOnce(mockStdbResponse(["/home/user/proj", "/opt/proj-clone"]) as any);
+      execSyncMock
+        .mockReturnValueOnce("git@github.com:owner/repo.git\n")
+        .mockReturnValueOnce("https://github.com/owner/repo.git\n");
 
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        spacetimedb: stdbConfig,
+      });
+      const repos = await registrar.discoverReposFromMounts();
+
+      expect(repos).toEqual(["owner/repo"]);
+    });
+
+    it("skips mounts that are not GitHub repos", async () => {
+      fetchSpy.mockResolvedValueOnce(mockStdbResponse(["/home/user/project", "/home/user/not-a-repo"]) as any);
+      execSyncMock
+        .mockReturnValueOnce("git@github.com:owner/project.git\n")
+        .mockImplementationOnce(() => { throw new Error("not a git repo"); });
+
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        spacetimedb: stdbConfig,
+      });
+      const repos = await registrar.discoverReposFromMounts();
+
+      expect(repos).toEqual(["owner/project"]);
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("not a GitHub repo")
+      );
+    });
+
+    it("returns empty array when SpacetimeDB is not configured", async () => {
       const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      const repos = await registrar.discoverRepos();
+      const repos = await registrar.discoverReposFromMounts();
 
       expect(repos).toEqual([]);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("gh CLI not found")
+        expect.stringContaining("SpacetimeDB not configured")
       );
     });
 
-    it("returns empty array and warns when gh exits non-zero", async () => {
-      spawnMock.mockReturnValueOnce(
-        mockProcess({ stderr: "authentication required", exitCode: 1 })
-      );
+    it("returns empty array when SpacetimeDB query fails", async () => {
+      fetchSpy.mockResolvedValueOnce(mockStdbErrorResponse(500, "internal error") as any);
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      const repos = await registrar.discoverRepos();
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        spacetimedb: stdbConfig,
+      });
+      const repos = await registrar.discoverReposFromMounts();
 
       expect(repos).toEqual([]);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("gh repo list failed"),
-        expect.any(String)
+        expect.stringContaining("SpacetimeDB query failed")
       );
     });
 
-    it("filters out empty lines from stdout", async () => {
-      spawnMock.mockReturnValueOnce(
-        mockProcess({ stdout: "owner/repo1\n\nowner/repo2\n\n" })
-      );
+    it("returns empty array when no mounts exist", async () => {
+      fetchSpy.mockResolvedValueOnce(mockStdbEmptyResponse() as any);
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      const repos = await registrar.discoverRepos();
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        spacetimedb: stdbConfig,
+      });
+      const repos = await registrar.discoverReposFromMounts();
 
-      expect(repos).toEqual(["owner/repo1", "owner/repo2"]);
+      expect(repos).toEqual([]);
     });
   });
 
   // ── ensureWebhooks — guard conditions ────────────────────────────────────
 
   describe("ensureWebhooks — no externalUrl", () => {
-    it("logs warning and skips all gh calls when externalUrl is not set", async () => {
+    it("logs warning and skips all calls when externalUrl is not set", async () => {
       const registrar = new WebhookRegistrar({});
       await registrar.ensureWebhooks();
 
@@ -136,7 +218,7 @@ describe("WebhookRegistrar", () => {
   // ── ensureWebhooks — repo sources ─────────────────────────────────────────
 
   describe("ensureWebhooks — repo sources", () => {
-    it("uses configured repos instead of auto-discovery", async () => {
+    it("uses configured repos instead of mount discovery", async () => {
       // list hooks → empty; create hook → success
       spawnMock
         .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
@@ -148,32 +230,38 @@ describe("WebhookRegistrar", () => {
       });
       await registrar.ensureWebhooks();
 
-      // No discover call — only list + create
+      // No SpacetimeDB call, no discover — only list + create
+      expect(fetchSpy).not.toHaveBeenCalled();
       expect(spawnMock).toHaveBeenCalledTimes(2);
       const listCall = spawnMock.mock.calls[0];
       expect(listCall[1]).toContain("/repos/owner/explicit-repo/hooks");
     });
 
-    it("auto-discovers repos when no repos configured", async () => {
-      // discover → 1 repo; list hooks → empty; create → success
+    it("discovers repos from SpacetimeDB mounts when no repos configured", async () => {
+      fetchSpy.mockResolvedValueOnce(mockStdbResponse(["/home/user/project"]) as any);
+      execSyncMock.mockReturnValueOnce("git@github.com:owner/discovered.git\n");
+
+      // list hooks → empty; create → success
       spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/discovered\n" }))
         .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
         .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      await registrar.ensureWebhooks();
-
-      expect(spawnMock).toHaveBeenCalledTimes(3);
-      const discoverCall = spawnMock.mock.calls[0];
-      expect(discoverCall[1]).toContain("repo");
-      expect(discoverCall[1]).toContain("list");
-    });
-
-    it("skips registration when autoDiscover is false and no repos configured", async () => {
       const registrar = new WebhookRegistrar({
         externalUrl: "https://example.com",
-        autoDiscover: false,
+        spacetimedb: stdbConfig,
+      });
+      await registrar.ensureWebhooks();
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("skips registration when no mounts and no repos configured", async () => {
+      fetchSpy.mockResolvedValueOnce(mockStdbEmptyResponse() as any);
+
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        spacetimedb: stdbConfig,
       });
       await registrar.ensureWebhooks();
 
@@ -191,52 +279,198 @@ describe("WebhookRegistrar", () => {
       const webhookUrl = "https://example.com/webhooks/github";
       const existingHook = { id: 42, config: { url: webhookUrl } };
 
-      // discover → 1 repo; list hooks → existing hook
       spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo\n" }))
         .mockReturnValueOnce(mockProcess({ stdout: JSON.stringify([existingHook]) }));
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo"],
+      });
       await registrar.ensureWebhooks();
 
-      // Only 2 calls — no create
-      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("already registered")
       );
+
+      // Verify it's tracked as registered
+      const status = registrar.getRepoStatus("owner/repo");
+      expect(status?.state).toBe("registered");
     });
 
     it("creates webhook when no hooks exist for repo", async () => {
       spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo\n" }))
         .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
         .mockReturnValueOnce(mockProcess({ stdout: JSON.stringify({ id: 99 }) }));
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo"],
+      });
       await registrar.ensureWebhooks();
 
-      expect(spawnMock).toHaveBeenCalledTimes(3);
-      const createCall = spawnMock.mock.calls[2];
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      const createCall = spawnMock.mock.calls[1];
       expect(createCall[1]).toContain("--method");
       expect(createCall[1]).toContain("POST");
       expect(createCall[1]).toContain("/repos/owner/repo/hooks");
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Created webhook for owner/repo")
       );
+
+      const status = registrar.getRepoStatus("owner/repo");
+      expect(status?.state).toBe("registered");
     });
+  });
 
-    it("creates webhook when existing hooks have different URLs", async () => {
-      const otherHook = { id: 1, config: { url: "https://other.example.com/webhooks/github" } };
+  // ── state tracking — success skipping ─────────────────────────────────────
 
+  describe("state tracking — success", () => {
+    it("skips already-registered repos on subsequent calls", async () => {
+      // First call: list + create
       spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo\n" }))
-        .mockReturnValueOnce(mockProcess({ stdout: JSON.stringify([otherHook]) }))
+        .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
         .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      await registrar.ensureWebhooks();
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo"],
+      });
 
-      expect(spawnMock).toHaveBeenCalledTimes(3);
+      await registrar.ensureWebhooks();
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(registrar.getRepoStatus("owner/repo")?.state).toBe("registered");
+
+      // Second call: should skip entirely
+      spawnMock.mockReset();
+      await registrar.ensureWebhooks();
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("already registered, skipping")
+      );
+    });
+  });
+
+  // ── state tracking — failure and gave_up ──────────────────────────────────
+
+  describe("state tracking — failure", () => {
+    it("tracks failed attempts and gives up after 3", async () => {
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/no-access"],
+      });
+
+      // Attempt 1: list hooks fails
+      spawnMock.mockReturnValueOnce(mockProcess({ stderr: "forbidden", exitCode: 1 }));
+      await registrar.ensureWebhooks();
+      expect(registrar.getRepoStatus("owner/no-access")?.state).toBe("failed");
+      expect(registrar.getRepoStatus("owner/no-access")?.attempts).toBe(1);
+
+      // Attempt 2
+      spawnMock.mockReturnValueOnce(mockProcess({ stderr: "forbidden", exitCode: 1 }));
+      await registrar.ensureWebhooks();
+      expect(registrar.getRepoStatus("owner/no-access")?.state).toBe("failed");
+      expect(registrar.getRepoStatus("owner/no-access")?.attempts).toBe(2);
+
+      // Attempt 3 → gave_up
+      spawnMock.mockReturnValueOnce(mockProcess({ stderr: "forbidden", exitCode: 1 }));
+      await registrar.ensureWebhooks();
+      expect(registrar.getRepoStatus("owner/no-access")?.state).toBe("gave_up");
+      expect(registrar.getRepoStatus("owner/no-access")?.attempts).toBe(3);
+
+      // Attempt 4: should be skipped
+      spawnMock.mockReset();
+      await registrar.ensureWebhooks();
+      expect(spawnMock).not.toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(
+        expect.stringContaining("gave up")
+      );
+    });
+
+    it("tracks failure on webhook creation error", async () => {
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo"],
+      });
+
+      // list hooks OK, create fails
+      spawnMock
+        .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
+        .mockReturnValueOnce(mockProcess({ stderr: "forbidden", exitCode: 1 }));
+
+      await registrar.ensureWebhooks();
+      expect(registrar.getRepoStatus("owner/repo")?.state).toBe("failed");
+      expect(registrar.getRepoStatus("owner/repo")?.attempts).toBe(1);
+      expect(registrar.getRepoStatus("owner/repo")?.lastError).toContain("forbidden");
+    });
+  });
+
+  // ── reset ────────────────────────────────────────────────────────────────
+
+  describe("reset", () => {
+    it("resets a specific gave_up repo for retry", async () => {
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo"],
+      });
+
+      // Fail 3 times
+      for (let i = 0; i < 3; i++) {
+        spawnMock.mockReturnValueOnce(mockProcess({ stderr: "forbidden", exitCode: 1 }));
+        await registrar.ensureWebhooks();
+      }
+      expect(registrar.getRepoStatus("owner/repo")?.state).toBe("gave_up");
+
+      // Reset
+      registrar.reset("owner/repo");
+      expect(registrar.getRepoStatus("owner/repo")?.state).toBe("pending");
+      expect(registrar.getRepoStatus("owner/repo")?.attempts).toBe(0);
+
+      // Now it should retry
+      spawnMock
+        .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
+        .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
+      await registrar.ensureWebhooks();
+      expect(registrar.getRepoStatus("owner/repo")?.state).toBe("registered");
+    });
+
+    it("resets all failed repos when called without argument", async () => {
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo1", "owner/repo2"],
+      });
+
+      // Fail both 3 times
+      for (let i = 0; i < 3; i++) {
+        spawnMock
+          .mockReturnValueOnce(mockProcess({ stderr: "error", exitCode: 1 }))
+          .mockReturnValueOnce(mockProcess({ stderr: "error", exitCode: 1 }));
+        await registrar.ensureWebhooks();
+      }
+      expect(registrar.getRepoStatus("owner/repo1")?.state).toBe("gave_up");
+      expect(registrar.getRepoStatus("owner/repo2")?.state).toBe("gave_up");
+
+      // Reset all
+      registrar.reset();
+      expect(registrar.getRepoStatus("owner/repo1")?.state).toBe("pending");
+      expect(registrar.getRepoStatus("owner/repo2")?.state).toBe("pending");
+    });
+
+    it("does not reset registered repos", async () => {
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/good-repo"],
+      });
+
+      spawnMock
+        .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
+        .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
+      await registrar.ensureWebhooks();
+      expect(registrar.getRepoStatus("owner/good-repo")?.state).toBe("registered");
+
+      registrar.reset();
+      // Should still be registered
+      expect(registrar.getRepoStatus("owner/good-repo")?.state).toBe("registered");
     });
   });
 
@@ -245,17 +479,17 @@ describe("WebhookRegistrar", () => {
   describe("ensureWebhooks — webhook secret", () => {
     it("includes secret in create payload when webhookSecret is set", async () => {
       spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo\n" }))
         .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
         .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
 
       const registrar = new WebhookRegistrar({
         externalUrl: "https://example.com",
         webhookSecret: "my-secret",
+        repos: ["owner/repo"],
       });
       await registrar.ensureWebhooks();
 
-      const createProc = (spawnMock.mock.results[2].value as any);
+      const createProc = (spawnMock.mock.results[1].value as any);
       const writtenData = createProc.stdin.write.mock.calls[0]?.[0];
       const body = JSON.parse(writtenData);
       expect(body.config.secret).toBe("my-secret");
@@ -263,14 +497,16 @@ describe("WebhookRegistrar", () => {
 
     it("omits secret from create payload when webhookSecret is not set", async () => {
       spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo\n" }))
         .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
         .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo"],
+      });
       await registrar.ensureWebhooks();
 
-      const createProc = (spawnMock.mock.results[2].value as any);
+      const createProc = (spawnMock.mock.results[1].value as any);
       const writtenData = createProc.stdin.write.mock.calls[0]?.[0];
       const body = JSON.parse(writtenData);
       expect(body.config.secret).toBeUndefined();
@@ -280,57 +516,61 @@ describe("WebhookRegistrar", () => {
   // ── error resilience ──────────────────────────────────────────────────────
 
   describe("error resilience", () => {
-    it("does not throw when gh CLI is not found (ENOENT during discover)", async () => {
+    it("does not throw when gh CLI is not found (ENOENT)", async () => {
       spawnMock.mockReturnValueOnce(mockProcess({ spawnError: enoentError() }));
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo"],
+      });
       await expect(registrar.ensureWebhooks()).resolves.toBeUndefined();
-    });
-
-    it("does not throw when listing hooks fails for a repo", async () => {
-      spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo\n" }))
-        .mockReturnValueOnce(mockProcess({ stderr: "not found", exitCode: 1 }));
-
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      await expect(registrar.ensureWebhooks()).resolves.toBeUndefined();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Could not list hooks for owner/repo"),
-        expect.any(String)
-      );
-    });
-
-    it("does not throw when creating hook fails for a repo", async () => {
-      spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo\n" }))
-        .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
-        .mockReturnValueOnce(mockProcess({ stderr: "forbidden", exitCode: 1 }));
-
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
-      await expect(registrar.ensureWebhooks()).resolves.toBeUndefined();
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Could not create webhook for owner/repo"),
-        expect.any(String)
-      );
     });
 
     it("continues with remaining repos when one repo fails", async () => {
       spawnMock
-        .mockReturnValueOnce(mockProcess({ stdout: "owner/repo1\nowner/repo2\n" }))
         // repo1: list hooks fails
         .mockReturnValueOnce(mockProcess({ stderr: "error", exitCode: 1 }))
         // repo2: list hooks succeeds (empty), create succeeds
         .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
         .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
 
-      const registrar = new WebhookRegistrar({ externalUrl: "https://example.com" });
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/repo1", "owner/repo2"],
+      });
       await registrar.ensureWebhooks();
 
-      // 4 calls: discover + fail-list + ok-list + create
-      expect(spawnMock).toHaveBeenCalledTimes(4);
-      expect(logSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Created webhook for owner/repo2")
-      );
+      expect(spawnMock).toHaveBeenCalledTimes(3);
+      expect(registrar.getRepoStatus("owner/repo1")?.state).toBe("failed");
+      expect(registrar.getRepoStatus("owner/repo2")?.state).toBe("registered");
+    });
+  });
+
+  // ── getRepoStatuses ───────────────────────────────────────────────────────
+
+  describe("getRepoStatuses", () => {
+    it("returns a snapshot of all tracked repos", async () => {
+      const registrar = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/good"],
+      });
+
+      // Register "good" successfully
+      spawnMock
+        .mockReturnValueOnce(mockProcess({ stdout: "[]" }))
+        .mockReturnValueOnce(mockProcess({ stdout: "{}" }));
+      await registrar.ensureWebhooks();
+
+      // Now add "bad" and let it fail
+      const registrar2 = new WebhookRegistrar({
+        externalUrl: "https://example.com",
+        repos: ["owner/bad"],
+      });
+      spawnMock.mockReturnValueOnce(mockProcess({ stderr: "error", exitCode: 1 }));
+      await registrar2.ensureWebhooks();
+
+      expect(registrar.getRepoStatuses().get("owner/good")?.state).toBe("registered");
+      expect(registrar2.getRepoStatuses().get("owner/bad")?.state).toBe("failed");
     });
   });
 });
