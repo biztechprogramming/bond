@@ -147,9 +147,15 @@ export default function AgentsTab() {
       if (res.ok) {
         const saved = await res.json();
 
+        // Update local state immediately with the server response
+        // instead of refetching (avoids eventual consistency lag)
+        if (isNew) {
+          setAgents((prev) => [...prev, saved]);
+        } else {
+          setAgents((prev) => prev.map((a) => (a.id === saved.id ? saved : a)));
+        }
         setMsg("Saved successfully.");
         setEditing(null);
-        await fetchData();
       } else {
         const data = await res.json();
         setMsg(`Error: ${data.detail || "Save failed"}`);
