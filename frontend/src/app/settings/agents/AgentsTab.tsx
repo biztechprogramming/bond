@@ -1,9 +1,8 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import DirBrowser from "@/components/shared/DirBrowser";
 import { BACKEND_API } from "@/lib/config";
-import { useAgents, useAvailableModels } from "@/hooks/useSpacetimeDB";
-import { getAgentChannels, getAgentMounts } from "@/lib/spacetimedb-client";
-import { useSpacetimeDB } from "@/hooks/useSpacetimeDB";
+import { useAvailableModels, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
+import { getAgents as getAgentRows, getAgentChannels, getAgentMounts } from "@/lib/spacetimedb-client";
 
 const API_BASE = `${BACKEND_API}/agents`;
 
@@ -49,7 +48,7 @@ const DEFAULT_MODELS = [
 const ALL_CHANNELS = ["webchat", "signal", "telegram", "discord", "whatsapp", "email", "slack"];
 
 /** Map SpacetimeDB camelCase rows to the Agent interface used by the UI */
-function mapAgentRows(agentRows: ReturnType<typeof useAgents>): Agent[] {
+function mapAgentRows(agentRows: import("@/lib/spacetimedb-client").AgentRow[]): Agent[] {
   return agentRows.map((a) => {
     const channels = getAgentChannels(a.id);
     const mounts = getAgentMounts(a.id);
@@ -87,12 +86,9 @@ function mapAgentRows(agentRows: ReturnType<typeof useAgents>): Agent[] {
 }
 
 export default function AgentsTab() {
-  // Live subscriptions from SpacetimeDB — auto-updates on any change
-  const agentRows = useAgents();
+  // Live subscriptions from SpacetimeDB — auto-updates on any table change
+  const agents = useSpacetimeDB(() => mapAgentRows(getAgentRows()));
   const liveModels = useAvailableModels();
-
-  // Map SpacetimeDB rows to UI shape
-  const agents = useSpacetimeDB(() => mapAgentRows(agentRows), [agentRows]);
   const availableModels = liveModels.length > 0 ? liveModels : DEFAULT_MODELS.map(id => ({ id, name: id }));
 
   const [sandboxImages, setSandboxImages] = useState<string[]>([]);
