@@ -106,8 +106,8 @@ export async function deleteTrigger(cfg: GatewayConfig, id: string): Promise<voi
 export async function disableTrigger(cfg: GatewayConfig, id: string): Promise<void> {
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "update_deployment_trigger_enabled",
-    [{ id, enabled: false, updated_at: Date.now() }],
+    "update_deployment_trigger",
+    [{ id, enabled: false }],
     cfg.spacetimedbToken,
   );
 }
@@ -115,8 +115,8 @@ export async function disableTrigger(cfg: GatewayConfig, id: string): Promise<vo
 export async function enableTrigger(cfg: GatewayConfig, id: string): Promise<void> {
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "update_deployment_trigger_enabled",
-    [{ id, enabled: true, updated_at: Date.now() }],
+    "update_deployment_trigger",
+    [{ id, enabled: true }],
     cfg.spacetimedbToken,
   );
 }

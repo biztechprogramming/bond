@@ -40,6 +40,7 @@ import {
 import type { AllowListProvider } from "./pipeline/index.js";
 import { initSubscription } from "./spacetimedb/subscription.js";
 import { CompletionHandler } from "./completion/handler.js";
+import { initAgentNotifier, getAgentStartupMessage } from "./deployments/events.js";
 
 export interface GatewayServer {
   close(): void;
@@ -82,6 +83,43 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   };
 
   eventBus.startCleanup();
+
+  // Wire deployment agent notifier — sends messages to deploy-* agents via backend
+  initAgentNotifier(async (agentName: string, message: string) => {
+    // Find agent ID from backend
+    const agents = await backendClient.listAgents();
+    const agent = agents.find((a) => a.name === agentName);
+    if (!agent) {
+      console.warn(`[deploy-notify] Agent '${agentName}' not found — skipping notification`);
+      return;
+    }
+
+    // Find or create a conversation for this deploy agent
+    let conversationId = await backendClient.findActiveConversation(agent.id);
+    if (!conversationId) {
+      conversationId = ulid();
+      await backendClient.createConversation(conversationId, agent.id, "webchat", `${agentName} deployments`);
+      // Inject startup message as the first system-like user message
+      const startupMsg = getAgentStartupMessage(agentName.replace(/^deploy-/, ""));
+      await backendClient.saveUserMessage(conversationId, startupMsg);
+    }
+
+    // Save the notification as a user message and trigger a turn
+    await backendClient.saveUserMessage(conversationId, message);
+    console.log(`[deploy-notify] Sent deployment notification to ${agentName} (conversation=${conversationId})`);
+
+    // Fire-and-forget: trigger the agent turn so it processes the message
+    // The webchat channel will pick up the response if anyone is watching
+    (async () => {
+      try {
+        for await (const _event of backendClient.conversationTurnStream(conversationId!, undefined, agent.id)) {
+          // Consume the stream — responses are persisted by the backend
+        }
+      } catch (err: any) {
+        console.warn(`[deploy-notify] Turn execution error for ${agentName}:`, err.message);
+      }
+    })();
+  });
 
   // Auto-register GitHub webhooks (non-blocking — failures are logged, not fatal)
   const registrar = new WebhookRegistrar({
