@@ -55,6 +55,19 @@ vi.mock("../deployments/events.js", () => ({
   initDeploymentEvents: vi.fn(),
 }));
 
+vi.mock("../deployments/resources.js", () => ({
+  getResource: vi.fn(async () => null),
+  getResources: vi.fn(async () => []),
+}));
+
+vi.mock("../deployments/discovery-scripts.js", () => ({
+  executeSshScript: vi.fn(async () => ({ exit_code: 0, stdout: '{"test": true}', stderr: "" })),
+}));
+
+vi.mock("../deployments/secrets.js", () => ({
+  loadSecrets: vi.fn(() => ({})),
+}));
+
 // ── Imports (after mocks) ───────────────────────────────────────────────────
 
 import { computeFingerprint, shouldFileIssue, formatIssueBody } from "../deployments/issue-dedup.js";
@@ -298,5 +311,66 @@ describe("monitoring alert CRUD", () => {
     await resolveMonitoringAlert(cfg, id);
     const alert = mockAlerts.find(a => a.id === id);
     expect(alert.resolved_at).toBeTruthy();
+  });
+});
+
+// ── Environment scoping tests ────────────────────────────────────────────
+
+describe("environment scoping", () => {
+  it("runDiscovery denies access to resources in other environments", async () => {
+    // We import dynamically to get the mocked version
+    const { runDiscovery } = await import("../deployments/discovery.js");
+
+    // Mock getResource to return a resource in 'prod' environment
+    const { getResource } = await import("../deployments/resources.js");
+    vi.mocked(getResource).mockResolvedValueOnce({
+      id: "res_1",
+      name: "prod-server",
+      display_name: "Prod Server",
+      resource_type: "linux-server",
+      environment: "prod",
+      connection_json: '{"host":"10.0.1.50","port":22,"user":"deploy"}',
+      capabilities_json: "{}",
+      state_json: "{}",
+      tags_json: "[]",
+      recommendations_json: "[]",
+      is_active: true,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      last_probed_at: 0,
+    });
+
+    // Agent is deploy-dev, trying to discover a prod resource
+    const result = await runDiscovery(cfg, "res_1", "dev");
+    expect(result.status).toBe("denied");
+    expect(result.reason).toContain("belongs to environment 'prod'");
+    expect(result.reason).toContain("not 'dev'");
+  });
+
+  it("collectLogs denies access to resources in other environments", async () => {
+    const { collectLogs } = await import("../deployments/log-collector.js");
+    const { getResource } = await import("../deployments/resources.js");
+
+    vi.mocked(getResource).mockResolvedValueOnce({
+      id: "res_2",
+      name: "staging-db",
+      display_name: "Staging DB",
+      resource_type: "linux-server",
+      environment: "staging",
+      connection_json: '{"host":"10.0.2.10","port":22,"user":"deploy"}',
+      capabilities_json: "{}",
+      state_json: "{}",
+      tags_json: "[]",
+      recommendations_json: "[]",
+      is_active: true,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      last_probed_at: 0,
+    });
+
+    // Agent is deploy-dev, trying to collect logs from staging resource
+    const result = await collectLogs(cfg, "res_2", "dev");
+    expect(result.status).toBe("error");
+    expect(result.reason).toContain("belongs to environment 'staging'");
   });
 });

@@ -36,6 +36,9 @@ export interface DiscoveryResult {
 
 /**
  * Run discovery layers on a remote resource via SSH.
+ *
+ * Environment scoping: the resource must belong to the agent's environment.
+ * This prevents deploy-dev from discovering prod resources.
  */
 export async function runDiscovery(
   cfg: GatewayConfig,
@@ -46,6 +49,15 @@ export async function runDiscovery(
   const resource = await getResource(cfg, resourceId);
   if (!resource) {
     return { status: "denied", action: "discover", reason: "Resource not found" };
+  }
+
+  // Enforce environment scoping — agent can only discover resources in its own environment
+  if (resource.environment !== env) {
+    return {
+      status: "denied",
+      action: "discover",
+      reason: `Resource '${resource.name}' belongs to environment '${resource.environment}', not '${env}'. Agents can only discover resources in their own environment.`,
+    };
   }
 
   let conn: any;

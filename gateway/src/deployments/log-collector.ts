@@ -113,6 +113,8 @@ echo "$result"
 
 /**
  * Collect logs from a remote resource via SSH.
+ *
+ * Environment scoping: the resource must belong to the agent's environment.
  */
 export async function collectLogs(
   cfg: GatewayConfig,
@@ -124,6 +126,15 @@ export async function collectLogs(
   const resource = await getResource(cfg, resourceId);
   if (!resource) {
     return { status: "error", action: "log-check", reason: "Resource not found" };
+  }
+
+  // Enforce environment scoping — agent can only collect logs from resources in its own environment
+  if (resource.environment !== env) {
+    return {
+      status: "error",
+      action: "log-check",
+      reason: `Resource '${resource.name}' belongs to environment '${resource.environment}', not '${env}'. Access denied.`,
+    };
   }
 
   let conn: any;

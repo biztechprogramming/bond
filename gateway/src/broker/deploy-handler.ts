@@ -222,7 +222,30 @@ export async function handleDeploy(
   if (action === "discover-topology") {
     const resourceId = (body as any).resource_id;
     if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
-    return { status: "ok", action, environment: env, info: { message: "Topology discovery triggered — agent should follow connections from manifest" } };
+    const topoResource = await getResource(cfg, resourceId);
+    if (!topoResource) return { status: "error", action, reason: "Resource not found" };
+    if (topoResource.environment !== env) {
+      return { status: "denied", action, environment: env, reason: `Resource '${topoResource.name}' belongs to '${topoResource.environment}', not '${env}'. Agents can only discover topology from resources in their own environment.` };
+    }
+    // Cross-server topology: the agent can only follow connections to hosts
+    // that are also registered as resources in the same environment.
+    // Unregistered hosts are reported as "unreachable — not registered in {env}".
+    const connectionStrings: Array<{ host: string; port: number; type: string }> = (body as any).connection_strings || [];
+    const envResources = await getResources(cfg, env);
+    const envHosts = new Set(envResources.map(r => {
+      try { return JSON.parse(r.connection_json).host; } catch { return null; }
+    }).filter(Boolean));
+
+    const reachable: typeof connectionStrings = [];
+    const denied: Array<{ host: string; port: number; type: string; reason: string }> = [];
+    for (const cs of connectionStrings) {
+      if (envHosts.has(cs.host)) {
+        reachable.push(cs);
+      } else {
+        denied.push({ ...cs, reason: `Host '${cs.host}' is not registered as a resource in environment '${env}'. Add it as a resource to enable cross-server discovery.` });
+      }
+    }
+    return { status: "ok", action, environment: env, info: { reachable, denied, message: `${reachable.length} host(s) accessible, ${denied.length} host(s) not registered in ${env}` } };
   }
 
   if (action === "log-check") {
@@ -237,6 +260,9 @@ export async function handleDeploy(
     if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
     const resource = await getResource(cfg, resourceId);
     if (!resource) return { status: "error", action, reason: "Resource not found" };
+    if (resource.environment !== env) {
+      return { status: "denied", action, environment: env, reason: `Resource '${resource.name}' belongs to '${resource.environment}', not '${env}'. Agents can only access resources in their own environment.` };
+    }
     const conn = JSON.parse(resource.connection_json || "{}");
     if (!conn.host) return { status: "error", action, reason: "Resource requires SSH host" };
     const secrets = loadSecrets(env);
