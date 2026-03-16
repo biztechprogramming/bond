@@ -335,14 +335,16 @@ async def create_agent(body: AgentCreate):
     
     # Insert channels
     for channel in body.channels:
-        # Use SQL INSERT - no reducer for channels yet
+        channel_id = str(ULID())
         await stdb.query(f"""
-            INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
+            INSERT INTO agent_channels (id, agent_id, channel, enabled, sandbox_override, created_at)
             VALUES (
+                '{channel_id}',
                 '{agent_id}',
                 '{channel.channel}',
                 {str(channel.enabled).lower()},
-                '{channel.sandbox_override or ""}'
+                '{channel.sandbox_override or ""}',
+                {int(__import__('time').time() * 1000)}
             )
         """)
     
@@ -434,13 +436,16 @@ async def update_agent(
             pass  # Table might not exist
         
         for channel in body.channels:
+            channel_id = str(ULID())
             await stdb.query(f"""
-                INSERT INTO agent_channels (agent_id, channel, enabled, sandbox_override)
+                INSERT INTO agent_channels (id, agent_id, channel, enabled, sandbox_override, created_at)
                 VALUES (
+                    '{channel_id}',
                     '{agent_id}',
                     '{_escape_sql(channel.channel)}',
                     {str(channel.enabled).lower()},
-                    '{_escape_sql(channel.sandbox_override or "")}'
+                    '{_escape_sql(channel.sandbox_override or "")}',
+                    {int(__import__('time').time() * 1000)}
                 )
             """)
 
