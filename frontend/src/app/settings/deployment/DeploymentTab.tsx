@@ -3,6 +3,7 @@ import { BACKEND_API, GATEWAY_API } from "@/lib/config";
 import { useAgentsWithRelations, useAvailableModels, useSettingsMap, callReducer, type AgentWithRelations } from "@/hooks/useSpacetimeDB";
 import { getAgents } from "@/lib/spacetimedb-client";
 import SetupWizard from "./SetupWizard";
+import OnboardServerWizard from "./OnboardServerWizard";
 import AgentCardGrid from "./AgentCardGrid";
 import SharedSettingsForm from "./SharedSettingsForm";
 import SingleAgentEditor from "./SingleAgentEditor";
@@ -365,12 +366,13 @@ export default function DeploymentTab() {
         </>
       )}
 
-      {/* Onboard server placeholder */}
+      {/* Onboard server wizard */}
       {view === "onboard-server" && (
-        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", padding: "24px", textAlign: "center" }}>
-          <div style={{ color: "#8888a0", fontSize: "0.9rem", marginBottom: "12px" }}>Server onboarding wizard coming soon.</div>
-          <button style={styles.secondaryButton} onClick={goToDashboard}>Back</button>
-        </div>
+        <OnboardServerWizard
+          environments={environments}
+          onComplete={() => goToDashboard()}
+          onCancel={goToDashboard}
+        />
       )}
 
       {/* Infra map placeholder */}
