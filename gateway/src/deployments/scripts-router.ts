@@ -14,11 +14,38 @@ import {
   verifyScriptHash,
   parseScriptMeta,
 } from "./scripts.js";
+import { execFile } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 
 const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
 export function createScriptsRouter(_config: GatewayConfig): Router {
   const router = Router();
+
+  // POST /api/v1/deployments/scripts/validate-syntax
+  router.post("/validate-syntax", (req: any, res: any) => {
+    const { script } = req.body;
+    if (!script || typeof script !== "string") {
+      return res.status(400).json({ valid: false, errors: ["No script body provided"] });
+    }
+
+    const tmpFile = path.join(os.tmpdir(), `bond-validate-${Date.now()}-${Math.random().toString(36).slice(2)}.sh`);
+    fs.writeFileSync(tmpFile, script, "utf8");
+
+    execFile("bash", ["-n", tmpFile], (err, _stdout, stderr) => {
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+
+      if (err) {
+        const errors = stderr
+          .split("\n")
+          .filter((line: string) => line.trim().length > 0)
+          .map((line: string) => line.replace(tmpFile, "script"));
+        return res.json({ valid: false, errors });
+      }
+      res.json({ valid: true });
+    });
+  });
 
   // GET /api/v1/deployments/scripts — list all registered scripts
   router.get("/", (_req: any, res: any) => {

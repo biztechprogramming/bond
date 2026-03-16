@@ -152,4 +152,48 @@ export function emitScriptPromoted(env: string, scriptId: string, version: strin
     summary: `${scriptId}@${version} promoted to ${env} by ${promotedBy}`,
     details: { version, promoted_by: promotedBy },
   });
+
+  // Notify the deploy agent so it can begin the autonomous deployment flow
+  notifyDeployAgent(env, scriptId, version, promotedBy).catch(() => {});
+}
+
+// ── Agent Notification ───────────────────────────────────────────────────────
+
+type AgentNotifyFn = (agentName: string, message: string) => Promise<void>;
+let _agentNotifier: AgentNotifyFn | null = null;
+
+/**
+ * Register a function that can send a message to a named agent's conversation.
+ * Call during server startup after the gateway's messaging layer is ready.
+ */
+export function initAgentNotifier(notifier: AgentNotifyFn): void {
+  _agentNotifier = notifier;
+}
+
+/**
+ * Send a deployment notification to the deploy agent for the given environment.
+ */
+export async function notifyDeployAgent(
+  envName: string,
+  scriptId: string,
+  version: string,
+  promotedBy: string,
+): Promise<void> {
+  if (!_agentNotifier) return;
+  const agentName = `deploy-${envName}`;
+  const message = `Script ${scriptId}@${version} has been promoted to ${envName} by ${promotedBy}. Execute the deployment flow.`;
+  try {
+    await _agentNotifier(agentName, message);
+  } catch (err: any) {
+    console.warn(`[deployment-event] Failed to notify ${agentName}:`, err.message);
+  }
+}
+
+// ── Agent Startup Message ────────────────────────────────────────────────────
+
+/**
+ * Returns the message to inject when a deploy agent container comes online.
+ */
+export function getAgentStartupMessage(env: string): string {
+  return `Welcome back. You are deploy-${env}. Check for pending deployments:\n1. Call deploy_action with action "status" to see what needs deploying\n2. Call deploy_action with action "health-check" to verify environment health\n3. Report your findings`;
 }

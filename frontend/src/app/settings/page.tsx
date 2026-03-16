@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import AgentsTab from "./agents/AgentsTab";
+import DeploymentTab from "./deployment/DeploymentTab";
 import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
 import { BACKEND_API } from "@/lib/config";
@@ -10,6 +11,7 @@ const API_BASE = `${BACKEND_API}/settings`;
 
 const TABS = [
   { id: "agents", label: "Agents" },
+  { id: "deployment", label: "Deployment" },
   { id: "channels", label: "Channels" },
   { id: "prompts", label: "Prompts" },
   { id: "llm", label: "LLM" },
@@ -188,6 +190,8 @@ export default function SettingsPage() {
       {/* Tab content */}
       <div style={s.content}>
         {activeTab === "agents" && <AgentsTab />}
+
+        {activeTab === "deployment" && <DeploymentTab />}
 
         {activeTab === "channels" && <ChannelsTab />}
 

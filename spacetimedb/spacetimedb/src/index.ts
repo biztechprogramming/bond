@@ -413,6 +413,44 @@ const spacetimedb = schema({
       approved_at: t.u64(),
     }
   ),
+
+  // -- Deployment Resources (Doc 043 §6) --
+  deployment_resources: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),           // ULID
+      name: t.string(),                      // "web-prod-01"
+      display_name: t.string(),              // "Production Web Server"
+      resource_type: t.string(),             // "linux-server", "kubernetes", etc.
+      environment: t.string(),               // which deployment environment
+      connection_json: t.string().default('{}'),     // JSON-encoded connection config
+      capabilities_json: t.string().default('{}'),   // JSON-encoded capabilities
+      state_json: t.string().default('{}'),          // JSON-encoded state
+      tags_json: t.string().default('[]'),           // JSON array of tags
+      recommendations_json: t.string().default('[]'), // JSON-encoded recommendations
+      is_active: t.bool().default(true),
+      created_at: t.u64(),
+      updated_at: t.u64(),
+      last_probed_at: t.u64().default(0n),
+    }
+  ),
+
+  // -- Deployment Triggers (Doc 043 §3.4) --
+  deployment_triggers: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),           // ULID
+      script_id: t.string(),
+      repo_url: t.string(),
+      branch: t.string(),
+      tag_pattern: t.string().default(''),
+      environment: t.string(),
+      cron_schedule: t.string().default(''),
+      enabled: t.bool().default(true),
+      created_at: t.u64(),
+      updated_at: t.u64(),
+    }
+  ),
 });
 
 export default spacetimedb;
@@ -1452,5 +1490,139 @@ export const update_promotion_status = spacetimedb.reducer(
       deployed_at: args.deployed_at ?? existing.deployed_at,
       receipt_id: args.receipt_id ?? existing.receipt_id,
     });
+  }
+);
+
+// ─── Deployment Resource Reducers (Design Doc 043 §6) ─────────────────────
+
+export const create_deployment_resource = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    display_name: t.string(),
+    resource_type: t.string(),
+    environment: t.string(),
+    connection_json: t.string().default('{}'),
+    capabilities_json: t.string().default('{}'),
+    state_json: t.string().default('{}'),
+    tags_json: t.string().default('[]'),
+    recommendations_json: t.string().default('[]'),
+    is_active: t.bool().default(true),
+    created_at: t.u64(),
+    updated_at: t.u64(),
+    last_probed_at: t.u64().default(0n),
+  },
+  (ctx, args) => {
+    ctx.db.deployment_resources.insert(args);
+  }
+);
+
+export const update_deployment_resource = spacetimedb.reducer(
+  {
+    id: t.string(),
+    display_name: t.string().optional(),
+    resource_type: t.string().optional(),
+    environment: t.string().optional(),
+    connection_json: t.string().optional(),
+    capabilities_json: t.string().optional(),
+    state_json: t.string().optional(),
+    tags_json: t.string().optional(),
+    recommendations_json: t.string().optional(),
+    is_active: t.bool().optional(),
+    updated_at: t.u64(),
+    last_probed_at: t.u64().optional(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.deployment_resources.id.find(args.id);
+    if (!existing) return;
+    ctx.db.deployment_resources.id.update({
+      ...existing,
+      display_name: args.display_name ?? existing.display_name,
+      resource_type: args.resource_type ?? existing.resource_type,
+      environment: args.environment ?? existing.environment,
+      connection_json: args.connection_json ?? existing.connection_json,
+      capabilities_json: args.capabilities_json ?? existing.capabilities_json,
+      state_json: args.state_json ?? existing.state_json,
+      tags_json: args.tags_json ?? existing.tags_json,
+      recommendations_json: args.recommendations_json ?? existing.recommendations_json,
+      is_active: args.is_active ?? existing.is_active,
+      updated_at: args.updated_at,
+      last_probed_at: args.last_probed_at ?? existing.last_probed_at,
+    });
+  }
+);
+
+export const delete_deployment_resource = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.deployment_resources.id.find(id);
+    if (existing) {
+      ctx.db.deployment_resources.id.update({
+        ...existing,
+        is_active: false,
+        updated_at: BigInt(Date.now()),
+      });
+    }
+  }
+);
+
+// ─── Deployment Trigger Reducers (Design Doc 043 §3.4) ────────────────────
+
+export const create_deployment_trigger = spacetimedb.reducer(
+  {
+    id: t.string(),
+    script_id: t.string(),
+    repo_url: t.string(),
+    branch: t.string(),
+    tag_pattern: t.string().default(''),
+    environment: t.string(),
+    cron_schedule: t.string().default(''),
+    enabled: t.bool().default(true),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    ctx.db.deployment_triggers.insert({
+      ...args,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+);
+
+export const update_deployment_trigger = spacetimedb.reducer(
+  {
+    id: t.string(),
+    script_id: t.string().optional(),
+    repo_url: t.string().optional(),
+    branch: t.string().optional(),
+    tag_pattern: t.string().optional(),
+    environment: t.string().optional(),
+    cron_schedule: t.string().optional(),
+    enabled: t.bool().optional(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.deployment_triggers.id.find(args.id);
+    if (!existing) return;
+    ctx.db.deployment_triggers.id.update({
+      ...existing,
+      script_id: args.script_id ?? existing.script_id,
+      repo_url: args.repo_url ?? existing.repo_url,
+      branch: args.branch ?? existing.branch,
+      tag_pattern: args.tag_pattern ?? existing.tag_pattern,
+      environment: args.environment ?? existing.environment,
+      cron_schedule: args.cron_schedule ?? existing.cron_schedule,
+      enabled: args.enabled ?? existing.enabled,
+      updated_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const delete_deployment_trigger = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.deployment_triggers.id.find(id);
+    if (existing) {
+      ctx.db.deployment_triggers.id.delete(id);
+    }
   }
 );

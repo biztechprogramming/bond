@@ -580,6 +580,12 @@ async def _run_agent_loop(
     # and runtime gating (Permission Broker, API key presence, etc.).
     agent_tools = list(TOOL_MAP.keys())
 
+    # Gate deployment tools to deploy-* agents only (Design Doc 039)
+    agent_name = config.get("name", "")
+    DEPLOY_ONLY_TOOLS = {"deploy_action", "file_bug_ticket"}
+    if not agent_name.startswith("deploy-"):
+        agent_tools = [t for t in agent_tools if t not in DEPLOY_ONLY_TOOLS]
+
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
     provider_aliases: dict[str, str] = config.get("provider_aliases", {})

@@ -23,6 +23,7 @@ import {
   getApprovalsForPromotion,
 } from "./stdb.js";
 import { getManifest, listScripts } from "./scripts.js";
+import { emitScriptPromoted } from "./events.js";
 
 const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -175,6 +176,7 @@ export function createPromotionRouter(config: GatewayConfig): Router {
               promoted_at: Date.now(),
             });
           }
+          emitScriptPromoted(envName, script_id, version, identity.user_id);
           results[envName] = {
             status: "promoted",
             promotion_id: promotionId,
@@ -192,6 +194,7 @@ export function createPromotionRouter(config: GatewayConfig): Router {
             await updatePromotionStatus(config, currentPromotionId, "promoted", {
               promoted_at: Date.now(),
             });
+            emitScriptPromoted(envName, script_id, version, identity.user_id);
             results[envName] = {
               status: "promoted",
               promotion_id: currentPromotionId,
