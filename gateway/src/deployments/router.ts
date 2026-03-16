@@ -42,6 +42,7 @@ import { getMonitoringAlerts } from "./stdb.js";
 import { createSecretsRouter } from "./secrets-router.js";
 import { createAlertRulesRouter } from "./alert-rules-router.js";
 import { createCompareRouter } from "./compare-router.js";
+import { createComponentsRouter } from "./components-router.js";
 import { collectLogs } from "./log-stream.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
@@ -104,6 +105,9 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
   // Environment comparison (§8.3)
   router.use("/compare", createCompareRouter(config));
+
+  // Components (§045a)
+  router.use("/components", createComponentsRouter(config));
 
   // Session token issue — Phase 1 helper for testing
   // In production this would be behind proper auth

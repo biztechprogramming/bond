@@ -38,7 +38,7 @@ export async function getResources(
     : " WHERE is_active = true";
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_resources${where}`,
+    `SELECT * FROM resources${where}`,
     cfg.spacetimedbToken,
   );
   return rows.map(normalizeResource);
@@ -50,7 +50,7 @@ export async function getResource(
 ): Promise<DeploymentResource | null> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_resources WHERE id = '${esc(id)}'`,
+    `SELECT * FROM resources WHERE id = '${esc(id)}'`,
     cfg.spacetimedbToken,
   );
   return rows.length ? normalizeResource(rows[0]) : null;

@@ -27,6 +27,7 @@ export interface AlertRule {
   last_triggered_at: number;
   created_at: number;
   updated_at: number;
+  component_id?: string;
 }
 
 // ── SQL escaping ─────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ function normalizeRule(r: any): AlertRule {
     last_triggered_at: r.last_triggered_at ? Number(r.last_triggered_at) : 0,
     created_at: Number(r.created_at),
     updated_at: Number(r.updated_at),
+    component_id: r.component_id || undefined,
   };
 }
 
@@ -63,7 +65,7 @@ function normalizeRule(r: any): AlertRule {
 export async function getAlertRules(cfg: GatewayConfig, environment: string): Promise<AlertRule[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_alert_rules WHERE environment = '${esc(environment)}' ORDER BY created_at DESC`,
+    `SELECT * FROM alert_rules WHERE environment = '${esc(environment)}' ORDER BY created_at DESC`,
     cfg.spacetimedbToken,
   );
   return rows.map(normalizeRule);
@@ -72,7 +74,7 @@ export async function getAlertRules(cfg: GatewayConfig, environment: string): Pr
 export async function getAlertRule(cfg: GatewayConfig, id: string): Promise<AlertRule | null> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_alert_rules WHERE id = '${esc(id)}'`,
+    `SELECT * FROM alert_rules WHERE id = '${esc(id)}'`,
     cfg.spacetimedbToken,
   );
   return rows.length ? normalizeRule(rows[0]) : null;

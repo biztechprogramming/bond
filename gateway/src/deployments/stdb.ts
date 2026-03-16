@@ -64,7 +64,7 @@ export interface DeploymentApproval {
 export async function getEnvironments(cfg: GatewayConfig): Promise<DeploymentEnvironment[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "SELECT * FROM deployment_environments",
+    "SELECT * FROM environments",
     cfg.spacetimedbToken,
   );
   return rows.map(normalizeEnv);
@@ -73,7 +73,7 @@ export async function getEnvironments(cfg: GatewayConfig): Promise<DeploymentEnv
 export async function getEnvironment(cfg: GatewayConfig, name: string): Promise<DeploymentEnvironment | null> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_environments WHERE name = '${esc(name)}'`,
+    `SELECT * FROM environments WHERE name = '${esc(name)}'`,
     cfg.spacetimedbToken,
   );
   return rows.length ? normalizeEnv(rows[0]) : null;
@@ -132,7 +132,7 @@ export async function getApprovers(
 ): Promise<DeploymentEnvironmentApprover[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_environment_approvers WHERE environment_name = '${esc(environmentName)}'`,
+    `SELECT * FROM environment_approvers WHERE environment_name = '${esc(environmentName)}'`,
     cfg.spacetimedbToken,
   );
   return rows.map(normalizeApprover);
@@ -159,7 +159,7 @@ export async function removeApprover(
 ): Promise<void> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT id FROM deployment_environment_approvers WHERE environment_name = '${esc(environmentName)}' AND user_id = '${esc(userId)}'`,
+    `SELECT id FROM environment_approvers WHERE environment_name = '${esc(environmentName)}' AND user_id = '${esc(userId)}'`,
     cfg.spacetimedbToken,
   );
   for (const row of rows) {
@@ -182,7 +182,7 @@ export async function getPromotion(
 ): Promise<DeploymentPromotion | null> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_promotions WHERE script_id = '${esc(scriptId)}' AND script_version = '${esc(scriptVersion)}' AND environment_name = '${esc(environmentName)}'`,
+    `SELECT * FROM promotions WHERE script_id = '${esc(scriptId)}' AND script_version = '${esc(scriptVersion)}' AND environment_name = '${esc(environmentName)}'`,
     cfg.spacetimedbToken,
   );
   return rows.length ? normalizePromotion(rows[0]) : null;
@@ -195,7 +195,7 @@ export async function getPromotionsForScript(
 ): Promise<DeploymentPromotion[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_promotions WHERE script_id = '${esc(scriptId)}' AND script_version = '${esc(scriptVersion)}'`,
+    `SELECT * FROM promotions WHERE script_id = '${esc(scriptId)}' AND script_version = '${esc(scriptVersion)}'`,
     cfg.spacetimedbToken,
   );
   return rows.map(normalizePromotion);
@@ -204,7 +204,7 @@ export async function getPromotionsForScript(
 export async function getAllPromotions(cfg: GatewayConfig): Promise<DeploymentPromotion[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "SELECT * FROM deployment_promotions",
+    "SELECT * FROM promotions",
     cfg.spacetimedbToken,
   );
   return rows.map(normalizePromotion);
@@ -280,7 +280,7 @@ export async function getApprovalsForPromotion(
 ): Promise<DeploymentApproval[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_approvals WHERE promotion_id = '${esc(promotionId)}'`,
+    `SELECT * FROM approvals WHERE promotion_id = '${esc(promotionId)}'`,
     cfg.spacetimedbToken,
   );
   return rows.map(normalizeApprovalRow);
@@ -328,7 +328,7 @@ export async function getEnvironmentHistory(
 ): Promise<DeploymentEnvironmentHistory[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM deployment_environment_history WHERE environment_name = '${esc(envName)}' ORDER BY changed_at DESC LIMIT ${limit}`,
+    `SELECT * FROM environment_history WHERE environment_name = '${esc(envName)}' ORDER BY changed_at DESC LIMIT ${limit}`,
     cfg.spacetimedbToken,
   );
   return rows.map(normalizeHistory);
@@ -347,6 +347,7 @@ export interface MonitoringAlert {
   detected_at: number;
   issue_number?: number;
   issue_action?: string;
+  component_id?: string;
   resolved_at?: number;
 }
 
@@ -371,7 +372,7 @@ export async function getMonitoringAlerts(
 ): Promise<MonitoringAlert[]> {
   const rows = await sqlQuery(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    `SELECT * FROM monitoring_alerts WHERE environment = '${esc(environment)}' ORDER BY detected_at DESC LIMIT ${limit}`,
+    `SELECT * FROM alerts WHERE environment = '${esc(environment)}' ORDER BY detected_at DESC LIMIT ${limit}`,
     cfg.spacetimedbToken,
   );
   return rows.map(normalizeAlert);
@@ -401,6 +402,7 @@ function normalizeAlert(r: any): MonitoringAlert {
     detected_at: Number(r.detected_at),
     issue_number: r.issue_number ? Number(r.issue_number) : undefined,
     issue_action: r.issue_action || undefined,
+    component_id: r.component_id || undefined,
     resolved_at: r.resolved_at ? Number(r.resolved_at) : undefined,
   };
 }
