@@ -36,6 +36,7 @@ import {
   disableTrigger, enableTrigger, handleWebhookPush,
 } from "./trigger-handler.js";
 import { SCRIPT_TEMPLATES } from "./script-templates.js";
+import { createPipelineRouter } from "./pipeline-router.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -72,6 +73,16 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
   // Receipts
   router.use("/receipts", createReceiptsRouter(config));
+
+  // Pipeline-as-Code
+  const pipelineCodeRouter = createPipelineRouter();
+  router.use("/pipeline-code", pipelineCodeRouter);
+
+  // Alias: frontend calls /deployments/validate-yaml
+  router.post("/validate-yaml", (req: any, res: any, next: any) => {
+    req.url = "/validate";
+    pipelineCodeRouter(req, res, next);
+  });
 
   // Resources
   router.use("/resources", createResourceRouter(config));

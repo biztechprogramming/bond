@@ -1,8 +1,10 @@
 /**
- * Resource Router — CRUD + probe endpoints for deployment resources.
+ * Resource Router — CRUD + probe + recommendations endpoints for deployment resources.
  */
 
 import { Router } from "express";
+import path from "node:path";
+import { homedir } from "node:os";
 import type { GatewayConfig } from "../config/index.js";
 import { extractUserIdentity } from "./session-tokens.js";
 import {
@@ -14,6 +16,11 @@ import {
   updateResourceProbe,
 } from "./resources.js";
 import { probeResource } from "./resource-probe.js";
+import { generateRecommendations, getRecommendationApplyScript } from "./recommendations.js";
+import { registerScript } from "./scripts.js";
+import { initiatePromotion } from "./stdb.js";
+
+const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
 export function createResourceRouter(config: GatewayConfig): Router {
   const router = Router();
@@ -156,39 +163,70 @@ export function createResourceRouter(config: GatewayConfig): Router {
     }
   });
 
-  // POST /api/v1/deployments/resources/:id/recommendations/:rank/apply — stub
+  // POST /api/v1/deployments/resources/:id/recommendations/:rank/apply
+  // Generates a script from the recommendation and registers it in the script registry,
+  // then auto-promotes it to the resource's environment.
   router.post("/:id/recommendations/:rank/apply", async (req: any, res: any) => {
     const identity = extractUserIdentity(req.headers.authorization);
     if (!identity) return res.status(403).json({ error: "User auth required" });
 
-    res.json({
-      success: false,
-      message: "Recommendation application is not yet implemented",
-      resource_id: req.params.id,
-      rank: req.params.rank,
-    });
+    try {
+      const resource = await getResource(config, req.params.id);
+      if (!resource) return res.status(404).json({ error: "Resource not found" });
+
+      const rank = parseInt(req.params.rank, 10);
+      const recommendations = JSON.parse(resource.recommendations_json);
+      const result = getRecommendationApplyScript(recommendations, rank);
+
+      if (!result) {
+        return res.status(404).json({
+          error: `Recommendation #${rank} not found or has no apply script`,
+          resource_id: req.params.id,
+        });
+      }
+
+      const { recommendation, script } = result;
+      const scriptId = `rec-${resource.name}-${rank}-${Date.now()}`;
+      const version = "v1";
+
+      // Register the script in the script registry
+      const manifest = registerScript(DEPLOYMENTS_DIR, {
+        script_id: scriptId,
+        version,
+        name: `Apply: ${recommendation.title}`,
+        description: `Auto-generated from recommendation for resource ${resource.display_name}: ${recommendation.description}`,
+        timeout: 120,
+        registered_by: identity.user_id,
+        files: {
+          "deploy.sh": Buffer.from(script, "utf-8"),
+        },
+      });
+
+      // Auto-promote to the resource's environment
+      const promotionId = await initiatePromotion(
+        config,
+        scriptId,
+        version,
+        manifest.sha256,
+        resource.environment,
+        "promoted",
+        identity.user_id,
+      );
+
+      res.json({
+        success: true,
+        resource_id: req.params.id,
+        recommendation: recommendation.title,
+        script_id: scriptId,
+        version,
+        promotion_id: promotionId,
+        environment: resource.environment,
+        message: `Script registered and promoted to '${resource.environment}'. Deploy via the deploy agent.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   return router;
-}
-
-/**
- * Generate simple recommendations based on probe results.
- */
-function generateRecommendations(probe: { capabilities: Record<string, any>; state: Record<string, any> }): any[] {
-  const recs: any[] = [];
-  const caps = probe.capabilities;
-  const state = probe.state;
-
-  if (!caps.docker) {
-    recs.push({ rank: recs.length + 1, title: "Install Docker", description: "Docker is not detected. Install it to enable containerized deployments.", severity: "medium" });
-  }
-  if (!caps.node) {
-    recs.push({ rank: recs.length + 1, title: "Install Node.js", description: "Node.js is not detected. Required for JavaScript/TypeScript deployments.", severity: "low" });
-  }
-  if (state.memory_gb !== undefined && typeof state.memory_gb === "number" && state.memory_gb < 2) {
-    recs.push({ rank: recs.length + 1, title: "Low Memory", description: `Only ${state.memory_gb}GB RAM detected. Consider upgrading for production workloads.`, severity: "high" });
-  }
-
-  return recs;
 }

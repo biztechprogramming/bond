@@ -39,6 +39,7 @@ import { getEnvironments } from "../deployments/stdb.js";
 import { writeDeployLog } from "../deployments/log-stream.js";
 import { saveBaseline } from "../deployments/drift-detector.js";
 import { executeHealthCheck } from "../deployments/health-scheduler.js";
+import { getResources } from "../deployments/resources.js";
 
 const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -618,18 +619,78 @@ async function runDeploy(
       throw new Error("Script hash verification failed — refusing to execute");
     }
 
-    // Execute
-    const execStart = Date.now();
-    const execResult = await executeCommand(`bash '${scriptPath}'`, {
-      timeout: scriptTimeout,
-      env: {
-        ...secrets,
-        BOND_DEPLOY_ENV: env,
-        SCRIPT_DIR: path.dirname(scriptPath),
-        DEPLOY_RECEIPT_ID: receiptId,
-      },
-    });
-    const execDuration = Date.now() - execStart;
+    // Check for resources in this environment
+    let resources: Array<{ id: string; name: string; resource_type: string; connection_json: string }> = [];
+    try {
+      resources = await getResources(cfg, env);
+    } catch {
+      // non-fatal — run without resources
+    }
+
+    let execResult: { exit_code: number; stdout: string; stderr: string };
+    let execDuration: number;
+
+    if (resources.length > 0) {
+      // Multi-resource execution: run script once per resource
+      const resourceResults: Array<{ resource: string; exit_code: number; stdout: string; stderr: string; duration_ms: number }> = [];
+      let allSucceeded = true;
+      const multiStart = Date.now();
+
+      for (const resource of resources) {
+        const conn = JSON.parse(resource.connection_json || "{}");
+        const resourceEnv: Record<string, string> = {
+          ...secrets,
+          BOND_DEPLOY_ENV: env,
+          SCRIPT_DIR: path.dirname(scriptPath),
+          DEPLOY_RECEIPT_ID: receiptId,
+          RESOURCE_ID: resource.id,
+          RESOURCE_NAME: resource.name,
+          RESOURCE_TYPE: resource.resource_type,
+          RESOURCE_HOST: conn.host || "",
+          RESOURCE_PORT: String(conn.port || ""),
+          RESOURCE_USER: conn.user || "",
+        };
+
+        const resStart = Date.now();
+        const resResult = await executeCommand(`bash '${scriptPath}'`, {
+          timeout: scriptTimeout,
+          env: resourceEnv,
+        });
+        const resDuration = Date.now() - resStart;
+
+        resourceResults.push({
+          resource: resource.name,
+          exit_code: resResult.exit_code,
+          stdout: resResult.stdout,
+          stderr: resResult.stderr,
+          duration_ms: resDuration,
+        });
+
+        if (resResult.exit_code !== 0) allSucceeded = false;
+      }
+
+      execDuration = Date.now() - multiStart;
+      // Aggregate results
+      execResult = {
+        exit_code: allSucceeded ? 0 : 1,
+        stdout: resourceResults.map(r => `=== ${r.resource} (exit ${r.exit_code}) ===\n${r.stdout}`).join("\n\n"),
+        stderr: resourceResults.filter(r => r.stderr).map(r => `=== ${r.resource} ===\n${r.stderr}`).join("\n\n"),
+      };
+      (phases as any).resource_results = resourceResults;
+    } else {
+      // Single execution (no resources)
+      const execStart = Date.now();
+      execResult = await executeCommand(`bash '${scriptPath}'`, {
+        timeout: scriptTimeout,
+        env: {
+          ...secrets,
+          BOND_DEPLOY_ENV: env,
+          SCRIPT_DIR: path.dirname(scriptPath),
+          DEPLOY_RECEIPT_ID: receiptId,
+        },
+      });
+      execDuration = Date.now() - execStart;
+    }
 
     phases.execution = {
       status: execResult.exit_code === 0 ? "pass" : "fail",
@@ -752,6 +813,14 @@ async function runDeploy(
     };
   } finally {
     releaseLock(DEPLOYMENTS_DIR, env);
+
+    // Auto-dequeue: if there's a queued entry, notify the deploy agent
+    const nextEntry = dequeue(env);
+    if (nextEntry) {
+      console.log(`[deploy-handler] Auto-dequeued ${nextEntry.script_id}@${nextEntry.version} for ${env}`);
+      // Emit promotion event to wake the agent for the queued script
+      emitDeploymentStarted(env, nextEntry.script_id, nextEntry.agent_sub);
+    }
   }
 }
 

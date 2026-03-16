@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { GATEWAY_API } from "@/lib/config";
 import StatusIndicator, { DeployStatus } from "./StatusIndicator";
 
 export interface PipelineStep {
@@ -17,6 +18,7 @@ export interface PipelineStep {
 
 interface Props {
   steps: PipelineStep[];
+  runId?: string;
 }
 
 function formatDuration(seconds?: number): string {
@@ -27,8 +29,43 @@ function formatDuration(seconds?: number): string {
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
 
-export default function PipelineStepView({ steps }: Props) {
+export default function PipelineStepView({ steps: propSteps, runId }: Props) {
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const [liveSteps, setLiveSteps] = useState<PipelineStep[]>(propSteps);
+
+  useEffect(() => {
+    if (!runId) { setLiveSteps(propSteps); return; }
+
+    let cancelled = false;
+    const fetchRun = async () => {
+      try {
+        const res = await fetch(`${GATEWAY_API}/deployments/pipeline-code/runs/${runId}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const allSteps: PipelineStep[] = [];
+        for (const job of data.jobs || []) {
+          for (const s of job.steps || []) {
+            allSteps.push({
+              name: s.name,
+              image: s.matrix_vars ? `matrix: ${JSON.stringify(s.matrix_vars)}` : "",
+              status: (s.status === "success" ? "success" : s.status === "failed" ? "failed" : s.status === "running" ? "deploying" : "pending") as DeployStatus,
+              duration_seconds: s.duration_ms != null ? Math.round(s.duration_ms / 1000) : undefined,
+              stdout_preview: s.stdout?.slice(0, 500) || undefined,
+              stderr_preview: s.stderr?.slice(0, 500) || undefined,
+              exit_code: s.exit_code,
+            });
+          }
+        }
+        if (!cancelled && allSteps.length > 0) setLiveSteps(allSteps);
+      } catch { /* fetch failed, keep existing */ }
+    };
+
+    fetchRun();
+    const interval = setInterval(fetchRun, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [runId, propSteps]);
+
+  const steps = liveSteps;
 
   if (steps.length === 0) {
     return <p style={styles.empty}>No steps defined.</p>;
