@@ -55,7 +55,7 @@ function statusDot(status: ServerStatus["status"]): { symbol: string; color: str
     case "online": return { symbol: "●", color: "#6cffa0" };
     case "degraded": return { symbol: "◐", color: "#ffcc6c" };
     case "offline": return { symbol: "○", color: "#ff6c8a" };
-    default: return { symbol: "?", color: "#5a5a6e" };
+    default: return { symbol: "⊘", color: "#5a5a6e" };
   }
 }
 
@@ -87,11 +87,11 @@ function relativeTime(iso: string): string {
 }
 
 function overallHealth(servers: ServerStatus[]): { label: string; symbol: string; color: string } {
-  if (servers.length === 0) return { label: "Unknown", symbol: "?", color: "#5a5a6e" };
+  if (servers.length === 0) return { label: "No servers", symbol: "○", color: "#5a5a6e" };
   if (servers.some((s) => s.status === "offline")) return { label: "Offline", symbol: "○", color: "#ff6c8a" };
   if (servers.some((s) => s.status === "degraded")) return { label: "Degraded", symbol: "◐", color: "#ffcc6c" };
   if (servers.every((s) => s.status === "online")) return { label: "Healthy", symbol: "●", color: "#6cffa0" };
-  return { label: "Unknown", symbol: "?", color: "#5a5a6e" };
+  return { label: "Partial", symbol: "◐", color: "#8888a0" };
 }
 
 // --- skeleton placeholder ---
@@ -138,24 +138,55 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
   const fetchServers = useCallback(async () => {
     try {
       const res = await fetch(`${GATEWAY_API}/deployments/resources?environment=${encodeURIComponent(envName)}`);
-      if (res.ok) setServers(await res.json());
-      else setServers([]);
+      if (res.ok) {
+        const resources: any[] = await res.json();
+        // Map DeploymentResource objects to ServerStatus shape
+        const mapped: ServerStatus[] = resources.map((r: any) => {
+          const state = typeof r.state_json === "string" ? (() => { try { return JSON.parse(r.state_json); } catch { return {}; } })() : (r.state_json || {});
+          const caps = typeof r.capabilities_json === "string" ? (() => { try { return JSON.parse(r.capabilities_json); } catch { return {}; } })() : (r.capabilities_json || {});
+          return {
+            resource_id: r.id,
+            name: r.name,
+            display_name: r.display_name || r.name,
+            status: state.status || (r.is_active ? (r.last_probed_at ? "online" : "unknown") : "offline"),
+            cpu_percent: state.cpu_percent ?? caps.cpu_percent ?? 0,
+            ram_percent: state.ram_percent ?? caps.ram_percent ?? 0,
+            disk_percent: state.disk_percent ?? caps.disk_percent ?? 0,
+            last_probe: r.last_probed_at ? new Date(typeof r.last_probed_at === "number" ? r.last_probed_at : r.last_probed_at).toISOString() : new Date(0).toISOString(),
+          };
+        });
+        setServers(mapped);
+      } else setServers([]);
     } catch { setServers([]); }
   }, [envName]);
 
   const fetchReceipts = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/receipts?environment=${encodeURIComponent(envName)}&limit=10`);
-      if (res.ok) setReceipts(await res.json());
-      else setReceipts([]);
+      const res = await fetch(`${GATEWAY_API}/deployments/receipts/${encodeURIComponent(envName)}?limit=10`);
+      if (res.ok) {
+        const data = await res.json();
+        // API returns array of receipt objects — normalize field names
+        const mapped: DeploymentReceipt[] = (Array.isArray(data) ? data : []).map((r: any) => ({
+          id: r.id || r.receipt_id || "",
+          script_name: r.script_name || r.script_id || "unknown",
+          version: r.version || r.script_version || "?",
+          status: r.status || "success",
+          created_at: r.created_at || r.timestamp || new Date().toISOString(),
+        }));
+        setReceipts(mapped);
+      } else setReceipts([]);
     } catch { setReceipts([]); }
   }, [envName]);
 
   const fetchAlerts = useCallback(async () => {
     try {
       const res = await fetch(`${GATEWAY_API}/deployments/monitoring/${encodeURIComponent(envName)}`);
-      if (res.ok) setAlerts(await res.json());
-      else setAlerts([]);
+      if (res.ok) {
+        const data = await res.json();
+        // API returns { environment, health, recent_alerts } — extract the alerts array
+        const alertList = Array.isArray(data) ? data : (data.recent_alerts || []);
+        setAlerts(alertList);
+      } else setAlerts([]);
     } catch { setAlerts([]); }
   }, [envName]);
 
