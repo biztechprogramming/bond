@@ -48,6 +48,38 @@ interface SecurityObservation {
   detail?: string;
 }
 
+interface Component {
+  id: string;
+  name: string;
+  display_name: string;
+  component_type: string;
+  parent_id: string | null;
+  runtime: string | null;
+  framework: string | null;
+  repository_url: string | null;
+  icon: string | null;
+  description: string | null;
+  is_active: boolean;
+}
+
+interface DraftComponent {
+  name: string;
+  display_name: string;
+  component_type: string;
+  icon: string;
+  enabled: boolean;
+  sourceLayer: string;
+}
+
+const COMPONENT_TYPES = ["application", "web-server", "data-store", "cache", "message-queue", "infrastructure", "system"];
+const LAYER_TO_COMPONENT_TYPE: Record<string, string> = {
+  system: "infrastructure",
+  web_server: "web-server",
+  application: "application",
+  data_stores: "data-store",
+  dns: "infrastructure",
+};
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -142,8 +174,13 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
   const [securityObs, setSecurityObs] = useState<SecurityObservation[]>([]);
   const [manifestName, setManifestName] = useState("");
 
-  // Step 3: Review
+  // Step 3: Review + Component creation
   const [reviewExpanded, setReviewExpanded] = useState<Set<string>>(new Set(["application", "security"]));
+  const [draftComponents, setDraftComponents] = useState<DraftComponent[]>([]);
+  const [parentSystem, setParentSystem] = useState<string>("none");
+  const [newSystemName, setNewSystemName] = useState("");
+  const [existingSystems, setExistingSystems] = useState<Component[]>([]);
+  const [creatingComponents, setCreatingComponents] = useState(false);
 
   // Step 4: Environment & Monitoring
   const [selectedEnv, setSelectedEnv] = useState("");
@@ -316,6 +353,80 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
       runDiscovery();
     }
   }, [step, resourceId, discoveryLayers.length, discoveryRunning, runDiscovery]);
+
+  // Build draft components when entering step 3
+  useEffect(() => {
+    if (step === "review" && discoveryLayers.length > 0 && draftComponents.length === 0) {
+      const drafts: DraftComponent[] = [];
+      for (const layer of discoveryLayers) {
+        for (const item of layer.items) {
+          const ctype = LAYER_TO_COMPONENT_TYPE[layer.key] || "application";
+          drafts.push({
+            name: item.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-"),
+            display_name: item.name,
+            component_type: ctype,
+            icon: "",
+            enabled: ctype === "application" || ctype === "web-server",
+            sourceLayer: layer.key,
+          });
+        }
+      }
+      setDraftComponents(drafts);
+    }
+  }, [step, discoveryLayers, draftComponents.length]);
+
+  // Fetch existing system components for parent dropdown
+  useEffect(() => {
+    if (step === "review") {
+      fetch(`${GATEWAY_API}/deployments/components`)
+        .then(r => r.ok ? r.json() : [])
+        .then(data => {
+          const systems = (Array.isArray(data) ? data : data.components || []).filter((c: Component) => c.component_type === "system");
+          setExistingSystems(systems);
+        })
+        .catch(() => {});
+    }
+  }, [step]);
+
+  // Create components when proceeding from step 3 to step 4
+  const createComponentsAndProceed = async () => {
+    const enabled = draftComponents.filter(d => d.enabled);
+    if (enabled.length === 0) { goNext(); return; }
+    setCreatingComponents(true);
+    try {
+      let parentId: string | null = null;
+      if (parentSystem === "new" && newSystemName.trim()) {
+        const sysRes = await fetch(`${GATEWAY_API}/deployments/components`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newSystemName.trim().toLowerCase().replace(/[^a-z0-9-]/g, "-"), display_name: newSystemName.trim(), component_type: "system" }),
+        });
+        if (sysRes.ok) { const sys = await sysRes.json(); parentId = sys.id; }
+      } else if (parentSystem !== "none") {
+        parentId = parentSystem;
+      }
+
+      for (const draft of enabled) {
+        try {
+          const compRes = await fetch(`${GATEWAY_API}/deployments/components`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: draft.name, display_name: draft.display_name, component_type: draft.component_type, icon: draft.icon || null, parent_id: parentId }),
+          });
+          if (compRes.ok && resourceId) {
+            const comp = await compRes.json();
+            await fetch(`${GATEWAY_API}/deployments/components/${comp.id}/resources`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ resource_id: resourceId }),
+            }).catch(() => {});
+          }
+        } catch { /* continue with other components */ }
+      }
+    } catch { /* proceed anyway */ }
+    setCreatingComponents(false);
+    goNext();
+  };
 
   // Auto-suggest environment when entering step 4
   useEffect(() => {
@@ -595,6 +706,45 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
               ))}
             </div>
           )}
+
+          {/* Component creation from discovery */}
+          {draftComponents.length > 0 && (
+            <div style={styles.card}>
+              <span style={styles.cardTitle}>Register as Components</span>
+              <p style={{ fontSize: "0.8rem", color: "#8888a0", margin: 0 }}>Toggle which discovered items to register as managed components.</p>
+
+              {draftComponents.map((draft, i) => (
+                <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #1e1e2e" }}>
+                  <input type="checkbox" checked={draft.enabled} onChange={e => {
+                    setDraftComponents(prev => prev.map((d, j) => j === i ? { ...d, enabled: e.target.checked } : d));
+                  }} style={{ accentColor: "#6cffa0" }} />
+                  <input style={{ ...styles.input, flex: 1, maxWidth: 160 }} value={draft.display_name} onChange={e => {
+                    setDraftComponents(prev => prev.map((d, j) => j === i ? { ...d, display_name: e.target.value, name: e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-") } : d));
+                  }} placeholder="Name" />
+                  <select style={{ ...styles.select, minWidth: 120 }} value={draft.component_type} onChange={e => {
+                    setDraftComponents(prev => prev.map((d, j) => j === i ? { ...d, component_type: e.target.value } : d));
+                  }}>
+                    {COMPONENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <input style={{ ...styles.input, maxWidth: 80 }} value={draft.icon} onChange={e => {
+                    setDraftComponents(prev => prev.map((d, j) => j === i ? { ...d, icon: e.target.value } : d));
+                  }} placeholder="Icon" />
+                </div>
+              ))}
+
+              <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 4 }}>
+                <label style={{ fontSize: "0.75rem", color: "#8888a0" }}>Parent System:</label>
+                <select style={{ ...styles.select, minWidth: 180 }} value={parentSystem} onChange={e => setParentSystem(e.target.value)}>
+                  <option value="none">None</option>
+                  <option value="new">Create new system...</option>
+                  {existingSystems.map(s => <option key={s.id} value={s.id}>{s.display_name || s.name}</option>)}
+                </select>
+                {parentSystem === "new" && (
+                  <input style={{ ...styles.input, maxWidth: 180 }} value={newSystemName} onChange={e => setNewSystemName(e.target.value)} placeholder="System name" />
+                )}
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -747,8 +897,12 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
             <button style={styles.secondaryButton} onClick={onCancel}>Cancel</button>
           )}
           {step !== "connect" && step !== "scripts" && (
-            <button style={{ ...styles.primaryButton, opacity: canNext() ? 1 : 0.4 }} onClick={goNext} disabled={!canNext()}>
-              Continue
+            <button
+              style={{ ...styles.primaryButton, opacity: canNext() && !creatingComponents ? 1 : 0.4 }}
+              onClick={step === "review" ? createComponentsAndProceed : goNext}
+              disabled={!canNext() || creatingComponents}
+            >
+              {creatingComponents ? "Creating Components..." : "Continue"}
             </button>
           )}
         </div>

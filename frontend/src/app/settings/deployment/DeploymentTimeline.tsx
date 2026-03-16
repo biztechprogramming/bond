@@ -17,6 +17,14 @@ interface Receipt {
   duration_seconds?: number;
   agent_name?: string;
   commit_sha?: string;
+  component_id?: string;
+}
+
+interface Component {
+  id: string;
+  name: string;
+  display_name: string;
+  icon: string | null;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -41,6 +49,8 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
   const [hoveredReceipt, setHoveredReceipt] = useState<Receipt | null>(null);
   const [hoverPos, setHoverPos] = useState({ x: 0, y: 0 });
   const svgRef = useRef<SVGSVGElement>(null);
+  const [components, setComponents] = useState<Component[]>([]);
+  const [selectedComponent, setSelectedComponent] = useState<string>("");
 
   const now = timeRange?.end || new Date();
   const rangeStart = timeRange?.start || new Date(now.getTime() - selectedRange * 86400000);
@@ -59,11 +69,19 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
 
   useEffect(() => { fetchReceipts(); }, [fetchReceipts]);
 
+  useEffect(() => {
+    fetch(`${GATEWAY_API}/deployments/components`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setComponents(Array.isArray(data) ? data : data.components || []))
+      .catch(() => {});
+  }, []);
+
   const sortedEnvs = [...environments].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const envNames = sortedEnvs.map((e) => e.name);
 
   const filtered = receipts.filter((r) => {
     if (selectedScript && r.script_name !== selectedScript) return false;
+    if (selectedComponent && r.component_id !== selectedComponent) return false;
     const t = new Date(r.started_at).getTime();
     return t >= rangeStart.getTime() && t <= now.getTime();
   });
@@ -110,6 +128,12 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ fontSize: "1rem", fontWeight: 600, color: "#6c8aff", margin: 0 }}>Deployment Timeline</h3>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          {components.length > 0 && (
+            <select value={selectedComponent} onChange={(e) => setSelectedComponent(e.target.value)} style={styles.select}>
+              <option value="">All Components</option>
+              {components.map(c => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.display_name || c.name}</option>)}
+            </select>
+          )}
           <select
             value={selectedScript}
             onChange={(e) => setSelectedScript(e.target.value)}
@@ -210,6 +234,7 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
               {hoveredReceipt.status.replace("_", " ").toUpperCase()}
             </div>
             <div>Script: {hoveredReceipt.script_name}</div>
+            {hoveredReceipt.component_id && (() => { const c = components.find(c => c.id === hoveredReceipt.component_id); return c ? <div>Component: {c.icon || ""}{c.display_name || c.name}</div> : null; })()}
             <div>Started: {new Date(hoveredReceipt.started_at).toLocaleString()}</div>
             {hoveredReceipt.duration_seconds != null && <div>Duration: {hoveredReceipt.duration_seconds}s</div>}
             {hoveredReceipt.agent_name && <div>Agent: {hoveredReceipt.agent_name}</div>}

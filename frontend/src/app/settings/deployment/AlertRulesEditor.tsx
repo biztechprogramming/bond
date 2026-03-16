@@ -18,6 +18,15 @@ interface AlertRule {
   trigger_count: number;
   actions: string[];
   applies_to: string;
+  component_id?: string;
+}
+
+interface Component {
+  id: string;
+  name: string;
+  display_name: string;
+  component_type: string;
+  icon: string | null;
 }
 
 const METRICS = [
@@ -46,6 +55,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
   const [editing, setEditing] = useState<Partial<AlertRule> | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
+  const [components, setComponents] = useState<Component[]>([]);
 
   const fetchRules = useCallback(async () => {
     try {
@@ -55,6 +65,13 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
   }, [environment]);
 
   useEffect(() => { fetchRules(); }, [fetchRules]);
+
+  useEffect(() => {
+    fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(environment)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setComponents(Array.isArray(data) ? data : data.components || []))
+      .catch(() => {});
+  }, [environment]);
 
   const saveRule = async () => {
     if (!editing?.name) { setMsg("Name is required"); return; }
@@ -146,6 +163,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
               </div>
               <span style={{ color: "#8888a0", fontSize: "0.8rem" }}>
                 {rule.metric} {rule.operator} {rule.threshold} for {rule.duration_seconds}s
+                {rule.component_id && (() => { const c = components.find(c => c.id === rule.component_id); return c ? ` · ${c.icon || ""}${c.display_name || c.name}` : ""; })()}
                 {rule.trigger_count > 0 && ` — triggered ${rule.trigger_count}x`}
               </span>
             </div>
@@ -215,6 +233,13 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
                 onChange={(e) => setEditing({ ...editing, applies_to: e.target.value })}
                 placeholder="* for all servers"
               />
+            </label>
+            <label style={styles.label}>
+              Component
+              <select style={styles.input} value={editing.component_id || ""} onChange={(e) => setEditing({ ...editing, component_id: e.target.value || undefined })}>
+                <option value="">None</option>
+                {components.map(c => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.display_name || c.name}</option>)}
+              </select>
             </label>
           </div>
 

@@ -5,6 +5,15 @@ interface Props {
   environments: string[];
 }
 
+interface ComponentData {
+  id: string;
+  name: string;
+  display_name: string;
+  component_type: string;
+  icon: string | null;
+  is_active: boolean;
+}
+
 interface InfraNode {
   id: string;
   name: string;
@@ -14,6 +23,8 @@ interface InfraNode {
   port?: number;
   health: "healthy" | "degraded" | "unhealthy" | "unknown";
   stats?: { cpu?: number; memory?: number; requests?: number; latencyMs?: number };
+  component_type?: string;
+  icon?: string | null;
 }
 
 interface InfraEdge {
@@ -28,9 +39,9 @@ const TIER_LABELS: Record<string, string> = { edge: "CDN / Edge", application: "
 const TIER_ORDER: Array<"edge" | "application" | "data"> = ["edge", "application", "data"];
 
 const TYPE_TO_TIER: Record<string, "edge" | "application" | "data"> = {
-  cloudfront: "edge", cdn: "edge", "load-balancer": "edge",
-  "app-server": "application", application: "application", web_server: "application", api: "application",
-  postgresql: "data", mysql: "data", database: "data", redis: "data", cache: "data", s3: "data", storage: "data",
+  cloudfront: "edge", cdn: "edge", "load-balancer": "edge", infrastructure: "edge",
+  "app-server": "application", application: "application", web_server: "application", api: "application", "web-server": "application", system: "application",
+  postgresql: "data", mysql: "data", database: "data", redis: "data", cache: "data", s3: "data", storage: "data", "data-store": "data", "message-queue": "data",
 };
 
 const HEALTH_INDICATORS: Record<string, { symbol: string; color: string }> = {
@@ -64,25 +75,41 @@ export default function InfraMap({ environments }: Props) {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [resRes, manRes] = await Promise.all([
+      const [resRes, manRes, compRes] = await Promise.all([
         fetch(`${GATEWAY_API}/deployments/resources/${env}`),
         fetch(`${GATEWAY_API}/deployments/discovery/manifests`),
+        fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(env)}`).catch(() => null),
       ]);
       const resources = resRes.ok ? await resRes.json() : [];
       const manifests = manRes.ok ? await manRes.json() : [];
+      const compsRaw = compRes && compRes.ok ? await compRes.json() : [];
+      const components: ComponentData[] = Array.isArray(compsRaw) ? compsRaw : compsRaw.components || [];
 
       const nodeMap = new Map<string, InfraNode>();
       const edgeList: InfraEdge[] = [];
 
+      // From components (primary nodes)
+      for (const c of components) {
+        nodeMap.set(c.id, {
+          id: c.id, name: c.display_name || c.name, type: c.component_type,
+          tier: TYPE_TO_TIER[c.component_type] || "application",
+          health: c.is_active ? "healthy" : "unknown",
+          component_type: c.component_type,
+          icon: c.icon,
+        });
+      }
+
       // From resources
       for (const r of (Array.isArray(resources) ? resources : resources.resources || [])) {
-        nodeMap.set(r.id || r.name, {
-          id: r.id || r.name, name: r.name, type: r.type || "unknown",
-          tier: TYPE_TO_TIER[r.type] || "application",
-          host: r.host, port: r.port,
-          health: r.health || "unknown",
-          stats: r.stats,
-        });
+        if (!nodeMap.has(r.id || r.name)) {
+          nodeMap.set(r.id || r.name, {
+            id: r.id || r.name, name: r.name, type: r.type || "unknown",
+            tier: TYPE_TO_TIER[r.type] || "application",
+            host: r.host, port: r.port,
+            health: r.health || "unknown",
+            stats: r.stats,
+          });
+        }
       }
 
       // From manifests
@@ -247,11 +274,15 @@ export default function InfraMap({ environments }: Props) {
                   style={{ cursor: "pointer" }}
                 >
                   <rect x={p.x} y={p.y} width={NODE_W} height={NODE_H} rx={10} fill="#12121a" stroke={isSel ? "#6c8aff" : isHov ? "#3a3a5a" : "#1e1e2e"} strokeWidth={isSel ? 2 : isHov ? 2 : 1} />
-                  {/* Health indicator */}
-                  <text x={p.x + 12} y={p.y + 20} fill={hi.color} fontSize="0.7rem">{hi.symbol}</text>
-                  <text x={p.x + 26} y={p.y + 20} fill="#e0e0e8" fontSize="0.8rem" fontWeight={600}>{node.name}</text>
+                  {/* Health indicator + icon */}
+                  {node.icon ? (
+                    <text x={p.x + 10} y={p.y + 20} fontSize="0.8rem">{node.icon}</text>
+                  ) : (
+                    <text x={p.x + 12} y={p.y + 20} fill={hi.color} fontSize="0.7rem">{hi.symbol}</text>
+                  )}
+                  <text x={p.x + (node.icon ? 28 : 26)} y={p.y + 20} fill="#e0e0e8" fontSize="0.8rem" fontWeight={600}>{node.name}</text>
                   <text x={p.x + NODE_W / 2} y={p.y + 38} textAnchor="middle" fill="#8888a0" fontSize="0.65rem">
-                    {node.type}{node.host ? ` · ${node.host}` : ""}
+                    {node.component_type || node.type}{node.host ? ` · ${node.host}` : ""}
                   </text>
                   {node.stats && (
                     <text x={p.x + NODE_W / 2} y={p.y + 52} textAnchor="middle" fill="#5a5a70" fontSize="0.55rem">

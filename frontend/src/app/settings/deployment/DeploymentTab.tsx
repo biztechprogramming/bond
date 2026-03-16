@@ -12,6 +12,7 @@ import DeploymentTimeline from "./DeploymentTimeline";
 import AlertRulesEditor from "./AlertRulesEditor";
 import SecretManager from "./SecretManager";
 import CompareEnvironments from "./CompareEnvironments";
+import ComponentDetail from "./ComponentDetail";
 
 interface WorkspaceMount {
   id?: string;
@@ -58,7 +59,7 @@ type ViewMode =
   | "quick-deploy" | "register-script" | "onboard-server"
   | "script-from-discovery" | "monitoring-setup" | "live-logs"
   | "alert-rules" | "secrets" | "compare-envs" | "infra-map" | "timeline"
-  | "agent-settings";
+  | "agent-settings" | "component-detail";
 
 type TopTab = "env" | "map" | "timeline";
 
@@ -80,6 +81,7 @@ export default function DeploymentTab() {
   const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
   const [sandboxImages, setSandboxImages] = useState<string[]>([]);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
   // Shared settings
@@ -263,6 +265,12 @@ export default function DeploymentTab() {
       case "monitoring-setup": setView("monitoring-setup"); break;
       case "onboard-server": setView("onboard-server"); break;
       case "script-from-discovery": setView("script-from-discovery"); break;
+      case "component-detail":
+        if (params?.componentId) {
+          setSelectedComponentId(params.componentId);
+          setView("component-detail");
+        }
+        break;
       default: setView(navView as ViewMode); break;
     }
   };
@@ -333,6 +341,10 @@ export default function DeploymentTab() {
 
   if (view === "compare-envs") {
     return <CompareEnvironments environments={environments} onBack={goToDashboard} />;
+  }
+
+  if (view === "component-detail" && selectedComponentId) {
+    return <ComponentDetail componentId={selectedComponentId} onBack={goToDashboard} onNavigate={handleEnvNavigate} />;
   }
 
   // Main dashboard view with environment tabs

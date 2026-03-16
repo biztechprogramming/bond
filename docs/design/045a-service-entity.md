@@ -21,7 +21,9 @@ monitoring_alerts                    secrets/{env}/        (env vars)
 
 There's no entity for "the thing I'm deploying." Scripts are named `deploy-my-api` by convention but aren't formally linked to anything. Discovery finds services but they're just JSON blobs inside manifest files. Monitoring alerts reference a "component" string but it's not a foreign key. Secrets are per-environment but not per-service.
 
-**The result:** Every UI component has to guess relationships by string matching names, and users see disconnected lists instead of a coherent picture of what they're managing.
+Additionally, tables use inconsistent prefixes (`deployment_environments`, `monitoring_alerts`) that bake domain assumptions into entity names. Environments aren't deployment-specific — they're a platform concept. Resources aren't deployment-specific — they're infrastructure.
+
+**The result:** Every UI component has to guess relationships by string matching names, users see disconnected lists instead of a coherent picture, and table names discourage reuse across features.
 
 ---
 
@@ -56,8 +58,8 @@ A **component** is any discrete thing Bond manages. It's the anchor entity that 
 A component is a logical entity — "my-api" is the same thing whether it's deployed to dev, staging, or prod. What differs per-environment is the *deployment instance*: which server it runs on, which secrets it uses, which version is deployed.
 
 ```
-deployment_components (global)           Link tables (per-environment)
-──────────────────────────────           ────────────────────────────
+components (global)                      Link tables (per-environment)
+───────────────────                      ────────────────────────────
 my-api                               →   prod: runs on prod-web-01:3000, 5 secrets, v4
   type: application                       staging: runs on staging-01:3000, 5 secrets, v4
   runtime: node                           dev: runs on dev-box:3000, 3 secrets, v5
@@ -120,20 +122,43 @@ experimental (top-level)
 
 A system-type parent is visible in an environment if *any* of its children are visible there.
 
+### 3.4 Table naming: drop the `deployment_` prefix
+
+Tables are named for what they represent, not which feature introduced them. Environments, resources, components, and alerts are platform-level concepts — not deployment-specific.
+
+| Old Name | New Name | Rationale |
+|---|---|---|
+| `deployment_environments` | `environments` | Environments are a platform concept |
+| `deployment_environment_approvers` | `environment_approvers` | Follows from environments |
+| `deployment_environment_history` | `environment_history` | Follows from environments |
+| `deployment_resources` | `resources` | Servers/hosts are infrastructure |
+| `deployment_promotions` | `promotions` | Cleaner, still scoped by context |
+| `deployment_approvals` | `approvals` | Could apply to non-deployment workflows |
+| `deployment_alert_rules` | `alert_rules` | Alerting is broader than deployment |
+| `monitoring_alerts` | `alerts` | Consistent with alert_rules |
+| *(new)* `deployment_components` | `components` | Clean from the start |
+| *(new)* `deployment_component_resources` | `component_resources` | Clean from the start |
+| *(new)* `deployment_component_scripts` | `component_scripts` | Clean from the start |
+| *(new)* `deployment_component_secrets` | `component_secrets` | Clean from the start |
+
+This rename is part of the 045a migration. All gateway code references are updated at the same time.
+
 ---
 
 ## 4. Data Model
 
-### 4.1 `deployment_components` (SpacetimeDB)
+All table names use the new clean naming convention.
+
+### 4.1 `components` (SpacetimeDB)
 
 ```sql
-CREATE TABLE deployment_components (
+CREATE TABLE components (
   id              TEXT PRIMARY KEY,         -- ULID
   name            TEXT NOT NULL UNIQUE,     -- e.g. "my-api" (globally unique)
   display_name    TEXT NOT NULL,            -- e.g. "My API"
   component_type  TEXT NOT NULL,            -- application | web-server | data-store | cache |
                                             -- message-queue | infrastructure | system
-  parent_id       TEXT,                     -- FK → deployment_components (null = top-level)
+  parent_id       TEXT,                     -- FK → components (null = top-level)
   runtime         TEXT,                     -- e.g. "node", "python", "nginx", "postgresql"
   framework       TEXT,                     -- e.g. "express", "next.js", "django"
   repository_url  TEXT,                     -- e.g. "github.com/org/my-api"
@@ -148,16 +173,16 @@ CREATE TABLE deployment_components (
 
 **`component_type: "system"`** is a component that exists purely to group other components. It has no runtime, no port, no health check — just children. But it *can* have a deploy script (for "deploy everything in this system" orchestration) and it *can* have secrets (shared across children).
 
-### 4.2 `deployment_component_resources` (SpacetimeDB)
+### 4.2 `component_resources` (SpacetimeDB)
 
 Links a component to the resource(s) it runs on, per environment.
 
 ```sql
-CREATE TABLE deployment_component_resources (
+CREATE TABLE component_resources (
   id              TEXT PRIMARY KEY,
-  component_id    TEXT NOT NULL,            -- FK → deployment_components
-  resource_id     TEXT NOT NULL,            -- FK → deployment_resources
-  environment     TEXT NOT NULL,            -- FK → deployment_environments
+  component_id    TEXT NOT NULL,            -- FK → components
+  resource_id     TEXT NOT NULL,            -- FK → resources
+  environment     TEXT NOT NULL,            -- FK → environments
   port            INTEGER,                  -- primary port this component listens on
   process_name    TEXT,                     -- e.g. "node", "nginx", "redis-server"
   health_check    TEXT,                     -- e.g. "http://localhost:3000/health"
@@ -168,14 +193,14 @@ CREATE TABLE deployment_component_resources (
 
 This is the key per-environment link. "my-api runs on prod-web-01:3000 in production" and "my-api runs on dev-box:3000 in dev" are two rows in this table, both pointing to the same component.
 
-### 4.3 `deployment_component_scripts` (SpacetimeDB)
+### 4.3 `component_scripts` (SpacetimeDB)
 
 Links scripts to the component they manage. Scripts are global (not per-env) — the same `deploy-my-api` script is promoted through environments.
 
 ```sql
-CREATE TABLE deployment_component_scripts (
+CREATE TABLE component_scripts (
   id              TEXT PRIMARY KEY,
-  component_id    TEXT NOT NULL,            -- FK → deployment_components
+  component_id    TEXT NOT NULL,            -- FK → components
   script_id       TEXT NOT NULL,            -- matches script_id in filesystem registry
   role            TEXT DEFAULT 'deploy',    -- deploy | setup | rollback | migrate | backup
   created_at      BIGINT NOT NULL,
@@ -183,16 +208,16 @@ CREATE TABLE deployment_component_scripts (
 );
 ```
 
-### 4.4 `deployment_component_secrets` (SpacetimeDB)
+### 4.4 `component_secrets` (SpacetimeDB)
 
 Tracks which secrets belong to which component, per environment. Values stay in the encrypted filesystem store.
 
 ```sql
-CREATE TABLE deployment_component_secrets (
+CREATE TABLE component_secrets (
   id              TEXT PRIMARY KEY,
-  component_id    TEXT NOT NULL,            -- FK → deployment_components
+  component_id    TEXT NOT NULL,            -- FK → components
   secret_key      TEXT NOT NULL,            -- e.g. "DATABASE_URL"
-  environment     TEXT NOT NULL,            -- FK → deployment_environments
+  environment     TEXT NOT NULL,            -- FK → environments
   is_sensitive    BOOLEAN DEFAULT true,     -- false for PORT, NODE_ENV etc.
   created_at      BIGINT NOT NULL,
   UNIQUE(component_id, secret_key, environment)
@@ -386,41 +411,70 @@ For system-type components, `children` aggregates child status. The system is "h
 
 ## 8. Migration Path
 
-Fully additive — nothing breaks:
+### 8.1 Table Rename (existing tables)
 
-1. **Add 4 tables** to SpacetimeDB
-2. **Add component CRUD + link endpoints** to gateway
-3. **Auto-create components from discovery** — when a manifest is written, create/link component entities
-4. **Update EnvironmentDashboard** to show component tree instead of raw server/receipt/alert columns
-5. **Add ComponentDetail view**
-6. **Update OnboardServerWizard** Step 3 for component naming
-7. **Backfill** — for existing setups, infer components from manifest application names and script naming conventions
+Rename all existing SpacetimeDB tables to drop the `deployment_` prefix:
 
----
+| Old Name | New Name |
+|---|---|
+| `deployment_environments` | `environments` |
+| `deployment_environment_approvers` | `environment_approvers` |
+| `deployment_environment_history` | `environment_history` |
+| `deployment_resources` | `resources` |
+| `deployment_promotions` | `promotions` |
+| `deployment_approvals` | `approvals` |
+| `deployment_alert_rules` | `alert_rules` |
+| `monitoring_alerts` | `alerts` |
 
-## 9. Files to Create / Modify
+**SpacetimeDB migration strategy:** Create new tables → copy data → update gateway code to reference new names → drop old tables. Since SpacetimeDB uses reducers, the rename is done by registering new table definitions and migrating via reducer calls.
 
-### New Backend
+**Gateway code changes:** ~15 files in `gateway/src/deployments/` reference these table names in SQL strings. All updated in a single pass.
+
+### 8.2 Schema modifications (existing tables)
+
+| Table (new name) | Change |
+|---|---|
+| `alerts` | Add `component_id TEXT` (nullable FK → `components`) |
+| `alert_rules` | Add `component_id TEXT` (nullable FK → `components`), deprecate `applies_to_resources` |
+
+### 8.3 New tables
+
+Create the 4 new component tables: `components`, `component_resources`, `component_scripts`, `component_secrets`.
+
+### 8.4 Code changes
+
+**New backend files:**
 ```
 gateway/src/deployments/
 ├── components.ts              — CRUD logic + STDB queries for all 4 tables
 └── components-router.ts       — Express routes
 ```
 
-### Modified Backend
+**Modified backend files (~15 files):**
 ```
 gateway/src/deployments/
+├── stdb.ts                    — table name updates + component helpers
+├── resources.ts               — table name update
+├── alert-rules.ts             — table name update + component_id field
 ├── router.ts                  — mount /components router
-└── discovery.ts               — auto-create components on discovery
+├── discovery.ts               — auto-create components on discovery
+├── environments.ts            — table name update
+├── promotion.ts               — table name update
+├── secrets-router.ts          — table name update
+├── compare.ts                 — table name update
+├── monitoring.ts              — table name update
+├── health-scheduler.ts        — table name update (if applicable)
+├── trigger-handler.ts         — table name update
+└── quick-deploy.ts            — table name update (if applicable)
 ```
 
-### New Frontend
+**New frontend files:**
 ```
 frontend/src/app/settings/deployment/
 └── ComponentDetail.tsx         — full component detail view
 ```
 
-### Modified Frontend
+**Modified frontend files:**
 ```
 frontend/src/app/settings/deployment/
 ├── DeploymentTab.tsx           — add component-detail view mode
@@ -432,3 +486,12 @@ frontend/src/app/settings/deployment/
 ├── InfraMap.tsx                — component nodes
 └── DeploymentTimeline.tsx      — filter by component
 ```
+
+### 8.5 Ordering
+
+1. **Rename existing tables** (gateway code + STDB migration)
+2. **Create 4 new tables** in SpacetimeDB
+3. **Add component CRUD + link endpoints** to gateway
+4. **Auto-create components from discovery**
+5. **Update frontend components**
+6. **Backfill** — infer components from existing manifest/script names

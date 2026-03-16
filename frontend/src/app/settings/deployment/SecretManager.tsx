@@ -12,6 +12,15 @@ interface Secret {
   source: "manual" | "discovered";
   created_at?: string;
   updated_at?: string;
+  component_id?: string;
+}
+
+interface Component {
+  id: string;
+  name: string;
+  display_name: string;
+  component_type: string;
+  icon: string | null;
 }
 
 export default function SecretManager({ environment, onBack }: SecretManagerProps) {
@@ -25,6 +34,8 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
   const [newValue, setNewValue] = useState("");
   const [msg, setMsg] = useState("");
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const [components, setComponents] = useState<Component[]>([]);
+  const [filterComponent, setFilterComponent] = useState<string>("");
 
   const fetchSecrets = useCallback(async () => {
     try {
@@ -38,6 +49,13 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
   }, [environment]);
 
   useEffect(() => { fetchSecrets(); }, [fetchSecrets]);
+
+  useEffect(() => {
+    fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(environment)}`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setComponents(Array.isArray(data) ? data : data.components || []))
+      .catch(() => {});
+  }, [environment]);
 
   useEffect(() => {
     return () => { timersRef.current.forEach((t) => clearTimeout(t)); };
@@ -128,40 +146,85 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
         </div>
       </div>
 
-      {/* Secrets table */}
-      <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottom: "1px solid #3a3a4e" }}>
-          <span style={styles.header}>Key</span>
-          <span style={styles.header}>Value</span>
-          <span style={styles.header}>Source</span>
-          <span style={styles.header}>Actions</span>
+      {/* Component filter */}
+      {components.length > 0 && (
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <span style={{ fontSize: "0.8rem", color: "#8888a0" }}>Group by:</span>
+          <select style={{ backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: "6px", padding: "6px 10px", fontSize: "0.8rem" }} value={filterComponent} onChange={e => setFilterComponent(e.target.value)}>
+            <option value="">All Secrets</option>
+            {components.map(c => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.display_name || c.name}</option>)}
+            <option value="ungrouped">Ungrouped</option>
+          </select>
         </div>
-        {secrets.length === 0 && (
-          <div style={{ color: "#8888a0", fontSize: "0.85rem", padding: "16px", textAlign: "center" }}>No secrets configured.</div>
-        )}
-        {secrets.map((s) => (
-          <div key={s.key} style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottom: "1px solid #2a2a3e", alignItems: "center" }}>
-            <span style={{ color: "#e0e0e8", fontSize: "0.85rem", fontFamily: "monospace" }}>{s.key}</span>
-            <span style={{ color: "#8888a0", fontSize: "0.85rem", fontFamily: "monospace" }}>
-              {editingKey === s.key ? (
-                <div style={{ display: "flex", gap: "4px" }}>
-                  <input style={styles.input} value={editValue} onChange={(e) => setEditValue(e.target.value)} />
-                  <button style={styles.tinyBtn} onClick={() => saveSecret(s.key, editValue)}>Save</button>
-                  <button style={styles.tinyBtn} onClick={() => setEditingKey(null)}>Cancel</button>
-                </div>
-              ) : revealedKeys.has(s.key) ? s.value : "●●●●●●●●"}
-            </span>
-            <span style={{ fontSize: "0.75rem", color: s.source === "discovered" ? "#ffcc6c" : "#8888a0" }}>{s.source}</span>
-            <div style={{ display: "flex", gap: "4px" }}>
-              {!revealedKeys.has(s.key) && editingKey !== s.key && (
-                <button style={styles.tinyBtn} onClick={() => revealSecret(s.key)}>Reveal</button>
+      )}
+
+      {/* Secrets table */}
+      {(() => {
+        const filteredSecrets = filterComponent === "ungrouped"
+          ? secrets.filter(s => !s.component_id)
+          : filterComponent
+            ? secrets.filter(s => s.component_id === filterComponent)
+            : secrets;
+
+        const groups: Array<{ component: Component | null; secrets: Secret[] }> = [];
+        if (!filterComponent && components.length > 0) {
+          for (const comp of components) {
+            const compSecrets = filteredSecrets.filter(s => s.component_id === comp.id);
+            if (compSecrets.length > 0) groups.push({ component: comp, secrets: compSecrets });
+          }
+          const ungrouped = filteredSecrets.filter(s => !s.component_id);
+          if (ungrouped.length > 0) groups.push({ component: null, secrets: ungrouped });
+        } else {
+          groups.push({ component: null, secrets: filteredSecrets });
+        }
+
+        return groups.map((group, gi) => (
+          <div key={gi}>
+            {group.component && (
+              <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#e0e0e8", padding: "8px 0 4px", display: "flex", alignItems: "center", gap: "6px" }}>
+                {group.component.icon && <span>{group.component.icon}</span>}
+                <span>{group.component.display_name || group.component.name}</span>
+              </div>
+            )}
+            {!group.component && groups.length > 1 && (
+              <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#8888a0", padding: "8px 0 4px" }}>Ungrouped</div>
+            )}
+            <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", overflow: "hidden", marginBottom: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottom: "1px solid #3a3a4e" }}>
+                <span style={styles.header}>Key</span>
+                <span style={styles.header}>Value</span>
+                <span style={styles.header}>Source</span>
+                <span style={styles.header}>Actions</span>
+              </div>
+              {group.secrets.length === 0 && (
+                <div style={{ color: "#8888a0", fontSize: "0.85rem", padding: "16px", textAlign: "center" }}>No secrets configured.</div>
               )}
-              <button style={styles.tinyBtn} onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>Edit</button>
-              <button style={{ ...styles.tinyBtn, color: "#ff6c8a" }} onClick={() => deleteSecret(s.key)}>Delete</button>
+              {group.secrets.map((s) => (
+                <div key={s.key} style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottom: "1px solid #2a2a3e", alignItems: "center" }}>
+                  <span style={{ color: "#e0e0e8", fontSize: "0.85rem", fontFamily: "monospace" }}>{s.key}</span>
+                  <span style={{ color: "#8888a0", fontSize: "0.85rem", fontFamily: "monospace" }}>
+                    {editingKey === s.key ? (
+                      <div style={{ display: "flex", gap: "4px" }}>
+                        <input style={styles.input} value={editValue} onChange={(e) => setEditValue(e.target.value)} />
+                        <button style={styles.tinyBtn} onClick={() => saveSecret(s.key, editValue)}>Save</button>
+                        <button style={styles.tinyBtn} onClick={() => setEditingKey(null)}>Cancel</button>
+                      </div>
+                    ) : revealedKeys.has(s.key) ? s.value : "●●●●●●●●"}
+                  </span>
+                  <span style={{ fontSize: "0.75rem", color: s.source === "discovered" ? "#ffcc6c" : "#8888a0" }}>{s.source}</span>
+                  <div style={{ display: "flex", gap: "4px" }}>
+                    {!revealedKeys.has(s.key) && editingKey !== s.key && (
+                      <button style={styles.tinyBtn} onClick={() => revealSecret(s.key)}>Reveal</button>
+                    )}
+                    <button style={styles.tinyBtn} onClick={() => { setEditingKey(s.key); setEditValue(s.value); }}>Edit</button>
+                    <button style={{ ...styles.tinyBtn, color: "#ff6c8a" }} onClick={() => deleteSecret(s.key)}>Delete</button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
-        ))}
-      </div>
+        ));
+      })()}
 
       {/* Add secret inline */}
       {addMode && (

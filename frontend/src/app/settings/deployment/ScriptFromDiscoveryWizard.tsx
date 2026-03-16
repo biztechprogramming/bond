@@ -13,6 +13,8 @@ interface ScriptFromDiscoveryWizardProps {
   environment: string;
   onComplete: (scripts: RegisteredScript[]) => void;
   onCancel: () => void;
+  componentId?: string;
+  componentName?: string;
 }
 
 interface DiscoveredComponent {
@@ -42,7 +44,7 @@ function isAppType(type: string): boolean {
   return ["app", "application", "app-server", "web_server"].includes(type);
 }
 
-export default function ScriptFromDiscoveryWizard({ manifestName, environment, onComplete, onCancel }: ScriptFromDiscoveryWizardProps) {
+export default function ScriptFromDiscoveryWizard({ manifestName, environment, onComplete, onCancel, componentId, componentName }: ScriptFromDiscoveryWizardProps) {
   const [loading, setLoading] = useState(true);
   const [components, setComponents] = useState<DiscoveredComponent[]>([]);
   const [options, setOptions] = useState<Record<string, ComponentOptions>>({});
@@ -71,7 +73,9 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
         setComponents(comps);
         const opts: Record<string, ComponentOptions> = {};
         for (const c of comps) {
-          opts[c.id] = { enabled: isAppType(c.type), restartMethod: "rolling", healthCheckUrl: c.host ? `http://${c.host}${c.port ? `:${c.port}` : ""}/health` : "", backup: !isAppType(c.type) };
+          // If scoped to a component, enable all by default; otherwise use type heuristic
+          const enabled = componentId ? true : isAppType(c.type);
+          opts[c.id] = { enabled, restartMethod: "rolling", healthCheckUrl: c.host ? `http://${c.host}${c.port ? `:${c.port}` : ""}/health` : "", backup: !isAppType(c.type) };
         }
         setOptions(opts);
       })
@@ -140,6 +144,14 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
         });
         if (regRes.ok) {
           registered.push({ name: script.name, description: script.description || "", content: script.content, level });
+          // Link script to component if provided
+          if (componentId) {
+            await fetch(`${GATEWAY_API}/deployments/components/${componentId}/scripts`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ script_name: script.name }),
+            }).catch(() => {});
+          }
         }
       }
 
@@ -164,7 +176,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
   return (
     <div style={styles.container}>
       <div style={styles.headerRow}>
-        <h2 style={styles.title}>Script from Discovery — {manifestName}</h2>
+        <h2 style={styles.title}>Script from Discovery — {manifestName}{componentName ? ` · ${componentName}` : ""}</h2>
         <button style={styles.secondaryButton} onClick={onCancel}>Cancel</button>
       </div>
 
