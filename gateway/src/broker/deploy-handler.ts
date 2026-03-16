@@ -39,7 +39,12 @@ import { getEnvironments } from "../deployments/stdb.js";
 import { writeDeployLog } from "../deployments/log-stream.js";
 import { saveBaseline } from "../deployments/drift-detector.js";
 import { executeHealthCheck } from "../deployments/health-scheduler.js";
-import { getResources } from "../deployments/resources.js";
+import { getResources, getResource } from "../deployments/resources.js";
+import { runDiscovery } from "../deployments/discovery.js";
+import { collectLogs } from "../deployments/log-collector.js";
+import { generateReplicationScripts } from "../deployments/proposal-generator.js";
+import { readManifest } from "../deployments/manifest.js";
+import { searchExistingIssues, computeFingerprint } from "../deployments/issue-dedup.js";
 
 const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -56,7 +61,14 @@ export type DeployAction =
   | "status"
   | "lock-status"
   | "queue-status"
-  | "dependencies";
+  | "dependencies"
+  | "discover"
+  | "discover-dns"
+  | "discover-topology"
+  | "log-check"
+  | "resource-usage"
+  | "generate-replication-scripts"
+  | "search-issues";
 
 export interface DeployRequest {
   script_id?: string;
@@ -188,6 +200,79 @@ export async function handleDeploy(
       environment: env,
       info: { queue: q, length: q.length },
     };
+  }
+
+  // Discovery and monitoring actions — no promotion check needed
+  if (action === "discover") {
+    const resourceId = (body as any).resource_id;
+    if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
+    const result = await runDiscovery(cfg, resourceId, env, (body as any).discovery_layers);
+    return { status: result.status as any, action, environment: env, info: result.info, reason: result.reason };
+  }
+
+  if (action === "discover-dns") {
+    const domain = (body as any).domain;
+    if (!domain) return { status: "denied", action, reason: "domain is required" };
+    const secrets = loadSecrets(env);
+    const dnsEnv: Record<string, string> = { ...secrets, BOND_DEPLOY_ENV: env };
+    const digResult = await executeCommand(`dig +short ${domain} A && dig +short ${domain} CNAME && dig +short ${domain} MX`, { timeout: 15, env: dnsEnv });
+    return { status: "ok", action, environment: env, info: { domain, raw: digResult.stdout } };
+  }
+
+  if (action === "discover-topology") {
+    const resourceId = (body as any).resource_id;
+    if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
+    return { status: "ok", action, environment: env, info: { message: "Topology discovery triggered — agent should follow connections from manifest" } };
+  }
+
+  if (action === "log-check") {
+    const resourceId = (body as any).resource_id;
+    if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
+    const logResult = await collectLogs(cfg, resourceId, env, (body as any).since_minutes, (body as any).log_sources);
+    return { status: logResult.status as any, action, environment: env, info: logResult.info, reason: logResult.reason };
+  }
+
+  if (action === "resource-usage") {
+    const resourceId = (body as any).resource_id;
+    if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
+    const resource = await getResource(cfg, resourceId);
+    if (!resource) return { status: "error", action, reason: "Resource not found" };
+    const conn = JSON.parse(resource.connection_json || "{}");
+    if (!conn.host) return { status: "error", action, reason: "Resource requires SSH host" };
+    const secrets = loadSecrets(env);
+    const usageCmd = `ssh -o StrictHostKeyChecking=no -o BatchMode=yes -p ${conn.port || 22} ${conn.user || "deploy"}@${conn.host} 'echo "{\\"cpu\\":$(cat /proc/loadavg | cut -d" " -f1),\\"memory\\":$(free | awk "/Mem:/{printf \\"%.1f\\", \\$3/\\$2*100}"),\\"disk\\":$(df / | awk "NR==2{print \\$5}" | tr -d %)}"'`;
+    const usageResult = await executeCommand(usageCmd, { timeout: 15, env: secrets });
+    let info: any = { raw: usageResult.stdout };
+    try { info = JSON.parse(usageResult.stdout); } catch { /* keep raw */ }
+    return { status: usageResult.exit_code === 0 ? "ok" : "error", action, environment: env, info };
+  }
+
+  if (action === "generate-replication-scripts") {
+    const manifestName = (body as any).manifest_name || script_id;
+    if (!manifestName) return { status: "denied", action, reason: "manifest_name or script_id is required" };
+    const manifest = readManifest(manifestName);
+    if (!manifest) return { status: "error", action, reason: `Manifest '${manifestName}' not found` };
+    const result = generateReplicationScripts(manifest);
+    return { status: "ok", action, environment: env, info: { scripts: result.scripts.map(s => s.filename), proposal_dir: result.proposal_dir } };
+  }
+
+  if (action === "search-issues") {
+    const query = (body as any).query;
+    const issueRepo = (body as any).issue_repo;
+    if (!issueRepo) return { status: "denied", action, reason: "issue_repo is required" };
+    if (query) {
+      const searchResult = await executeCommand(`gh issue list --repo ${issueRepo} --state open --search "${query}" --json number,title,labels --limit 10`, { timeout: 15 });
+      let issues: any[] = [];
+      try { issues = JSON.parse(searchResult.stdout || "[]"); } catch { /* empty */ }
+      return { status: "ok", action, environment: env, info: { issues } };
+    }
+    const labels = (body as any).labels;
+    if (labels) {
+      const fp = computeFingerprint(env, labels.category || "", labels.component || "", labels.message || "");
+      const existing = await searchExistingIssues(fp, issueRepo);
+      return { status: "ok", action, environment: env, info: { issues: existing, fingerprint: fp } };
+    }
+    return { status: "ok", action, environment: env, info: { issues: [] } };
   }
 
   // Actions that read from another environment's receipts

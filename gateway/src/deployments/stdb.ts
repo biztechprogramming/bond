@@ -334,6 +334,79 @@ export async function getEnvironmentHistory(
   return rows.map(normalizeHistory);
 }
 
+// ── Monitoring Alerts ────────────────────────────────────────────────────────
+
+export interface MonitoringAlert {
+  id: string;
+  environment: string;
+  category: string;
+  component: string;
+  fingerprint_hash: string;
+  severity: string;
+  message: string;
+  detected_at: number;
+  issue_number?: number;
+  issue_action?: string;
+  resolved_at?: number;
+}
+
+export async function createMonitoringAlert(
+  cfg: GatewayConfig,
+  alert: Omit<MonitoringAlert, "id">,
+): Promise<string> {
+  const id = ulid();
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "create_monitoring_alert",
+    [{ id, ...alert }],
+    cfg.spacetimedbToken,
+  );
+  return id;
+}
+
+export async function getMonitoringAlerts(
+  cfg: GatewayConfig,
+  environment: string,
+  limit = 50,
+): Promise<MonitoringAlert[]> {
+  const rows = await sqlQuery(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    `SELECT * FROM monitoring_alerts WHERE environment = '${esc(environment)}' ORDER BY detected_at DESC LIMIT ${limit}`,
+    cfg.spacetimedbToken,
+  );
+  return rows.map(normalizeAlert);
+}
+
+export async function resolveMonitoringAlert(
+  cfg: GatewayConfig,
+  id: string,
+): Promise<void> {
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "resolve_monitoring_alert",
+    [{ id, resolved_at: Date.now() }],
+    cfg.spacetimedbToken,
+  );
+}
+
+function normalizeAlert(r: any): MonitoringAlert {
+  return {
+    id: r.id,
+    environment: r.environment,
+    category: r.category,
+    component: r.component,
+    fingerprint_hash: r.fingerprint_hash,
+    severity: r.severity,
+    message: r.message,
+    detected_at: Number(r.detected_at),
+    issue_number: r.issue_number ? Number(r.issue_number) : undefined,
+    issue_action: r.issue_action || undefined,
+    resolved_at: r.resolved_at ? Number(r.resolved_at) : undefined,
+  };
+}
+
+// ── History normalizer ──────────────────────────────────────────────────────
+
 function normalizeHistory(r: any): DeploymentEnvironmentHistory {
   return {
     id: r.id,
