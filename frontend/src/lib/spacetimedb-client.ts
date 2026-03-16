@@ -125,7 +125,13 @@ export async function connectToSpacetimeDB(
               "SELECT * FROM conversations",
               "SELECT * FROM conversation_messages",
               "SELECT * FROM work_plans",
-              "SELECT * FROM work_items"
+              "SELECT * FROM work_items",
+              "SELECT * FROM agents",
+              "SELECT * FROM agent_channels",
+              "SELECT * FROM agent_workspace_mounts",
+              "SELECT * FROM llm_models",
+              "SELECT * FROM providers",
+              "SELECT * FROM provider_aliases"
             ]);
         })
         .onConnectError((ctx, err) => {
@@ -154,6 +160,36 @@ export async function connectToSpacetimeDB(
         conn.db.workItems.onInsert(() => notifyListeners());
         conn.db.workItems.onUpdate(() => notifyListeners());
         conn.db.workItems.onDelete(() => notifyListeners());
+      }
+
+      // Agent tables
+      conn.db.agents.onInsert(() => notifyListeners());
+      conn.db.agents.onUpdate(() => notifyListeners());
+      conn.db.agents.onDelete(() => notifyListeners());
+
+      if (conn.db.agent_channels) {
+        conn.db.agent_channels.onInsert(() => notifyListeners());
+        conn.db.agent_channels.onUpdate(() => notifyListeners());
+        conn.db.agent_channels.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.agent_workspace_mounts) {
+        conn.db.agent_workspace_mounts.onInsert(() => notifyListeners());
+        conn.db.agent_workspace_mounts.onUpdate(() => notifyListeners());
+        conn.db.agent_workspace_mounts.onDelete(() => notifyListeners());
+      }
+
+      // Model/provider tables
+      if (conn.db.llm_models) {
+        conn.db.llm_models.onInsert(() => notifyListeners());
+        conn.db.llm_models.onUpdate(() => notifyListeners());
+        conn.db.llm_models.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.providers) {
+        conn.db.providers.onInsert(() => notifyListeners());
+        conn.db.providers.onUpdate(() => notifyListeners());
+        conn.db.providers.onDelete(() => notifyListeners());
       }
 
     } catch (err) {
@@ -225,4 +261,113 @@ export function getAgentName(agentId: string): string | null {
   if (!db) return null;
   const agent = db.db.agents.id.find(agentId);
   return agent ? (agent as any).displayName : null;
+}
+
+export interface AgentRow {
+  id: string;
+  name: string;
+  displayName: string;
+  systemPrompt: string;
+  model: string;
+  utilityModel: string;
+  tools: string;
+  sandboxImage: string;
+  maxIterations: number;
+  isActive: boolean;
+  isDefault: boolean;
+  autoRag?: boolean;
+  autoRagLimit?: number;
+}
+
+export interface AgentChannelRow {
+  id: string;
+  agentId: string;
+  channel: string;
+  sandboxOverride: string;
+  enabled: boolean;
+}
+
+export interface AgentMountRow {
+  id: string;
+  agentId: string;
+  hostPath: string;
+  mountName: string;
+  containerPath: string;
+  readonly: boolean;
+}
+
+export interface LlmModelRow {
+  id: string;
+  provider: string;
+  modelId: string;
+  displayName: string;
+  contextWindow: number;
+  isEnabled: boolean;
+}
+
+export interface ProviderRow {
+  id: string;
+  displayName: string;
+  litellmPrefix: string;
+  isEnabled: boolean;
+}
+
+export function getAgents(): AgentRow[] {
+  if (!db) return [];
+  const rows: AgentRow[] = [];
+  for (const row of db.db.agents.iter()) {
+    rows.push(row as unknown as AgentRow);
+  }
+  rows.sort((a, b) => (a.isDefault ? -1 : b.isDefault ? 1 : a.name.localeCompare(b.name)));
+  return rows;
+}
+
+export function getAgentChannels(agentId: string): AgentChannelRow[] {
+  if (!db || !db.db.agent_channels) return [];
+  const rows: AgentChannelRow[] = [];
+  for (const row of db.db.agent_channels.iter()) {
+    const ch = row as unknown as AgentChannelRow;
+    if (ch.agentId === agentId) rows.push(ch);
+  }
+  return rows;
+}
+
+export function getAgentMounts(agentId: string): AgentMountRow[] {
+  if (!db || !db.db.agent_workspace_mounts) return [];
+  const rows: AgentMountRow[] = [];
+  for (const row of db.db.agent_workspace_mounts.iter()) {
+    const m = row as unknown as AgentMountRow;
+    if (m.agentId === agentId) rows.push(m);
+  }
+  return rows;
+}
+
+export function getLlmModels(): LlmModelRow[] {
+  if (!db || !db.db.llm_models) return [];
+  const rows: LlmModelRow[] = [];
+  for (const row of db.db.llm_models.iter()) {
+    const m = row as unknown as LlmModelRow;
+    if (m.isEnabled) rows.push(m);
+  }
+  return rows;
+}
+
+export function getProviders(): ProviderRow[] {
+  if (!db || !db.db.providers) return [];
+  const rows: ProviderRow[] = [];
+  for (const row of db.db.providers.iter()) {
+    const p = row as unknown as ProviderRow;
+    if (p.isEnabled) rows.push(p);
+  }
+  return rows;
+}
+
+export function getAvailableModels(): { id: string; name: string }[] {
+  const models = getLlmModels();
+  const providers = getProviders();
+  const providerMap = new Map(providers.map(p => [p.id, p.litellmPrefix]));
+  return models.map(m => ({
+    id: `${providerMap.get(m.provider) || m.provider}/${m.modelId}`,
+    name: m.displayName,
+  }));
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, type Conversation, type WorkPlan, type WorkItem } from '@/lib/spacetimedb-client';
+import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow } from '@/lib/spacetimedb-client';
 
 /**
  * useSpacetimeDB React hook.
@@ -65,4 +65,32 @@ export function useSpacetimeConnection() {
   }, []);
 
   return { connected };
+}
+
+/**
+ * Hook to get agents from SpacetimeDB with live updates.
+ */
+export function useAgents(): AgentRow[] {
+  return useSpacetimeDB(() => getAgents());
+}
+
+/**
+ * Hook to get channels for an agent from SpacetimeDB with live updates.
+ */
+export function useAgentChannels(agentId: string): AgentChannelRow[] {
+  return useSpacetimeDB(() => getAgentChannels(agentId), [agentId]);
+}
+
+/**
+ * Hook to get workspace mounts for an agent from SpacetimeDB with live updates.
+ */
+export function useAgentMounts(agentId: string): AgentMountRow[] {
+  return useSpacetimeDB(() => getAgentMounts(agentId), [agentId]);
+}
+
+/**
+ * Hook to get available LLM models from SpacetimeDB with live updates.
+ */
+export function useAvailableModels(): { id: string; name: string }[] {
+  return useSpacetimeDB(() => getAvailableModels());
 }

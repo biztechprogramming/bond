@@ -1,6 +1,9 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import DirBrowser from "@/components/shared/DirBrowser";
 import { BACKEND_API } from "@/lib/config";
+import { useAgents, useAvailableModels } from "@/hooks/useSpacetimeDB";
+import { getAgentChannels, getAgentMounts } from "@/lib/spacetimedb-client";
+import { useSpacetimeDB } from "@/hooks/useSpacetimeDB";
 
 const API_BASE = `${BACKEND_API}/agents`;
 
@@ -45,37 +48,63 @@ const DEFAULT_MODELS = [
 
 const ALL_CHANNELS = ["webchat", "signal", "telegram", "discord", "whatsapp", "email", "slack"];
 
+/** Map SpacetimeDB camelCase rows to the Agent interface used by the UI */
+function mapAgentRows(agentRows: ReturnType<typeof useAgents>): Agent[] {
+  return agentRows.map((a) => {
+    const channels = getAgentChannels(a.id);
+    const mounts = getAgentMounts(a.id);
+    let tools: string[] = [];
+    try { tools = JSON.parse(a.tools || "[]"); } catch { tools = []; }
+    return {
+      id: a.id,
+      name: a.name,
+      display_name: a.displayName,
+      system_prompt: a.systemPrompt,
+      model: a.model,
+      utility_model: a.utilityModel,
+      sandbox_image: a.sandboxImage || null,
+      tools,
+      max_iterations: a.maxIterations,
+      auto_rag: (a as any).autoRag ?? true,
+      auto_rag_limit: (a as any).autoRagLimit ?? 5,
+      is_default: a.isDefault,
+      is_active: a.isActive,
+      workspace_mounts: mounts.map((m) => ({
+        id: m.id,
+        host_path: m.hostPath,
+        mount_name: m.mountName,
+        container_path: m.containerPath,
+        readonly: m.readonly,
+      })),
+      channels: channels.map((c) => ({
+        id: c.id,
+        channel: c.channel,
+        enabled: c.enabled,
+        sandbox_override: c.sandboxOverride || null,
+      })),
+    };
+  });
+}
+
 export default function AgentsTab() {
-  const [agents, setAgents] = useState<Agent[]>([]);
+  // Live subscriptions from SpacetimeDB — auto-updates on any change
+  const agentRows = useAgents();
+  const liveModels = useAvailableModels();
+
+  // Map SpacetimeDB rows to UI shape
+  const agents = useSpacetimeDB(() => mapAgentRows(agentRows), [agentRows]);
+  const availableModels = liveModels.length > 0 ? liveModels : DEFAULT_MODELS.map(id => ({ id, name: id }));
 
   const [sandboxImages, setSandboxImages] = useState<string[]>([]);
   const [editing, setEditing] = useState<Agent | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [msg, setMsg] = useState("");
   const [browsingMountIndex, setBrowsingMountIndex] = useState<number | null>(null);
-  // Fragment state removed (Doc 027 Phase 1) — fragments are now on disk, not per-agent checkboxes
-  const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [agentsRes, imagesRes] = await Promise.all([
-        fetch(API_BASE),
-        fetch(`${API_BASE}/sandbox-images`),
-      ]);
-      setAgents(await agentsRes.json());
-      setSandboxImages(await imagesRes.json());
-      try {
-        const modelsRes = await fetch(`${BACKEND_API}/settings/llm/models`);
-        if (modelsRes.ok) setAvailableModels(await modelsRes.json());
-      } catch { /* models API not available */ }
-    } catch {
-      // API not available
-    }
-  }, []);
-
+  // Sandbox images still fetched via REST (no STDB table for these)
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetch(`${API_BASE}/sandbox-images`).then(r => r.ok ? r.json() : []).then(setSandboxImages).catch(() => {});
+  }, []);
 
   const newAgent = (): Agent => ({
     id: "",
@@ -145,15 +174,7 @@ export default function AgentsTab() {
       });
 
       if (res.ok) {
-        const saved = await res.json();
-
-        // Update local state immediately with the server response
-        // instead of refetching (avoids eventual consistency lag)
-        if (isNew) {
-          setAgents((prev) => [...prev, saved]);
-        } else {
-          setAgents((prev) => prev.map((a) => (a.id === saved.id ? saved : a)));
-        }
+        // SpacetimeDB subscription will auto-update the agents list
         setMsg("Saved successfully.");
         setEditing(null);
       } else {
@@ -171,7 +192,7 @@ export default function AgentsTab() {
       if (res.ok) {
         setMsg("Deleted.");
         setEditing(null);
-        await fetchData();
+        // SpacetimeDB subscription will auto-update
       } else {
         const data = await res.json();
         setMsg(`Error: ${data.detail || "Delete failed"}`);
@@ -186,7 +207,7 @@ export default function AgentsTab() {
       const res = await fetch(`${API_BASE}/${id}/default`, { method: "POST" });
       if (res.ok) {
         setMsg("Default updated.");
-        await fetchData();
+        // SpacetimeDB subscription will auto-update
       }
     } catch {
       setMsg("Failed to set default.");
