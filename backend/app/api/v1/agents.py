@@ -430,10 +430,7 @@ async def update_agent(
 
     # Update channels if provided
     if body.channels is not None:
-        try:
-            await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
-        except Exception:
-            pass  # Table might not exist
+        await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
         
         for channel in body.channels:
             channel_id = str(ULID())
@@ -466,11 +463,8 @@ async def delete_agent(agent_id: str):
     if existing[0]["is_default"]:
         raise HTTPException(status_code=400, detail="Cannot delete the default agent")
     
-    # Delete in transaction-like order (foreign keys might not be enforced)
-    try:
-        await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
-    except:
-        pass  # Table might not exist
+    # Delete in transaction-like order
+    await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
     
     await stdb.query(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
     await stdb.query(f"DELETE FROM agents WHERE id = '{agent_id}'")
