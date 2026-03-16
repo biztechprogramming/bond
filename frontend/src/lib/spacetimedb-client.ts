@@ -80,7 +80,7 @@ export function getConnection(): DbConnection | null {
 }
 
 export async function connectToSpacetimeDB(
-  uri = "ws://localhost:18788/stdb/",
+  uri = "ws://localhost:18787",
   moduleName = "bond-core-v2"
 ): Promise<DbConnection> {
   if (db) return db;

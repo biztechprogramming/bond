@@ -35,6 +35,7 @@ import {
 
 // Import all reducer arg schemas
 import AddAgentReducer from "./add_agent_reducer";
+import AddAgentChannelReducer from "./add_agent_channel_reducer";
 import AddAgentMountReducer from "./add_agent_mount_reducer";
 import AddAgentPromptFragmentReducer from "./add_agent_prompt_fragment_reducer";
 import AddConversationMessageReducer from "./add_conversation_message_reducer";
@@ -46,9 +47,23 @@ import AddPromptTemplateReducer from "./add_prompt_template_reducer";
 import AddPromptTemplateVersionReducer from "./add_prompt_template_version_reducer";
 import AddProviderReducer from "./add_provider_reducer";
 import AddWorkItemReducer from "./add_work_item_reducer";
+import AddComponentResourceReducer from "./add_component_resource_reducer";
+import AddComponentScriptReducer from "./add_component_script_reducer";
+import AddComponentSecretReducer from "./add_component_secret_reducer";
+import AddDeploymentApproverReducer from "./add_deployment_approver_reducer";
 import ConsumeSystemEventReducer from "./consume_system_event_reducer";
 import CreateConversationReducer from "./create_conversation_reducer";
 import CreateWorkPlanReducer from "./create_work_plan_reducer";
+import CreateAlertRuleReducer from "./create_alert_rule_reducer";
+import CreateComponentReducer from "./create_component_reducer";
+import CreateDeploymentEnvironmentReducer from "./create_deployment_environment_reducer";
+import CreateDeploymentResourceReducer from "./create_deployment_resource_reducer";
+import CreateDeploymentTriggerReducer from "./create_deployment_trigger_reducer";
+import CreateMonitoringAlertReducer from "./create_monitoring_alert_reducer";
+import DeactivateComponentReducer from "./deactivate_component_reducer";
+import DeleteAgentReducer from "./delete_agent_reducer";
+import DeleteAgentChannelsForAgentReducer from "./delete_agent_channels_for_agent_reducer";
+import DeleteAgentMountsForAgentReducer from "./delete_agent_mounts_for_agent_reducer";
 import DeleteAgentPromptFragmentReducer from "./delete_agent_prompt_fragment_reducer";
 import DeleteConversationReducer from "./delete_conversation_reducer";
 import DeleteConversationMessageReducer from "./delete_conversation_message_reducer";
@@ -60,22 +75,42 @@ import DeleteProviderAliasReducer from "./delete_provider_alias_reducer";
 import DeleteProviderApiKeyReducer from "./delete_provider_api_key_reducer";
 import DeleteSettingReducer from "./delete_setting_reducer";
 import DeleteWorkPlanReducer from "./delete_work_plan_reducer";
+import DeleteAlertRuleReducer from "./delete_alert_rule_reducer";
+import DeleteDeploymentResourceReducer from "./delete_deployment_resource_reducer";
+import DeleteDeploymentTriggerReducer from "./delete_deployment_trigger_reducer";
+import DisableAlertRuleReducer from "./disable_alert_rule_reducer";
+import EnableAlertRuleReducer from "./enable_alert_rule_reducer";
 import EnqueueSystemEventReducer from "./enqueue_system_event_reducer";
 import ImportConversationReducer from "./import_conversation_reducer";
 import ImportConversationMessageReducer from "./import_conversation_message_reducer";
 import ImportWorkItemReducer from "./import_work_item_reducer";
 import ImportWorkPlanReducer from "./import_work_plan_reducer";
+import InitiatePromotionReducer from "./initiate_promotion_reducer";
 import LogToolReducer from "./log_tool_reducer";
+import RecordApprovalReducer from "./record_approval_reducer";
+import RemoveComponentResourceReducer from "./remove_component_resource_reducer";
+import RemoveComponentScriptReducer from "./remove_component_script_reducer";
+import RemoveComponentSecretReducer from "./remove_component_secret_reducer";
+import RemoveDeploymentApproverReducer from "./remove_deployment_approver_reducer";
 import RenameWorkItemReducer from "./rename_work_item_reducer";
+import ResolveMonitoringAlertReducer from "./resolve_monitoring_alert_reducer";
 import SaveMessageReducer from "./save_message_reducer";
+import SetDefaultAgentReducer from "./set_default_agent_reducer";
 import SetProviderAliasReducer from "./set_provider_alias_reducer";
 import SetProviderApiKeyReducer from "./set_provider_api_key_reducer";
 import SetSettingReducer from "./set_setting_reducer";
+import UpdateAgentReducer from "./update_agent_reducer";
 import UpdateConversationReducer from "./update_conversation_reducer";
 import UpdateMcpServerReducer from "./update_mcp_server_reducer";
 import UpdateProviderReducer from "./update_provider_reducer";
 import UpdateWorkItemReducer from "./update_work_item_reducer";
 import UpdateWorkPlanStatusReducer from "./update_work_plan_status_reducer";
+import UpdateAlertRuleReducer from "./update_alert_rule_reducer";
+import UpdateComponentReducer from "./update_component_reducer";
+import UpdateDeploymentEnvironmentReducer from "./update_deployment_environment_reducer";
+import UpdateDeploymentResourceReducer from "./update_deployment_resource_reducer";
+import UpdateDeploymentTriggerReducer from "./update_deployment_trigger_reducer";
+import UpdatePromotionStatusReducer from "./update_promotion_status_reducer";
 
 // Import all procedure arg schemas
 
@@ -84,11 +119,22 @@ import AgentChannelsRow from "./agent_channels_table";
 import AgentPromptFragmentsRow from "./agent_prompt_fragments_table";
 import AgentWorkspaceMountsRow from "./agent_workspace_mounts_table";
 import AgentsRow from "./agents_table";
+import AlertRulesRow from "./alert_rules_table";
+import AlertsRow from "./alerts_table";
+import ApprovalsRow from "./approvals_table";
+import ComponentResourcesRow from "./component_resources_table";
+import ComponentScriptsRow from "./component_scripts_table";
+import ComponentSecretsRow from "./component_secrets_table";
+import ComponentsRow from "./components_table";
 import ConversationMessagesRow from "./conversation_messages_table";
 import ConversationsRow from "./conversations_table";
+import EnvironmentApproversRow from "./environment_approvers_table";
+import EnvironmentHistoryRow from "./environment_history_table";
+import EnvironmentsRow from "./environments_table";
 import LlmModelsRow from "./llm_models_table";
 import McpServersRow from "./mcp_servers_table";
 import MessagesRow from "./messages_table";
+import PromotionsRow from "./promotions_table";
 import PromptFragmentVersionsRow from "./prompt_fragment_versions_table";
 import PromptFragmentsRow from "./prompt_fragments_table";
 import PromptTemplateVersionsRow from "./prompt_template_versions_table";
@@ -96,9 +142,11 @@ import PromptTemplatesRow from "./prompt_templates_table";
 import ProviderAliasesRow from "./provider_aliases_table";
 import ProviderApiKeysRow from "./provider_api_keys_table";
 import ProvidersRow from "./providers_table";
+import ResourcesRow from "./resources_table";
 import SettingsRow from "./settings_table";
 import SystemEventsRow from "./system_events_table";
 import ToolLogsRow from "./tool_logs_table";
+import TriggersRow from "./triggers_table";
 import WorkItemsRow from "./work_items_table";
 import WorkPlansRow from "./work_plans_table";
 
@@ -150,6 +198,83 @@ const tablesSchema = __schema({
       { name: 'agents_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, AgentsRow),
+  alert_rules: __table({
+    name: 'alert_rules',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'alert_rules_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AlertRulesRow),
+  alerts: __table({
+    name: 'alerts',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'alerts_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AlertsRow),
+  approvals: __table({
+    name: 'approvals',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'approvals_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ApprovalsRow),
+  component_resources: __table({
+    name: 'component_resources',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'component_resources_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ComponentResourcesRow),
+  component_scripts: __table({
+    name: 'component_scripts',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'component_scripts_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ComponentScriptsRow),
+  component_secrets: __table({
+    name: 'component_secrets',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'component_secrets_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ComponentSecretsRow),
+  components: __table({
+    name: 'components',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'components_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ComponentsRow),
   conversationMessages: __table({
     name: 'conversation_messages',
     indexes: [
@@ -172,6 +297,39 @@ const tablesSchema = __schema({
       { name: 'conversations_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ConversationsRow),
+  environment_approvers: __table({
+    name: 'environment_approvers',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'environment_approvers_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, EnvironmentApproversRow),
+  environment_history: __table({
+    name: 'environment_history',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'environment_history_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, EnvironmentHistoryRow),
+  environments: __table({
+    name: 'environments',
+    indexes: [
+      { name: 'name', algorithm: 'btree', columns: [
+        'name',
+      ] },
+    ],
+    constraints: [
+      { name: 'environments_name_key', constraint: 'unique', columns: ['name'] },
+    ],
+  }, EnvironmentsRow),
   llm_models: __table({
     name: 'llm_models',
     indexes: [
@@ -205,6 +363,17 @@ const tablesSchema = __schema({
       { name: 'messages_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, MessagesRow),
+  promotions: __table({
+    name: 'promotions',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'promotions_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PromotionsRow),
   prompt_fragment_versions: __table({
     name: 'prompt_fragment_versions',
     indexes: [
@@ -282,6 +451,17 @@ const tablesSchema = __schema({
       { name: 'providers_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ProvidersRow),
+  resources: __table({
+    name: 'resources',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'resources_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ResourcesRow),
   settings: __table({
     name: 'settings',
     indexes: [
@@ -315,6 +495,17 @@ const tablesSchema = __schema({
       { name: 'tool_logs_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ToolLogsRow),
+  triggers: __table({
+    name: 'triggers',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'triggers_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, TriggersRow),
   workItems: __table({
     name: 'work_items',
     indexes: [
@@ -342,6 +533,7 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("add_agent", AddAgentReducer),
+  __reducerSchema("add_agent_channel", AddAgentChannelReducer),
   __reducerSchema("add_agent_mount", AddAgentMountReducer),
   __reducerSchema("add_agent_prompt_fragment", AddAgentPromptFragmentReducer),
   __reducerSchema("add_conversation_message", AddConversationMessageReducer),
@@ -353,9 +545,23 @@ const reducersSchema = __reducers(
   __reducerSchema("add_prompt_template_version", AddPromptTemplateVersionReducer),
   __reducerSchema("add_provider", AddProviderReducer),
   __reducerSchema("add_work_item", AddWorkItemReducer),
+  __reducerSchema("add_component_resource", AddComponentResourceReducer),
+  __reducerSchema("add_component_script", AddComponentScriptReducer),
+  __reducerSchema("add_component_secret", AddComponentSecretReducer),
+  __reducerSchema("add_deployment_approver", AddDeploymentApproverReducer),
   __reducerSchema("consume_system_event", ConsumeSystemEventReducer),
   __reducerSchema("create_conversation", CreateConversationReducer),
   __reducerSchema("create_work_plan", CreateWorkPlanReducer),
+  __reducerSchema("create_alert_rule", CreateAlertRuleReducer),
+  __reducerSchema("create_component", CreateComponentReducer),
+  __reducerSchema("create_deployment_environment", CreateDeploymentEnvironmentReducer),
+  __reducerSchema("create_deployment_resource", CreateDeploymentResourceReducer),
+  __reducerSchema("create_deployment_trigger", CreateDeploymentTriggerReducer),
+  __reducerSchema("create_monitoring_alert", CreateMonitoringAlertReducer),
+  __reducerSchema("deactivate_component", DeactivateComponentReducer),
+  __reducerSchema("delete_agent", DeleteAgentReducer),
+  __reducerSchema("delete_agent_channels_for_agent", DeleteAgentChannelsForAgentReducer),
+  __reducerSchema("delete_agent_mounts_for_agent", DeleteAgentMountsForAgentReducer),
   __reducerSchema("delete_agent_prompt_fragment", DeleteAgentPromptFragmentReducer),
   __reducerSchema("delete_conversation", DeleteConversationReducer),
   __reducerSchema("delete_conversation_message", DeleteConversationMessageReducer),
@@ -367,22 +573,42 @@ const reducersSchema = __reducers(
   __reducerSchema("delete_provider_api_key", DeleteProviderApiKeyReducer),
   __reducerSchema("delete_setting", DeleteSettingReducer),
   __reducerSchema("delete_work_plan", DeleteWorkPlanReducer),
+  __reducerSchema("delete_alert_rule", DeleteAlertRuleReducer),
+  __reducerSchema("delete_deployment_resource", DeleteDeploymentResourceReducer),
+  __reducerSchema("delete_deployment_trigger", DeleteDeploymentTriggerReducer),
+  __reducerSchema("disable_alert_rule", DisableAlertRuleReducer),
+  __reducerSchema("enable_alert_rule", EnableAlertRuleReducer),
   __reducerSchema("enqueue_system_event", EnqueueSystemEventReducer),
   __reducerSchema("import_conversation", ImportConversationReducer),
   __reducerSchema("import_conversation_message", ImportConversationMessageReducer),
   __reducerSchema("import_work_item", ImportWorkItemReducer),
   __reducerSchema("import_work_plan", ImportWorkPlanReducer),
+  __reducerSchema("initiate_promotion", InitiatePromotionReducer),
   __reducerSchema("log_tool", LogToolReducer),
+  __reducerSchema("record_approval", RecordApprovalReducer),
+  __reducerSchema("remove_component_resource", RemoveComponentResourceReducer),
+  __reducerSchema("remove_component_script", RemoveComponentScriptReducer),
+  __reducerSchema("remove_component_secret", RemoveComponentSecretReducer),
+  __reducerSchema("remove_deployment_approver", RemoveDeploymentApproverReducer),
   __reducerSchema("rename_work_item", RenameWorkItemReducer),
+  __reducerSchema("resolve_monitoring_alert", ResolveMonitoringAlertReducer),
   __reducerSchema("save_message", SaveMessageReducer),
+  __reducerSchema("set_default_agent", SetDefaultAgentReducer),
   __reducerSchema("set_provider_alias", SetProviderAliasReducer),
   __reducerSchema("set_provider_api_key", SetProviderApiKeyReducer),
   __reducerSchema("set_setting", SetSettingReducer),
+  __reducerSchema("update_agent", UpdateAgentReducer),
   __reducerSchema("update_conversation", UpdateConversationReducer),
   __reducerSchema("update_mcp_server", UpdateMcpServerReducer),
   __reducerSchema("update_provider", UpdateProviderReducer),
   __reducerSchema("update_work_item", UpdateWorkItemReducer),
   __reducerSchema("update_work_plan_status", UpdateWorkPlanStatusReducer),
+  __reducerSchema("update_alert_rule", UpdateAlertRuleReducer),
+  __reducerSchema("update_component", UpdateComponentReducer),
+  __reducerSchema("update_deployment_environment", UpdateDeploymentEnvironmentReducer),
+  __reducerSchema("update_deployment_resource", UpdateDeploymentResourceReducer),
+  __reducerSchema("update_deployment_trigger", UpdateDeploymentTriggerReducer),
+  __reducerSchema("update_promotion_status", UpdatePromotionStatusReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

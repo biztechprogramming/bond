@@ -10,14 +10,13 @@ import PlanSelector from "@/components/shared/PlanSelector";
 import KanbanColumn from "@/components/shared/KanbanColumn";
 import { useSpacetimeDB, useWorkPlans, useWorkItems } from "@/hooks/useSpacetimeDB";
 import { 
-  connectToSpacetimeDB, 
   getWorkPlans, 
   getWorkItems,
   getConversations,
   type WorkPlan as STDBWorkPlan,
   type WorkItem as STDBWorkItem
 } from "@/lib/spacetimedb-client";
-import { BACKEND_API, STDB_WS } from "@/lib/config";
+import { BACKEND_API } from "@/lib/config";
 
 const API_BASE = BACKEND_API;
 
@@ -116,11 +115,6 @@ function BoardPage() {
     const name = agents.find(a => a.id === selectedAgentId)?.display_name;
     if (name) currentAgentNameRef.current = name;
   }, [selectedAgentId, agents]);
-
-  // Initialize SpacetimeDB connection
-  useEffect(() => {
-    connectToSpacetimeDB(STDB_WS);
-  }, []);
 
   // Persist conversation ID
   useEffect(() => {

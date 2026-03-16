@@ -621,6 +621,96 @@ export const addAgentMount = spacetimedb.reducer(
   }
 );
 
+export const updateAgent = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    displayName: t.string(),
+    systemPrompt: t.string(),
+    model: t.string(),
+    utilityModel: t.string(),
+    tools: t.string(),
+    sandboxImage: t.string(),
+    maxIterations: t.u32(),
+    isActive: t.bool(),
+    isDefault: t.bool(),
+  },
+  (ctx, agent) => {
+    const existing = ctx.db.agents.id.find(agent.id);
+    if (!existing) return;
+    ctx.db.agents.id.update({
+      ...existing,
+      ...agent,
+      createdAt: existing.createdAt,
+    });
+  }
+);
+
+export const deleteAgent = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const agent = ctx.db.agents.id.find(id);
+    if (!agent || agent.isDefault) return;
+    // Cascade delete channels
+    for (const ch of ctx.db.agent_channels.iter()) {
+      if (ch.agentId === id) ctx.db.agent_channels.id.delete(ch.id);
+    }
+    // Cascade delete mounts
+    for (const m of ctx.db.agent_workspace_mounts.iter()) {
+      if (m.agentId === id) ctx.db.agent_workspace_mounts.id.delete(m.id);
+    }
+    ctx.db.agents.id.delete(id);
+  }
+);
+
+export const setDefaultAgent = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const agent = ctx.db.agents.id.find(id);
+    if (!agent) return;
+    for (const a of ctx.db.agents.iter()) {
+      if (a.isDefault) {
+        ctx.db.agents.id.update({ ...a, isDefault: false });
+      }
+    }
+    ctx.db.agents.id.update({ ...agent, isDefault: true });
+  }
+);
+
+export const addAgentChannel = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    channel: t.string(),
+    sandboxOverride: t.string(),
+    enabled: t.bool(),
+  },
+  (ctx, ch) => {
+    ctx.db.agent_channels.insert({
+      ...ch,
+      createdAt: BigInt(Date.now()),
+    });
+  }
+);
+
+export const deleteAgentChannelsForAgent = spacetimedb.reducer(
+  { agentId: t.string() },
+  (ctx, { agentId }) => {
+    for (const ch of ctx.db.agent_channels.iter()) {
+      if (ch.agentId === agentId) ctx.db.agent_channels.id.delete(ch.id);
+    }
+  }
+);
+
+export const deleteAgentMountsForAgent = spacetimedb.reducer(
+  { agentId: t.string() },
+  (ctx, { agentId }) => {
+    for (const m of ctx.db.agent_workspace_mounts.iter()) {
+      if (m.agentId === agentId) ctx.db.agent_workspace_mounts.id.delete(m.id);
+    }
+  }
+);
+
 // -- Conversations --
 
 export const createConversation = spacetimedb.reducer(

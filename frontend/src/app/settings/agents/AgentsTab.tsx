@@ -2,9 +2,11 @@ import React, { useEffect, useState, useCallback } from "react";
 import DirBrowser from "@/components/shared/DirBrowser";
 import { BACKEND_API } from "@/lib/config";
 import { useAvailableModels, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
-import { getAgents as getAgentRows, getAgentChannels, getAgentMounts } from "@/lib/spacetimedb-client";
+import { getAgents as getAgentRows, getAgentChannels, getAgentMounts, getConnection } from "@/lib/spacetimedb-client";
 
-const API_BASE = `${BACKEND_API}/agents`;
+function generateId(): string {
+  return crypto.randomUUID().replace(/-/g, '');
+}
 
 interface WorkspaceMount {
   id?: string;
@@ -90,7 +92,6 @@ export default function AgentsTab() {
   const agents = useSpacetimeDB(() => mapAgentRows(getAgentRows()));
   const liveModels = useAvailableModels();
   const availableModels = liveModels.length > 0 ? liveModels : DEFAULT_MODELS.map(id => ({ id, name: id }));
-
   const [sandboxImages, setSandboxImages] = useState<string[]>([]);
   const [editing, setEditing] = useState<Agent | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -99,7 +100,7 @@ export default function AgentsTab() {
 
   // Sandbox images still fetched via REST (no STDB table for these)
   useEffect(() => {
-    fetch(`${API_BASE}/sandbox-images`).then(r => r.ok ? r.json() : []).then(setSandboxImages).catch(() => {});
+    fetch(`${BACKEND_API}/agents/sandbox-images`).then(r => r.ok ? r.json() : []).then(setSandboxImages).catch(() => {});
   }, []);
 
   const newAgent = (): Agent => ({
@@ -138,61 +139,81 @@ export default function AgentsTab() {
     if (!editing) return;
     setMsg("");
     try {
-      const body = {
-        name: editing.name,
-        display_name: editing.display_name,
-        system_prompt: editing.system_prompt,
-        model: editing.model,
-        utility_model: editing.utility_model,
-        sandbox_image: editing.sandbox_image,
-        max_iterations: editing.max_iterations,
-        auto_rag: editing.auto_rag,
-        auto_rag_limit: editing.auto_rag_limit,
-        workspace_mounts: editing.workspace_mounts?.map((m) => ({
-          host_path: m.host_path,
-          mount_name: m.mount_name,
-          container_path: m.container_path || `/workspace/${m.mount_name}`,
-          readonly: m.readonly,
-        })) || [],
-        channels: editing.channels?.map((c) => ({
-          channel: c.channel,
-          enabled: c.enabled,
-          sandbox_override: c.sandbox_override,
-        })),
-      };
+      const conn = getConnection();
+      if (!conn) { setMsg("Not connected to database"); return; }
 
-      const url = isNew ? API_BASE : `${API_BASE}/${editing.id}`;
-      const method = isNew ? "POST" : "PUT";
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const agentId = isNew ? generateId() : editing.id;
+      const toolsJson = JSON.stringify(editing.tools || []);
 
-      if (res.ok) {
-        // SpacetimeDB subscription will auto-update the agents list
-        setMsg("Saved successfully.");
-        setEditing(null);
+      if (isNew) {
+        conn.reducers.addAgent({
+          id: agentId,
+          name: editing.name,
+          displayName: editing.display_name,
+          systemPrompt: editing.system_prompt,
+          model: editing.model,
+          utilityModel: editing.utility_model,
+          tools: toolsJson,
+          sandboxImage: editing.sandbox_image || "",
+          maxIterations: editing.max_iterations,
+          isActive: true,
+          isDefault: false,
+        });
       } else {
-        const data = await res.json();
-        setMsg(`Error: ${data.detail || "Save failed"}`);
+        conn.reducers.updateAgent({
+          id: agentId,
+          name: editing.name,
+          displayName: editing.display_name,
+          systemPrompt: editing.system_prompt,
+          model: editing.model,
+          utilityModel: editing.utility_model,
+          tools: toolsJson,
+          sandboxImage: editing.sandbox_image || "",
+          maxIterations: editing.max_iterations,
+          isActive: editing.is_active,
+          isDefault: editing.is_default,
+        });
       }
-    } catch {
-      setMsg("Failed to save.");
+
+      // Replace mounts: delete all, then add new ones
+      conn.reducers.deleteAgentMountsForAgent({ agentId });
+      for (const mount of editing.workspace_mounts || []) {
+        conn.reducers.addAgentMount({
+          id: generateId(),
+          agentId,
+          hostPath: mount.host_path,
+          mountName: mount.mount_name,
+          containerPath: mount.container_path || `/workspace/${mount.mount_name}`,
+          readonly: mount.readonly,
+        });
+      }
+
+      // Replace channels: delete all, then add new ones
+      conn.reducers.deleteAgentChannelsForAgent({ agentId });
+      for (const ch of editing.channels || []) {
+        conn.reducers.addAgentChannel({
+          id: generateId(),
+          agentId,
+          channel: ch.channel,
+          sandboxOverride: ch.sandbox_override || "",
+          enabled: ch.enabled,
+        });
+      }
+
+      setMsg("Saved successfully.");
+      setEditing(null);
+    } catch (err: any) {
+      setMsg(`Error: ${err.message || "Save failed"}`);
     }
   };
 
   const deleteAgent = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setMsg("Deleted.");
-        setEditing(null);
-        // SpacetimeDB subscription will auto-update
-      } else {
-        const data = await res.json();
-        setMsg(`Error: ${data.detail || "Delete failed"}`);
-      }
+      const conn = getConnection();
+      if (!conn) { setMsg("Not connected to database"); return; }
+      conn.reducers.deleteAgent({ id });
+      setMsg("Deleted.");
+      setEditing(null);
     } catch {
       setMsg("Failed to delete.");
     }
@@ -200,11 +221,10 @@ export default function AgentsTab() {
 
   const setDefault = async (id: string) => {
     try {
-      const res = await fetch(`${API_BASE}/${id}/default`, { method: "POST" });
-      if (res.ok) {
-        setMsg("Default updated.");
-        // SpacetimeDB subscription will auto-update
-      }
+      const conn = getConnection();
+      if (!conn) { setMsg("Not connected to database"); return; }
+      conn.reducers.setDefaultAgent({ id });
+      setMsg("Default updated.");
     } catch {
       setMsg("Failed to set default.");
     }
