@@ -279,6 +279,17 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     console.log(`[gateway] Bond gateway listening on ws://${config.host}:${config.port}/ws`);
     console.log(`[gateway] Backend URL: ${config.backendUrl}`);
 
+    // Non-blocking backup on startup
+    import("node:child_process").then(({ spawn }) => {
+      const backupScript = new URL("../../scripts/backup-spacetimedb.sh", import.meta.url).pathname;
+      const child = spawn("bash", [backupScript], { stdio: "ignore", detached: true });
+      child.unref();
+      child.on("exit", (code) => {
+        if (code === 0) console.log("[gateway] SpacetimeDB backup completed on startup");
+        else console.warn(`[gateway] SpacetimeDB backup exited with code ${code}`);
+      });
+    }).catch(() => { /* backup script missing — non-fatal */ });
+
     // Initialize SpacetimeDB real-time subscription for system events.
     // This enables the completion loop: when a background coding agent finishes,
     // the worker writes a system_event row → SpacetimeDB pushes it here via

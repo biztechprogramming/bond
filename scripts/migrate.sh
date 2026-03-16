@@ -50,7 +50,7 @@ spacetime_publish() {
     local exit_code
 
     set +e
-    output=$(spacetime publish --server "$server_url" --yes --delete-data=on-conflict $SPACETIMEDB_DATABASE 2>&1)
+    output=$(spacetime publish --server "$server_url" --yes $SPACETIMEDB_DATABASE 2>&1)
     exit_code=$?
     set -e
 
@@ -70,7 +70,7 @@ spacetime_publish() {
         spacetime login --token "$fresh_token"
 
         echo "  Retrying publish..."
-        spacetime publish --server "$server_url" --yes --delete-data=on-conflict $SPACETIMEDB_DATABASE
+        spacetime publish --server "$server_url" --yes $SPACETIMEDB_DATABASE
         return $?
     fi
 
