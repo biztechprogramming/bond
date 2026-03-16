@@ -118,7 +118,9 @@ async def _fetch_google_api(
     key_type: str,
 ) -> list[dict]:
     """Fetch Google/Gemini models via generativelanguage API."""
-    url = provider["api_base_url"] + provider["models_endpoint"]
+    base = provider.get("api_base_url") or "https://generativelanguage.googleapis.com"
+    endpoint = provider.get("models_endpoint") or "/v1beta/models"
+    url = base + endpoint
     resp = await client.get(url, params={"key": api_key})
     resp.raise_for_status()
 
