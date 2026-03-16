@@ -1,5 +1,7 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { BACKEND_API, GATEWAY_API } from "@/lib/config";
+import { useAgentsWithRelations, useAvailableModels, useSettingsMap, callReducer, type AgentWithRelations } from "@/hooks/useSpacetimeDB";
+import { getAgents } from "@/lib/spacetimedb-client";
 import SetupWizard from "./SetupWizard";
 import AgentCardGrid from "./AgentCardGrid";
 import SharedSettingsForm from "./SharedSettingsForm";
@@ -13,33 +15,6 @@ import AlertRulesEditor from "./AlertRulesEditor";
 import SecretManager from "./SecretManager";
 import CompareEnvironments from "./CompareEnvironments";
 import ComponentDetail from "./ComponentDetail";
-
-interface WorkspaceMount {
-  id?: string;
-  host_path: string;
-  mount_name: string;
-  container_path: string;
-  readonly: boolean;
-}
-
-interface ChannelConfig {
-  channel: string;
-  enabled: boolean;
-  sandbox_override: string | null;
-}
-
-interface Agent {
-  id: string;
-  name: string;
-  display_name: string;
-  system_prompt: string;
-  model: string;
-  utility_model: string;
-  sandbox_image: string | null;
-  is_active: boolean;
-  workspace_mounts: WorkspaceMount[];
-  channels: ChannelConfig[];
-}
 
 interface Environment {
   name: string;
@@ -75,179 +50,145 @@ export default function DeploymentTab() {
   const [view, setView] = useState<ViewMode>("loading");
   const [topTab, setTopTab] = useState<TopTab>("env");
   const [selectedEnvironment, setSelectedEnvironment] = useState<string>("");
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [allAgents, setAllAgents] = useState<Agent[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>(DEFAULT_ENVIRONMENTS);
-  const [availableModels, setAvailableModels] = useState<{ id: string; name: string }[]>([]);
   const [sandboxImages, setSandboxImages] = useState<string[]>([]);
-  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [editingAgent, setEditingAgent] = useState<AgentWithRelations | null>(null);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
+  const [initialized, setInitialized] = useState(false);
 
-  // Shared settings
-  const [shared, setShared] = useState({
-    model: "anthropic/claude-sonnet-4-20250514",
-    utility_model: "anthropic/claude-sonnet-4-20250514",
-    sandbox_image: "",
-  });
+  // SpacetimeDB subscriptions (reactive, no fetch needed)
+  const allAgents = useAgentsWithRelations();
+  const settingsMap = useSettingsMap();
+  const availableModels = useAvailableModels();
 
-  const fetchData = useCallback(async () => {
+  const agents = useMemo(() => allAgents.filter(a => a.name.startsWith("deploy-")), [allAgents]);
+
+  const shared = useMemo(() => ({
+    model: settingsMap["deployment.shared.model"] || "anthropic/claude-sonnet-4-20250514",
+    utility_model: settingsMap["deployment.shared.utility_model"] || "anthropic/claude-sonnet-4-20250514",
+    sandbox_image: settingsMap["deployment.shared.sandbox_image"] || "",
+  }), [settingsMap]);
+  const [sharedOverride, setSharedOverride] = useState<{ model: string; utility_model: string; sandbox_image: string } | null>(null);
+  const effectiveShared = sharedOverride ?? shared;
+
+  // REST-only fetches (sandbox images, environments)
+  const fetchExceptions = useCallback(async () => {
     try {
-      const agentsRes = await fetch(`${BACKEND_API}/agents`);
-      const allAgentsList: Agent[] = agentsRes.ok ? await agentsRes.json() : [];
-      setAllAgents(allAgentsList);
-
-      const deployAgents = allAgentsList.filter((a) => a.name.startsWith("deploy-"));
-      setAgents(deployAgents);
-
-      try {
-        const envRes = await fetch(`${GATEWAY_API}/deployments/environments`);
-        if (envRes.ok) {
-          const envData = await envRes.json();
-          if (Array.isArray(envData) && envData.length > 0) {
-            setEnvironments(envData);
-            if (!selectedEnvironment) setSelectedEnvironment(envData[0].name);
-          }
+      const envRes = await fetch(`${GATEWAY_API}/deployments/environments`);
+      if (envRes.ok) {
+        const envData = await envRes.json();
+        if (Array.isArray(envData) && envData.length > 0) {
+          setEnvironments(envData);
+          setSelectedEnvironment(prev => prev || envData[0].name);
         }
-      } catch { /* use defaults */ }
+      }
+    } catch { /* use defaults */ }
 
-      if (!selectedEnvironment) setSelectedEnvironment(DEFAULT_ENVIRONMENTS[0].name);
-
-      try {
-        const settingsRes = await fetch(`${BACKEND_API}/settings`);
-        if (settingsRes.ok) {
-          const settings = await settingsRes.json();
-          setShared({
-            model: settings["deployment.shared.model"] || "anthropic/claude-sonnet-4-20250514",
-            utility_model: settings["deployment.shared.utility_model"] || "anthropic/claude-sonnet-4-20250514",
-            sandbox_image: settings["deployment.shared.sandbox_image"] || "",
-          });
-        }
-      } catch { /* use defaults */ }
-
-      try {
-        const modelsRes = await fetch(`${BACKEND_API}/settings/llm/models`);
-        if (modelsRes.ok) setAvailableModels(await modelsRes.json());
-      } catch { /* use defaults */ }
-
-      try {
-        const imagesRes = await fetch(`${BACKEND_API}/agents/sandbox-images`);
-        if (imagesRes.ok) setSandboxImages(await imagesRes.json());
-      } catch { /* use defaults */ }
-
-      setView(deployAgents.length > 0 ? "dashboard" : "empty");
-    } catch {
-      setView("empty");
-    }
+    try {
+      const imagesRes = await fetch(`${BACKEND_API}/agents/sandbox-images`);
+      if (imagesRes.ok) setSandboxImages(await imagesRes.json());
+    } catch { /* use defaults */ }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetchExceptions(); }, [fetchExceptions]);
+
+  // Set initial view once data arrives
+  useEffect(() => {
+    if (!initialized && allAgents.length >= 0) {
+      if (!selectedEnvironment) setSelectedEnvironment(DEFAULT_ENVIRONMENTS[0].name);
+      setView(agents.length > 0 ? "dashboard" : "empty");
+      setInitialized(true);
+    }
+  }, [allAgents, agents.length, initialized, selectedEnvironment]);
+
+  // Keep view in sync when agents change after init
+  useEffect(() => {
+    if (initialized && view === "empty" && agents.length > 0) setView("dashboard");
+    if (initialized && view === "dashboard" && agents.length === 0) setView("empty");
+  }, [agents.length, initialized, view]);
 
   // Collect workspace mounts from existing non-deploy agents for wizard
-  const existingMounts: WorkspaceMount[] = [];
-  const seenPaths = new Set<string>();
-  for (const a of allAgents) {
-    if (a.name.startsWith("deploy-")) continue;
-    for (const m of a.workspace_mounts || []) {
-      const key = `${m.host_path}:${m.container_path}`;
-      if (!seenPaths.has(key)) {
-        seenPaths.add(key);
-        existingMounts.push({ ...m, readonly: true });
+  const existingMounts = useMemo(() => {
+    const mounts: AgentWithRelations["workspace_mounts"] = [];
+    const seenPaths = new Set<string>();
+    for (const a of allAgents) {
+      if (a.name.startsWith("deploy-")) continue;
+      for (const m of a.workspace_mounts || []) {
+        const key = `${m.host_path}:${m.container_path}`;
+        if (!seenPaths.has(key)) {
+          seenPaths.add(key);
+          mounts.push({ ...m, readonly: true });
+        }
       }
     }
-  }
+    return mounts;
+  }, [allAgents]);
 
   const envNames = environments.map((e) => e.name);
 
   // Compute override warning for edit-all mode
   const overriddenAgents = agents.filter(
-    (a) => a.model !== shared.model || a.utility_model !== shared.utility_model
+    (a) => a.model !== effectiveShared.model || a.utility_model !== effectiveShared.utility_model
   );
   const overrideWarning = overriddenAgents.length > 0
     ? `${overriddenAgents.length} agent(s) have overrides (${overriddenAgents.map((a) => a.display_name || a.name).join(", ")}). These will NOT be changed.`
     : undefined;
 
-  const saveSharedSettings = async () => {
+  const updateAgentViaReducer = (agent: AgentWithRelations, model: string, utilityModel: string, sandboxImage: string) => {
+    const agentRow = getAgents().find(r => r.id === agent.id);
+    callReducer(conn => conn.reducers.updateAgent({
+      id: agent.id,
+      name: agent.name,
+      displayName: agent.display_name,
+      systemPrompt: agent.system_prompt,
+      model,
+      utilityModel,
+      tools: agentRow?.tools || "[]",
+      sandboxImage: sandboxImage || agent.sandbox_image || "",
+      maxIterations: agentRow?.maxIterations ?? 50,
+      isActive: agent.is_active,
+      isDefault: agent.is_default,
+    }));
+  };
+
+  const saveSharedSettings = () => {
     setMsg("");
     try {
-      const entries = [
-        { key: "deployment.shared.model", value: shared.model },
-        { key: "deployment.shared.utility_model", value: shared.utility_model },
-        { key: "deployment.shared.sandbox_image", value: shared.sandbox_image },
-      ];
-      for (const entry of entries) {
-        await fetch(`${BACKEND_API}/settings/${entry.key}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: entry.value }),
-        });
+      if (!callReducer(conn => {
+        const entries = [
+          { key: "deployment.shared.model", value: effectiveShared.model },
+          { key: "deployment.shared.utility_model", value: effectiveShared.utility_model },
+          { key: "deployment.shared.sandbox_image", value: effectiveShared.sandbox_image },
+        ];
+        for (const entry of entries) {
+          conn.reducers.setSetting({ key: entry.key, value: entry.value, keyType: "string" });
+        }
+      })) {
+        setMsg("Not connected to SpacetimeDB.");
+        return;
       }
 
       for (const agent of agents) {
         const hasModelOverride = overriddenAgents.some((a) => a.id === agent.id);
         if (!hasModelOverride) {
-          await fetch(`${BACKEND_API}/agents/${agent.id}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: agent.name,
-              display_name: agent.display_name,
-              system_prompt: agent.system_prompt,
-              model: shared.model,
-              utility_model: shared.utility_model,
-              sandbox_image: shared.sandbox_image || agent.sandbox_image,
-              workspace_mounts: (agent.workspace_mounts || []).map((m) => ({
-                host_path: m.host_path,
-                mount_name: m.mount_name,
-                container_path: m.container_path,
-                readonly: true,
-              })),
-              channels: (agent.channels || []).map((c) => ({
-                channel: c.channel,
-                enabled: c.enabled,
-                sandbox_override: c.sandbox_override,
-              })),
-            }),
-          });
+          updateAgentViaReducer(agent, effectiveShared.model, effectiveShared.utility_model, effectiveShared.sandbox_image);
         }
       }
+      setSharedOverride(null);
       setMsg("Shared settings saved.");
-      await fetchData();
     } catch {
       setMsg("Failed to save shared settings.");
     }
   };
 
-  const resetAllOverrides = async () => {
+  const resetAllOverrides = () => {
     setMsg("");
     try {
       for (const agent of agents) {
-        await fetch(`${BACKEND_API}/agents/${agent.id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: agent.name,
-            display_name: agent.display_name,
-            system_prompt: agent.system_prompt,
-            model: shared.model,
-            utility_model: shared.utility_model,
-            sandbox_image: shared.sandbox_image || agent.sandbox_image,
-            workspace_mounts: (agent.workspace_mounts || []).map((m) => ({
-              host_path: m.host_path,
-              mount_name: m.mount_name,
-              container_path: m.container_path,
-              readonly: true,
-            })),
-            channels: (agent.channels || []).map((c) => ({
-              channel: c.channel,
-              enabled: c.enabled,
-              sandbox_override: c.sandbox_override,
-            })),
-          }),
-        });
+        updateAgentViaReducer(agent, effectiveShared.model, effectiveShared.utility_model, effectiveShared.sandbox_image);
       }
       setMsg("All overrides reset.");
-      await fetchData();
     } catch {
       setMsg("Failed to reset overrides.");
     }
@@ -284,7 +225,7 @@ export default function DeploymentTab() {
       <QuickDeployForm
         environments={environments}
         onBack={goToDashboard}
-        onDeployed={() => fetchData()}
+        onDeployed={goToDashboard}
       />
     );
   }
@@ -293,7 +234,7 @@ export default function DeploymentTab() {
     return (
       <ScriptRegistration
         onBack={goToDashboard}
-        onRegistered={() => fetchData()}
+        onRegistered={goToDashboard}
       />
     );
   }
@@ -306,7 +247,7 @@ export default function DeploymentTab() {
           availableModels={availableModels}
           sandboxImages={sandboxImages}
           existingMounts={existingMounts}
-          onCreated={() => fetchData()}
+          onCreated={goToDashboard}
         />
         <div style={{ borderTop: "1px solid #1e1e2e", paddingTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
           <span style={{ fontSize: "0.85rem", color: "#8888a0" }}>Just want to deploy quickly?</span>
@@ -321,12 +262,12 @@ export default function DeploymentTab() {
   if (view === "edit-one" && editingAgent) {
     return (
       <SingleAgentEditor
-        agent={editingAgent as Agent & { system_prompt: string; sandbox_image: string | null; workspace_mounts: WorkspaceMount[]; channels: ChannelConfig[] }}
+        agent={editingAgent}
         sharedModel={shared.model}
         sharedUtilityModel={shared.utility_model}
         availableModels={availableModels}
         onBack={() => { setEditingAgent(null); setView("dashboard"); }}
-        onSaved={() => { setEditingAgent(null); setView("dashboard"); fetchData(); }}
+        onSaved={() => { setEditingAgent(null); setView("dashboard"); }}
       />
     );
   }
@@ -414,7 +355,7 @@ export default function DeploymentTab() {
           </div>
           <SharedSettingsForm
             settings={shared}
-            onChange={setShared}
+            onChange={setSharedOverride}
             availableModels={availableModels}
             sandboxImages={sandboxImages}
             overrideWarning={overrideWarning}

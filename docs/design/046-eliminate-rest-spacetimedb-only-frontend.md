@@ -1,6 +1,6 @@
 # Design Doc 046: Eliminate REST — SpacetimeDB-Only Frontend
 
-## Status: Draft
+## Status: Implemented (Phases 1-3 complete, cleanup remaining)
 ## Author: Bond AI
 ## Date: 2026-03-16
 
@@ -102,7 +102,7 @@ function generateId(): string {
 | **Main Chat (page.tsx)** | Backend + Gateway | agents list, conversation messages, message edit/delete | agents, conversations, conversationMessages | updateConversation ✅, deleteConversationMessage ✅ |
 | **Board (Kanban)** | Backend | agents list, plans CRUD, items CRUD, plan resume | agents, workPlans, workItems | All exist ✅ |
 | **Board > Plans** | Backend | plans list, plan detail, plan delete | workPlans, workItems | All exist ✅ |
-| **Settings > Prompts** | Backend | fragments list, fragment edit, template edit, versions, rollback, generate system prompt | prompt_fragments, prompt_templates, prompt_fragment_versions, prompt_template_versions, agent_prompt_fragments | Most exist ✅. Need: `updatePromptFragment`, `updatePromptTemplate`, `rollbackPromptFragment` |
+| **Settings > Prompts** | Backend | fragments list, fragment edit, template edit, versions, rollback, generate system prompt | prompt_fragments, prompt_templates, prompt_fragment_versions, prompt_template_versions, agent_prompt_fragments | **Exception: keep REST** — fragments are files on disk (`prompts/`), not DB CRUD. Templates are DB-backed but unused by worker. AI generation is compute. |
 | **Settings Page (LLM/Embedding/Keys)** | Backend | settings get/set, embedding config, API keys | settings, providers, provider_api_keys | setSetting ✅, setProviderApiKey ✅ |
 
 ### 4.2 Tier 2 — Deployment (many components, data in STDB)
@@ -134,6 +134,10 @@ function generateId(): string {
 
 These should **not** be migrated because they're imperative actions, not data CRUD:
 
+- `prompts/fragments` — Filesystem reads/writes (`prompts/` directory), not database CRUD
+- `prompts/fragments/{path}` — Read/write markdown files on disk
+- `prompts/templates` — DB-backed but not consumed by worker; version history and rollback are complex multi-step operations
+- `prompts/generate/*` — AI compute endpoints
 - `agents/sandbox-images` — Docker image listing (host system query)
 - `agents/browse-dirs` — File system browsing (host system query)
 - `channels/*/start|stop` — Runtime channel lifecycle
@@ -155,7 +159,7 @@ These should **not** be migrated because they're imperative actions, not data CR
 
 ### Phase 2: Settings Pages (2-3 days)
 4. **Settings main (LLM/Embedding/Keys)** — Replace settings fetch with `useSpacetimeDB(() => getSettings())`, writes via `setSetting` reducer
-5. **Prompts tab** — Add missing reducers (`updatePromptFragment`, `updatePromptTemplate`), use subscription hooks
+5. **Prompts tab** — Exception: keep REST (filesystem-backed fragments, see §4.4)
 6. **Channels tab** — Migrate config reads to STDB, keep channel lifecycle REST
 
 ### Phase 3: Deployment (3-5 days)
@@ -172,16 +176,8 @@ These should **not** be migrated because they're imperative actions, not data CR
 
 ## 6. Required New Reducers
 
-These reducers don't exist yet and need to be added to `spacetimedb/spacetimedb/src/index.ts`:
-
-| Reducer | Table | Purpose |
-|---|---|---|
-| `updatePromptFragment` | prompt_fragments | Edit fragment content, name, category, etc. |
-| `updatePromptTemplate` | prompt_templates | Edit template content, variables, etc. |
-| `rollbackPromptFragmentVersion` | prompt_fragments + prompt_fragment_versions | Restore a fragment to a previous version |
-| `rollbackPromptTemplateVersion` | prompt_templates + prompt_template_versions | Restore a template to a previous version |
-
-Most other tables already have full CRUD reducers.
+No new reducers needed. Prompts stay REST (filesystem-backed fragments, see §4.4).
+All other tables already have full CRUD reducers.
 
 ---
 
@@ -317,16 +313,21 @@ Once migration is complete, enforce these rules:
 
 ## 13. Migration Checklist
 
-- [x] Agents tab — subscriptions + reducers (2026-03-16)
-- [ ] Main chat page — remove agents REST fetch
-- [ ] Board page — replace plans/items REST with hooks + reducers
-- [ ] Board plans page — same
-- [ ] Settings main — settings, embedding, API keys via STDB
-- [ ] Prompts tab — fragments + templates via STDB
-- [ ] Channels tab — config reads via STDB (keep lifecycle REST)
-- [ ] Deployment components — phased migration
-- [ ] Move connection to root layout
-- [ ] Add missing getter functions to spacetimedb-client.ts
-- [ ] Add missing hooks to useSpacetimeDB.ts
-- [ ] Remove dead backend REST endpoints
+### Completed (2026-03-16)
+- [x] Agents tab — subscriptions + reducers
+- [x] Main chat page — `useAgents()` replaces REST fetch
+- [x] Board page — STDB hooks + reducers for agents/plans/items
+- [x] Board plans page — fully client-side with STDB, client filtering/pagination
+- [x] Settings main — `useSettings()`/`useSettingsMap()` + `setSetting`/`setProviderApiKey` reducers
+- [x] Prompts tab — Exception: keep REST (filesystem-backed fragments, see §4.4)
+- [x] Deployment — `DeploymentTab`, `SingleAgentEditor`, `SetupWizard` migrated via `useAgentsWithRelations()`, `useSettingsMap()`, `callReducer()`
+- [x] Move connection to root layout — `SpacetimeDBProvider` in `layout.tsx`
+- [x] Add missing getter functions — `getSettings`, `getSetting`, `getProviderApiKeys` in `spacetimedb-client.ts`
+- [x] Add missing hooks — `useSettingsMap`, `useAgentsWithRelations`, `callReducer`, `useProviders`, `useProviderApiKeys` in `useSpacetimeDB.ts`
+- [x] Expand subscriptions — 7 new tables (settings, provider_api_keys, prompt_fragments, prompt_templates, prompt_fragment_versions, prompt_template_versions, agent_prompt_fragments)
+
+### Remaining
+- [ ] Channels tab — all calls go to Gateway (lifecycle/operational), likely stays REST
+- [ ] Remaining deployment sub-components — all hit Gateway API, not backend REST; stays REST
+- [ ] Remove dead backend REST endpoints (agents, settings, plans CRUD)
 - [ ] Add CI binding freshness check

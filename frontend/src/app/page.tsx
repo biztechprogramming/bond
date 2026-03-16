@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GatewayWebSocket, type GatewayMessage, type ConversationSummary, type ConnectionState } from "@/lib/ws";
-import { GATEWAY_API, BACKEND_API } from "@/lib/config";
+import { GATEWAY_API } from "@/lib/config";
 import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
-import { useSpacetimeConnection, useConversations } from "@/hooks/useSpacetimeDB";
+import { useSpacetimeConnection, useConversations, useAgents } from "@/hooks/useSpacetimeDB";
 import { getAgentName } from "@/lib/spacetimedb-client";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
@@ -55,7 +55,8 @@ export default function Home() {
       agent_name: getAgentName(c.agentId),
     }));
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
+  const stdbAgents = useAgents();
+  const agents = stdbAgents.map(a => ({ id: a.id, display_name: a.displayName, is_default: a.isDefault }));
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const initialAgentSetRef = useRef(false);
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
@@ -134,23 +135,18 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Fetch agents
+  // Auto-select default agent when agents load from SpacetimeDB
   useEffect(() => {
-    fetch(`${BACKEND_API}/agents`)
-      .then(r => r.json())
-      .then((data: { id: string; display_name: string; is_default: boolean }[]) => {
-        setAgents(data);
-        const storedConvId = localStorage.getItem("bond-conversation-id");
-        if (!storedConvId) {
-          const def = data.find(a => a.is_default);
-          if (def) {
-            setSelectedAgentId(def.id);
-            currentAgentNameRef.current = def.display_name;
-          }
-        }
-      })
-      .catch(() => { });
-  }, []);
+    if (agents.length === 0) return;
+    const storedConvId = localStorage.getItem("bond-conversation-id");
+    if (!storedConvId && !selectedAgentId) {
+      const def = agents.find(a => a.is_default);
+      if (def) {
+        setSelectedAgentId(def.id);
+        currentAgentNameRef.current = def.display_name;
+      }
+    }
+  }, [agents.length]);
 
   useEffect(() => {
     let cancelled = false;

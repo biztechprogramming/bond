@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { callReducer } from "@/hooks/useSpacetimeDB";
+import { getConnection } from "@/lib/spacetimedb-client";
 import SharedSettingsForm from "./SharedSettingsForm";
 
 interface Environment {
@@ -112,50 +113,65 @@ export default function SetupWizard({ environments, availableModels, sandboxImag
     setCreating(true);
     setMsg("");
 
-    // Save shared settings first
-    try {
-      const settingsToSave = [
-        { key: "deployment.shared.model", value: shared.model },
-        { key: "deployment.shared.utility_model", value: shared.utility_model },
-        { key: "deployment.shared.sandbox_image", value: shared.sandbox_image },
-      ];
-      for (const s of settingsToSave) {
-        await fetch(`${BACKEND_API}/settings/${s.key}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: s.value }),
-        });
-      }
-    } catch {
-      // Settings API might not support this yet, continue anyway
+    // Save shared settings via SpacetimeDB
+    const conn = getConnection();
+    if (!conn) {
+      setMsg("Error: No SpacetimeDB connection");
+      setCreating(false);
+      return;
+    }
+
+    const settingsToSave = [
+      { key: "deployment.shared.model", value: shared.model },
+      { key: "deployment.shared.utility_model", value: shared.utility_model },
+      { key: "deployment.shared.sandbox_image", value: shared.sandbox_image },
+    ];
+    for (const s of settingsToSave) {
+      conn.reducers.setSetting({ key: s.key, value: s.value, keyType: "string" });
     }
 
     const errors: string[] = [];
     for (const env of environments) {
       try {
-        const body = {
-          name: `deploy-${env.name}`,
-          display_name: personalNames[env.name] || env.display_name,
-          system_prompt: DEFAULT_PROMPT_TEMPLATE(env.name, personalNames[env.name] || env.display_name),
-          model: shared.model,
-          utility_model: shared.utility_model,
-          sandbox_image: shared.sandbox_image || null,
-          workspace_mounts: roMounts,
-          channels: [{ channel: "webchat", enabled: true, sandbox_override: null }],
-        };
+        const agentId = `deploy-${env.name}`;
+        const displayName = personalNames[env.name] || env.display_name;
 
-        const res = await fetch(`${BACKEND_API}/agents`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+        conn.reducers.addAgent({
+          id: agentId,
+          name: `deploy-${env.name}`,
+          displayName,
+          systemPrompt: DEFAULT_PROMPT_TEMPLATE(env.name, displayName),
+          model: shared.model,
+          utilityModel: shared.utility_model,
+          tools: "",
+          sandboxImage: shared.sandbox_image || "",
+          maxIterations: 200,
+          isActive: true,
+          isDefault: false,
         });
 
-        if (!res.ok) {
-          const data = await res.json();
-          errors.push(`${env.name}: ${data.detail || "failed"}`);
+        // Add channel
+        conn.reducers.addAgentChannel({
+          id: `${agentId}-webchat`,
+          agentId,
+          channel: "webchat",
+          sandboxOverride: "",
+          enabled: true,
+        });
+
+        // Add workspace mounts
+        for (const m of roMounts) {
+          conn.reducers.addAgentMount({
+            id: `${agentId}-${m.mount_name}`,
+            agentId,
+            hostPath: m.host_path,
+            mountName: m.mount_name,
+            containerPath: m.container_path,
+            readonly: true,
+          });
         }
       } catch {
-        errors.push(`${env.name}: network error`);
+        errors.push(`${env.name}: reducer error`);
       }
     }
 

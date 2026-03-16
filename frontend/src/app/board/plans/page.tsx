@@ -1,24 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-
-interface WorkItem {
-  id: string;
-  status: string;
-}
-
-interface WorkPlan {
-  id: string;
-  agent_id: string;
-  title: string;
-  status: string;
-  created_at: string;
-  items?: WorkItem[];
-}
-
-import { BACKEND_API } from "@/lib/config";
-
-const API_BASE = BACKEND_API;
+import { useEffect, useState, useMemo } from "react";
+import { useWorkPlans } from "@/hooks/useSpacetimeDB";
+import { getConnection, getWorkItems } from "@/lib/spacetimedb-client";
 
 const STATUS_EMOJI: Record<string, string> = {
   active: "\uD83D\uDD04",
@@ -32,54 +16,39 @@ const STATUS_OPTIONS = ["all", "active", "paused", "completed", "failed", "cance
 const PAGE_SIZE = 20;
 
 export default function AllPlansPage() {
-  const [plans, setPlans] = useState<WorkPlan[]>([]);
+  const allPlans = useWorkPlans();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(0);
-  const [total, setTotal] = useState(0);
-
-  const fetchPlans = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(page * PAGE_SIZE),
-      });
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (search.trim()) params.set("search", search.trim());
-
-      const res = await fetch(`${API_BASE}/plans?${params}`);
-      if (!res.ok) return;
-      const data: WorkPlan[] = await res.json();
-
-      // Fetch item details for each plan to get counts
-      const withItems = await Promise.all(
-        data.map(async (plan) => {
-          try {
-            const r = await fetch(`${API_BASE}/plans/${plan.id}`);
-            if (r.ok) {
-              const detail: WorkPlan = await r.json();
-              return detail;
-            }
-          } catch { /* ignore */ }
-          return plan;
-        })
-      );
-
-      setPlans(withItems);
-      // If we got a full page, there might be more
-      setTotal(data.length === PAGE_SIZE ? (page + 2) * PAGE_SIZE : page * PAGE_SIZE + data.length);
-    } catch { /* API not available */ }
-  }, [page, statusFilter, search]);
-
-  useEffect(() => { fetchPlans(); }, [fetchPlans]);
 
   // Reset page when filters change
   useEffect(() => { setPage(0); }, [search, statusFilter]);
 
-  const itemCounts = (plan: WorkPlan) => {
-    if (!plan.items || plan.items.length === 0) return { done: 0, total: 0 };
-    const done = plan.items.filter(i => i.status === "done" || i.status === "complete" || i.status === "approved" || i.status === "tested").length;
-    return { done, total: plan.items.length };
+  // Client-side filtering
+  const filteredPlans = useMemo(() => {
+    let result = allPlans;
+    if (statusFilter !== "all") {
+      result = result.filter(p => p.status === statusFilter);
+    }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(p => p.title.toLowerCase().includes(q));
+    }
+    return result;
+  }, [allPlans, statusFilter, search]);
+
+  // Client-side pagination
+  const paginatedPlans = useMemo(() => {
+    return filteredPlans.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  }, [filteredPlans, page]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredPlans.length / PAGE_SIZE));
+
+  const itemCounts = (planId: string) => {
+    const items = getWorkItems(planId);
+    if (items.length === 0) return { done: 0, total: 0 };
+    const done = items.filter(i => i.status === "done" || i.status === "complete" || i.status === "approved" || i.status === "tested").length;
+    return { done, total: items.length };
   };
 
   const [ctrlShift, setCtrlShift] = useState(false);
@@ -91,22 +60,20 @@ export default function AllPlansPage() {
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
   }, []);
 
-  const deletePlan = async (planId: string, e: React.MouseEvent) => {
+  const deletePlan = (planId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!ctrlShift && !confirm("Delete this plan?")) return;
-    try {
-      await fetch(`${API_BASE}/plans/${planId}`, { method: "DELETE" });
-      setPlans(prev => prev.filter(p => p.id !== planId));
-    } catch { /* ignore */ }
+    const conn = getConnection();
+    if (conn) {
+      conn.reducers.deleteWorkPlan({ id: planId });
+    }
   };
 
-  const formatDate = (iso: string) => {
-    const d = new Date(iso);
+  const formatDate = (timestamp: bigint) => {
+    const d = new Date(Number(timestamp));
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
   };
-
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div style={s.container}>
@@ -136,12 +103,12 @@ export default function AllPlansPage() {
         </select>
       </div>
 
-      {plans.length === 0 ? (
+      {paginatedPlans.length === 0 ? (
         <div style={s.empty}>No plans found</div>
       ) : (
         <div style={s.list}>
-          {plans.map(plan => {
-            const counts = itemCounts(plan);
+          {paginatedPlans.map(plan => {
+            const counts = itemCounts(plan.id);
             return (
               <a
                 key={plan.id}
@@ -155,9 +122,9 @@ export default function AllPlansPage() {
                   <div style={s.planInfo}>
                     <div style={s.planTitle}>{plan.title}</div>
                     <div style={s.planMeta}>
-                      <span>{plan.agent_id}</span>
+                      <span>{plan.agentId}</span>
                       <span style={s.metaDot}>&middot;</span>
-                      <span>{formatDate(plan.created_at)}</span>
+                      <span>{formatDate(plan.createdAt)}</span>
                       {counts.total > 0 && (
                         <>
                           <span style={s.metaDot}>&middot;</span>
@@ -190,11 +157,11 @@ export default function AllPlansPage() {
           >
             &larr; Prev
           </button>
-          <span style={s.pageInfo}>Page {page + 1}</span>
+          <span style={s.pageInfo}>Page {page + 1} of {totalPages}</span>
           <button
             onClick={() => setPage(p => p + 1)}
-            disabled={plans.length < PAGE_SIZE}
-            style={{ ...s.pageBtn, opacity: plans.length < PAGE_SIZE ? 0.4 : 1 }}
+            disabled={page >= totalPages - 1}
+            style={{ ...s.pageBtn, opacity: page >= totalPages - 1 ? 0.4 : 1 }}
           >
             Next &rarr;
           </button>
