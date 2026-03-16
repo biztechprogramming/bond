@@ -14,7 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Always included regardless of heuristics
-ALWAYS_INCLUDE = {"respond", "load_context"}
+ALWAYS_INCLUDE = {"respond"}
 
 # Filesystem toolkit — always included as a group in coding/file contexts.
 # ~2,000 tokens total. Cheaper than one wasted iteration.
@@ -109,6 +109,12 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "shell_tree": [
         "tree", "directory structure", "project structure", "folder structure",
         "show structure",
+    ],
+    "load_context": [
+        "implement", "build", "create", "fix", "refactor", "change",
+        "update", "migrate", "debug", "deploy", "configure", "optimize",
+        "review", "test", "write code", "add feature", "bug", "error",
+        "how to", "best practice", "pattern", "architecture",
     ],
     "search_memory": [
         "remember", "recall", "search", "find", "what did", "do you know",
