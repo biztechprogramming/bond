@@ -10,10 +10,8 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 
 export interface WebhooksConfig {
-  /** Explicit list of repos to register webhooks for (overrides autoDiscover). */
+  /** Explicit list of repos to register webhooks for (overrides mount-based discovery). */
   repos?: string[];
-  /** Auto-discover repos via `gh repo list` (default: true). */
-  autoDiscover?: boolean;
 }
 
 export interface GatewayConfig {
@@ -71,8 +69,6 @@ export function loadConfig(): GatewayConfig {
   const webhooks: WebhooksConfig | undefined = gwWebhooks
     ? {
         repos: Array.isArray(gwWebhooks.repos) ? gwWebhooks.repos : undefined,
-        autoDiscover:
-          typeof gwWebhooks.autoDiscover === "boolean" ? gwWebhooks.autoDiscover : true,
       }
     : undefined;
 

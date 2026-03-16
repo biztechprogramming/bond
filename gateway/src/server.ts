@@ -122,11 +122,16 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   });
 
   // Auto-register GitHub webhooks (non-blocking — failures are logged, not fatal)
+  // Discovers repos from SpacetimeDB agent workspace mounts unless explicit repos are configured.
   const registrar = new WebhookRegistrar({
     externalUrl: process.env.GATEWAY_EXTERNAL_URL,
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
     repos: config.webhooks?.repos,
-    autoDiscover: config.webhooks?.autoDiscover ?? true,
+    spacetimedb: {
+      url: config.spacetimedbUrl,
+      module: config.spacetimedbModuleName,
+      token: config.spacetimedbToken,
+    },
   });
   registrar.ensureWebhooks().catch((err) => {
     console.warn("[registrar] Unexpected error during webhook registration:", err);
