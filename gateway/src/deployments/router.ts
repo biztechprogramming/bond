@@ -39,6 +39,10 @@ import { SCRIPT_TEMPLATES } from "./script-templates.js";
 import { createPipelineRouter } from "./pipeline-router.js";
 import { listManifests, readManifest } from "./manifest.js";
 import { getMonitoringAlerts } from "./stdb.js";
+import { createSecretsRouter } from "./secrets-router.js";
+import { createAlertRulesRouter } from "./alert-rules-router.js";
+import { createCompareRouter } from "./compare-router.js";
+import { collectLogs } from "./log-stream.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -91,6 +95,15 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
   // Resources
   router.use("/resources", createResourceRouter(config));
+
+  // Secrets management (§8.1)
+  router.use("/secrets", createSecretsRouter(config));
+
+  // Alert rules (§8.2)
+  router.use("/alert-rules", createAlertRulesRouter(config));
+
+  // Environment comparison (§8.3)
+  router.use("/compare", createCompareRouter(config));
 
   // Session token issue — Phase 1 helper for testing
   // In production this would be behind proper auth
@@ -192,6 +205,19 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       return res.status(404).json({ error: `No log found for ${env} on ${date}` });
     }
     res.json({ environment: env, date, ...result });
+  });
+
+  // Live log collection trigger (§8.4)
+  router.post("/logs/:env/collect", (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    const { env } = req.params;
+    try {
+      const result = collectLogs(env);
+      res.json({ environment: env, ...result, message: "Log collection triggered" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Environment history endpoint
