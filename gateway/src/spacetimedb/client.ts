@@ -51,9 +51,13 @@ export async function sqlQuery(
   token: string = "",
 ): Promise<any[]> {
   const url = `${baseUrl}/v1/database/${module}/sql`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
   const res = await fetch(url, {
     method: "POST",
-    headers: authHeaders(token),
+    headers,
     body: sql,
   });
   if (!res.ok) {

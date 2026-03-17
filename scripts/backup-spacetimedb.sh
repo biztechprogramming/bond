@@ -3,10 +3,25 @@ set -e
 
 # backup-spacetimedb.sh
 # Performs a backup of the SpacetimeDB data directory and maintains a rotation.
+# Refuses to back up an empty database to prevent overwriting good backups.
 
 BACKUP_DIR="$HOME/.bond/backups/spacetimedb"
 DATA_DIR="$HOME/.bond/spacetimedb"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+# Guard: check that the database actually has conversations before backing up.
+# This prevents a freshly-wiped database from rotating out good backups.
+STDB_URL="${BOND_SPACETIMEDB_URL:-http://localhost:18787}"
+STDB_MODULE="${BOND_SPACETIMEDB_MODULE:-bond-core-v2}"
+CONV_COUNT=$(spacetime sql "$STDB_MODULE" "SELECT COUNT(*) AS cnt FROM conversations" 2>/dev/null \
+  | grep -oP '\d+' | tail -1 || echo "0")
+
+if [ "$CONV_COUNT" = "0" ] || [ -z "$CONV_COUNT" ]; then
+  echo "Skipping backup: database has 0 conversations (empty or unreachable)"
+  exit 0
+fi
+
+echo "Database has $CONV_COUNT conversations — proceeding with backup"
 
 # Ensure backup directory exists
 mkdir -p "$BACKUP_DIR/daily"
