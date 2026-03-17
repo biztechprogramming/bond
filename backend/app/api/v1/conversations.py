@@ -696,7 +696,7 @@ async def conversation_turn(
             "model": agent_row["model"],
             "utility_model": agent_row.get("utility_model") or agent_row.get("utilityModel", "claude-sonnet-4-6"),
             "system_prompt": agent_row.get("system_prompt") or agent_row.get("systemPrompt"),
-            "tools": json.loads(agent_row["tools"]) if isinstance(agent_row["tools"], str) else agent_row["tools"],
+            "tools": json.loads(agent_row["tools"]) if isinstance(agent_row["tools"], str) and agent_row["tools"].strip() else (agent_row["tools"] if not isinstance(agent_row["tools"], str) else []),
             "max_iterations": int(agent_row.get("max_iterations") or agent_row.get("maxIterations") or 10),
             "workspace_mounts": workspace_mounts,
             "api_keys": api_keys,
