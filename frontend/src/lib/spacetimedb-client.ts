@@ -634,27 +634,31 @@ export function getResourceEnvironments(): ResourceEnvironmentRow[] {
   return rows;
 }
 
-// Fallback mapping from provider ID to litellm prefix.
-// Used when the providers table is empty or a provider row is missing litellmPrefix.
-const LITELLM_PREFIX_FALLBACKS: Record<string, string> = {
-  google: "gemini",
-  anthropic: "anthropic",
-  openai: "openai",
-  deepseek: "deepseek",
-  groq: "groq",
-  mistral: "mistral",
-  xai: "xai",
-  openrouter: "openrouter",
-};
-
 export function getAvailableModels(): { id: string; name: string }[] {
   const models = getLlmModels();
   const providers = getProviders();
+
+  if (models.length > 0 && providers.length === 0) {
+    console.error(
+      "[getAvailableModels] providers table is empty but llm_models has entries. " +
+      "Run seed_providers.py to populate the providers table. " +
+      "Without providers, model IDs will use raw provider IDs (e.g., 'google/') " +
+      "instead of litellm prefixes (e.g., 'gemini/'), causing litellm errors."
+    );
+  }
+
   const providerMap = new Map(providers.map(p => [p.id, p.litellmPrefix]));
   return models.map(m => {
-    const prefix = providerMap.get(m.provider) || LITELLM_PREFIX_FALLBACKS[m.provider] || m.provider;
+    const prefix = providerMap.get(m.provider);
+    if (!prefix) {
+      console.error(
+        `[getAvailableModels] No litellm prefix found for provider "${m.provider}". ` +
+        `Model "${m.modelId}" will use "${m.provider}/" prefix which litellm may reject. ` +
+        `Ensure the providers table has an entry for "${m.provider}" with a valid litellm_prefix.`
+      );
+    }
     return {
-      id: `${prefix}/${m.modelId}`,
+      id: `${prefix || m.provider}/${m.modelId}`,
       name: m.displayName,
     };
   });
