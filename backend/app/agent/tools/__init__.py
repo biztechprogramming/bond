@@ -92,6 +92,7 @@ def build_registry() -> ToolRegistry:
     )
     from .coding_agent import handle_coding_agent
     from .deploy_tools import handle_deploy_tool
+    from .deployment_query import handle_deployment_query
 
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
@@ -137,4 +138,6 @@ def build_registry() -> ToolRegistry:
     # Deployment agent tools (Design Doc 039) — only available to deploy-* agents
     registry.register("deploy_action", lambda args, ctx: handle_deploy_tool("deploy_action", args))
     registry.register("file_bug_ticket", lambda args, ctx: handle_deploy_tool("file_bug_ticket", args))
+    # Deployment query — read-only access to deployment data via Gateway APIs
+    registry.register("deployment_query", handle_deployment_query)
     return registry

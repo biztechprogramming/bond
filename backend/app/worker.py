@@ -582,7 +582,7 @@ async def _run_agent_loop(
 
     # Gate deployment tools to deploy-* agents only (Design Doc 039)
     agent_name = config.get("name", "")
-    DEPLOY_ONLY_TOOLS = {"deploy_action", "file_bug_ticket"}
+    DEPLOY_ONLY_TOOLS = {"deploy_action", "deployment_query", "file_bug_ticket"}
     if not agent_name.startswith("deploy-"):
         agent_tools = [t for t in agent_tools if t not in DEPLOY_ONLY_TOOLS]
 
@@ -1032,6 +1032,7 @@ async def _run_agent_loop(
         recent_tools_used=recent_tools[-10:] if recent_tools else None,
         last_assistant_content=last_assistant,
         has_active_plan=_has_active_plan,
+        agent_name=agent_name,
     )
 
     # Use compact schemas to further reduce token usage

@@ -165,6 +165,26 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "multi-file", "refactor the", "complex change", "across multiple files",
         "write the code", "coding task", "have an agent", "let an agent",
     ],
+    "deploy_action": [
+        "deploy", "deployment", "rollback", "promote", "health check",
+        "health-check", "dry run", "dry-run", "pre-hook", "post-hook",
+        "validate script", "deployment status", "lock status", "receipt",
+        "deploy to", "deploy on", "deploy the", "run deployment",
+        "migration", "migrate", "release", "staging", "production",
+        "environment", "component", "thermostat", "service",
+    ],
+    "deployment_query": [
+        "deploy", "deployment", "component", "environment", "promotion",
+        "script", "resource", "queue", "health", "receipt", "trigger",
+        "what components", "what environments", "what scripts",
+        "status of", "list", "show me", "what do I need",
+        "thermostat", "service", "monitor",
+    ],
+    "file_bug_ticket": [
+        "bug", "issue", "ticket", "failure", "failed", "broken",
+        "file a bug", "create issue", "open ticket", "report bug",
+        "deployment failed", "health check failed",
+    ],
     "work_plan": [
         "implement", "build", "create", "fix", "refactor", "change",
         "update", "migrate", "plan", "task", "work plan", "multi-step",
@@ -193,6 +213,7 @@ def select_tools(
     recent_tools_used: list[str] | None = None,
     last_assistant_content: str | None = None,
     has_active_plan: bool = False,
+    agent_name: str | None = None,
 ) -> list[str]:
     """Select relevant tools for this turn.
 
@@ -201,11 +222,22 @@ def select_tools(
         enabled_tools: All tools enabled for this agent
         recent_tools_used: Tools used in recent turns (for momentum)
         last_assistant_content: Last assistant message (for context)
+        agent_name: Agent name (used for role-based tool inclusion)
 
     Returns:
         List of tool names to include in this turn's API call.
     """
     selected: set[str] = set(ALWAYS_INCLUDE & set(enabled_tools))
+
+    # Deploy-* agents always get deployment tools + essential investigation tools
+    if agent_name and agent_name.startswith("deploy-"):
+        DEPLOY_AGENT_ALWAYS = {
+            "deploy_action", "deployment_query", "file_bug_ticket",
+            "file_read", "project_search", "shell_grep", "shell_ls",
+            "code_execute", "web_search", "web_read",
+            "search_memory", "memory_save", "work_plan",
+        }
+        selected.update(DEPLOY_AGENT_ALWAYS & set(enabled_tools))
 
     # Always include work_plan + parallel_orchestrate if agent has an active plan
     if has_active_plan and "work_plan" in enabled_tools:
@@ -364,6 +396,19 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
     ),
     "git_info": (
         " For git status/log/diff/branch/show. NOT as a pre-read verification step."
+    ),
+    "deploy_action": (
+        " Execute deployment actions (info, validate, dry-run, deploy, rollback, health-check)."
+        " Use 'info' or 'status' to check what's available before deploying."
+    ),
+    "deployment_query": (
+        " Read-only queries for deployment data: components, environments, promotions,"
+        " scripts, resources, queues, health, receipts, triggers."
+        " Use this FIRST to understand what exists before taking any deploy_action."
+    ),
+    "file_bug_ticket": (
+        " Create a GitHub issue for deployment failures. Include error output,"
+        " environment, severity, and suggested fix."
     ),
 }
 

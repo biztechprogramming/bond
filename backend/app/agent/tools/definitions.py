@@ -1336,6 +1336,71 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "deployment_query",
+            "description": (
+                "Query deployment data from the Gateway. Returns information about "
+                "components, environments, promotions, scripts, resources, queues, "
+                "health status, and receipts. This is read-only — use deploy_action "
+                "for actual deployment operations."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "enum": [
+                            "list_components",
+                            "get_component",
+                            "component_tree",
+                            "component_status",
+                            "list_environments",
+                            "get_environment",
+                            "environment_history",
+                            "list_promotions",
+                            "get_promotion",
+                            "list_scripts",
+                            "get_script",
+                            "list_resources",
+                            "get_resource",
+                            "queue",
+                            "health",
+                            "monitoring",
+                            "list_receipts",
+                            "get_receipt",
+                            "list_triggers",
+                        ],
+                        "description": "The type of deployment data to query.",
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": (
+                            "Entity ID for single-record lookups. "
+                            "For get_component, get_script, get_resource, get_receipt: the entity ID. "
+                            "For component_status: the component ID (also requires environment). "
+                            "For get_promotion: the script_id (also requires version + environment). "
+                            "For get_environment, environment_history, queue, health, monitoring: the environment name."
+                        ),
+                    },
+                    "environment": {
+                        "type": "string",
+                        "description": (
+                            "Environment name filter. "
+                            "Used by: list_components (optional filter), component_status (required), "
+                            "get_promotion (required), queue, health, monitoring."
+                        ),
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Script version for get_promotion queries (e.g., 'v1').",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "file_bug_ticket",
             "description": (
                 "Create a detailed GitHub issue for a deployment failure or environment problem. "
