@@ -791,6 +791,27 @@ async def handle_respond(
 
 
 # ---------------------------------------------------------------------------
+# Say — stream a message to the user mid-turn (non-terminal)
+# ---------------------------------------------------------------------------
+
+async def handle_say(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Stream a message to the user without ending the turn."""
+    message = arguments.get("message", "")
+    if not message or not isinstance(message, str):
+        return {"error": "message is required and must be a non-empty string"}
+    return {
+        "status": "said",
+        "_sse_event": {
+            "event": "chunk",
+            "data": {"content": message},
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Repo PR — propose changes to the Bond repo
 # ---------------------------------------------------------------------------
 
@@ -883,14 +904,39 @@ async def handle_repo_pr(
 # Load Context (prompt hierarchy)
 # ---------------------------------------------------------------------------
 
+# Per-turn load_context budget. Resets each turn via reset_load_context_budget().
+_load_context_budget: int = 5
+_LOAD_CONTEXT_MAX_PER_TURN: int = 5
+
+
+def reset_load_context_budget() -> None:
+    """Reset the load_context call budget. Call at the start of each turn."""
+    global _load_context_budget
+    _load_context_budget = _LOAD_CONTEXT_MAX_PER_TURN
+
+
 async def handle_load_context(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Load prompt context fragments for a given category."""
+    global _load_context_budget
+
     category = arguments.get("category", "")
     if not category:
         return {"error": "category is required"}
+
+    if _load_context_budget <= 0:
+        return {
+            "error": (
+                f"load_context budget exhausted for this turn "
+                f"(max {_LOAD_CONTEXT_MAX_PER_TURN} calls per turn). "
+                "Pick only the most relevant categories. Budget resets next turn."
+            ),
+            "remaining_calls": 0,
+        }
+
+    _load_context_budget -= 1
 
     from backend.app.agent.tools.dynamic_loader import load_context_fragments
 
@@ -901,8 +947,8 @@ async def handle_load_context(
 
     result = load_context_fragments(category, prompts_dir)
     if result.startswith("Error:"):
-        return {"error": result}
-    return {"context": result}
+        return {"error": result, "remaining_calls": _load_context_budget}
+    return {"context": result, "remaining_calls": _load_context_budget}
 
 
 # ---------------------------------------------------------------------------
