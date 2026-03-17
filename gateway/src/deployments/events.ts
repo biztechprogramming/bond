@@ -20,7 +20,9 @@ export type DeploymentEventType =
   | "bug_ticket_filed"
   | "deployment_window_closing"
   | "manual_intervention_needed"
-  | "deployment_lock_stale";
+  | "deployment_lock_stale"
+  | "monitoring_alert"
+  | "discovery_completed";
 
 export interface DeploymentEvent {
   id: string;
@@ -142,6 +144,26 @@ export function emitHealthCheckFailed(env: string, agentId: string, details: Rec
     agent_id: agentId,
     summary: `Health check failed in ${env}`,
     details,
+  });
+}
+
+export function emitMonitoringAlert(
+  env: string, category: string, component: string, message: string,
+): void {
+  emitDeploymentEvent("monitoring_alert", {
+    environment: env,
+    summary: `[${category}] ${component}: ${message.slice(0, 200)}`,
+    details: { category, component, message },
+  });
+}
+
+export function emitDiscoveryCompleted(
+  env: string, resourceName: string, layerCount: number,
+): void {
+  emitDeploymentEvent("discovery_completed", {
+    environment: env,
+    summary: `Discovery completed for ${resourceName}: ${layerCount} layer(s)`,
+    details: { resource_name: resourceName, layer_count: layerCount },
   });
 }
 

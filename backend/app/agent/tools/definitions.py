@@ -750,7 +750,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "load_context",
-            "description": "Load prompt context for the current task. Pick the most specific relevant category from the manifest in your system prompt. Call this as your FIRST action on any non-trivial task.",
+            "description": "Load specialized prompt context for coding/engineering tasks. Pick the most specific relevant category from the manifest. Only call when you need domain-specific guidance (e.g. git workflow, database patterns, security rules). Do NOT call for conversational messages, greetings, or simple questions.",
             "parameters": {
                 "type": "object",
                 "properties": {

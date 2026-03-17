@@ -8,16 +8,16 @@ import { STATUS_EMOJI, KANBAN_COLUMNS } from "@/lib/theme";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanSelector from "@/components/shared/PlanSelector";
 import KanbanColumn from "@/components/shared/KanbanColumn";
-import { useSpacetimeDB, useWorkPlans, useWorkItems } from "@/hooks/useSpacetimeDB";
-import { 
-  connectToSpacetimeDB, 
-  getWorkPlans, 
+import { useSpacetimeDB, useWorkPlans, useWorkItems, useAgents } from "@/hooks/useSpacetimeDB";
+import {
+  getWorkPlans,
   getWorkItems,
+  getConnection,
   getConversations,
   type WorkPlan as STDBWorkPlan,
   type WorkItem as STDBWorkItem
 } from "@/lib/spacetimedb-client";
-import { BACKEND_API, STDB_WS } from "@/lib/config";
+import { BACKEND_API } from "@/lib/config";
 
 const API_BASE = BACKEND_API;
 
@@ -101,7 +101,8 @@ function BoardPage() {
     }
     return null;
   });
-  const [agents, setAgents] = useState<{ id: string; display_name: string; is_default: boolean }[]>([]);
+  const stdbAgents = useAgents();
+  const agents = stdbAgents.map(a => ({ id: a.id, display_name: a.displayName, is_default: a.isDefault }));
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const currentAgentNameRef = useRef<string>("Agent");
   const selectedAgentName = agents.find(a => a.id === selectedAgentId)?.display_name || currentAgentNameRef.current;
@@ -117,11 +118,6 @@ function BoardPage() {
     if (name) currentAgentNameRef.current = name;
   }, [selectedAgentId, agents]);
 
-  // Initialize SpacetimeDB connection
-  useEffect(() => {
-    connectToSpacetimeDB(STDB_WS);
-  }, []);
-
   // Persist conversation ID
   useEffect(() => {
     if (conversationId) {
@@ -129,20 +125,14 @@ function BoardPage() {
     }
   }, [conversationId]);
 
-  // Fetch agents
+  // Auto-select default agent when agents load from SpacetimeDB
   useEffect(() => {
-    fetch(`${API_BASE}/agents`)
-      .then(r => r.json())
-      .then((data: { id: string; display_name: string; is_default: boolean }[]) => {
-        setAgents(data);
-        // Only fall back to default agent if the current plan doesn't own a specific agent
-        const currentPlan = getWorkPlans().find(p => p.id === selectedPlanIdRef.current);
-        const planAgentId = currentPlan?.agentId || (currentPlan as any)?.agent_id;
-        const def = data.find(a => a.is_default);
-        if (!planAgentId && def) setSelectedAgentId(def.id);
-      })
-      .catch(() => {});
-  }, []);
+    if (agents.length === 0) return;
+    const currentPlan = getWorkPlans().find(p => p.id === selectedPlanIdRef.current);
+    const planAgentId = currentPlan?.agentId || (currentPlan as any)?.agent_id;
+    const def = agents.find(a => a.is_default);
+    if (!planAgentId && def && !selectedAgentId) setSelectedAgentId(def.id);
+  }, [agents.length]);
 
   // Persist selected plan to localStorage
   useEffect(() => {
@@ -300,28 +290,18 @@ function BoardPage() {
 
   const handleResume = useCallback(async () => {
     if (!selectedPlanId) return;
-    try {
-      const res = await fetch(`${API_BASE}/plans/${selectedPlanId}/resume`, { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.recovery_context && wsRef.current?.connected) {
-          wsRef.current.send(
-            `Resume work plan: ${data.recovery_context}`,
-            conversationId || undefined,
-            selectedAgentId || undefined
-          );
-          setLoading(true);
-        }
-      }
-    } catch { /* ignore */ }
-  }, [selectedPlanId, conversationId, selectedAgentId]);
+    const conn = getConnection();
+    if (conn) {
+      conn.reducers.updateWorkPlanStatus({ id: selectedPlanId, status: "active" });
+    }
+  }, [selectedPlanId]);
 
   const handleCancel = useCallback(async () => {
     if (!selectedPlanId) return;
-    try {
-      await fetch(`${API_BASE}/plans/${selectedPlanId}`, { method: "DELETE" });
-      // Reactive reload happens automatically
-    } catch { /* ignore */ }
+    const conn = getConnection();
+    if (conn) {
+      conn.reducers.deleteWorkPlan({ id: selectedPlanId });
+    }
     if (conversationId) wsRef.current?.interrupt(conversationId);
   }, [selectedPlanId, conversationId]);
 
@@ -343,14 +323,10 @@ function BoardPage() {
     if (!dragItemId || !selectedPlanId) return;
     setDragOverColumn(null);
     setDragItemId(null);
-    try {
-      await fetch(`${API_BASE}/plans/${selectedPlanId}/items/${dragItemId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: columnKey }),
-      });
-      // SpacetimeDB sync is triggered by backend, frontend re-renders reactively
-    } catch { /* ignore */ }
+    const conn = getConnection();
+    if (conn) {
+      conn.reducers.updateWorkItem({ id: dragItemId, status: columnKey, notes: undefined, filesChanged: undefined, description: undefined });
+    }
   };
 
   // -- Render --

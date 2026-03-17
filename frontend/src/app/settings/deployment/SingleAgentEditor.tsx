@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { callReducer } from "@/hooks/useSpacetimeDB";
 
 interface WorkspaceMount {
   id?: string;
@@ -92,18 +92,25 @@ export default function SingleAgentEditor({ agent, sharedModel, sharedUtilityMod
         })),
       };
 
-      const res = await fetch(`${BACKEND_API}/agents/${agent.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const ok = callReducer(conn => conn.reducers.updateAgent({
+        id: agent.id,
+        name: agent.name,
+        displayName: displayName,
+        systemPrompt: systemPrompt,
+        model: useSharedModel ? sharedModel : modelOverride,
+        utilityModel: useSharedUtility ? sharedUtilityModel : utilityOverride,
+        tools: "",
+        sandboxImage: agent.sandbox_image || "",
+        maxIterations: 200,
+        isActive: true,
+        isDefault: false,
+      }));
 
-      if (res.ok) {
+      if (ok) {
         setMsg("Saved.");
         onSaved();
       } else {
-        const data = await res.json();
-        setMsg(`Error: ${data.detail || "Save failed"}`);
+        setMsg("Error: No SpacetimeDB connection");
       }
     } catch {
       setMsg("Failed to save.");

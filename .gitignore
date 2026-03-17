@@ -36,3 +36,4 @@ data/
 tests/coding-runs/
 *.db
 data/agent-configs/
+*.tsbuildinfo

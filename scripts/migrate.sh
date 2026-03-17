@@ -41,6 +41,8 @@ echo "SQLite migrations complete."
 # Run SpacetimeDB migrations (publish module)
 SPACETIMEDB_URL="${SPACETIMEDB_URL:-http://localhost:18787}"
 SPACETIMEDB_MODULE="$PROJECT_ROOT/spacetimedb/spacetimedb"
+SPACETIMEDB_CONFIG_DIR="$PROJECT_ROOT/spacetimedb"
+SPACETIMEDB_DATABASE=$(python3 -c "import json; print(json.load(open('$SPACETIMEDB_CONFIG_DIR/spacetime.local.json')).get('database', json.load(open('$SPACETIMEDB_CONFIG_DIR/spacetime.json')).get('database', '')))" 2>/dev/null)
 
 spacetime_publish() {
     local server_url="$1"
@@ -48,7 +50,7 @@ spacetime_publish() {
     local exit_code
 
     set +e
-    output=$(spacetime publish --server "$server_url" --yes 2>&1)
+    output=$(spacetime publish --server "$server_url" --yes $SPACETIMEDB_DATABASE 2>&1)
     exit_code=$?
     set -e
 
@@ -68,7 +70,7 @@ spacetime_publish() {
         spacetime login --token "$fresh_token"
 
         echo "  Retrying publish..."
-        spacetime publish --server "$server_url" --yes
+        spacetime publish --server "$server_url" --yes $SPACETIMEDB_DATABASE
         return $?
     fi
 

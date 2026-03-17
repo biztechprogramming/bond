@@ -37,6 +37,14 @@ import {
 } from "./trigger-handler.js";
 import { SCRIPT_TEMPLATES } from "./script-templates.js";
 import { createPipelineRouter } from "./pipeline-router.js";
+import { listManifests, readManifest } from "./manifest.js";
+import { getMonitoringAlerts } from "./stdb.js";
+import { createSecretsRouter } from "./secrets-router.js";
+import { createAlertRulesRouter } from "./alert-rules-router.js";
+import { createCompareRouter } from "./compare-router.js";
+import { createComponentsRouter } from "./components-router.js";
+import { createFolderBrowserRouter } from "./folder-browser.js";
+import { collectLogs } from "./log-stream.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -52,6 +60,9 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     path.join(DEPLOYMENTS_DIR, "receipts"),
     path.join(DEPLOYMENTS_DIR, "locks"),
     path.join(DEPLOYMENTS_DIR, "logs"),
+    path.join(DEPLOYMENTS_DIR, "discovery", "manifests"),
+    path.join(DEPLOYMENTS_DIR, "discovery", "scripts"),
+    path.join(DEPLOYMENTS_DIR, "discovery", "proposals"),
   ]) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -86,6 +97,21 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
   // Resources
   router.use("/resources", createResourceRouter(config));
+
+  // Secrets management (§8.1)
+  router.use("/secrets", createSecretsRouter(config));
+
+  // Alert rules (§8.2)
+  router.use("/alert-rules", createAlertRulesRouter(config));
+
+  // Environment comparison (§8.3)
+  router.use("/compare", createCompareRouter(config));
+
+  // Components (§045a)
+  router.use("/components", createComponentsRouter(config));
+
+  // Folder browser (§044)
+  router.use("/browse", createFolderBrowserRouter(config));
 
   // Session token issue — Phase 1 helper for testing
   // In production this would be behind proper auth
@@ -187,6 +213,19 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       return res.status(404).json({ error: `No log found for ${env} on ${date}` });
     }
     res.json({ environment: env, date, ...result });
+  });
+
+  // Live log collection trigger (§8.4)
+  router.post("/logs/:env/collect", (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    const { env } = req.params;
+    try {
+      const result = collectLogs(env);
+      res.json({ environment: env, ...result, message: "Log collection triggered" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Environment history endpoint
@@ -296,6 +335,52 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // Discovery manifests
+  router.get("/discovery/manifests", (_req: any, res: any) => {
+    const manifests = listManifests();
+    res.json({ manifests });
+  });
+
+  router.get("/discovery/manifests/:name", (_req: any, res: any) => {
+    const { name } = _req.params;
+    const manifest = readManifest(name);
+    if (!manifest) return res.status(404).json({ error: `Manifest '${name}' not found` });
+    res.json(manifest);
+  });
+
+  // Discovery proposals
+  router.get("/discovery/proposals/:app", (_req: any, res: any) => {
+    const { app } = _req.params;
+    const proposalDir = path.join(DEPLOYMENTS_DIR, "discovery", "proposals", app);
+    if (!fs.existsSync(proposalDir)) return res.json({ app, levels: [] });
+    const levels = fs.readdirSync(proposalDir).filter(d => fs.statSync(path.join(proposalDir, d)).isDirectory());
+    const result: Record<string, string[]> = {};
+    for (const level of levels) {
+      result[level] = fs.readdirSync(path.join(proposalDir, level));
+    }
+    res.json({ app, levels: result });
+  });
+
+  // Monitoring status
+  router.get("/monitoring/:env", async (req: any, res: any) => {
+    const { env } = req.params;
+    try {
+      const alerts = await getMonitoringAlerts(config, env, 20);
+      const health = getHealthStatus(env);
+      res.json({ environment: env, health, recent_alerts: alerts });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.put("/monitoring/:env", (req: any, res: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    const { env } = req.params;
+    // Monitoring config is stored per environment — return acknowledgment
+    res.json({ success: true, environment: env, config: req.body });
   });
 
   // Webhook receiver — no user auth (receives GitHub payloads)

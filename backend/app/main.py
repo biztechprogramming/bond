@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.app.config import get_settings
 from backend.app.db.session import get_db, get_session_factory, init_db
@@ -66,6 +67,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch ALL unhandled exceptions and return them as structured JSON errors.
+    
+    No silent failures. Every error gets surfaced to the caller.
+    """
+    import logging
+    import traceback
+    logger = logging.getLogger("bond.api")
+    logger.error("Unhandled exception on %s %s: %s\n%s", 
+                 request.method, request.url.path, exc, traceback.format_exc())
+    
+    status_code = getattr(exc, "status_code", 500)
+    detail = str(exc)
+    
+    # Don't leak internal details in production, but we're local-first
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": detail,
+            "error_type": type(exc).__name__,
+            "path": str(request.url.path),
+        },
+    )
 
 
 @app.middleware("http")

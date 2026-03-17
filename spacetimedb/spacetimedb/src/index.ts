@@ -323,10 +323,10 @@ const spacetimedb = schema({
       createdAt: t.u64(),
     }
   ),
-  // ─── Deployment Agent Tables (Design Doc 039) ─────────────────────────────
+  // ─── Deployment & Infrastructure Tables (Design Docs 039, 043, 045a) ──────
 
-  // -- Deployment Environments --
-  deployment_environments: table(
+  // -- Environments --
+  environments: table(
     { public: true },
     {
       name: t.string().primaryKey(),        // 'dev', 'qa', 'staging', 'uat', 'prod'
@@ -352,8 +352,8 @@ const spacetimedb = schema({
     }
   ),
 
-  // -- Deployment Environment Approvers --
-  deployment_environment_approvers: table(
+  // -- Environment Approvers --
+  environment_approvers: table(
     { public: true },
     {
       id: t.string().primaryKey(),           // ULID
@@ -364,8 +364,8 @@ const spacetimedb = schema({
     }
   ),
 
-  // -- Deployment Environment History --
-  deployment_environment_history: table(
+  // -- Environment History --
+  environment_history: table(
     { public: true },
     {
       id: t.string().primaryKey(),           // ULID
@@ -378,8 +378,8 @@ const spacetimedb = schema({
     }
   ),
 
-  // -- Deployment Promotions --
-  deployment_promotions: table(
+  // -- Promotions --
+  promotions: table(
     { public: true },
     {
       id: t.string().primaryKey(),           // ULID
@@ -400,8 +400,8 @@ const spacetimedb = schema({
     }
   ),
 
-  // -- Deployment Approvals --
-  deployment_approvals: table(
+  // -- Approvals --
+  approvals: table(
     { public: true },
     {
       id: t.string().primaryKey(),           // ULID
@@ -414,15 +414,15 @@ const spacetimedb = schema({
     }
   ),
 
-  // -- Deployment Resources (Doc 043 §6) --
-  deployment_resources: table(
+  // -- Resources (Doc 043 §6) --
+  resources: table(
     { public: true },
     {
       id: t.string().primaryKey(),           // ULID
       name: t.string(),                      // "web-prod-01"
       display_name: t.string(),              // "Production Web Server"
       resource_type: t.string(),             // "linux-server", "kubernetes", etc.
-      environment: t.string(),               // which deployment environment
+      environment: t.string().default(''),   // deprecated — use resource_environments join table
       connection_json: t.string().default('{}'),     // JSON-encoded connection config
       capabilities_json: t.string().default('{}'),   // JSON-encoded capabilities
       state_json: t.string().default('{}'),          // JSON-encoded state
@@ -435,8 +435,8 @@ const spacetimedb = schema({
     }
   ),
 
-  // -- Deployment Triggers (Doc 043 §3.4) --
-  deployment_triggers: table(
+  // -- Triggers (Doc 043 §3.4) --
+  triggers: table(
     { public: true },
     {
       id: t.string().primaryKey(),           // ULID
@@ -449,6 +449,126 @@ const spacetimedb = schema({
       enabled: t.bool().default(true),
       created_at: t.u64(),
       updated_at: t.u64(),
+    }
+  ),
+
+  // ─── Monitoring Tables (Design Doc 045a) ─────────────────────────────────
+
+  // -- Alerts --
+  alerts: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      environment: t.string(),
+      category: t.string(),
+      component: t.string().default(''),
+      component_id: t.string().default(''),
+      fingerprint_hash: t.string().default(''),
+      severity: t.string(),
+      message: t.string(),
+      detected_at: t.u64(),
+      issue_number: t.u32().default(0),
+      issue_action: t.string().default(''),
+      resolved_at: t.u64().default(0n),
+    }
+  ),
+
+  // -- Alert Rules --
+  alert_rules: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      environment: t.string(),
+      name: t.string(),
+      metric: t.string(),
+      operator: t.string(),
+      threshold: t.f64(),
+      duration_minutes: t.u32().default(0),
+      severity: t.string().default('medium'),
+      enabled: t.bool().default(true),
+      auto_file_issue: t.bool().default(false),
+      custom_script_id: t.string().default(''),
+      applies_to_resources: t.string().default(''),
+      component_id: t.string().default(''),
+      triggered_count: t.u32().default(0),
+      last_triggered_at: t.u64().default(0n),
+      created_at: t.u64(),
+      updated_at: t.u64(),
+    }
+  ),
+
+  // ─── Component Tables (Design Doc 045a) ──────────────────────────────────
+
+  // -- Components --
+  components: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      name: t.string(),
+      display_name: t.string(),
+      component_type: t.string(),
+      parent_id: t.string().default(''),
+      runtime: t.string().default(''),
+      framework: t.string().default(''),
+      repository_url: t.string().default(''),
+      icon: t.string().default(''),
+      description: t.string().default(''),
+      is_active: t.bool().default(true),
+      created_at: t.u64(),
+      updated_at: t.u64(),
+      discovered_from: t.string().default(''),
+      source_path: t.string().default(''),
+    }
+  ),
+
+  // -- Resource Environments (many-to-many) --
+  resource_environments: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      resource_id: t.string(),
+      environment_name: t.string(),
+      created_at: t.u64(),
+    }
+  ),
+
+  // -- Component Resources --
+  component_resources: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      component_id: t.string(),
+      resource_id: t.string(),
+      environment: t.string(),
+      port: t.u32().default(0),
+      process_name: t.string().default(''),
+      health_check: t.string().default(''),
+      created_at: t.u64(),
+    }
+  ),
+
+  // -- Component Scripts --
+  component_scripts: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      component_id: t.string(),
+      script_id: t.string(),
+      role: t.string().default('deploy'),
+      created_at: t.u64(),
+    }
+  ),
+
+  // -- Component Secrets --
+  component_secrets: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      component_id: t.string(),
+      secret_key: t.string(),
+      environment: t.string(),
+      is_sensitive: t.bool().default(true),
+      created_at: t.u64(),
     }
   ),
 });
@@ -510,6 +630,96 @@ export const addAgentMount = spacetimedb.reducer(
   },
   (ctx, mount) => {
     ctx.db.agent_workspace_mounts.insert(mount);
+  }
+);
+
+export const updateAgent = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    displayName: t.string(),
+    systemPrompt: t.string(),
+    model: t.string(),
+    utilityModel: t.string(),
+    tools: t.string(),
+    sandboxImage: t.string(),
+    maxIterations: t.u32(),
+    isActive: t.bool(),
+    isDefault: t.bool(),
+  },
+  (ctx, agent) => {
+    const existing = ctx.db.agents.id.find(agent.id);
+    if (!existing) return;
+    ctx.db.agents.id.update({
+      ...existing,
+      ...agent,
+      createdAt: existing.createdAt,
+    });
+  }
+);
+
+export const deleteAgent = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const agent = ctx.db.agents.id.find(id);
+    if (!agent || agent.isDefault) return;
+    // Cascade delete channels
+    for (const ch of ctx.db.agent_channels.iter()) {
+      if (ch.agentId === id) ctx.db.agent_channels.id.delete(ch.id);
+    }
+    // Cascade delete mounts
+    for (const m of ctx.db.agent_workspace_mounts.iter()) {
+      if (m.agentId === id) ctx.db.agent_workspace_mounts.id.delete(m.id);
+    }
+    ctx.db.agents.id.delete(id);
+  }
+);
+
+export const setDefaultAgent = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const agent = ctx.db.agents.id.find(id);
+    if (!agent) return;
+    for (const a of ctx.db.agents.iter()) {
+      if (a.isDefault) {
+        ctx.db.agents.id.update({ ...a, isDefault: false });
+      }
+    }
+    ctx.db.agents.id.update({ ...agent, isDefault: true });
+  }
+);
+
+export const addAgentChannel = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    channel: t.string(),
+    sandboxOverride: t.string(),
+    enabled: t.bool(),
+  },
+  (ctx, ch) => {
+    ctx.db.agent_channels.insert({
+      ...ch,
+      createdAt: BigInt(Date.now()),
+    });
+  }
+);
+
+export const deleteAgentChannelsForAgent = spacetimedb.reducer(
+  { agentId: t.string() },
+  (ctx, { agentId }) => {
+    for (const ch of ctx.db.agent_channels.iter()) {
+      if (ch.agentId === agentId) ctx.db.agent_channels.id.delete(ch.id);
+    }
+  }
+);
+
+export const deleteAgentMountsForAgent = spacetimedb.reducer(
+  { agentId: t.string() },
+  (ctx, { agentId }) => {
+    for (const m of ctx.db.agent_workspace_mounts.iter()) {
+      if (m.agentId === agentId) ctx.db.agent_workspace_mounts.id.delete(m.id);
+    }
   }
 );
 
@@ -1294,7 +1504,7 @@ export const consumeSystemEvent = spacetimedb.reducer(
     }
   }
 );
-// ─── Deployment Reducers (Design Doc 039) ──────────────────────────────────
+// ─── Deployment & Infrastructure Reducers (Design Docs 039, 043, 045a) ─────
 
 // -- Deployment Environments --
 
@@ -1315,7 +1525,7 @@ export const create_deployment_environment = spacetimedb.reducer(
   },
   (ctx, args) => {
     const now = BigInt(Date.now());
-    ctx.db.deployment_environments.insert({
+    ctx.db.environments.insert({
       name: args.name,
       display_name: args.display_name,
       order: args.order,
@@ -1330,7 +1540,7 @@ export const create_deployment_environment = spacetimedb.reducer(
       created_at: now,
       updated_at: now,
     });
-    ctx.db.deployment_environment_history.insert({
+    ctx.db.environment_history.insert({
       id: args.history_id,
       environment_name: args.name,
       action: 'created',
@@ -1359,7 +1569,7 @@ export const update_deployment_environment = spacetimedb.reducer(
     changed_by: t.string(),
   },
   (ctx, args) => {
-    const existing = ctx.db.deployment_environments.name.find(args.name);
+    const existing = ctx.db.environments.name.find(args.name);
     if (!existing) return;
     const now = BigInt(Date.now());
     const before = JSON.stringify(existing);
@@ -1377,8 +1587,8 @@ export const update_deployment_environment = spacetimedb.reducer(
       is_active: args.is_active ?? existing.is_active,
       updated_at: now,
     };
-    ctx.db.deployment_environments.name.update(updated);
-    ctx.db.deployment_environment_history.insert({
+    ctx.db.environments.name.update(updated);
+    ctx.db.environment_history.insert({
       id: args.history_id,
       environment_name: args.name,
       action: args.is_active === false ? 'deactivated' : args.is_active === true ? 'reactivated' : 'updated',
@@ -1398,7 +1608,7 @@ export const add_deployment_approver = spacetimedb.reducer(
     added_by: t.string(),
   },
   (ctx, args) => {
-    ctx.db.deployment_environment_approvers.insert({
+    ctx.db.environment_approvers.insert({
       id: args.id,
       environment_name: args.environment_name,
       user_id: args.user_id,
@@ -1413,9 +1623,9 @@ export const remove_deployment_approver = spacetimedb.reducer(
     id: t.string(),
   },
   (ctx, args) => {
-    const existing = ctx.db.deployment_environment_approvers.id.find(args.id);
+    const existing = ctx.db.environment_approvers.id.find(args.id);
     if (existing) {
-      ctx.db.deployment_environment_approvers.id.delete(args.id);
+      ctx.db.environment_approvers.id.delete(args.id);
     }
   }
 );
@@ -1434,7 +1644,7 @@ export const initiate_promotion = spacetimedb.reducer(
   },
   (ctx, args) => {
     const now = BigInt(Date.now());
-    ctx.db.deployment_promotions.insert({
+    ctx.db.promotions.insert({
       id: args.id,
       script_id: args.script_id,
       script_version: args.script_version,
@@ -1460,7 +1670,7 @@ export const record_approval = spacetimedb.reducer(
     user_id: t.string(),
   },
   (ctx, args) => {
-    ctx.db.deployment_approvals.insert({
+    ctx.db.approvals.insert({
       id: args.id,
       promotion_id: args.promotion_id,
       script_id: args.script_id,
@@ -1481,9 +1691,9 @@ export const update_promotion_status = spacetimedb.reducer(
     receipt_id: t.string().optional(),
   },
   (ctx, args) => {
-    const existing = ctx.db.deployment_promotions.id.find(args.id);
+    const existing = ctx.db.promotions.id.find(args.id);
     if (!existing) return;
-    ctx.db.deployment_promotions.id.update({
+    ctx.db.promotions.id.update({
       ...existing,
       status: args.status,
       promoted_at: args.promoted_at ?? existing.promoted_at,
@@ -1493,7 +1703,7 @@ export const update_promotion_status = spacetimedb.reducer(
   }
 );
 
-// ─── Deployment Resource Reducers (Design Doc 043 §6) ─────────────────────
+// ─── Resource Reducers (Design Doc 043 §6) ────────────────────────────────
 
 export const create_deployment_resource = spacetimedb.reducer(
   {
@@ -1501,7 +1711,7 @@ export const create_deployment_resource = spacetimedb.reducer(
     name: t.string(),
     display_name: t.string(),
     resource_type: t.string(),
-    environment: t.string(),
+    environment: t.string().default(''),   // deprecated — use resource_environments join table
     connection_json: t.string().default('{}'),
     capabilities_json: t.string().default('{}'),
     state_json: t.string().default('{}'),
@@ -1513,7 +1723,31 @@ export const create_deployment_resource = spacetimedb.reducer(
     last_probed_at: t.u64().default(0n),
   },
   (ctx, args) => {
-    ctx.db.deployment_resources.insert(args);
+    ctx.db.resources.insert(args);
+  }
+);
+
+// ─── Resource ↔ Environment (many-to-many) ─────────────────────────────────
+
+export const add_resource_environment = spacetimedb.reducer(
+  {
+    id: t.string(),
+    resource_id: t.string(),
+    environment_name: t.string(),
+    created_at: t.u64(),
+  },
+  (ctx, args) => {
+    ctx.db.resource_environments.insert(args);
+  }
+);
+
+export const remove_resource_environment = spacetimedb.reducer(
+  {
+    id: t.string(),
+  },
+  (ctx, { id }) => {
+    const row = ctx.db.resource_environments.id.find(id);
+    if (row) ctx.db.resource_environments.id.delete(id);
   }
 );
 
@@ -1533,9 +1767,9 @@ export const update_deployment_resource = spacetimedb.reducer(
     last_probed_at: t.u64().optional(),
   },
   (ctx, args) => {
-    const existing = ctx.db.deployment_resources.id.find(args.id);
+    const existing = ctx.db.resources.id.find(args.id);
     if (!existing) return;
-    ctx.db.deployment_resources.id.update({
+    ctx.db.resources.id.update({
       ...existing,
       display_name: args.display_name ?? existing.display_name,
       resource_type: args.resource_type ?? existing.resource_type,
@@ -1555,9 +1789,9 @@ export const update_deployment_resource = spacetimedb.reducer(
 export const delete_deployment_resource = spacetimedb.reducer(
   { id: t.string() },
   (ctx, { id }) => {
-    const existing = ctx.db.deployment_resources.id.find(id);
+    const existing = ctx.db.resources.id.find(id);
     if (existing) {
-      ctx.db.deployment_resources.id.update({
+      ctx.db.resources.id.update({
         ...existing,
         is_active: false,
         updated_at: BigInt(Date.now()),
@@ -1566,7 +1800,7 @@ export const delete_deployment_resource = spacetimedb.reducer(
   }
 );
 
-// ─── Deployment Trigger Reducers (Design Doc 043 §3.4) ────────────────────
+// ─── Trigger Reducers (Design Doc 043 §3.4) ───────────────────────────────
 
 export const create_deployment_trigger = spacetimedb.reducer(
   {
@@ -1581,7 +1815,7 @@ export const create_deployment_trigger = spacetimedb.reducer(
   },
   (ctx, args) => {
     const now = BigInt(Date.now());
-    ctx.db.deployment_triggers.insert({
+    ctx.db.triggers.insert({
       ...args,
       created_at: now,
       updated_at: now,
@@ -1601,9 +1835,9 @@ export const update_deployment_trigger = spacetimedb.reducer(
     enabled: t.bool().optional(),
   },
   (ctx, args) => {
-    const existing = ctx.db.deployment_triggers.id.find(args.id);
+    const existing = ctx.db.triggers.id.find(args.id);
     if (!existing) return;
-    ctx.db.deployment_triggers.id.update({
+    ctx.db.triggers.id.update({
       ...existing,
       script_id: args.script_id ?? existing.script_id,
       repo_url: args.repo_url ?? existing.repo_url,
@@ -1620,9 +1854,307 @@ export const update_deployment_trigger = spacetimedb.reducer(
 export const delete_deployment_trigger = spacetimedb.reducer(
   { id: t.string() },
   (ctx, { id }) => {
-    const existing = ctx.db.deployment_triggers.id.find(id);
+    const existing = ctx.db.triggers.id.find(id);
     if (existing) {
-      ctx.db.deployment_triggers.id.delete(id);
+      ctx.db.triggers.id.delete(id);
+    }
+  }
+);
+
+// ─── Alert Reducers (Design Doc 045a) ─────────────────────────────────────
+
+export const create_monitoring_alert = spacetimedb.reducer(
+  {
+    id: t.string(),
+    environment: t.string(),
+    category: t.string(),
+    component: t.string().default(''),
+    component_id: t.string().default(''),
+    fingerprint_hash: t.string().default(''),
+    severity: t.string(),
+    message: t.string(),
+    detected_at: t.u64(),
+    issue_number: t.u32().default(0),
+    issue_action: t.string().default(''),
+  },
+  (ctx, args) => {
+    ctx.db.alerts.insert({
+      ...args,
+      resolved_at: 0n,
+    });
+  }
+);
+
+export const resolve_monitoring_alert = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.alerts.id.find(id);
+    if (!existing) return;
+    ctx.db.alerts.id.update({
+      ...existing,
+      resolved_at: BigInt(Date.now()),
+    });
+  }
+);
+
+// ─── Alert Rule Reducers (Design Doc 045a) ────────────────────────────────
+
+export const create_alert_rule = spacetimedb.reducer(
+  {
+    id: t.string(),
+    environment: t.string(),
+    name: t.string(),
+    metric: t.string(),
+    operator: t.string(),
+    threshold: t.f64(),
+    duration_minutes: t.u32().default(0),
+    severity: t.string().default('medium'),
+    enabled: t.bool().default(true),
+    auto_file_issue: t.bool().default(false),
+    custom_script_id: t.string().default(''),
+    applies_to_resources: t.string().default(''),
+    component_id: t.string().default(''),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    ctx.db.alert_rules.insert({
+      ...args,
+      triggered_count: 0,
+      last_triggered_at: 0n,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+);
+
+export const update_alert_rule = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string().optional(),
+    metric: t.string().optional(),
+    operator: t.string().optional(),
+    threshold: t.f64().optional(),
+    duration_minutes: t.u32().optional(),
+    severity: t.string().optional(),
+    auto_file_issue: t.bool().optional(),
+    custom_script_id: t.string().optional(),
+    applies_to_resources: t.string().optional(),
+    component_id: t.string().optional(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.alert_rules.id.find(args.id);
+    if (!existing) return;
+    ctx.db.alert_rules.id.update({
+      ...existing,
+      name: args.name ?? existing.name,
+      metric: args.metric ?? existing.metric,
+      operator: args.operator ?? existing.operator,
+      threshold: args.threshold ?? existing.threshold,
+      duration_minutes: args.duration_minutes ?? existing.duration_minutes,
+      severity: args.severity ?? existing.severity,
+      auto_file_issue: args.auto_file_issue ?? existing.auto_file_issue,
+      custom_script_id: args.custom_script_id ?? existing.custom_script_id,
+      applies_to_resources: args.applies_to_resources ?? existing.applies_to_resources,
+      component_id: args.component_id ?? existing.component_id,
+      updated_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const delete_alert_rule = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.alert_rules.id.find(id);
+    if (existing) {
+      ctx.db.alert_rules.id.delete(id);
+    }
+  }
+);
+
+export const enable_alert_rule = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.alert_rules.id.find(id);
+    if (!existing) return;
+    ctx.db.alert_rules.id.update({
+      ...existing,
+      enabled: true,
+      updated_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const disable_alert_rule = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.alert_rules.id.find(id);
+    if (!existing) return;
+    ctx.db.alert_rules.id.update({
+      ...existing,
+      enabled: false,
+      updated_at: BigInt(Date.now()),
+    });
+  }
+);
+
+// ─── Component Reducers (Design Doc 045a) ─────────────────────────────────
+
+export const create_component = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    display_name: t.string(),
+    component_type: t.string(),
+    parent_id: t.string().default(''),
+    runtime: t.string().default(''),
+    framework: t.string().default(''),
+    repository_url: t.string().default(''),
+    icon: t.string().default(''),
+    description: t.string().default(''),
+    discovered_from: t.string().default(''),
+    source_path: t.string().default(''),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    ctx.db.components.insert({
+      ...args,
+      is_active: true,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+);
+
+export const update_component = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string().optional(),
+    display_name: t.string().optional(),
+    component_type: t.string().optional(),
+    parent_id: t.string().optional(),
+    runtime: t.string().optional(),
+    framework: t.string().optional(),
+    repository_url: t.string().optional(),
+    icon: t.string().optional(),
+    description: t.string().optional(),
+    discovered_from: t.string().optional(),
+    source_path: t.string().optional(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.components.id.find(args.id);
+    if (!existing) return;
+    ctx.db.components.id.update({
+      ...existing,
+      name: args.name ?? existing.name,
+      display_name: args.display_name ?? existing.display_name,
+      component_type: args.component_type ?? existing.component_type,
+      parent_id: args.parent_id ?? existing.parent_id,
+      runtime: args.runtime ?? existing.runtime,
+      framework: args.framework ?? existing.framework,
+      repository_url: args.repository_url ?? existing.repository_url,
+      icon: args.icon ?? existing.icon,
+      description: args.description ?? existing.description,
+      discovered_from: args.discovered_from ?? existing.discovered_from,
+      source_path: args.source_path ?? existing.source_path,
+      updated_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const deactivate_component = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.components.id.find(id);
+    if (!existing) return;
+    ctx.db.components.id.update({
+      ...existing,
+      is_active: false,
+      updated_at: BigInt(Date.now()),
+    });
+  }
+);
+
+// -- Component Resource Links --
+
+export const add_component_resource = spacetimedb.reducer(
+  {
+    id: t.string(),
+    component_id: t.string(),
+    resource_id: t.string(),
+    environment: t.string(),
+    port: t.u32().default(0),
+    process_name: t.string().default(''),
+    health_check: t.string().default(''),
+  },
+  (ctx, args) => {
+    ctx.db.component_resources.insert({
+      ...args,
+      created_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const remove_component_resource = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.component_resources.id.find(id);
+    if (existing) {
+      ctx.db.component_resources.id.delete(id);
+    }
+  }
+);
+
+// -- Component Script Links --
+
+export const add_component_script = spacetimedb.reducer(
+  {
+    id: t.string(),
+    component_id: t.string(),
+    script_id: t.string(),
+    role: t.string().default('deploy'),
+  },
+  (ctx, args) => {
+    ctx.db.component_scripts.insert({
+      ...args,
+      created_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const remove_component_script = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.component_scripts.id.find(id);
+    if (existing) {
+      ctx.db.component_scripts.id.delete(id);
+    }
+  }
+);
+
+// -- Component Secret Links --
+
+export const add_component_secret = spacetimedb.reducer(
+  {
+    id: t.string(),
+    component_id: t.string(),
+    secret_key: t.string(),
+    environment: t.string(),
+    is_sensitive: t.bool().default(true),
+  },
+  (ctx, args) => {
+    ctx.db.component_secrets.insert({
+      ...args,
+      created_at: BigInt(Date.now()),
+    });
+  }
+);
+
+export const remove_component_secret = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.component_secrets.id.find(id);
+    if (existing) {
+      ctx.db.component_secrets.id.delete(id);
     }
   }
 );

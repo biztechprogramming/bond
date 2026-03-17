@@ -109,3 +109,25 @@ export function readLog(
     size,
   };
 }
+
+/**
+ * Trigger a fresh log collection for an environment.
+ * Writes a collection marker so the deploy agent knows to flush output.
+ * Returns the current log state for immediate polling.
+ */
+export function collectLogs(
+  env: string,
+): { date: string; offset: number; size: number } {
+  const date = todayDate();
+  const dir = getLogsDir(env);
+  fs.mkdirSync(dir, { recursive: true });
+
+  // Write collection trigger marker
+  const markerPath = path.join(dir, ".collect-trigger");
+  fs.writeFileSync(markerPath, JSON.stringify({ triggered_at: new Date().toISOString() }), "utf8");
+
+  const logPath = getLogFilePath(env, date);
+  const size = fs.existsSync(logPath) ? fs.statSync(logPath).size : 0;
+
+  return { date, offset: size, size };
+}

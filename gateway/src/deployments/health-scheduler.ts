@@ -14,6 +14,7 @@ import type { GatewayConfig } from "../config/index.js";
 import { getEnvironments } from "./stdb.js";
 import { compareDrift } from "./drift-detector.js";
 import { loadSecrets } from "./secrets.js";
+import { runMonitoringCycle } from "./monitoring.js";
 
 const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -142,6 +143,13 @@ async function runCheck(env: string, _config: GatewayConfig): Promise<void> {
       }
     } catch (driftErr: any) {
       console.warn(`[health-scheduler] Drift check error for '${env}':`, driftErr.message);
+    }
+
+    // Run monitoring cycle if configured
+    try {
+      await runMonitoringCycle(env, _config);
+    } catch (monErr: any) {
+      console.warn(`[health-scheduler] Monitoring cycle error for '${env}':`, monErr.message);
     }
   } catch (err: any) {
     console.error(`[health-scheduler] Error checking '${env}':`, err.message);

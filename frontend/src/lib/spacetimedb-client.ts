@@ -80,7 +80,7 @@ export function getConnection(): DbConnection | null {
 }
 
 export async function connectToSpacetimeDB(
-  uri = "ws://localhost:18788/stdb/",
+  uri = "ws://localhost:18787",
   moduleName = "bond-core-v2"
 ): Promise<DbConnection> {
   if (db) return db;
@@ -125,7 +125,27 @@ export async function connectToSpacetimeDB(
               "SELECT * FROM conversations",
               "SELECT * FROM conversation_messages",
               "SELECT * FROM work_plans",
-              "SELECT * FROM work_items"
+              "SELECT * FROM work_items",
+              "SELECT * FROM agents",
+              "SELECT * FROM agent_channels",
+              "SELECT * FROM agent_workspace_mounts",
+              "SELECT * FROM llm_models",
+              "SELECT * FROM providers",
+              "SELECT * FROM provider_aliases",
+              "SELECT * FROM settings",
+              "SELECT * FROM provider_api_keys",
+              "SELECT * FROM prompt_fragments",
+              "SELECT * FROM prompt_templates",
+              "SELECT * FROM prompt_fragment_versions",
+              "SELECT * FROM prompt_template_versions",
+              "SELECT * FROM agent_prompt_fragments",
+              "SELECT * FROM resources",
+              "SELECT * FROM components",
+              "SELECT * FROM environments",
+              "SELECT * FROM component_resources",
+              "SELECT * FROM alerts",
+              "SELECT * FROM alert_rules",
+              "SELECT * FROM resource_environments"
             ]);
         })
         .onConnectError((ctx, err) => {
@@ -154,6 +174,91 @@ export async function connectToSpacetimeDB(
         conn.db.workItems.onInsert(() => notifyListeners());
         conn.db.workItems.onUpdate(() => notifyListeners());
         conn.db.workItems.onDelete(() => notifyListeners());
+      }
+
+      // Agent tables
+      conn.db.agents.onInsert(() => notifyListeners());
+      conn.db.agents.onUpdate(() => notifyListeners());
+      conn.db.agents.onDelete(() => notifyListeners());
+
+      if (conn.db.agent_channels) {
+        conn.db.agent_channels.onInsert(() => notifyListeners());
+        conn.db.agent_channels.onUpdate(() => notifyListeners());
+        conn.db.agent_channels.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.agent_workspace_mounts) {
+        conn.db.agent_workspace_mounts.onInsert(() => notifyListeners());
+        conn.db.agent_workspace_mounts.onUpdate(() => notifyListeners());
+        conn.db.agent_workspace_mounts.onDelete(() => notifyListeners());
+      }
+
+      // Model/provider tables
+      if (conn.db.llm_models) {
+        conn.db.llm_models.onInsert(() => notifyListeners());
+        conn.db.llm_models.onUpdate(() => notifyListeners());
+        conn.db.llm_models.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.providers) {
+        conn.db.providers.onInsert(() => notifyListeners());
+        conn.db.providers.onUpdate(() => notifyListeners());
+        conn.db.providers.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.settings) {
+        conn.db.settings.onInsert(() => notifyListeners());
+        conn.db.settings.onUpdate(() => notifyListeners());
+        conn.db.settings.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.provider_api_keys) {
+        conn.db.provider_api_keys.onInsert(() => notifyListeners());
+        conn.db.provider_api_keys.onUpdate(() => notifyListeners());
+        conn.db.provider_api_keys.onDelete(() => notifyListeners());
+      }
+
+      // Deployment tables
+      if (conn.db.resources) {
+        conn.db.resources.onInsert(() => notifyListeners());
+        conn.db.resources.onUpdate(() => notifyListeners());
+        conn.db.resources.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.components) {
+        conn.db.components.onInsert(() => notifyListeners());
+        conn.db.components.onUpdate(() => notifyListeners());
+        conn.db.components.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.environments) {
+        conn.db.environments.onInsert(() => notifyListeners());
+        conn.db.environments.onUpdate(() => notifyListeners());
+        conn.db.environments.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.component_resources) {
+        conn.db.component_resources.onInsert(() => notifyListeners());
+        conn.db.component_resources.onUpdate(() => notifyListeners());
+        conn.db.component_resources.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.alerts) {
+        conn.db.alerts.onInsert(() => notifyListeners());
+        conn.db.alerts.onUpdate(() => notifyListeners());
+        conn.db.alerts.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.alert_rules) {
+        conn.db.alert_rules.onInsert(() => notifyListeners());
+        conn.db.alert_rules.onUpdate(() => notifyListeners());
+        conn.db.alert_rules.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.resource_environments) {
+        conn.db.resource_environments.onInsert(() => notifyListeners());
+        conn.db.resource_environments.onUpdate(() => notifyListeners());
+        conn.db.resource_environments.onDelete(() => notifyListeners());
       }
 
     } catch (err) {
@@ -225,4 +330,316 @@ export function getAgentName(agentId: string): string | null {
   if (!db) return null;
   const agent = db.db.agents.id.find(agentId);
   return agent ? (agent as any).displayName : null;
+}
+
+export interface AgentRow {
+  id: string;
+  name: string;
+  displayName: string;
+  systemPrompt: string;
+  model: string;
+  utilityModel: string;
+  tools: string;
+  sandboxImage: string;
+  maxIterations: number;
+  isActive: boolean;
+  isDefault: boolean;
+  autoRag?: boolean;
+  autoRagLimit?: number;
+}
+
+export interface AgentChannelRow {
+  id: string;
+  agentId: string;
+  channel: string;
+  sandboxOverride: string;
+  enabled: boolean;
+}
+
+export interface AgentMountRow {
+  id: string;
+  agentId: string;
+  hostPath: string;
+  mountName: string;
+  containerPath: string;
+  readonly: boolean;
+}
+
+export interface LlmModelRow {
+  id: string;
+  provider: string;
+  modelId: string;
+  displayName: string;
+  contextWindow: number;
+  isEnabled: boolean;
+}
+
+export interface ProviderRow {
+  id: string;
+  displayName: string;
+  litellmPrefix: string;
+  isEnabled: boolean;
+}
+
+export function getAgents(): AgentRow[] {
+  if (!db) return [];
+  const rows: AgentRow[] = [];
+  for (const row of db.db.agents.iter()) {
+    rows.push(row as unknown as AgentRow);
+  }
+  rows.sort((a, b) => (a.isDefault ? -1 : b.isDefault ? 1 : a.name.localeCompare(b.name)));
+  return rows;
+}
+
+export function getAgentChannels(agentId: string): AgentChannelRow[] {
+  if (!db || !db.db.agent_channels) return [];
+  const rows: AgentChannelRow[] = [];
+  for (const row of db.db.agent_channels.iter()) {
+    const ch = row as unknown as AgentChannelRow;
+    if (ch.agentId === agentId) rows.push(ch);
+  }
+  return rows;
+}
+
+export function getAgentMounts(agentId: string): AgentMountRow[] {
+  if (!db || !db.db.agent_workspace_mounts) return [];
+  const rows: AgentMountRow[] = [];
+  for (const row of db.db.agent_workspace_mounts.iter()) {
+    const m = row as unknown as AgentMountRow;
+    if (m.agentId === agentId) rows.push(m);
+  }
+  return rows;
+}
+
+export function getLlmModels(): LlmModelRow[] {
+  if (!db || !db.db.llm_models) return [];
+  const rows: LlmModelRow[] = [];
+  for (const row of db.db.llm_models.iter()) {
+    const m = row as unknown as LlmModelRow;
+    if (m.isEnabled) rows.push(m);
+  }
+  return rows;
+}
+
+export function getProviders(): ProviderRow[] {
+  if (!db || !db.db.providers) return [];
+  const rows: ProviderRow[] = [];
+  for (const row of db.db.providers.iter()) {
+    const p = row as unknown as ProviderRow;
+    if (p.isEnabled) rows.push(p);
+  }
+  return rows;
+}
+
+// Settings
+export interface SettingRow {
+  key: string;
+  value: string;
+  keyType: string;
+  createdAt: bigint;
+  updatedAt: bigint;
+}
+
+export function getSettings(): SettingRow[] {
+  if (!db || !db.db.settings) return [];
+  const rows: SettingRow[] = [];
+  for (const row of db.db.settings.iter()) {
+    rows.push(row as unknown as SettingRow);
+  }
+  return rows;
+}
+
+export function getSetting(key: string): string | null {
+  if (!db || !db.db.settings) return null;
+  const row = db.db.settings.key.find(key);
+  return row ? (row as unknown as SettingRow).value : null;
+}
+
+// Provider API Keys
+export interface ProviderApiKeyRow {
+  providerId: string;
+  encryptedValue: string;
+  keyType: string;
+  createdAt: bigint;
+  updatedAt: bigint;
+}
+
+export function getProviderApiKeys(): ProviderApiKeyRow[] {
+  if (!db || !db.db.provider_api_keys) return [];
+  const rows: ProviderApiKeyRow[] = [];
+  for (const row of db.db.provider_api_keys.iter()) {
+    rows.push(row as unknown as ProviderApiKeyRow);
+  }
+  return rows;
+}
+
+// Deployment types
+export interface ResourceRow {
+  id: string;
+  name: string;
+  displayName: string;
+  resourceType: string;
+  environment: string;
+  connectionJson: string;
+  capabilitiesJson: string;
+  stateJson: string;
+  tagsJson: string;
+  recommendationsJson: string;
+  isActive: boolean;
+  createdAt: bigint;
+  updatedAt: bigint;
+  lastProbedAt: bigint;
+}
+
+export interface ComponentRow {
+  id: string;
+  name: string;
+  displayName: string;
+  componentType: string;
+  parentId: string;
+  runtime: string;
+  framework: string;
+  repositoryUrl: string;
+  icon: string;
+  description: string;
+  isActive: boolean;
+  createdAt: bigint;
+  updatedAt: bigint;
+  discoveredFrom: string;
+  sourcePath: string;
+}
+
+export interface EnvironmentRow {
+  name: string;
+  displayName: string;
+  order: number;
+  isActive: boolean;
+  maxScriptTimeout: number;
+  healthCheckInterval: number;
+  windowDays: string;
+  windowStart: string;
+  windowEnd: string;
+  windowTimezone: string;
+  requiredApprovals: number;
+  createdAt: bigint;
+  updatedAt: bigint;
+}
+
+export interface ComponentResourceRow {
+  id: string;
+  componentId: string;
+  resourceId: string;
+  environment: string;
+  port: number;
+  processName: string;
+  healthCheck: string;
+  createdAt: bigint;
+}
+
+export interface AlertRow {
+  id: string;
+  environment: string;
+  category: string;
+  component: string;
+  componentId: string;
+  fingerprintHash: string;
+  severity: string;
+  message: string;
+  detectedAt: bigint;
+  issueNumber: number;
+  issueAction: string;
+  resolvedAt: bigint;
+}
+
+export interface AlertRuleRow {
+  id: string;
+  environment: string;
+  name: string;
+  metric: string;
+  operator: string;
+  threshold: number;
+  durationMinutes: number;
+  severity: string;
+  enabled: boolean;
+  autoFileIssue: boolean;
+  customScriptId: string;
+  appliesToResources: string;
+  componentId: string;
+  triggeredCount: number;
+  lastTriggeredAt: bigint;
+  createdAt: bigint;
+  updatedAt: bigint;
+}
+
+export function getResources(): ResourceRow[] {
+  if (!db || !db.db.resources) return [];
+  const rows: ResourceRow[] = [];
+  for (const row of db.db.resources.iter()) {
+    rows.push(row as unknown as ResourceRow);
+  }
+  return rows;
+}
+
+export function getComponents(): ComponentRow[] {
+  if (!db || !db.db.components) return [];
+  const rows: ComponentRow[] = [];
+  for (const row of db.db.components.iter()) {
+    rows.push(row as unknown as ComponentRow);
+  }
+  return rows;
+}
+
+export function getEnvironments(): EnvironmentRow[] {
+  if (!db || !db.db.environments) return [];
+  const rows: EnvironmentRow[] = [];
+  for (const row of db.db.environments.iter()) {
+    rows.push(row as unknown as EnvironmentRow);
+  }
+  rows.sort((a, b) => a.order - b.order);
+  return rows;
+}
+
+export function getComponentResources(componentId: string): ComponentResourceRow[] {
+  if (!db || !db.db.component_resources) return [];
+  const rows: ComponentResourceRow[] = [];
+  for (const row of db.db.component_resources.iter()) {
+    const cr = row as unknown as ComponentResourceRow;
+    if (cr.componentId === componentId) rows.push(cr);
+  }
+  return rows;
+}
+
+export function getAlerts(): AlertRow[] {
+  if (!db || !db.db.alerts) return [];
+  const rows: AlertRow[] = [];
+  for (const row of db.db.alerts.iter()) {
+    rows.push(row as unknown as AlertRow);
+  }
+  return rows;
+}
+
+export interface ResourceEnvironmentRow {
+  id: string;
+  resourceId: string;
+  environmentName: string;
+  createdAt: bigint;
+}
+
+export function getResourceEnvironments(): ResourceEnvironmentRow[] {
+  if (!db || !db.db.resource_environments) return [];
+  const rows: ResourceEnvironmentRow[] = [];
+  for (const row of db.db.resource_environments.iter()) {
+    rows.push(row as unknown as ResourceEnvironmentRow);
+  }
+  return rows;
+}
+
+export function getAvailableModels(): { id: string; name: string }[] {
+  const models = getLlmModels();
+  const providers = getProviders();
+  const providerMap = new Map(providers.map(p => [p.id, p.litellmPrefix]));
+  return models.map(m => ({
+    id: `${providerMap.get(m.provider) || m.provider}/${m.modelId}`,
+    name: m.displayName,
+  }));
 }

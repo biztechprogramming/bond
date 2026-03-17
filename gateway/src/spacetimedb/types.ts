@@ -56,6 +56,103 @@ export const Agents = __t.object("Agents", {
 });
 export type Agents = __Infer<typeof Agents>;
 
+export const AlertRules = __t.object("AlertRules", {
+  id: __t.string(),
+  environment: __t.string(),
+  name: __t.string(),
+  metric: __t.string(),
+  operator: __t.string(),
+  threshold: __t.f64(),
+  durationMinutes: __t.u32(),
+  severity: __t.string(),
+  enabled: __t.bool(),
+  autoFileIssue: __t.bool(),
+  customScriptId: __t.string(),
+  appliesToResources: __t.string(),
+  componentId: __t.string(),
+  triggeredCount: __t.u32(),
+  lastTriggeredAt: __t.u64(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type AlertRules = __Infer<typeof AlertRules>;
+
+export const Alerts = __t.object("Alerts", {
+  id: __t.string(),
+  environment: __t.string(),
+  category: __t.string(),
+  component: __t.string(),
+  componentId: __t.string(),
+  fingerprintHash: __t.string(),
+  severity: __t.string(),
+  message: __t.string(),
+  detectedAt: __t.u64(),
+  issueNumber: __t.u32(),
+  issueAction: __t.string(),
+  resolvedAt: __t.u64(),
+});
+export type Alerts = __Infer<typeof Alerts>;
+
+export const Approvals = __t.object("Approvals", {
+  id: __t.string(),
+  promotionId: __t.string(),
+  scriptId: __t.string(),
+  scriptVersion: __t.string(),
+  environmentName: __t.string(),
+  userId: __t.string(),
+  approvedAt: __t.u64(),
+});
+export type Approvals = __Infer<typeof Approvals>;
+
+export const ComponentResources = __t.object("ComponentResources", {
+  id: __t.string(),
+  componentId: __t.string(),
+  resourceId: __t.string(),
+  environment: __t.string(),
+  port: __t.u32(),
+  processName: __t.string(),
+  healthCheck: __t.string(),
+  createdAt: __t.u64(),
+});
+export type ComponentResources = __Infer<typeof ComponentResources>;
+
+export const ComponentScripts = __t.object("ComponentScripts", {
+  id: __t.string(),
+  componentId: __t.string(),
+  scriptId: __t.string(),
+  role: __t.string(),
+  createdAt: __t.u64(),
+});
+export type ComponentScripts = __Infer<typeof ComponentScripts>;
+
+export const ComponentSecrets = __t.object("ComponentSecrets", {
+  id: __t.string(),
+  componentId: __t.string(),
+  secretKey: __t.string(),
+  environment: __t.string(),
+  isSensitive: __t.bool(),
+  createdAt: __t.u64(),
+});
+export type ComponentSecrets = __Infer<typeof ComponentSecrets>;
+
+export const Components = __t.object("Components", {
+  id: __t.string(),
+  name: __t.string(),
+  displayName: __t.string(),
+  componentType: __t.string(),
+  parentId: __t.string(),
+  runtime: __t.string(),
+  framework: __t.string(),
+  repositoryUrl: __t.string(),
+  icon: __t.string(),
+  description: __t.string(),
+  isActive: __t.bool(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+  discoveredFrom: __t.string(),
+});
+export type Components = __Infer<typeof Components>;
+
 export const ConversationMessages = __t.object("ConversationMessages", {
   id: __t.string(),
   conversationId: __t.string(),
@@ -83,6 +180,43 @@ export const Conversations = __t.object("Conversations", {
   updatedAt: __t.u64(),
 });
 export type Conversations = __Infer<typeof Conversations>;
+
+export const EnvironmentApprovers = __t.object("EnvironmentApprovers", {
+  id: __t.string(),
+  environmentName: __t.string(),
+  userId: __t.string(),
+  addedAt: __t.u64(),
+  addedBy: __t.string(),
+});
+export type EnvironmentApprovers = __Infer<typeof EnvironmentApprovers>;
+
+export const EnvironmentHistory = __t.object("EnvironmentHistory", {
+  id: __t.string(),
+  environmentName: __t.string(),
+  action: __t.string(),
+  changedBy: __t.string(),
+  changedAt: __t.u64(),
+  beforeState: __t.string(),
+  afterState: __t.string(),
+});
+export type EnvironmentHistory = __Infer<typeof EnvironmentHistory>;
+
+export const Environments = __t.object("Environments", {
+  name: __t.string(),
+  displayName: __t.string(),
+  order: __t.u32(),
+  isActive: __t.bool(),
+  maxScriptTimeout: __t.u32(),
+  healthCheckInterval: __t.u32(),
+  windowDays: __t.string(),
+  windowStart: __t.string(),
+  windowEnd: __t.string(),
+  windowTimezone: __t.string(),
+  requiredApprovals: __t.u32(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type Environments = __Infer<typeof Environments>;
 
 export const LlmModels = __t.object("LlmModels", {
   id: __t.string(),
@@ -117,6 +251,21 @@ export const Messages = __t.object("Messages", {
   createdAt: __t.u64(),
 });
 export type Messages = __Infer<typeof Messages>;
+
+export const Promotions = __t.object("Promotions", {
+  id: __t.string(),
+  scriptId: __t.string(),
+  scriptVersion: __t.string(),
+  scriptSha256: __t.string(),
+  environmentName: __t.string(),
+  status: __t.string(),
+  initiatedBy: __t.string(),
+  initiatedAt: __t.u64(),
+  promotedAt: __t.u64(),
+  deployedAt: __t.u64(),
+  receiptId: __t.string(),
+});
+export type Promotions = __Infer<typeof Promotions>;
 
 export const PromptFragmentVersions = __t.object("PromptFragmentVersions", {
   id: __t.string(),
@@ -202,6 +351,24 @@ export const Providers = __t.object("Providers", {
 });
 export type Providers = __Infer<typeof Providers>;
 
+export const Resources = __t.object("Resources", {
+  id: __t.string(),
+  name: __t.string(),
+  displayName: __t.string(),
+  resourceType: __t.string(),
+  environment: __t.string(),
+  connectionJson: __t.string(),
+  capabilitiesJson: __t.string(),
+  stateJson: __t.string(),
+  tagsJson: __t.string(),
+  recommendationsJson: __t.string(),
+  isActive: __t.bool(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+  lastProbedAt: __t.u64(),
+});
+export type Resources = __Infer<typeof Resources>;
+
 export const Settings = __t.object("Settings", {
   key: __t.string(),
   value: __t.string(),
@@ -234,6 +401,20 @@ export const ToolLogs = __t.object("ToolLogs", {
   createdAt: __t.u64(),
 });
 export type ToolLogs = __Infer<typeof ToolLogs>;
+
+export const Triggers = __t.object("Triggers", {
+  id: __t.string(),
+  scriptId: __t.string(),
+  repoUrl: __t.string(),
+  branch: __t.string(),
+  tagPattern: __t.string(),
+  environment: __t.string(),
+  cronSchedule: __t.string(),
+  enabled: __t.bool(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type Triggers = __Infer<typeof Triggers>;
 
 export const WorkItems = __t.object("WorkItems", {
   id: __t.string(),

@@ -62,7 +62,12 @@ class StdbClient:
         try:
             resp = await self._client.post(url, headers=self._headers(), content=sql)
             if resp.status_code != 200:
-                logger.error("SpacetimeDB SQL failed (%d): %s", resp.status_code, resp.text)
+                error_msg = f"SpacetimeDB SQL failed ({resp.status_code}): {resp.text}"
+                logger.error(error_msg)
+                # Raise on write operations so callers know something failed
+                sql_upper = sql.strip().upper()
+                if sql_upper.startswith(("INSERT", "UPDATE", "DELETE")):
+                    raise RuntimeError(error_msg)
                 return []
             
             data = resp.json()

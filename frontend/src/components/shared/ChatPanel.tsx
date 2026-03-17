@@ -218,7 +218,7 @@ export default function ChatPanel({
         ))}
         {(loading || streamingContent) && (
           <div style={s.chatMsg}>
-            <div style={s.chatMsgRole}>{currentAgentName}</div>
+            <div style={s.chatMsgRole}>{selectedAgentName || currentAgentName}</div>
             <div style={{ ...s.chatMsgContent, color: streamingContent ? "#e0e0e8" : "#8888a0" }}>
               {streamingContent || (
                 agentStatus === "tool_calling" ? "Using tools..." :

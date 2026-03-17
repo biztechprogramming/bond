@@ -6,6 +6,8 @@ import DeploymentTab from "./deployment/DeploymentTab";
 import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
 import { BACKEND_API } from "@/lib/config";
+import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
+import { getConnection } from "@/lib/spacetimedb-client";
 
 const API_BASE = `${BACKEND_API}/settings`;
 
@@ -68,7 +70,11 @@ export default function SettingsPage() {
   const [warning, setWarning] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
-  const [allSettings, setAllSettings] = useState<Record<string, string>>({});
+
+  // SpacetimeDB-backed settings
+  const settingsRows = useSettings();
+  const allSettings = Object.fromEntries(settingsRows.map(s => [s.key, s.value]));
+  const providerApiKeys = useProviderApiKeys();
 
   // LLM state
   const [llmCurrent, setLlmCurrent] = useState<LlmCurrent | null>(null);
@@ -88,10 +94,9 @@ export default function SettingsPage() {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const [modelsRes, currentRes, settingsRes, llmCurrentRes] = await Promise.all([
+      const [modelsRes, currentRes, llmCurrentRes] = await Promise.all([
         fetch(`${API_BASE}/embedding/models`),
         fetch(`${API_BASE}/embedding/current`),
-        fetch(API_BASE),
         fetch(`${API_BASE}/llm/current`),
       ]);
       setModels(await modelsRes.json());
@@ -100,7 +105,6 @@ export default function SettingsPage() {
       setSelectedModel(cur.model);
       setSelectedDimension(cur.dimension);
       setSelectedMode(cur.execution_mode);
-      setAllSettings(await settingsRes.json());
       setLlmCurrent(await llmCurrentRes.json());
     } catch { /* API not available */ }
   }, []);
@@ -154,16 +158,26 @@ export default function SettingsPage() {
     if (!value.trim()) return;
     setKeySaveMsg("");
     try {
-      const res = await fetch(`${API_BASE}/${fullKey}`, {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: value.trim() }),
-      });
-      if (res.ok) { setKeySaveMsg(`Saved.`); clearFn(""); await fetchSettings(); }
-      else setKeySaveMsg("Failed.");
+      const conn = getConnection();
+      if (!conn) { setKeySaveMsg("Not connected."); return; }
+      // fullKey is like "llm.api_key.anthropic" — extract provider from last segment
+      const parts = fullKey.split(".");
+      const providerId = parts[parts.length - 1];
+      const keyType = parts.slice(0, parts.length - 1).join(".");
+      conn.reducers.setProviderApiKey({ providerId, encryptedValue: value.trim(), keyType, createdAt: BigInt(0), updatedAt: BigInt(0) });
+      setKeySaveMsg("Saved.");
+      clearFn("");
     } catch { setKeySaveMsg("Failed."); }
   };
 
-  const masked = (key: string) => allSettings[key] || "";
+  const masked = (key: string) => {
+    // key is like "llm.api_key.anthropic" — match by providerId (last segment) and keyType (rest)
+    const parts = key.split(".");
+    const providerId = parts[parts.length - 1];
+    const keyType = parts.slice(0, parts.length - 1).join(".");
+    const found = providerApiKeys.find(k => k.providerId === providerId && k.keyType === keyType);
+    return found ? found.encryptedValue : "";
+  };
 
   // ── Render ──
 
@@ -231,13 +245,10 @@ export default function SettingsPage() {
                     const val = e.target.value.trim();
                     if (!val || parseInt(val) < 1) return;
                     try {
-                      const res = await fetch(`${API_BASE}/agent.turn_timeout_minutes`, {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ value: val }),
-                      });
-                      if (res.ok) { setSaveMsg("Turn timeout saved."); await fetchSettings(); }
-                      else setSaveMsg("Failed to save.");
+                      const conn = getConnection();
+                      if (!conn) { setSaveMsg("Not connected."); return; }
+                      conn.reducers.setSetting({ key: "agent.turn_timeout_minutes", value: val, keyType: "string" });
+                      setSaveMsg("Turn timeout saved.");
                     } catch { setSaveMsg("Failed to save."); }
                   }}
                 />
@@ -260,13 +271,10 @@ export default function SettingsPage() {
                     onChange={async (e) => {
                       const val = e.target.checked ? "true" : "false";
                       try {
-                        const res = await fetch(`${API_BASE}/coding_agent.log_to_file`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ value: val }),
-                        });
-                        if (res.ok) { setSaveMsg("Saved."); await fetchSettings(); }
-                        else setSaveMsg("Failed to save.");
+                        const conn = getConnection();
+                        if (!conn) { setSaveMsg("Not connected."); return; }
+                        conn.reducers.setSetting({ key: "coding_agent.log_to_file", value: val, keyType: "string" });
+                        setSaveMsg("Saved.");
                       } catch { setSaveMsg("Failed to save."); }
                     }}
                     style={{ accentColor: "#6c8aff", width: "16px", height: "16px" }}
@@ -286,13 +294,10 @@ export default function SettingsPage() {
                     onChange={async (e) => {
                       const val = e.target.checked ? "true" : "false";
                       try {
-                        const res = await fetch(`${API_BASE}/coding_agent.stream_output`, {
-                          method: "PUT",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ value: val }),
-                        });
-                        if (res.ok) { setSaveMsg("Saved."); await fetchSettings(); }
-                        else setSaveMsg("Failed to save.");
+                        const conn = getConnection();
+                        if (!conn) { setSaveMsg("Not connected."); return; }
+                        conn.reducers.setSetting({ key: "coding_agent.stream_output", value: val, keyType: "string" });
+                        setSaveMsg("Saved.");
                       } catch { setSaveMsg("Failed to save."); }
                     }}
                     style={{ accentColor: "#6c8aff", width: "16px", height: "16px" }}

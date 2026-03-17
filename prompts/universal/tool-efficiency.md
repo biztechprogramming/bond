@@ -1,3 +1,6 @@
+## Conversational Messages — No Tools Needed
+If the user's message is conversational (greetings, thanks, simple questions, small talk), **respond directly without any tool calls**. Not every message is a task. "Hello" is not a coding task. "Thanks!" is not a discovery phase. Save tool calls for when there's actual work to do.
+
 ## Tool Efficiency
 - **Batch related tool calls** in a single response. If you need to read 3 files, call file_read 3 times in one turn — don't make a separate LLM round-trip for each.
 - Before exploring a codebase, use `file_read` with `outline: true` to understand structure, then read only the specific line ranges you need.

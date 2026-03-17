@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import SpacetimeDBProvider from "@/components/SpacetimeDBProvider";
 
 export const metadata: Metadata = {
   title: "Bond",
@@ -26,7 +27,9 @@ export default function RootLayout({
         backgroundColor: "#0a0a0f",
         color: "#e0e0e8",
       }}>
+        <SpacetimeDBProvider>
         {children}
+        </SpacetimeDBProvider>
         <style>{`
           @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
           @media (max-width: 768px) {
