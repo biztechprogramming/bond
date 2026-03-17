@@ -449,6 +449,13 @@ async def resolve_agent(
             ))).fetchall()
             provider_aliases = {r[0]: r[1] for r in alias_rows}
 
+            # Inject provider ID → litellm prefix mapping so the worker can
+            # normalize model strings (e.g., google/gemini-... → gemini/gemini-...)
+            prov_rows = (await db.execute(text(
+                "SELECT id, litellm_prefix FROM providers WHERE is_enabled = true"
+            ))).fetchall()
+            litellm_prefixes = {r[0]: r[1] for r in prov_rows if r[1]}
+
             agent_dict = {
                 "id": agent_row["id"],
                 "name": agent_row["name"],
@@ -461,6 +468,7 @@ async def resolve_agent(
                 "workspace_mounts": workspace_mounts,
                 "api_keys": api_keys,
                 "provider_aliases": provider_aliases,
+                "litellm_prefixes": litellm_prefixes,
             }
             info = await sandbox_manager.ensure_running(agent_dict)
             return {
