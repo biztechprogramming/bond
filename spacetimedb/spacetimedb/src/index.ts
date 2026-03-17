@@ -517,6 +517,7 @@ const spacetimedb = schema({
       created_at: t.u64(),
       updated_at: t.u64(),
       discovered_from: t.string().default(''),
+      source_path: t.string().default(''),
     }
   ),
 
@@ -2011,6 +2012,7 @@ export const create_component = spacetimedb.reducer(
     icon: t.string().default(''),
     description: t.string().default(''),
     discovered_from: t.string().default(''),
+    source_path: t.string().default(''),
   },
   (ctx, args) => {
     const now = BigInt(Date.now());
@@ -2036,6 +2038,7 @@ export const update_component = spacetimedb.reducer(
     icon: t.string().optional(),
     description: t.string().optional(),
     discovered_from: t.string().optional(),
+    source_path: t.string().optional(),
   },
   (ctx, args) => {
     const existing = ctx.db.components.id.find(args.id);
@@ -2052,6 +2055,7 @@ export const update_component = spacetimedb.reducer(
       icon: args.icon ?? existing.icon,
       description: args.description ?? existing.description,
       discovered_from: args.discovered_from ?? existing.discovered_from,
+      source_path: args.source_path ?? existing.source_path,
       updated_at: BigInt(Date.now()),
     });
   }

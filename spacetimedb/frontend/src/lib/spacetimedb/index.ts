@@ -51,6 +51,7 @@ import AddComponentResourceReducer from "./add_component_resource_reducer";
 import AddComponentScriptReducer from "./add_component_script_reducer";
 import AddComponentSecretReducer from "./add_component_secret_reducer";
 import AddDeploymentApproverReducer from "./add_deployment_approver_reducer";
+import AddResourceEnvironmentReducer from "./add_resource_environment_reducer";
 import ConsumeSystemEventReducer from "./consume_system_event_reducer";
 import CreateConversationReducer from "./create_conversation_reducer";
 import CreateWorkPlanReducer from "./create_work_plan_reducer";
@@ -92,6 +93,7 @@ import RemoveComponentResourceReducer from "./remove_component_resource_reducer"
 import RemoveComponentScriptReducer from "./remove_component_script_reducer";
 import RemoveComponentSecretReducer from "./remove_component_secret_reducer";
 import RemoveDeploymentApproverReducer from "./remove_deployment_approver_reducer";
+import RemoveResourceEnvironmentReducer from "./remove_resource_environment_reducer";
 import RenameWorkItemReducer from "./rename_work_item_reducer";
 import ResolveMonitoringAlertReducer from "./resolve_monitoring_alert_reducer";
 import SaveMessageReducer from "./save_message_reducer";
@@ -142,6 +144,7 @@ import PromptTemplatesRow from "./prompt_templates_table";
 import ProviderAliasesRow from "./provider_aliases_table";
 import ProviderApiKeysRow from "./provider_api_keys_table";
 import ProvidersRow from "./providers_table";
+import ResourceEnvironmentsRow from "./resource_environments_table";
 import ResourcesRow from "./resources_table";
 import SettingsRow from "./settings_table";
 import SystemEventsRow from "./system_events_table";
@@ -451,6 +454,17 @@ const tablesSchema = __schema({
       { name: 'providers_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ProvidersRow),
+  resource_environments: __table({
+    name: 'resource_environments',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'resource_environments_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ResourceEnvironmentsRow),
   resources: __table({
     name: 'resources',
     indexes: [
@@ -549,6 +563,7 @@ const reducersSchema = __reducers(
   __reducerSchema("add_component_script", AddComponentScriptReducer),
   __reducerSchema("add_component_secret", AddComponentSecretReducer),
   __reducerSchema("add_deployment_approver", AddDeploymentApproverReducer),
+  __reducerSchema("add_resource_environment", AddResourceEnvironmentReducer),
   __reducerSchema("consume_system_event", ConsumeSystemEventReducer),
   __reducerSchema("create_conversation", CreateConversationReducer),
   __reducerSchema("create_work_plan", CreateWorkPlanReducer),
@@ -590,6 +605,7 @@ const reducersSchema = __reducers(
   __reducerSchema("remove_component_script", RemoveComponentScriptReducer),
   __reducerSchema("remove_component_secret", RemoveComponentSecretReducer),
   __reducerSchema("remove_deployment_approver", RemoveDeploymentApproverReducer),
+  __reducerSchema("remove_resource_environment", RemoveResourceEnvironmentReducer),
   __reducerSchema("rename_work_item", RenameWorkItemReducer),
   __reducerSchema("resolve_monitoring_alert", ResolveMonitoringAlertReducer),
   __reducerSchema("save_message", SaveMessageReducer),

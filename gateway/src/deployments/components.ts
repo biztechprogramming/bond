@@ -5,7 +5,7 @@
  * component_scripts, and component_secrets tables.
  */
 
-import { callReducer, sqlQuery } from "../spacetimedb/client.js";
+import { callReducer, sqlQuery, encodeOption } from "../spacetimedb/client.js";
 import type { GatewayConfig } from "../config/index.js";
 import { ulid } from "ulid";
 
@@ -172,27 +172,23 @@ export async function createComponent(
   data: Omit<Component, "id" | "created_at" | "updated_at" | "is_active">,
 ): Promise<string> {
   const id = ulid();
-  const now = Date.now();
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
     "create_component",
-    [{
+    [
       id,
-      name: data.name,
-      display_name: data.display_name,
-      component_type: data.component_type,
-      parent_id: data.parent_id || "",
-      runtime: data.runtime || "",
-      framework: data.framework || "",
-      repository_url: data.repository_url || "",
-      icon: data.icon || "",
-      description: data.description || "",
-      is_active: true,
-      created_at: now,
-      updated_at: now,
-      discovered_from: data.discovered_from || "",
-      source_path: data.source_path || "",
-    }],
+      data.name,
+      data.display_name,
+      data.component_type,
+      data.parent_id || "",
+      data.runtime || "",
+      data.framework || "",
+      data.repository_url || "",
+      data.icon || "",
+      data.description || "",
+      data.discovered_from || "",
+      data.source_path || "",
+    ],
     cfg.spacetimedbToken,
   );
   return id;
@@ -203,10 +199,24 @@ export async function updateComponent(
   id: string,
   updates: Partial<Omit<Component, "id" | "created_at">>,
 ): Promise<void> {
+  // update_component takes: id, then 12 optional fields in order
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
     "update_component",
-    [{ id, ...updates, updated_at: Date.now() }],
+    [
+      id,
+      encodeOption(updates.name),
+      encodeOption(updates.display_name),
+      encodeOption(updates.component_type),
+      encodeOption(updates.parent_id),
+      encodeOption(updates.runtime),
+      encodeOption(updates.framework),
+      encodeOption(updates.repository_url),
+      encodeOption(updates.icon),
+      encodeOption(updates.description),
+      encodeOption(updates.discovered_from),
+      encodeOption(updates.source_path),
+    ],
     cfg.spacetimedbToken,
   );
 }
@@ -217,8 +227,8 @@ export async function deactivateComponent(
 ): Promise<void> {
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "update_component",
-    [{ id, is_active: false, updated_at: Date.now() }],
+    "deactivate_component",
+    [id],
     cfg.spacetimedbToken,
   );
 }
@@ -264,17 +274,16 @@ export async function addComponentResource(
   const id = ulid();
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "create_component_resource",
-    [{
+    "add_component_resource",
+    [
       id,
-      component_id: data.component_id,
-      resource_id: data.resource_id,
-      environment: data.environment,
-      port: data.port ?? 0,
-      process_name: data.process_name || "",
-      health_check: data.health_check || "",
-      created_at: Date.now(),
-    }],
+      data.component_id,
+      data.resource_id,
+      data.environment,
+      data.port ?? 0,
+      data.process_name || "",
+      data.health_check || "",
+    ],
     cfg.spacetimedbToken,
   );
   return id;
@@ -286,8 +295,8 @@ export async function removeComponentResource(
 ): Promise<void> {
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "delete_component_resource",
-    [{ id: linkId }],
+    "remove_component_resource",
+    [linkId],
     cfg.spacetimedbToken,
   );
 }
@@ -313,14 +322,13 @@ export async function addComponentScript(
   const id = ulid();
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "create_component_script",
-    [{
+    "add_component_script",
+    [
       id,
-      component_id: data.component_id,
-      script_id: data.script_id,
-      role: data.role || "deploy",
-      created_at: Date.now(),
-    }],
+      data.component_id,
+      data.script_id,
+      data.role || "deploy",
+    ],
     cfg.spacetimedbToken,
   );
   return id;
@@ -332,8 +340,8 @@ export async function removeComponentScript(
 ): Promise<void> {
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "delete_component_script",
-    [{ id: linkId }],
+    "remove_component_script",
+    [linkId],
     cfg.spacetimedbToken,
   );
 }
@@ -364,15 +372,14 @@ export async function addComponentSecret(
   const id = ulid();
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "create_component_secret",
-    [{
+    "add_component_secret",
+    [
       id,
-      component_id: data.component_id,
-      secret_key: data.secret_key,
-      environment: data.environment,
-      is_sensitive: data.is_sensitive !== false,
-      created_at: Date.now(),
-    }],
+      data.component_id,
+      data.secret_key,
+      data.environment,
+      data.is_sensitive !== false,
+    ],
     cfg.spacetimedbToken,
   );
   return id;
@@ -384,8 +391,8 @@ export async function removeComponentSecret(
 ): Promise<void> {
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
-    "delete_component_secret",
-    [{ id: linkId }],
+    "remove_component_secret",
+    [linkId],
     cfg.spacetimedbToken,
   );
 }

@@ -329,10 +329,9 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
     return () => clearInterval(interval);
   }, [fetchReceipts]);
 
-  const componentsFailed = components.length === 0;
-  const useFallback = componentsFailed;
+  const hasComponents = components.length > 0;
 
-  const health = !useFallback
+  const health = hasComponents
     ? componentsOverallHealth(components)
     : overallHealth(servers);
 
@@ -378,117 +377,102 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
         </div>
       </div>
 
-      {/* --- Component tree view (primary) --- */}
-      {!useFallback && (
+      {/* --- Component tree (shown when components exist) --- */}
+      {hasComponents && (
         <div style={s.compTree}>
-          {components.length === 0 ? (
-            <p style={s.empty}>No components registered.</p>
-          ) : (
-            components.map((node) => (
-              <ComponentCard key={node.id} node={node} onNavigate={onNavigate} />
-            ))
-          )}
+          <h3 style={s.colTitle}>Components</h3>
+          {components.map((node) => (
+            <ComponentCard key={node.id} node={node} onNavigate={onNavigate} />
+          ))}
         </div>
       )}
 
-      {/* --- Fallback: 3-column layout (servers/receipts/alerts) --- */}
-      {useFallback && (
-        <div style={s.columns}>
-          {/* LEFT: Servers */}
-          <div style={s.column}>
-            <h3 style={s.colTitle}>Servers</h3>
-            <div style={s.colBody}>
-              {servers.length === 0 ? (
-                <p style={s.empty}>No servers registered.</p>
-              ) : (
-                servers.map((srv) => {
-                  const dot = statusDot(srv.status);
-                  return (
-                    <div key={srv.resource_id} style={s.card}>
-                      <div style={s.serverHeader}>
-                        <span style={{ color: dot.color, fontSize: "0.7rem" }}>{dot.symbol}</span>
-                        <span style={s.serverName}>{srv.display_name || srv.name}</span>
-                        <span style={s.serverProbe}>{srv.last_probe ? relativeTime(srv.last_probe) : "never probed"}</span>
-                      </div>
-                      <Gauge label="CPU" percent={srv.cpu_percent} />
-                      <Gauge label="RAM" percent={srv.ram_percent} />
-                      <Gauge label="Disk" percent={srv.disk_percent} />
+      {/* --- 3-column layout: Servers / Recent Deployments / Alerts --- */}
+      <div style={s.columns}>
+        {/* LEFT: Servers */}
+        <div style={s.column}>
+          <h3 style={s.colTitle}>Servers</h3>
+          <div style={s.colBody}>
+            {servers.length === 0 ? (
+              <p style={s.empty}>No servers registered.</p>
+            ) : (
+              servers.map((srv) => {
+                const dot = statusDot(srv.status);
+                return (
+                  <div key={srv.resource_id} style={s.card}>
+                    <div style={s.serverHeader}>
+                      <span style={{ color: dot.color, fontSize: "0.7rem" }}>{dot.symbol}</span>
+                      <span style={s.serverName}>{srv.display_name || srv.name}</span>
+                      <span style={s.serverProbe}>{srv.last_probe ? relativeTime(srv.last_probe) : "never probed"}</span>
                     </div>
-                  );
-                })
-              )}
-              <button style={s.addBtn} onClick={() => onNavigate("add-server")}>+ Add Server</button>
-            </div>
-          </div>
-
-          {/* CENTER: Recent Deployments */}
-          <div style={s.column}>
-            <h3 style={s.colTitle}>Recent Deployments</h3>
-            <div style={s.colBody}>
-              {receipts === null ? (
-                Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} style={{ ...s.receiptRow, gap: 8 }}><Skeleton width={16} height={16} /><Skeleton width="70%" /></div>
-                ))
-              ) : receipts.length === 0 ? (
-                <p style={s.empty}>No deployments yet.</p>
-              ) : (
-                receipts.map((r) => {
-                  const icon = receiptIcon(r.status);
-                  return (
-                    <div key={r.id} style={s.receiptRow}>
-                      <span style={{ color: icon.color, fontWeight: 700, width: 18, textAlign: "center" }}>{icon.symbol}</span>
-                      <span style={s.receiptName}>{r.script_name}</span>
-                      <span style={s.receiptVersion}>v{r.version}</span>
-                      <span style={s.receiptTime}>{relativeTime(r.created_at)}</span>
-                    </div>
-                  );
-                })
-              )}
-              {receipts && receipts.length > 0 && (
-                <button style={s.linkBtn} onClick={() => onNavigate("receipts", { environment: envName })}>View all receipts →</button>
-              )}
-            </div>
-          </div>
-
-          {/* RIGHT: Alerts */}
-          <div style={s.column}>
-            <h3 style={s.colTitle}>Alerts</h3>
-            {(alertCounts.critical > 0 || alertCounts.warning > 0 || alertCounts.info > 0) && (
-              <div style={s.alertSummary}>
-                {alertCounts.critical > 0 && <span style={{ color: "#ff6c8a" }}>{alertCounts.critical} critical</span>}
-                {alertCounts.warning > 0 && <span style={{ color: "#ffcc6c" }}>{alertCounts.warning} warning</span>}
-                {alertCounts.info > 0 && <span style={{ color: "#6c8aff" }}>{alertCounts.info} info</span>}
-              </div>
-            )}
-            <div style={s.colBody}>
-              {alerts.length === 0 ? (
-                <p style={s.empty}>No alerts.</p>
-              ) : (
-                alerts.map((a) => (
-                  <div key={a.id} style={s.alertRow}>
-                    <span style={{ color: severityColor(a.severity), fontSize: "0.55rem" }}>●</span>
-                    <span style={s.alertMsg}>{a.message}</span>
-                    <span style={s.alertTime}>{relativeTime(a.created_at)}</span>
+                    <Gauge label="CPU" percent={srv.cpu_percent} />
+                    <Gauge label="RAM" percent={srv.ram_percent} />
+                    <Gauge label="Disk" percent={srv.disk_percent} />
                   </div>
-                ))
-              )}
-              {alerts.length > 0 && (
-                <button style={s.linkBtn} onClick={() => onNavigate("alerts", { environment: envName })}>View all →</button>
-              )}
-            </div>
+                );
+              })
+            )}
+            <button style={s.addBtn} onClick={() => onNavigate("add-server")}>+ Add Server</button>
           </div>
         </div>
-      )}
 
-      {/* --- Infrastructure summary --- */}
-      {!useFallback && (
-        <div style={s.infraSummary}>
-          <span style={s.infraItem}>{servers.length} server{servers.length !== 1 ? "s" : ""}</span>
-          {alertCounts.critical > 0 && <span style={{ ...s.infraItem, color: "#ff6c8a" }}>{alertCounts.critical} critical</span>}
-          {alertCounts.warning > 0 && <span style={{ ...s.infraItem, color: "#ffcc6c" }}>{alertCounts.warning} warning</span>}
-          {alertCounts.info > 0 && <span style={{ ...s.infraItem, color: "#6c8aff" }}>{alertCounts.info} info</span>}
+        {/* CENTER: Recent Deployments */}
+        <div style={s.column}>
+          <h3 style={s.colTitle}>Recent Deployments</h3>
+          <div style={s.colBody}>
+            {receipts === null ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} style={{ ...s.receiptRow, gap: 8 }}><Skeleton width={16} height={16} /><Skeleton width="70%" /></div>
+              ))
+            ) : receipts.length === 0 ? (
+              <p style={s.empty}>No deployments yet.</p>
+            ) : (
+              receipts.map((r) => {
+                const icon = receiptIcon(r.status);
+                return (
+                  <div key={r.id} style={s.receiptRow}>
+                    <span style={{ color: icon.color, fontWeight: 700, width: 18, textAlign: "center" }}>{icon.symbol}</span>
+                    <span style={s.receiptName}>{r.script_name}</span>
+                    <span style={s.receiptVersion}>v{r.version}</span>
+                    <span style={s.receiptTime}>{relativeTime(r.created_at)}</span>
+                  </div>
+                );
+              })
+            )}
+            {receipts && receipts.length > 0 && (
+              <button style={s.linkBtn} onClick={() => onNavigate("receipts", { environment: envName })}>View all receipts →</button>
+            )}
+          </div>
         </div>
-      )}
+
+        {/* RIGHT: Alerts */}
+        <div style={s.column}>
+          <h3 style={s.colTitle}>Alerts</h3>
+          {(alertCounts.critical > 0 || alertCounts.warning > 0 || alertCounts.info > 0) && (
+            <div style={s.alertSummary}>
+              {alertCounts.critical > 0 && <span style={{ color: "#ff6c8a" }}>{alertCounts.critical} critical</span>}
+              {alertCounts.warning > 0 && <span style={{ color: "#ffcc6c" }}>{alertCounts.warning} warning</span>}
+              {alertCounts.info > 0 && <span style={{ color: "#6c8aff" }}>{alertCounts.info} info</span>}
+            </div>
+          )}
+          <div style={s.colBody}>
+            {alerts.length === 0 ? (
+              <p style={s.empty}>No alerts.</p>
+            ) : (
+              alerts.map((a) => (
+                <div key={a.id} style={s.alertRow}>
+                  <span style={{ color: severityColor(a.severity), fontSize: "0.55rem" }}>●</span>
+                  <span style={s.alertMsg}>{a.message}</span>
+                  <span style={s.alertTime}>{relativeTime(a.created_at)}</span>
+                </div>
+              ))
+            )}
+            {alerts.length > 0 && (
+              <button style={s.linkBtn} onClick={() => onNavigate("alerts", { environment: envName })}>View all →</button>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* --- quick actions --- */}
       <div style={s.quickActions}>

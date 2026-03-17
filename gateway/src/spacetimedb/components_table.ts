@@ -25,4 +25,5 @@ export default __t.row({
   createdAt: __t.u64().name("created_at"),
   updatedAt: __t.u64().name("updated_at"),
   discoveredFrom: __t.string().name("discovered_from"),
+  sourcePath: __t.string().name("source_path"),
 });

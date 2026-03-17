@@ -12,15 +12,4 @@ import {
 
 export default {
   id: __t.string(),
-  name: __t.string(),
-  displayName: __t.string(),
-  componentType: __t.string(),
-  parentId: __t.string(),
-  runtime: __t.string(),
-  framework: __t.string(),
-  repositoryUrl: __t.string(),
-  icon: __t.string(),
-  description: __t.string(),
-  discoveredFrom: __t.string(),
-  sourcePath: __t.string(),
 };

@@ -150,6 +150,7 @@ export const Components = __t.object("Components", {
   createdAt: __t.u64(),
   updatedAt: __t.u64(),
   discoveredFrom: __t.string(),
+  sourcePath: __t.string(),
 });
 export type Components = __Infer<typeof Components>;
 
@@ -350,6 +351,14 @@ export const Providers = __t.object("Providers", {
   updatedAt: __t.u64(),
 });
 export type Providers = __Infer<typeof Providers>;
+
+export const ResourceEnvironments = __t.object("ResourceEnvironments", {
+  id: __t.string(),
+  resourceId: __t.string(),
+  environmentName: __t.string(),
+  createdAt: __t.u64(),
+});
+export type ResourceEnvironments = __Infer<typeof ResourceEnvironments>;
 
 export const Resources = __t.object("Resources", {
   id: __t.string(),

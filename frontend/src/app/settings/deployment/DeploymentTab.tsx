@@ -171,7 +171,7 @@ export default function DeploymentTab() {
           conn.reducers.setSetting({ key: entry.key, value: entry.value, keyType: "string" });
         }
       })) {
-        setMsg("Not connected to SpacetimeDB.");
+        setMsg("ERROR: Not connected to SpacetimeDB — settings were NOT saved.");
         return;
       }
 
@@ -183,8 +183,8 @@ export default function DeploymentTab() {
       }
       setSharedOverride(null);
       setMsg("Shared settings saved.");
-    } catch {
-      setMsg("Failed to save shared settings.");
+    } catch (err) {
+      setMsg(`ERROR: Failed to save shared settings — ${err}`);
     }
   };
 

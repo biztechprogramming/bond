@@ -22,4 +22,5 @@ export default {
   icon: __t.option(__t.string()),
   description: __t.option(__t.string()),
   discoveredFrom: __t.option(__t.string()),
+  sourcePath: __t.option(__t.string()),
 };

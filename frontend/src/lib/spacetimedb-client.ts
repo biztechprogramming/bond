@@ -506,6 +506,7 @@ export interface ComponentRow {
   createdAt: bigint;
   updatedAt: bigint;
   discoveredFrom: string;
+  sourcePath: string;
 }
 
 export interface EnvironmentRow {

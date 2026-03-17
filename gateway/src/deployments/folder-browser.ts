@@ -10,10 +10,13 @@
 import { Router } from "express";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import type { GatewayConfig } from "../config/index.js";
+import { sqlQuery } from "../spacetimedb/client.js";
 
 interface WorkspaceRoot {
-  path: string;
+  path: string;          // container path (what agents see)
+  hostPath: string;      // host path (for filesystem access)
   name: string;
 }
 
@@ -34,47 +37,92 @@ interface AnalysisResult {
   port?: number;
 }
 
+/** Resolve ~ to actual home directory. */
+function resolveTilde(p: string): string {
+  if (p.startsWith("~/")) return path.join(os.homedir(), p.slice(2));
+  if (p === "~") return os.homedir();
+  return p;
+}
+
+/** Hidden/config dirs that aren't useful project workspaces. */
+const HIDDEN_DIR_PREFIXES = [".", ".ssh", ".claude", ".config", ".local", ".cache"];
+
+function isHiddenWorkspace(p: string): boolean {
+  const base = path.basename(p);
+  return HIDDEN_DIR_PREFIXES.some((h) => base === h || base.startsWith("."));
+}
+
 /** Query SpacetimeDB for unique host_path entries from agent_workspace_mounts. */
 async function getWorkspaceRoots(config: GatewayConfig): Promise<WorkspaceRoot[]> {
   const { spacetimedbUrl, spacetimedbModuleName, spacetimedbToken } = config;
   if (!spacetimedbUrl || !spacetimedbModuleName) return [];
 
   try {
-    const res = await fetch(`${spacetimedbUrl}/v1/database/${spacetimedbModuleName}/sql`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${spacetimedbToken}`,
-      },
-      body: "SELECT DISTINCT host_path FROM agent_workspace_mounts",
-    });
-
-    if (!res.ok) return [];
-
-    const data = (await res.json()) as any[];
-    if (!data || !Array.isArray(data) || data.length === 0) return [];
-
-    const resultSet = data[0];
-    if (!resultSet?.rows) return [];
+    // SpacetimeDB doesn't support SELECT DISTINCT — de-dup in code
+    // sqlQuery throws if token is empty; fall back to direct fetch for tokenless local setups
+    let rows: any[];
+    const sql = "SELECT host_path, container_path, mount_name FROM agent_workspace_mounts";
+    if (spacetimedbToken) {
+      rows = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, sql, spacetimedbToken);
+    } else {
+      const res = await fetch(`${spacetimedbUrl}/v1/database/${spacetimedbModuleName}/sql`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: sql,
+      });
+      if (!res.ok) throw new Error(`SQL query failed: ${res.status}`);
+      const data = await res.json();
+      if (!data?.[0]?.rows || !data[0].schema) return [];
+      const columns = data[0].schema.elements.map((e: any) => e.name?.some || e.name);
+      rows = data[0].rows.map((row: any[]) => {
+        const obj: any = {};
+        columns.forEach((col: string, i: number) => { obj[col] = row[i]; });
+        return obj;
+      });
+    }
 
     const seen = new Set<string>();
     const roots: WorkspaceRoot[] = [];
-    for (const row of resultSet.rows) {
-      const hostPath = row[0] as string;
-      if (!hostPath || seen.has(hostPath)) continue;
-      seen.add(hostPath);
-      roots.push({ path: hostPath, name: path.basename(hostPath) });
+    for (const row of rows) {
+      const rawHostPath = row.host_path as string;
+      const containerPath = row.container_path as string;
+      if (!rawHostPath || !containerPath) continue;
+      const resolvedHost = resolveTilde(rawHostPath);
+      // De-dup by container path
+      if (seen.has(containerPath)) continue;
+      seen.add(containerPath);
+      // Skip hidden/config directories
+      if (isHiddenWorkspace(resolvedHost)) continue;
+      // Only include paths that actually exist on host
+      try {
+        if (!fs.statSync(resolvedHost).isDirectory()) continue;
+      } catch { continue; }
+      const name = path.basename(containerPath) || path.basename(resolvedHost);
+      roots.push({ path: containerPath, hostPath: resolvedHost, name });
     }
-    return roots;
-  } catch {
+    return roots.sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    console.warn("[folder-browser] Failed to query workspace mounts:", (err as Error).message);
     return [];
   }
 }
 
-/** Check if requestedPath is inside one of the allowed workspace roots. */
-function isPathAllowed(requestedPath: string, roots: WorkspaceRoot[]): boolean {
-  const resolved = path.resolve(requestedPath);
-  return roots.some((r) => resolved === path.resolve(r.path) || resolved.startsWith(path.resolve(r.path) + path.sep));
+/** Check if a container path is inside one of the allowed workspace roots. Returns the matching root or null. */
+function findMatchingRoot(containerPath: string, roots: WorkspaceRoot[]): WorkspaceRoot | null {
+  const resolved = path.resolve(containerPath);
+  for (const r of roots) {
+    const rootResolved = path.resolve(r.path);
+    if (resolved === rootResolved || resolved.startsWith(rootResolved + path.sep)) {
+      return r;
+    }
+  }
+  return null;
+}
+
+/** Convert a container path to the corresponding host path for filesystem access. */
+function containerToHost(containerPath: string, root: WorkspaceRoot): string {
+  const relative = path.relative(root.path, containerPath);
+  return relative ? path.join(root.hostPath, relative) : root.hostPath;
 }
 
 /** List immediate subdirectories of a path. */
@@ -244,48 +292,59 @@ export function createFolderBrowserRouter(config: GatewayConfig): Router {
     return cachedRoots;
   }
 
-  // GET /browse/workspaces
+  // GET /browse/workspaces — returns container paths
   router.get("/workspaces", async (_req: any, res: any) => {
     try {
       cachedRoots = null; // refresh each time
       const roots = await getRoots();
-      res.json(roots);
+      // Return only what the frontend needs (container paths)
+      res.json(roots.map((r) => ({ path: r.path, name: r.name })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // GET /browse/folders?path=...
+  // GET /browse/folders?path=... — accepts and returns container paths
   router.get("/folders", async (req: any, res: any) => {
-    const dirPath = req.query.path as string;
-    if (!dirPath) return res.status(400).json({ error: "path query param required" });
+    const containerDir = req.query.path as string;
+    if (!containerDir) return res.status(400).json({ error: "path query param required" });
 
     try {
       const roots = await getRoots();
-      if (!isPathAllowed(dirPath, roots)) {
+      const root = findMatchingRoot(containerDir, roots);
+      if (!root) {
         return res.status(403).json({ error: "Path is outside allowed workspaces" });
       }
-      const folders = listSubdirectories(dirPath);
-      res.json({ path: dirPath, folders });
+      const hostDir = containerToHost(containerDir, root);
+      const hostFolders = listSubdirectories(hostDir);
+      // Convert host paths back to container paths
+      const folders = hostFolders.map((f) => ({
+        name: f.name,
+        path: path.join(containerDir, f.name),
+        hasChildren: f.hasChildren,
+      }));
+      res.json({ path: containerDir, folders });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // POST /browse/analyze
+  // POST /browse/analyze — accepts container path
   router.post("/analyze", async (req: any, res: any) => {
-    const { path: dirPath } = req.body || {};
-    if (!dirPath) return res.status(400).json({ error: "path is required in body" });
+    const { path: containerDir } = req.body || {};
+    if (!containerDir) return res.status(400).json({ error: "path is required in body" });
 
     try {
       const roots = await getRoots();
-      if (!isPathAllowed(dirPath, roots)) {
+      const root = findMatchingRoot(containerDir, roots);
+      if (!root) {
         return res.status(403).json({ error: "Path is outside allowed workspaces" });
       }
-      if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
+      const hostDir = containerToHost(containerDir, root);
+      if (!fs.existsSync(hostDir) || !fs.statSync(hostDir).isDirectory()) {
         return res.status(404).json({ error: "Directory not found" });
       }
-      const analysis = analyzeFolder(dirPath);
+      const analysis = analyzeFolder(hostDir);
       res.json(analysis);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
