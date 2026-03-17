@@ -1,5 +1,6 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { GATEWAY_API } from "@/lib/config";
+import { useResources, useComponents, useAlerts as useAlertsHook, useResourceEnvironments } from "@/hooks/useSpacetimeDB";
 
 interface Agent {
   id: string;
@@ -117,7 +118,11 @@ function deployStatusIcon(status: string): { symbol: string; color: string } {
 }
 
 function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  if (!iso) return "never";
+  const ts = new Date(iso).getTime();
+  if (!ts || ts <= 0) return "never";
+  const diff = Date.now() - ts;
+  if (diff < 0) return "just now";
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -220,56 +225,86 @@ function ComponentCard({ node, onNavigate, depth = 0 }: { node: ComponentNode; o
 // --- main component ---
 
 export default function EnvironmentDashboard({ environment, agents, onNavigate }: EnvironmentDashboardProps) {
-  const [components, setComponents] = useState<ComponentNode[] | null>(null);
-  const [componentsFailed, setComponentsFailed] = useState(false);
-  const [servers, setServers] = useState<ServerStatus[] | null>(null);
-  const [receipts, setReceipts] = useState<DeploymentReceipt[] | null>(null);
-  const [alerts, setAlerts] = useState<MonitoringAlert[] | null>(null);
-  const intervalsRef = useRef<ReturnType<typeof setInterval>[]>([]);
-
   const envName = environment.name;
 
-  const fetchComponents = useCallback(async () => {
-    try {
-      const res = await fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(envName)}&tree=true`);
-      if (res.ok) {
-        const data = await res.json();
-        const list = Array.isArray(data) ? data : (data.components || []);
-        setComponents(list);
-        setComponentsFailed(list.length === 0);
-      } else {
-        setComponents([]);
-        setComponentsFailed(true);
-      }
-    } catch {
-      setComponents([]);
-      setComponentsFailed(true);
-    }
-  }, [envName]);
+  // STDB subscriptions — auto-update, no polling needed
+  const allResources = useResources();
+  const allComponents = useComponents();
+  const allAlerts = useAlertsHook();
+  const resourceEnvs = useResourceEnvironments();
 
-  const fetchServers = useCallback(async () => {
-    try {
-      const res = await fetch(`${GATEWAY_API}/deployments/resources?environment=${encodeURIComponent(envName)}`);
-      if (res.ok) {
-        const resources: any[] = await res.json();
-        const mapped: ServerStatus[] = resources.map((r: any) => {
-          const state = typeof r.state_json === "string" ? (() => { try { return JSON.parse(r.state_json); } catch { return {}; } })() : (r.state_json || {});
-          const caps = typeof r.capabilities_json === "string" ? (() => { try { return JSON.parse(r.capabilities_json); } catch { return {}; } })() : (r.capabilities_json || {});
-          return {
-            resource_id: r.id,
-            name: r.name,
-            display_name: r.display_name || r.name,
-            status: state.status || (r.is_active ? (r.last_probed_at ? "online" : "unknown") : "offline"),
-            cpu_percent: state.cpu_percent ?? caps.cpu_percent ?? 0,
-            ram_percent: state.ram_percent ?? caps.ram_percent ?? 0,
-            disk_percent: state.disk_percent ?? caps.disk_percent ?? 0,
-            last_probe: r.last_probed_at ? new Date(typeof r.last_probed_at === "number" ? r.last_probed_at : r.last_probed_at).toISOString() : new Date(0).toISOString(),
-          };
-        });
-        setServers(mapped);
-      } else setServers([]);
-    } catch { setServers([]); }
-  }, [envName]);
+  // Filter resources by environment via join table (many-to-many)
+  const envResourceIds = useMemo(() =>
+    new Set(resourceEnvs.filter(re => re.environmentName === envName).map(re => re.resourceId)),
+    [resourceEnvs, envName]
+  );
+
+  const servers: ServerStatus[] = useMemo(() =>
+    allResources
+      .filter(r => envResourceIds.has(r.id))
+      .map(r => {
+        const state = (() => { try { return JSON.parse(r.stateJson || "{}"); } catch { return {}; } })();
+        const caps = (() => { try { return JSON.parse(r.capabilitiesJson || "{}"); } catch { return {}; } })();
+        return {
+          resource_id: r.id,
+          name: r.name,
+          display_name: r.displayName || r.name,
+          status: state.status || (r.isActive ? (r.lastProbedAt ? "online" : "unknown") : "offline"),
+          cpu_percent: state.cpu_percent ?? caps.cpu_percent ?? 0,
+          ram_percent: state.ram_percent ?? caps.ram_percent ?? 0,
+          disk_percent: state.disk_percent ?? caps.disk_percent ?? 0,
+          last_probe: r.lastProbedAt && Number(r.lastProbedAt) > 0 ? new Date(Number(r.lastProbedAt)).toISOString() : "",
+        };
+      }),
+    [allResources, envName]
+  );
+
+  // Build component tree client-side
+  const components: ComponentNode[] = useMemo(() => {
+    const envComponents = allComponents.filter(c => {
+      // A component belongs to this environment if it has a resource in this environment
+      // For simplicity, show all active components (environment filtering via resources)
+      return c.isActive;
+    });
+    const nodeMap = new Map<string, ComponentNode>();
+    for (const c of envComponents) {
+      nodeMap.set(c.id, {
+        id: c.id,
+        display_name: c.displayName,
+        component_type: c.componentType,
+        runtime: c.runtime || undefined,
+        framework: c.framework || undefined,
+        icon: c.icon || undefined,
+        is_active: c.isActive,
+        children: [],
+      });
+    }
+    const roots: ComponentNode[] = [];
+    for (const c of envComponents) {
+      const node = nodeMap.get(c.id)!;
+      if (c.parentId && nodeMap.has(c.parentId)) {
+        nodeMap.get(c.parentId)!.children!.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+    return roots;
+  }, [allComponents]);
+
+  const alerts: MonitoringAlert[] = useMemo(() =>
+    allAlerts
+      .filter(a => a.environment === envName)
+      .map(a => ({
+        id: a.id,
+        severity: a.severity as MonitoringAlert["severity"],
+        message: a.message,
+        created_at: a.detectedAt ? new Date(Number(a.detectedAt)).toISOString() : new Date().toISOString(),
+      })),
+    [allAlerts, envName]
+  );
+
+  // Receipts stay REST — no STDB table exists
+  const [receipts, setReceipts] = useState<DeploymentReceipt[] | null>(null);
 
   const fetchReceipts = useCallback(async () => {
     try {
@@ -288,50 +323,28 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
     } catch { setReceipts([]); }
   }, [envName]);
 
-  const fetchAlerts = useCallback(async () => {
-    try {
-      const res = await fetch(`${GATEWAY_API}/deployments/monitoring/${encodeURIComponent(envName)}`);
-      if (res.ok) {
-        const data = await res.json();
-        const alertList = Array.isArray(data) ? data : (data.recent_alerts || []);
-        setAlerts(alertList);
-      } else setAlerts([]);
-    } catch { setAlerts([]); }
-  }, [envName]);
-
   useEffect(() => {
-    fetchComponents();
-    fetchServers();
     fetchReceipts();
-    fetchAlerts();
+    const interval = setInterval(fetchReceipts, 60_000);
+    return () => clearInterval(interval);
+  }, [fetchReceipts]);
 
-    const i1 = setInterval(fetchComponents, 30_000);
-    const i2 = setInterval(fetchServers, 30_000);
-    const i3 = setInterval(fetchReceipts, 60_000);
-    const i4 = setInterval(fetchAlerts, 30_000);
-    intervalsRef.current = [i1, i2, i3, i4];
+  const componentsFailed = components.length === 0;
+  const useFallback = componentsFailed;
 
-    return () => intervalsRef.current.forEach(clearInterval);
-  }, [fetchComponents, fetchServers, fetchReceipts, fetchAlerts]);
-
-  const useFallback = componentsFailed || (components !== null && components.length === 0);
-
-  const health = components && !useFallback
+  const health = !useFallback
     ? componentsOverallHealth(components)
-    : servers ? overallHealth(servers) : null;
+    : overallHealth(servers);
 
   const lastDeploy = receipts && receipts.length > 0 ? receipts[0] : null;
   const envAgent = agents.find((a) => a.name === `deploy-${envName}`);
 
-  const alertCounts = alerts
-    ? { critical: alerts.filter((a) => a.severity === "critical").length, warning: alerts.filter((a) => a.severity === "warning").length, info: alerts.filter((a) => a.severity === "info").length }
-    : null;
+  const alertCounts = { critical: alerts.filter((a) => a.severity === "critical").length, warning: alerts.filter((a) => a.severity === "warning").length, info: alerts.filter((a) => a.severity === "info").length };
 
   const quickActions: { label: string; view: string }[] = [
     { label: "+ Component", view: "add-component" },
-    { label: "+ Server", view: "onboard-server" },
+    { label: "+ Server", view: "add-server" },
     { label: "Deploy Script", view: "deploy-script" },
-    { label: "Run Discovery", view: "run-discovery" },
     { label: "View Logs", view: "live-logs" },
     { label: "Check Health", view: "check-health" },
     { label: "Agent Settings", view: "agent-settings" },
@@ -366,7 +379,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
       </div>
 
       {/* --- Component tree view (primary) --- */}
-      {!useFallback && components !== null && (
+      {!useFallback && (
         <div style={s.compTree}>
           {components.length === 0 ? (
             <p style={s.empty}>No components registered.</p>
@@ -378,18 +391,6 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
         </div>
       )}
 
-      {/* --- Loading state for components --- */}
-      {components === null && (
-        <div style={s.compTree}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} style={{ ...s.compCard, gap: 8 }}>
-              <Skeleton width="50%" height={16} />
-              <Skeleton width="80%" height={12} />
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* --- Fallback: 3-column layout (servers/receipts/alerts) --- */}
       {useFallback && (
         <div style={s.columns}>
@@ -397,11 +398,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
           <div style={s.column}>
             <h3 style={s.colTitle}>Servers</h3>
             <div style={s.colBody}>
-              {servers === null ? (
-                Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} style={s.card}><Skeleton width="60%" height={16} /><Skeleton width="100%" height={6} /><Skeleton width="100%" height={6} /><Skeleton width="100%" height={6} /></div>
-                ))
-              ) : servers.length === 0 ? (
+              {servers.length === 0 ? (
                 <p style={s.empty}>No servers registered.</p>
               ) : (
                 servers.map((srv) => {
@@ -411,7 +408,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
                       <div style={s.serverHeader}>
                         <span style={{ color: dot.color, fontSize: "0.7rem" }}>{dot.symbol}</span>
                         <span style={s.serverName}>{srv.display_name || srv.name}</span>
-                        <span style={s.serverProbe}>{relativeTime(srv.last_probe)}</span>
+                        <span style={s.serverProbe}>{srv.last_probe ? relativeTime(srv.last_probe) : "never probed"}</span>
                       </div>
                       <Gauge label="CPU" percent={srv.cpu_percent} />
                       <Gauge label="RAM" percent={srv.ram_percent} />
@@ -420,7 +417,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
                   );
                 })
               )}
-              <button style={s.addBtn} onClick={() => onNavigate("onboard-server")}>+ Add Server</button>
+              <button style={s.addBtn} onClick={() => onNavigate("add-server")}>+ Add Server</button>
             </div>
           </div>
 
@@ -456,7 +453,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
           {/* RIGHT: Alerts */}
           <div style={s.column}>
             <h3 style={s.colTitle}>Alerts</h3>
-            {alertCounts && (
+            {(alertCounts.critical > 0 || alertCounts.warning > 0 || alertCounts.info > 0) && (
               <div style={s.alertSummary}>
                 {alertCounts.critical > 0 && <span style={{ color: "#ff6c8a" }}>{alertCounts.critical} critical</span>}
                 {alertCounts.warning > 0 && <span style={{ color: "#ffcc6c" }}>{alertCounts.warning} warning</span>}
@@ -464,11 +461,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
               </div>
             )}
             <div style={s.colBody}>
-              {alerts === null ? (
-                Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} style={{ ...s.alertRow, gap: 8 }}><Skeleton width={8} height={8} /><Skeleton width="80%" /></div>
-                ))
-              ) : alerts.length === 0 ? (
+              {alerts.length === 0 ? (
                 <p style={s.empty}>No alerts.</p>
               ) : (
                 alerts.map((a) => (
@@ -479,7 +472,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
                   </div>
                 ))
               )}
-              {alerts && alerts.length > 0 && (
+              {alerts.length > 0 && (
                 <button style={s.linkBtn} onClick={() => onNavigate("alerts", { environment: envName })}>View all →</button>
               )}
             </div>
@@ -488,12 +481,12 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
       )}
 
       {/* --- Infrastructure summary --- */}
-      {!useFallback && (servers || alertCounts) && (
+      {!useFallback && (
         <div style={s.infraSummary}>
-          {servers && <span style={s.infraItem}>{servers.length} server{servers.length !== 1 ? "s" : ""}</span>}
-          {alertCounts && alertCounts.critical > 0 && <span style={{ ...s.infraItem, color: "#ff6c8a" }}>{alertCounts.critical} critical</span>}
-          {alertCounts && alertCounts.warning > 0 && <span style={{ ...s.infraItem, color: "#ffcc6c" }}>{alertCounts.warning} warning</span>}
-          {alertCounts && alertCounts.info > 0 && <span style={{ ...s.infraItem, color: "#6c8aff" }}>{alertCounts.info} info</span>}
+          <span style={s.infraItem}>{servers.length} server{servers.length !== 1 ? "s" : ""}</span>
+          {alertCounts.critical > 0 && <span style={{ ...s.infraItem, color: "#ff6c8a" }}>{alertCounts.critical} critical</span>}
+          {alertCounts.warning > 0 && <span style={{ ...s.infraItem, color: "#ffcc6c" }}>{alertCounts.warning} warning</span>}
+          {alertCounts.info > 0 && <span style={{ ...s.infraItem, color: "#6c8aff" }}>{alertCounts.info} info</span>}
         </div>
       )}
 

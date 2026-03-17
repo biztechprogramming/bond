@@ -351,6 +351,14 @@ export const Providers = __t.object("Providers", {
 });
 export type Providers = __Infer<typeof Providers>;
 
+export const ResourceEnvironments = __t.object("ResourceEnvironments", {
+  id: __t.string(),
+  resourceId: __t.string(),
+  environmentName: __t.string(),
+  createdAt: __t.u64(),
+});
+export type ResourceEnvironments = __Infer<typeof ResourceEnvironments>;
+
 export const Resources = __t.object("Resources", {
   id: __t.string(),
   name: __t.string(),

@@ -10,19 +10,43 @@ vi.mock("../spacetimedb/client.js", () => {
   const resources: any[] = [];
   return {
     sqlQuery: vi.fn(async (_url: string, _mod: string, sql: string) => {
-      if (sql.includes("deployment_resources")) {
+      if (sql.includes("FROM resources")) {
         return resources.filter(r => r.is_active);
       }
       return [];
     }),
     callReducer: vi.fn(async (_url: string, _mod: string, reducer: string, args: any[]) => {
       if (reducer === "create_deployment_resource") {
-        resources.push(args[0]);
+        // Positional args: id, name, display_name, resource_type, environment,
+        //   connection_json, capabilities_json, state_json, tags_json,
+        //   recommendations_json, is_active, created_at, updated_at, last_probed_at
+        resources.push({
+          id: args[0], name: args[1], display_name: args[2],
+          resource_type: args[3], environment: args[4],
+          connection_json: args[5], capabilities_json: args[6],
+          state_json: args[7], tags_json: args[8],
+          recommendations_json: args[9], is_active: args[10],
+          created_at: args[11], updated_at: args[12], last_probed_at: args[13],
+        });
       }
       if (reducer === "update_deployment_resource") {
-        const update = args[0];
-        const existing = resources.find(r => r.id === update.id);
-        if (existing) Object.assign(existing, update);
+        // Positional args: id, display_name?, resource_type?, environment?,
+        //   connection_json?, capabilities_json?, state_json?, tags_json?,
+        //   recommendations_json?, is_active?, updated_at, last_probed_at?
+        const existing = resources.find(r => r.id === args[0]);
+        if (existing) {
+          if (args[1] != null) existing.display_name = args[1];
+          if (args[2] != null) existing.resource_type = args[2];
+          if (args[3] != null) existing.environment = args[3];
+          if (args[4] != null) existing.connection_json = args[4];
+          if (args[5] != null) existing.capabilities_json = args[5];
+          if (args[6] != null) existing.state_json = args[6];
+          if (args[7] != null) existing.tags_json = args[7];
+          if (args[8] != null) existing.recommendations_json = args[8];
+          if (args[9] != null) existing.is_active = args[9];
+          existing.updated_at = args[10];
+          if (args[11] != null) existing.last_probed_at = args[11];
+        }
       }
     }),
   };

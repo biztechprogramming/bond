@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, getSettings, getProviderApiKeys, getProviders, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow, type SettingRow, type ProviderApiKeyRow, type ProviderRow } from '@/lib/spacetimedb-client';
+import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, getSettings, getProviderApiKeys, getProviders, getResources, getComponents, getEnvironments, getComponentResources, getAlerts, getResourceEnvironments, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow, type SettingRow, type ProviderApiKeyRow, type ProviderRow, type ResourceRow, type ComponentRow, type EnvironmentRow, type ComponentResourceRow, type AlertRow, type ResourceEnvironmentRow } from '@/lib/spacetimedb-client';
 
 /**
  * useSpacetimeDB React hook.
@@ -105,6 +105,32 @@ export function useProviderApiKeys(): ProviderApiKeyRow[] {
 
 export function useProviders(): ProviderRow[] {
   return useSpacetimeDB(() => getProviders());
+}
+
+// ── Deployment Hooks ─────────────────────────────────────────────────────
+
+export function useResources(): ResourceRow[] {
+  return useSpacetimeDB(() => getResources());
+}
+
+export function useComponents(): ComponentRow[] {
+  return useSpacetimeDB(() => getComponents());
+}
+
+export function useEnvironments(): EnvironmentRow[] {
+  return useSpacetimeDB(() => getEnvironments());
+}
+
+export function useComponentResources(componentId: string): ComponentResourceRow[] {
+  return useSpacetimeDB(() => getComponentResources(componentId), [componentId]);
+}
+
+export function useAlerts(): AlertRow[] {
+  return useSpacetimeDB(() => getAlerts());
+}
+
+export function useResourceEnvironments(): ResourceEnvironmentRow[] {
+  return useSpacetimeDB(() => getResourceEnvironments());
 }
 
 // ── Composite Hooks ──────────────────────────────────────────────────────

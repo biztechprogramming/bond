@@ -23,6 +23,7 @@ import AddComponentResourceReducer from "../add_component_resource_reducer";
 import AddComponentScriptReducer from "../add_component_script_reducer";
 import AddComponentSecretReducer from "../add_component_secret_reducer";
 import AddDeploymentApproverReducer from "../add_deployment_approver_reducer";
+import AddResourceEnvironmentReducer from "../add_resource_environment_reducer";
 import ConsumeSystemEventReducer from "../consume_system_event_reducer";
 import CreateConversationReducer from "../create_conversation_reducer";
 import CreateWorkPlanReducer from "../create_work_plan_reducer";
@@ -64,6 +65,7 @@ import RemoveComponentResourceReducer from "../remove_component_resource_reducer
 import RemoveComponentScriptReducer from "../remove_component_script_reducer";
 import RemoveComponentSecretReducer from "../remove_component_secret_reducer";
 import RemoveDeploymentApproverReducer from "../remove_deployment_approver_reducer";
+import RemoveResourceEnvironmentReducer from "../remove_resource_environment_reducer";
 import RenameWorkItemReducer from "../rename_work_item_reducer";
 import ResolveMonitoringAlertReducer from "../resolve_monitoring_alert_reducer";
 import SaveMessageReducer from "../save_message_reducer";
@@ -101,6 +103,7 @@ export type AddComponentResourceParams = __Infer<typeof AddComponentResourceRedu
 export type AddComponentScriptParams = __Infer<typeof AddComponentScriptReducer>;
 export type AddComponentSecretParams = __Infer<typeof AddComponentSecretReducer>;
 export type AddDeploymentApproverParams = __Infer<typeof AddDeploymentApproverReducer>;
+export type AddResourceEnvironmentParams = __Infer<typeof AddResourceEnvironmentReducer>;
 export type ConsumeSystemEventParams = __Infer<typeof ConsumeSystemEventReducer>;
 export type CreateConversationParams = __Infer<typeof CreateConversationReducer>;
 export type CreateWorkPlanParams = __Infer<typeof CreateWorkPlanReducer>;
@@ -142,6 +145,7 @@ export type RemoveComponentResourceParams = __Infer<typeof RemoveComponentResour
 export type RemoveComponentScriptParams = __Infer<typeof RemoveComponentScriptReducer>;
 export type RemoveComponentSecretParams = __Infer<typeof RemoveComponentSecretReducer>;
 export type RemoveDeploymentApproverParams = __Infer<typeof RemoveDeploymentApproverReducer>;
+export type RemoveResourceEnvironmentParams = __Infer<typeof RemoveResourceEnvironmentReducer>;
 export type RenameWorkItemParams = __Infer<typeof RenameWorkItemReducer>;
 export type ResolveMonitoringAlertParams = __Infer<typeof ResolveMonitoringAlertReducer>;
 export type SaveMessageParams = __Infer<typeof SaveMessageReducer>;

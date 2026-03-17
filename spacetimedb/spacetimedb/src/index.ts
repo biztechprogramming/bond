@@ -422,7 +422,7 @@ const spacetimedb = schema({
       name: t.string(),                      // "web-prod-01"
       display_name: t.string(),              // "Production Web Server"
       resource_type: t.string(),             // "linux-server", "kubernetes", etc.
-      environment: t.string(),               // which deployment environment
+      environment: t.string().default(''),   // deprecated — use resource_environments join table
       connection_json: t.string().default('{}'),     // JSON-encoded connection config
       capabilities_json: t.string().default('{}'),   // JSON-encoded capabilities
       state_json: t.string().default('{}'),          // JSON-encoded state
@@ -517,6 +517,17 @@ const spacetimedb = schema({
       created_at: t.u64(),
       updated_at: t.u64(),
       discovered_from: t.string().default(''),
+    }
+  ),
+
+  // -- Resource Environments (many-to-many) --
+  resource_environments: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      resource_id: t.string(),
+      environment_name: t.string(),
+      created_at: t.u64(),
     }
   ),
 
@@ -1699,7 +1710,7 @@ export const create_deployment_resource = spacetimedb.reducer(
     name: t.string(),
     display_name: t.string(),
     resource_type: t.string(),
-    environment: t.string(),
+    environment: t.string().default(''),   // deprecated — use resource_environments join table
     connection_json: t.string().default('{}'),
     capabilities_json: t.string().default('{}'),
     state_json: t.string().default('{}'),
@@ -1712,6 +1723,30 @@ export const create_deployment_resource = spacetimedb.reducer(
   },
   (ctx, args) => {
     ctx.db.resources.insert(args);
+  }
+);
+
+// ─── Resource ↔ Environment (many-to-many) ─────────────────────────────────
+
+export const add_resource_environment = spacetimedb.reducer(
+  {
+    id: t.string(),
+    resource_id: t.string(),
+    environment_name: t.string(),
+    created_at: t.u64(),
+  },
+  (ctx, args) => {
+    ctx.db.resource_environments.insert(args);
+  }
+);
+
+export const remove_resource_environment = spacetimedb.reducer(
+  {
+    id: t.string(),
+  },
+  (ctx, { id }) => {
+    const row = ctx.db.resource_environments.id.find(id);
+    if (row) ctx.db.resource_environments.id.delete(id);
   }
 );
 

@@ -62,25 +62,26 @@ export async function createResource(
 ): Promise<string> {
   const id = ulid();
   const now = Date.now();
+  // SpacetimeDB HTTP /call/ API expects positional args matching reducer field order
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
     "create_deployment_resource",
-    [{
+    [
       id,
-      name: resource.name,
-      display_name: resource.display_name,
-      resource_type: resource.resource_type,
-      environment: resource.environment,
-      connection_json: resource.connection_json || "{}",
-      capabilities_json: resource.capabilities_json || "{}",
-      state_json: resource.state_json || "{}",
-      tags_json: resource.tags_json || "[]",
-      recommendations_json: resource.recommendations_json || "[]",
-      is_active: true,
-      created_at: now,
-      updated_at: now,
-      last_probed_at: 0,
-    }],
+      resource.name,
+      resource.display_name,
+      resource.resource_type,
+      resource.environment,
+      resource.connection_json || "{}",
+      resource.capabilities_json || "{}",
+      resource.state_json || "{}",
+      resource.tags_json || "[]",
+      resource.recommendations_json || "[]",
+      true,   // is_active
+      now,    // created_at
+      now,    // updated_at
+      0,      // last_probed_at
+    ],
     cfg.spacetimedbToken,
   );
   return id;
@@ -91,10 +92,24 @@ export async function updateResource(
   id: string,
   updates: Partial<Omit<DeploymentResource, "id" | "created_at">>,
 ): Promise<void> {
+  // SpacetimeDB HTTP /call/ API expects positional args; pass null for optional fields not being updated
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
     "update_deployment_resource",
-    [{ id, ...updates, updated_at: Date.now() }],
+    [
+      id,
+      updates.display_name ?? null,     // optional
+      updates.resource_type ?? null,     // optional
+      updates.environment ?? null,       // optional
+      updates.connection_json ?? null,   // optional
+      updates.capabilities_json ?? null, // optional
+      updates.state_json ?? null,        // optional
+      updates.tags_json ?? null,         // optional
+      updates.recommendations_json ?? null, // optional
+      updates.is_active ?? null,         // optional
+      updates.updated_at ?? Date.now(),  // required
+      updates.last_probed_at ?? null,    // optional
+    ],
     cfg.spacetimedbToken,
   );
 }
@@ -103,10 +118,17 @@ export async function deleteResource(
   cfg: GatewayConfig,
   id: string,
 ): Promise<void> {
+  const now = Date.now();
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
     "update_deployment_resource",
-    [{ id, is_active: false, updated_at: Date.now() }],
+    [
+      id,
+      null, null, null, null, null, null, null, null, // optional fields unchanged
+      false, // is_active
+      now,   // updated_at
+      null,  // last_probed_at
+    ],
     cfg.spacetimedbToken,
   );
 }
@@ -118,17 +140,24 @@ export async function updateResourceProbe(
   state: Record<string, any>,
   recommendations: any[],
 ): Promise<void> {
+  const now = Date.now();
   await callReducer(
     cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
     "update_deployment_resource",
-    [{
+    [
       id,
-      capabilities_json: JSON.stringify(capabilities),
-      state_json: JSON.stringify(state),
-      recommendations_json: JSON.stringify(recommendations),
-      last_probed_at: Date.now(),
-      updated_at: Date.now(),
-    }],
+      null,                              // display_name
+      null,                              // resource_type
+      null,                              // environment
+      null,                              // connection_json
+      JSON.stringify(capabilities),      // capabilities_json
+      JSON.stringify(state),             // state_json
+      null,                              // tags_json
+      JSON.stringify(recommendations),   // recommendations_json
+      null,                              // is_active
+      now,                               // updated_at
+      now,                               // last_probed_at
+    ],
     cfg.spacetimedbToken,
   );
 }

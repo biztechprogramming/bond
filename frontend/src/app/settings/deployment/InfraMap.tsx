@@ -1,350 +1,386 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState } from "react";
+import { useResources, useEnvironments, useResourceEnvironments, callReducer } from "@/hooks/useSpacetimeDB";
 import { GATEWAY_API } from "@/lib/config";
 
-interface Props {
-  environments: string[];
+interface InfraMapProps {
+  onAddServer: () => void;
 }
 
-interface ComponentData {
-  id: string;
-  name: string;
-  display_name: string;
-  component_type: string;
-  icon: string | null;
-  is_active: boolean;
+function statusInfo(status: string): { symbol: string; color: string; label: string } {
+  switch (status) {
+    case "online": return { symbol: "\u25CF", color: "#6cffa0", label: "online" };
+    case "degraded": return { symbol: "\u25D0", color: "#ffcc6c", label: "degraded" };
+    case "offline": return { symbol: "\u25CB", color: "#ff6c8a", label: "offline" };
+    default: return { symbol: "\u2298", color: "#5a5a6e", label: "unknown" };
+  }
 }
 
-interface InfraNode {
-  id: string;
-  name: string;
-  type: string;
-  tier: "edge" | "application" | "data";
-  host?: string;
-  port?: number;
-  health: "healthy" | "degraded" | "unhealthy" | "unknown";
-  stats?: { cpu?: number; memory?: number; requests?: number; latencyMs?: number };
-  component_type?: string;
-  icon?: string | null;
+function relativeTime(ms: number): string {
+  if (!ms || ms <= 0) return "never";
+  const diff = Date.now() - ms;
+  if (diff < 0) return "just now";
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
-interface InfraEdge {
-  from: string;
-  to: string;
-  protocol: string;
-  port: number;
-  health: "healthy" | "degraded" | "unhealthy" | "unknown";
-}
+export default function InfraMap({ onAddServer }: InfraMapProps) {
+  const allResources = useResources();
+  const allEnvironments = useEnvironments();
+  const resourceEnvs = useResourceEnvironments();
+  const [probingIds, setProbingIds] = useState<Set<string>>(new Set());
 
-const TIER_LABELS: Record<string, string> = { edge: "CDN / Edge", application: "Application", data: "Data" };
-const TIER_ORDER: Array<"edge" | "application" | "data"> = ["edge", "application", "data"];
+  const servers = useMemo(() =>
+    allResources.filter(r => r.isActive).map(r => {
+      const state = (() => { try { return JSON.parse(r.stateJson || "{}"); } catch { return {}; } })();
+      return {
+        id: r.id,
+        name: r.name,
+        displayName: r.displayName || r.name,
+        resourceType: r.resourceType,
+        status: (state.status || (r.lastProbedAt && Number(r.lastProbedAt) > 0 ? "online" : "unknown")) as string,
+        lastProbedAt: Number(r.lastProbedAt) || 0,
+      };
+    }),
+    [allResources]
+  );
 
-const TYPE_TO_TIER: Record<string, "edge" | "application" | "data"> = {
-  cloudfront: "edge", cdn: "edge", "load-balancer": "edge", infrastructure: "edge",
-  "app-server": "application", application: "application", web_server: "application", api: "application", "web-server": "application", system: "application",
-  postgresql: "data", mysql: "data", database: "data", redis: "data", cache: "data", s3: "data", storage: "data", "data-store": "data", "message-queue": "data",
-};
+  const assignmentSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const re of resourceEnvs) s.add(`${re.resourceId}::${re.environmentName}`);
+    return s;
+  }, [resourceEnvs]);
 
-const HEALTH_INDICATORS: Record<string, { symbol: string; color: string }> = {
-  healthy: { symbol: "●", color: "#6cffa0" },
-  degraded: { symbol: "◐", color: "#ffcc6c" },
-  unhealthy: { symbol: "○", color: "#ff6c8a" },
-  unknown: { symbol: "⊘", color: "#8888a0" },
-};
+  const isAssigned = (resourceId: string, envName: string) =>
+    assignmentSet.has(`${resourceId}::${envName}`);
 
-const EDGE_HEALTH_COLORS: Record<string, string> = {
-  healthy: "#3a5a3a",
-  degraded: "#5a5a3a",
-  unhealthy: "#5a3a3a",
-  unknown: "#3a3a5a",
-};
+  const toggleOne = (resourceId: string, envName: string) => {
+    if (isAssigned(resourceId, envName)) {
+      const row = resourceEnvs.find(re => re.resourceId === resourceId && re.environmentName === envName);
+      if (row) callReducer(conn => conn.reducers.removeResourceEnvironment({ id: row.id }));
+    } else {
+      callReducer(conn => conn.reducers.addResourceEnvironment({
+        id: crypto.randomUUID().replace(/-/g, ""),
+        resourceId,
+        environmentName: envName,
+        createdAt: BigInt(Date.now()),
+      }));
+    }
+  };
 
-const NODE_W = 180;
-const NODE_H = 70;
-const TIER_GAP = 140;
-const NODE_GAP = 40;
-const TIER_LABEL_H = 30;
-
-export default function InfraMap({ environments }: Props) {
-  const [env, setEnv] = useState(environments[0] || "production");
-  const [nodes, setNodes] = useState<InfraNode[]>([]);
-  const [edges, setEdges] = useState<InfraEdge[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<InfraNode | null>(null);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [resRes, manRes, compRes] = await Promise.all([
-        fetch(`${GATEWAY_API}/deployments/resources/${env}`),
-        fetch(`${GATEWAY_API}/deployments/discovery/manifests`),
-        fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(env)}`).catch(() => null),
-      ]);
-      const resources = resRes.ok ? await resRes.json() : [];
-      const manifests = manRes.ok ? await manRes.json() : [];
-      const compsRaw = compRes && compRes.ok ? await compRes.json() : [];
-      const components: ComponentData[] = Array.isArray(compsRaw) ? compsRaw : compsRaw.components || [];
-
-      const nodeMap = new Map<string, InfraNode>();
-      const edgeList: InfraEdge[] = [];
-
-      // From components (primary nodes)
-      for (const c of components) {
-        nodeMap.set(c.id, {
-          id: c.id, name: c.display_name || c.name, type: c.component_type,
-          tier: TYPE_TO_TIER[c.component_type] || "application",
-          health: c.is_active ? "healthy" : "unknown",
-          component_type: c.component_type,
-          icon: c.icon,
-        });
-      }
-
-      // From resources
-      for (const r of (Array.isArray(resources) ? resources : resources.resources || [])) {
-        if (!nodeMap.has(r.id || r.name)) {
-          nodeMap.set(r.id || r.name, {
-            id: r.id || r.name, name: r.name, type: r.type || "unknown",
-            tier: TYPE_TO_TIER[r.type] || "application",
-            host: r.host, port: r.port,
-            health: r.health || "unknown",
-            stats: r.stats,
-          });
-        }
-      }
-
-      // From manifests
-      for (const m of manifests) {
-        if (!m.layers) continue;
-        for (const [key, val] of Object.entries(m.layers as Record<string, any>)) {
-          if (key === "dns") continue;
-          if (key === "topology" && val) {
-            const topo = val as any;
-            for (const e of (topo.edges || [])) {
-              edgeList.push({ from: e.from, to: e.to, protocol: e.protocol || "tcp", port: e.port || 0, health: "unknown" });
-            }
-            continue;
-          }
-          const items = Array.isArray(val) ? val : val ? [val] : [];
-          for (const item of items) {
-            const id = item.id || item.name || key;
-            if (!nodeMap.has(id)) {
-              const type = item.type || key;
-              nodeMap.set(id, { id, name: item.name || key, type, tier: TYPE_TO_TIER[type] || "application", host: item.host, port: item.port, health: "unknown" });
-            }
-          }
-        }
-      }
-
-      setNodes(Array.from(nodeMap.values()));
-      setEdges(edgeList);
-    } catch { setNodes([]); setEdges([]); }
-    setLoading(false);
-  }, [env]);
-
-  useEffect(() => { fetchData(); }, [fetchData]);
-
-  // Poll resource usage
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`${GATEWAY_API}/deployments/resource-usage/${env}`);
-        if (!res.ok) return;
-        const usage = await res.json();
-        setNodes((prev) => prev.map((n) => {
-          const u = (usage.nodes || usage)?.[n.id];
-          return u ? { ...n, health: u.health || n.health, stats: { ...n.stats, ...u.stats } } : n;
+  const toggleAllForEnv = (envName: string) => {
+    const allOn = servers.every(s => isAssigned(s.id, envName));
+    for (const s of servers) {
+      if (allOn) {
+        const row = resourceEnvs.find(re => re.resourceId === s.id && re.environmentName === envName);
+        if (row) callReducer(conn => conn.reducers.removeResourceEnvironment({ id: row.id }));
+      } else if (!isAssigned(s.id, envName)) {
+        callReducer(conn => conn.reducers.addResourceEnvironment({
+          id: crypto.randomUUID().replace(/-/g, ""),
+          resourceId: s.id,
+          environmentName: envName,
+          createdAt: BigInt(Date.now()),
         }));
-      } catch { /* ignore */ }
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [env]);
-
-  const { positions, svgW, svgH } = useMemo(() => {
-    const tiers: Record<string, InfraNode[]> = {};
-    for (const node of nodes) {
-      (tiers[node.tier] ||= []).push(node);
-    }
-
-    const pos: Record<string, { x: number; y: number }> = {};
-    let maxW = 0;
-
-    for (let ti = 0; ti < TIER_ORDER.length; ti++) {
-      const tierNodes = tiers[TIER_ORDER[ti]] || [];
-      const totalW = tierNodes.length * NODE_W + (tierNodes.length - 1) * NODE_GAP;
-      maxW = Math.max(maxW, totalW);
-      for (let ni = 0; ni < tierNodes.length; ni++) {
-        pos[tierNodes[ni].id] = { x: ni * (NODE_W + NODE_GAP), y: ti * (NODE_H + TIER_GAP) + TIER_LABEL_H + 20 };
       }
     }
+  };
 
-    // Center tiers
-    for (const tier of TIER_ORDER) {
-      const tierNodes = tiers[tier] || [];
-      const totalW = tierNodes.length * NODE_W + (tierNodes.length - 1) * NODE_GAP;
-      const off = (maxW - totalW) / 2;
-      for (const n of tierNodes) pos[n.id].x += off;
+  const toggleAllForServer = (resourceId: string) => {
+    const allOn = allEnvironments.every(e => isAssigned(resourceId, e.name));
+    for (const e of allEnvironments) {
+      if (allOn) {
+        const row = resourceEnvs.find(re => re.resourceId === resourceId && re.environmentName === e.name);
+        if (row) callReducer(conn => conn.reducers.removeResourceEnvironment({ id: row.id }));
+      } else if (!isAssigned(resourceId, e.name)) {
+        callReducer(conn => conn.reducers.addResourceEnvironment({
+          id: crypto.randomUUID().replace(/-/g, ""),
+          resourceId,
+          environmentName: e.name,
+          createdAt: BigInt(Date.now()),
+        }));
+      }
     }
-
-    return { positions: pos, svgW: Math.max(maxW + 40, 400), svgH: TIER_ORDER.length * (NODE_H + TIER_GAP) + TIER_LABEL_H + 40 };
-  }, [nodes]);
-
-  const handleExportSvg = () => {
-    const svgEl = document.getElementById("infra-map-svg");
-    if (!svgEl) return;
-    const data = new XMLSerializer().serializeToString(svgEl);
-    const blob = new Blob([data], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `infra-map-${env}.svg`; a.click();
-    URL.revokeObjectURL(url);
   };
 
-  const handleFullscreen = () => {
-    const el = document.getElementById("infra-map-container");
-    if (el?.requestFullscreen) el.requestFullscreen();
+  const handleProbe = async (resourceId: string) => {
+    setProbingIds(prev => new Set(prev).add(resourceId));
+    try {
+      await fetch(`${GATEWAY_API}/deployments/resources/${resourceId}/probe`, { method: "POST" });
+    } catch { /* probe failed */ }
+    setProbingIds(prev => { const next = new Set(prev); next.delete(resourceId); return next; });
   };
 
-  if (loading) return <div style={{ color: "#8888a0", fontSize: "0.85rem" }}>Loading infrastructure...</div>;
+  const handleDelete = (resourceId: string) => {
+    callReducer(conn => conn.reducers.updateDeploymentResource({
+      id: resourceId,
+      displayName: undefined,
+      resourceType: undefined,
+      environment: undefined,
+      connectionJson: undefined,
+      capabilitiesJson: undefined,
+      stateJson: undefined,
+      tagsJson: undefined,
+      recommendationsJson: undefined,
+      isActive: false,
+      updatedAt: BigInt(Date.now()),
+      lastProbedAt: undefined,
+    }));
+  };
+
+  const envCount = allEnvironments.length;
+  // Server col + env cols (evenly spaced) + all col + probe col + delete col
+  const gridCols = `minmax(180px, 1.5fr) repeat(${envCount}, 1fr) 48px 44px 44px`;
+
+  if (servers.length === 0) {
+    return (
+      <div style={s.emptyRoot}>
+        <div style={{ color: "#5a5a6e", fontSize: "0.95rem", marginBottom: 12 }}>No servers connected. Add one to get started.</div>
+        <button style={s.addBtn} onClick={onAddServer}>+ Add Server</button>
+      </div>
+    );
+  }
 
   return (
-    <div id="infra-map-container" style={styles.container}>
-      {/* Toolbar */}
-      <div style={styles.toolbar}>
-        <select style={styles.select} value={env} onChange={(e) => setEnv(e.target.value)}>
-          {environments.map((e) => <option key={e} value={e}>{e}</option>)}
-        </select>
-        <button style={styles.secondaryButton} onClick={fetchData}>Refresh</button>
-        <button style={styles.secondaryButton} onClick={handleExportSvg}>Export SVG</button>
-        <button style={styles.secondaryButton} onClick={handleFullscreen}>Fullscreen</button>
+    <div style={s.root}>
+      <div style={s.header}>
+        <h2 style={s.title}>Infrastructure Map</h2>
+        <button style={s.addBtn} onClick={onAddServer}>+ Add Server</button>
       </div>
 
-      {/* SVG Map */}
-      <div style={styles.mapWrapper}>
-        {nodes.length === 0 ? (
-          <div style={{ color: "#8888a0", fontSize: "0.85rem", padding: 20 }}>No infrastructure data for {env}.</div>
-        ) : (
-          <svg id="infra-map-svg" width={svgW} height={svgH} style={{ overflow: "visible" }}>
-            <defs>
-              <marker id="infra-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-                <path d="M0,0 L8,3 L0,6" fill="#3a3a5a" />
-              </marker>
-            </defs>
-
-            {/* Tier Labels */}
-            {TIER_ORDER.map((tier, ti) => (
-              <text key={tier} x={10} y={ti * (NODE_H + TIER_GAP) + 18} fill="#5a5a70" fontSize="0.7rem" fontWeight={600}>
-                {TIER_LABELS[tier]}
-              </text>
-            ))}
-
-            {/* Edges */}
-            {edges.map((edge, i) => {
-              const from = positions[edge.from];
-              const to = positions[edge.to];
-              if (!from || !to) return null;
-              const x1 = from.x + NODE_W / 2;
-              const y1 = from.y + NODE_H;
-              const x2 = to.x + NODE_W / 2;
-              const y2 = to.y;
-              const midY = (y1 + y2) / 2;
-              const edgeColor = EDGE_HEALTH_COLORS[edge.health] || EDGE_HEALTH_COLORS.unknown;
-              return (
-                <g key={i}>
-                  <path d={`M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`} fill="none" stroke={edgeColor} strokeWidth={1.5} markerEnd="url(#infra-arrow)" />
-                  <text x={(x1 + x2) / 2 + 4} y={midY - 4} fill="#8888a0" fontSize="0.6rem">
-                    {edge.protocol}{edge.port ? `:${edge.port}` : ""}
-                  </text>
-                </g>
-              );
-            })}
-
-            {/* Nodes */}
-            {nodes.map((node) => {
-              const p = positions[node.id];
-              if (!p) return null;
-              const hi = HEALTH_INDICATORS[node.health] || HEALTH_INDICATORS.unknown;
-              const isHov = hoveredNode === node.id;
-              const isSel = selectedNode?.id === node.id;
-              return (
-                <g
-                  key={node.id}
-                  onMouseEnter={() => setHoveredNode(node.id)}
-                  onMouseLeave={() => setHoveredNode(null)}
-                  onClick={() => setSelectedNode(isSel ? null : node)}
-                  style={{ cursor: "pointer" }}
+      <div style={s.tableWrap}>
+        {/* Header row */}
+        <div style={{ ...s.gridRow, gridTemplateColumns: gridCols, position: "sticky", top: 0, backgroundColor: "#0a0a12", zIndex: 1 }}>
+          <div style={s.colHeaderServer}>Server</div>
+          {allEnvironments.map(env => {
+            const allOn = servers.every(srv => isAssigned(srv.id, env.name));
+            return (
+              <div key={env.name} style={s.colHeaderEnv}>
+                <span style={s.envName}>{env.displayName || env.name}</span>
+                <span
+                  style={{ ...s.allIcon, color: allOn ? "#6cffa0" : "#6c8aff" }}
+                  onClick={() => toggleAllForEnv(env.name)}
+                  title={allOn ? `Remove all servers from ${env.displayName || env.name}` : `Add all servers to ${env.displayName || env.name}`}
                 >
-                  <rect x={p.x} y={p.y} width={NODE_W} height={NODE_H} rx={10} fill="#12121a" stroke={isSel ? "#6c8aff" : isHov ? "#3a3a5a" : "#1e1e2e"} strokeWidth={isSel ? 2 : isHov ? 2 : 1} />
-                  {/* Health indicator + icon */}
-                  {node.icon ? (
-                    <text x={p.x + 10} y={p.y + 20} fontSize="0.8rem">{node.icon}</text>
-                  ) : (
-                    <text x={p.x + 12} y={p.y + 20} fill={hi.color} fontSize="0.7rem">{hi.symbol}</text>
-                  )}
-                  <text x={p.x + (node.icon ? 28 : 26)} y={p.y + 20} fill="#e0e0e8" fontSize="0.8rem" fontWeight={600}>{node.name}</text>
-                  <text x={p.x + NODE_W / 2} y={p.y + 38} textAnchor="middle" fill="#8888a0" fontSize="0.65rem">
-                    {node.component_type || node.type}{node.host ? ` · ${node.host}` : ""}
-                  </text>
-                  {node.stats && (
-                    <text x={p.x + NODE_W / 2} y={p.y + 52} textAnchor="middle" fill="#5a5a70" fontSize="0.55rem">
-                      {node.stats.cpu != null ? `CPU ${node.stats.cpu}%` : ""}{node.stats.memory != null ? ` MEM ${node.stats.memory}%` : ""}{node.stats.latencyMs != null ? ` ${node.stats.latencyMs}ms` : ""}
-                    </text>
-                  )}
-                </g>
-              );
-            })}
-          </svg>
-        )}
-      </div>
-
-      {/* Node Detail Popup */}
-      {selectedNode && (
-        <div style={styles.card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={styles.cardTitle}>{selectedNode.name}</span>
-            <span style={{ color: HEALTH_INDICATORS[selectedNode.health]?.color || "#8888a0", fontSize: "0.8rem", fontWeight: 600 }}>
-              {HEALTH_INDICATORS[selectedNode.health]?.symbol} {selectedNode.health}
-            </span>
-          </div>
-          <div style={styles.statGrid}>
-            <div style={styles.statItem}><span style={styles.statLabel}>Type</span><span style={styles.statValue}>{selectedNode.type}</span></div>
-            <div style={styles.statItem}><span style={styles.statLabel}>Host</span><span style={styles.statValue}>{selectedNode.host || "—"}</span></div>
-            {selectedNode.port && <div style={styles.statItem}><span style={styles.statLabel}>Port</span><span style={styles.statValue}>{selectedNode.port}</span></div>}
-            {selectedNode.stats?.cpu != null && <div style={styles.statItem}><span style={styles.statLabel}>CPU</span><span style={styles.statValue}>{selectedNode.stats.cpu}%</span></div>}
-            {selectedNode.stats?.memory != null && <div style={styles.statItem}><span style={styles.statLabel}>Memory</span><span style={styles.statValue}>{selectedNode.stats.memory}%</span></div>}
-            {selectedNode.stats?.requests != null && <div style={styles.statItem}><span style={styles.statLabel}>Requests</span><span style={styles.statValue}>{selectedNode.stats.requests}/s</span></div>}
-            {selectedNode.stats?.latencyMs != null && <div style={styles.statItem}><span style={styles.statLabel}>Latency</span><span style={styles.statValue}>{selectedNode.stats.latencyMs}ms</span></div>}
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button style={styles.actionButton}>View Logs</button>
-            <button style={styles.actionButton}>Health Check</button>
-            <button style={styles.secondaryButton} onClick={() => setSelectedNode(null)}>Close</button>
-          </div>
+                  {allOn ? "⊖" : "⊕"}
+                </span>
+              </div>
+            );
+          })}
+          <div style={s.colHeaderIcon} title="Toggle all environments">⊕</div>
+          <div style={s.colHeaderIcon} title="Probe">⟳</div>
+          <div style={s.colHeaderIcon} title="Delete">✕</div>
         </div>
-      )}
 
-      {/* Legend */}
-      <div style={styles.legend}>
-        <span style={{ fontSize: "0.7rem", color: "#8888a0", fontWeight: 600 }}>HEALTH:</span>
-        {Object.entries(HEALTH_INDICATORS).map(([key, val]) => (
-          <span key={key} style={{ fontSize: "0.7rem", color: val.color }}>{val.symbol} {key}</span>
-        ))}
+        {/* Server rows */}
+        {servers.map(srv => {
+          const st = statusInfo(srv.status);
+          const allEnvsOn = allEnvironments.every(e => isAssigned(srv.id, e.name));
+          const isProbing = probingIds.has(srv.id);
+
+          return (
+            <div key={srv.id} style={{ ...s.gridRow, gridTemplateColumns: gridCols, borderBottom: "1px solid #1e1e2e" }}>
+              {/* Server info */}
+              <div style={s.serverCell}>
+                <div style={s.serverTopRow}>
+                  <span style={{ color: st.color, fontSize: "0.6rem", marginRight: 6 }}>{st.symbol}</span>
+                  <span style={s.serverName}>{srv.displayName}</span>
+                </div>
+                <div style={s.serverSubRow}>
+                  <span style={s.resourceType}>{srv.resourceType}</span>
+                  <span style={s.sep}>·</span>
+                  <span style={s.probeTime}>{relativeTime(srv.lastProbedAt)}</span>
+                </div>
+              </div>
+
+              {/* Environment dots */}
+              {allEnvironments.map(env => {
+                const on = isAssigned(srv.id, env.name);
+                return (
+                  <div key={env.name} style={s.dotCell}>
+                    <DotToggle on={on} onClick={() => toggleOne(srv.id, env.name)} />
+                  </div>
+                );
+              })}
+
+              {/* Toggle all envs for this server */}
+              <div style={s.actionCell}>
+                <span
+                  style={{ ...s.actionIcon, color: allEnvsOn ? "#6cffa0" : "#6c8aff" }}
+                  onClick={() => toggleAllForServer(srv.id)}
+                  title={allEnvsOn ? "Remove from all environments" : "Add to all environments"}
+                >
+                  {allEnvsOn ? "⊖" : "⊕"}
+                </span>
+              </div>
+
+              {/* Probe */}
+              <div style={s.actionCell}>
+                <span
+                  style={{ ...s.actionIcon, color: isProbing ? "#3a3a4e" : "#8888a0", cursor: isProbing ? "default" : "pointer" }}
+                  onClick={() => !isProbing && handleProbe(srv.id)}
+                  title="Probe server"
+                >
+                  {isProbing ? "⏳" : "⟳"}
+                </span>
+              </div>
+
+              {/* Delete */}
+              <div style={s.actionCell}>
+                <span
+                  style={{ ...s.actionIcon, color: "#ff6c8a55" }}
+                  onClick={() => handleDelete(srv.id)}
+                  title="Remove server"
+                  onMouseEnter={e => (e.currentTarget.style.color = "#ff6c8a")}
+                  onMouseLeave={e => (e.currentTarget.style.color = "#ff6c8a55")}
+                >
+                  ✕
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", gap: 12 },
-  toolbar: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
-  select: { backgroundColor: "#16162a", color: "#e0e0e8", border: "1px solid #3a3a5a", borderRadius: 6, padding: "6px 10px", fontSize: "0.8rem" },
-  mapWrapper: { backgroundColor: "#0a0a12", border: "1px solid #1e1e2e", borderRadius: 12, padding: 16, overflow: "auto", minHeight: 300 },
-  card: { backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 10 },
-  cardTitle: { fontSize: "0.85rem", fontWeight: 600, color: "#e0e0e8" },
-  statGrid: { display: "flex", gap: 16, flexWrap: "wrap" },
-  statItem: { display: "flex", flexDirection: "column", gap: 2 },
-  statLabel: { fontSize: "0.7rem", color: "#8888a0" },
-  statValue: { fontSize: "0.85rem", color: "#e0e0e8" },
-  legend: { display: "flex", gap: 12, alignItems: "center", padding: "8px 0" },
-  secondaryButton: { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: 6, padding: "6px 12px", fontSize: "0.8rem", cursor: "pointer" },
-  actionButton: { backgroundColor: "#2a2a6a", color: "#6c8aff", border: "1px solid #3a3a8a", borderRadius: 6, padding: "6px 12px", fontSize: "0.8rem", cursor: "pointer" },
+function DotToggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+  const [hovered, setHovered] = React.useState(false);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: 26,
+        height: 26,
+        borderRadius: "50%",
+        cursor: "pointer",
+        backgroundColor: on ? "#6cffa0" : "#1a1a2e",
+        border: `2px solid ${hovered ? "#6c8aff" : on ? "#6cffa0" : "#3a3a4e"}`,
+        boxShadow: on ? "0 0 8px #6cffa033" : "none",
+        transition: "all 0.15s ease",
+        margin: "0 auto",
+      }}
+    />
+  );
+}
+
+const s: Record<string, React.CSSProperties> = {
+  root: { display: "flex", flexDirection: "column", gap: 16 },
+  emptyRoot: {
+    backgroundColor: "#1a1a2e",
+    borderRadius: 8,
+    border: "1px solid #3a3a4e",
+    padding: 32,
+    textAlign: "center",
+  },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  title: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 },
+  addBtn: {
+    backgroundColor: "#2a2a3e",
+    color: "#e0e0e8",
+    border: "1px solid #3a3a4e",
+    borderRadius: 8,
+    padding: "8px 16px",
+    fontSize: "0.85rem",
+    cursor: "pointer",
+  },
+  tableWrap: {
+    overflowX: "auto",
+  },
+  gridRow: {
+    display: "grid",
+    alignItems: "center",
+    minHeight: 56,
+  },
+  colHeaderServer: {
+    padding: "10px 12px",
+    color: "#5a5a6e",
+    fontSize: "0.72rem",
+    fontWeight: 600,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.5px",
+  },
+  colHeaderEnv: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+    padding: "8px 4px",
+  },
+  colHeaderIcon: {
+    textAlign: "center",
+    color: "#5a5a6e",
+    fontSize: "0.7rem",
+    padding: "8px 0",
+  },
+  envName: {
+    color: "#8888a0",
+    fontSize: "0.78rem",
+    fontWeight: 500,
+  },
+  allIcon: {
+    fontSize: "1rem",
+    cursor: "pointer",
+    lineHeight: 1,
+    transition: "color 0.15s",
+  },
+  serverCell: {
+    padding: "10px 12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  },
+  serverTopRow: {
+    display: "flex",
+    alignItems: "center",
+  },
+  serverName: {
+    color: "#e0e0e8",
+    fontWeight: 600,
+    fontSize: "0.88rem",
+  },
+  serverSubRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 2,
+    paddingLeft: 16,
+  },
+  resourceType: {
+    color: "#5a5a6e",
+    fontSize: "0.7rem",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.5px",
+  },
+  sep: {
+    color: "#3a3a4e",
+    margin: "0 4px",
+    fontSize: "0.7rem",
+  },
+  probeTime: {
+    fontSize: "0.7rem",
+    color: "#5a5a6e",
+  },
+  dotCell: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: "8px 0",
+  },
+  actionCell: {
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: "8px 0",
+  },
+  actionIcon: {
+    fontSize: "1.1rem",
+    cursor: "pointer",
+    lineHeight: 1,
+    transition: "color 0.15s",
+  },
 };

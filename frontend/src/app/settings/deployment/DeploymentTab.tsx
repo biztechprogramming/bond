@@ -4,6 +4,8 @@ import { useAgentsWithRelations, useAvailableModels, useSettingsMap, callReducer
 import { getAgents } from "@/lib/spacetimedb-client";
 import SetupWizard from "./SetupWizard";
 import OnboardServerWizard from "./OnboardServerWizard";
+import AddServerModal from "./AddServerModal";
+import DiscoverStackWizard from "./DiscoverStackWizard";
 import AgentCardGrid from "./AgentCardGrid";
 import SharedSettingsForm from "./SharedSettingsForm";
 import SingleAgentEditor from "./SingleAgentEditor";
@@ -16,6 +18,8 @@ import AlertRulesEditor from "./AlertRulesEditor";
 import SecretManager from "./SecretManager";
 import CompareEnvironments from "./CompareEnvironments";
 import ComponentDetail from "./ComponentDetail";
+import AddComponentForm from "./AddComponentForm";
+import InfraMap from "./InfraMap";
 
 interface Environment {
   name: string;
@@ -35,7 +39,7 @@ type ViewMode =
   | "quick-deploy" | "register-script" | "onboard-server"
   | "script-from-discovery" | "monitoring-setup" | "live-logs"
   | "alert-rules" | "secrets" | "compare-envs" | "infra-map" | "timeline"
-  | "agent-settings" | "component-detail";
+  | "agent-settings" | "component-detail" | "add-server" | "discover" | "add-component";
 
 type TopTab = "env" | "map" | "timeline";
 
@@ -57,6 +61,7 @@ export default function DeploymentTab() {
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
   const [initialized, setInitialized] = useState(false);
+  const [showAddServerModal, setShowAddServerModal] = useState(false);
 
   // SpacetimeDB subscriptions (reactive, no fetch needed)
   const allAgents = useAgentsWithRelations();
@@ -205,15 +210,29 @@ export default function DeploymentTab() {
       case "compare-envs": setView("compare-envs"); break;
       case "live-logs": setView("live-logs"); break;
       case "monitoring-setup": setView("monitoring-setup"); break;
-      case "onboard-server": setView("onboard-server"); break;
+      case "onboard-server": setShowAddServerModal(true); break;
+      case "add-server": setShowAddServerModal(true); break;
+      case "discover": setView("discover"); break;
       case "script-from-discovery": setView("script-from-discovery"); break;
+      case "add-component": setView("add-component"); break;
       case "component-detail":
         if (params?.componentId) {
           setSelectedComponentId(params.componentId);
           setView("component-detail");
         }
         break;
-      default: setView(navView as ViewMode); break;
+      default:
+        // Only navigate to views that have render handlers; ignore unimplemented ones
+        const implemented: ViewMode[] = [
+          "dashboard", "edit-one", "edit-all", "quick-deploy", "register-script",
+          "onboard-server", "script-from-discovery", "monitoring-setup", "live-logs",
+          "alert-rules", "secrets", "compare-envs", "infra-map", "timeline",
+          "agent-settings", "component-detail", "add-server", "discover", "add-component",
+        ];
+        if (implemented.includes(navView as ViewMode)) {
+          setView(navView as ViewMode);
+        }
+        break;
     }
   };
 
@@ -285,6 +304,10 @@ export default function DeploymentTab() {
     return <CompareEnvironments environments={environments} onBack={goToDashboard} />;
   }
 
+  if (view === "add-component") {
+    return <AddComponentForm onComplete={goToDashboard} onCancel={goToDashboard} />;
+  }
+
   if (view === "component-detail" && selectedComponentId) {
     return <ComponentDetail componentId={selectedComponentId} onBack={goToDashboard} onNavigate={handleEnvNavigate} />;
   }
@@ -333,7 +356,8 @@ export default function DeploymentTab() {
           </button>
         </div>
         <div style={{ display: "flex", gap: "8px" }}>
-          <button style={styles.secondaryButton} onClick={() => setView("onboard-server")}>+ Add Server</button>
+          <button style={styles.secondaryButton} onClick={() => setShowAddServerModal(true)}>+ Server</button>
+          <button style={styles.secondaryButton} onClick={() => setView("discover")}>Discover</button>
           <button style={styles.secondaryButton} onClick={() => setView("register-script")}>Register Script</button>
           <button style={styles.secondaryButton} onClick={() => setView("quick-deploy")}>Quick Deploy</button>
           <button
@@ -366,20 +390,36 @@ export default function DeploymentTab() {
         </>
       )}
 
-      {/* Onboard server wizard */}
-      {view === "onboard-server" && (
-        <OnboardServerWizard
+      {/* Discover stack wizard */}
+      {view === "discover" && (
+        <DiscoverStackWizard
           environments={environments}
-          onComplete={() => goToDashboard()}
+          onComplete={goToDashboard}
           onCancel={goToDashboard}
         />
       )}
 
-      {/* Infra map placeholder */}
+      {/* Legacy onboard-server view — redirects to discover */}
+      {view === "onboard-server" && (
+        <DiscoverStackWizard
+          environments={environments}
+          onComplete={goToDashboard}
+          onCancel={goToDashboard}
+        />
+      )}
+
+      {/* Add server modal overlay */}
+      {showAddServerModal && (
+        <AddServerModal
+          environments={environments}
+          onComplete={() => { setShowAddServerModal(false); goToDashboard(); }}
+          onCancel={() => setShowAddServerModal(false)}
+        />
+      )}
+
+      {/* Infra map — server management with environment checkboxes */}
       {view === "infra-map" && (
-        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", padding: "24px", textAlign: "center" }}>
-          <div style={{ color: "#8888a0", fontSize: "0.9rem" }}>Infrastructure map view coming soon.</div>
-        </div>
+        <InfraMap onAddServer={() => setShowAddServerModal(true)} />
       )}
 
       {/* Timeline view */}
