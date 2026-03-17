@@ -1294,6 +1294,10 @@ async def _run_agent_loop(
         except Exception as e:
             logger.warning("Pre-gather phase failed, falling through to normal loop: %s", e)
 
+    # Reset per-turn budgets
+    from backend.app.agent.tools.native import reset_load_context_budget
+    reset_load_context_budget()
+
     for _iteration in range(max_iterations):
         # Check interrupt: if pending messages, inject them and continue.
         # If no messages, this is a pure pause signal — break the loop.

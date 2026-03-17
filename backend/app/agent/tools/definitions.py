@@ -7,13 +7,30 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "respond",
-            "description": "Send a text response to the user. Use this when you have a final answer or want to communicate something. This ends your turn.",
+            "description": "Send the final response to the user. Use this ONLY when you are completely done with the request. This is terminal — it ends your turn immediately. Do NOT use this for progress updates or mid-task messages; use `say` for those.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "message": {
                         "type": "string",
                         "description": "The message to send to the user.",
+                    }
+                },
+                "required": ["message"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "say",
+            "description": "Stream a message to the user mid-task without ending the turn. Use this for progress updates, status messages, or keeping the user informed during long operations. The turn continues after calling this — you can call more tools afterward. Use `respond` only for the final answer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message to stream to the user.",
                     }
                 },
                 "required": ["message"],
@@ -750,7 +767,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "load_context",
-            "description": "Load specialized prompt context for coding/engineering tasks. Pick the most specific relevant category from the manifest. Only call when you need domain-specific guidance (e.g. git workflow, database patterns, security rules). Do NOT call for conversational messages, greetings, or simple questions.",
+            "description": "Load specialized prompt context for coding/engineering tasks. Pick the most specific relevant category from the manifest. Only call when you need domain-specific guidance (e.g. git workflow, database patterns, security rules). Do NOT call for conversational messages, greetings, or simple questions. LIMIT: max 5 calls per turn — pick only the 1-2 most relevant categories. The response includes remaining_calls so you can track your budget.",
             "parameters": {
                 "type": "object",
                 "properties": {

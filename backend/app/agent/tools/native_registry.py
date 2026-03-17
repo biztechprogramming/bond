@@ -24,6 +24,7 @@ def build_native_registry() -> ToolRegistry:
         handle_memory_update,
         handle_repo_pr,
         handle_respond,
+        handle_say,
         handle_search_memory,
         handle_parallel_orchestrate,
     )
@@ -68,6 +69,7 @@ def build_native_registry() -> ToolRegistry:
         pass
 
     registry.register("respond", handle_respond)
+    registry.register("say", handle_say)
     registry.register("search_memory", handle_search_memory)
     registry.register("memory_save", handle_memory_save)
     registry.register("memory_update", handle_memory_update)

@@ -1,4 +1,4 @@
-"""Tests for native file tools — line-range reads, outline mode, and diff editing."""
+"""Tests for native file tools — line-range reads, outline mode, diff editing, say, and respond."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import pytest
 from backend.app.agent.tools.native import (
     handle_file_edit,
     handle_file_read,
+    handle_respond,
+    handle_say,
 )
 
 
@@ -272,3 +274,103 @@ class TestFileEdit:
         ))
         assert "error" in result
         assert "not found" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# handle_respond tests
+# ---------------------------------------------------------------------------
+
+class TestHandleRespond:
+    def test_respond_is_terminal(self):
+        """respond sets _terminal to True — ends the agent loop."""
+        result = _run(handle_respond({"message": "All done."}, _ctx()))
+        assert result.get("_terminal") is True
+
+    def test_respond_message_preserved(self):
+        """respond echoes the message verbatim."""
+        result = _run(handle_respond({"message": "Task complete!"}, _ctx()))
+        assert result["message"] == "Task complete!"
+
+    def test_respond_empty_message_defaults(self):
+        """respond with no message argument defaults to empty string."""
+        result = _run(handle_respond({}, _ctx()))
+        assert result["message"] == ""
+        assert result["_terminal"] is True
+
+    def test_respond_no_sse_event(self):
+        """respond must not emit an SSE event — it is terminal, not streamed."""
+        result = _run(handle_respond({"message": "Done"}, _ctx()))
+        assert "_sse_event" not in result
+
+    def test_respond_only_terminal_and_message(self):
+        """respond result contains exactly 'message' and '_terminal'."""
+        result = _run(handle_respond({"message": "Hi"}, _ctx()))
+        assert set(result.keys()) == {"message", "_terminal"}
+
+
+# ---------------------------------------------------------------------------
+# handle_say tests
+# ---------------------------------------------------------------------------
+
+class TestHandleSay:
+    def test_say_status_is_said(self):
+        """say returns status='said'."""
+        result = _run(handle_say({"message": "Processing..."}, _ctx()))
+        assert result.get("status") == "said"
+
+    def test_say_not_terminal(self):
+        """say must NOT set _terminal — the turn must continue."""
+        result = _run(handle_say({"message": "Working on step 1..."}, _ctx()))
+        assert not result.get("_terminal")
+
+    def test_say_sse_event_present(self):
+        """say returns an _sse_event so the backend can stream the message."""
+        result = _run(handle_say({"message": "Step 1 done"}, _ctx()))
+        assert "_sse_event" in result
+
+    def test_say_sse_event_is_chunk(self):
+        """_sse_event uses the 'chunk' event type — consistent with text responses."""
+        result = _run(handle_say({"message": "Running tests..."}, _ctx()))
+        assert result["_sse_event"]["event"] == "chunk"
+
+    def test_say_sse_data_contains_content(self):
+        """_sse_event data has a 'content' key matching the message."""
+        msg = "Searching 42 files for pattern..."
+        result = _run(handle_say({"message": msg}, _ctx()))
+        assert result["_sse_event"]["data"]["content"] == msg
+
+    def test_say_message_verbatim_in_sse(self):
+        """The full message, including special characters, is preserved in SSE data."""
+        msg = "Found `foo()` in 3 files — reviewing now"
+        result = _run(handle_say({"message": msg}, _ctx()))
+        assert result["_sse_event"]["data"]["content"] == msg
+
+    def test_say_empty_message_returns_error(self):
+        """say with an empty string message returns an error dict."""
+        result = _run(handle_say({"message": ""}, _ctx()))
+        assert "error" in result
+        assert result.get("status") != "said"
+
+    def test_say_missing_message_returns_error(self):
+        """say with no 'message' argument returns an error dict."""
+        result = _run(handle_say({}, _ctx()))
+        assert "error" in result
+        assert result.get("status") != "said"
+
+    def test_say_empty_message_not_terminal(self):
+        """Even on error, say must not accidentally set _terminal."""
+        result = _run(handle_say({"message": ""}, _ctx()))
+        assert not result.get("_terminal")
+
+    def test_say_sse_structure_matches_worker_expectation(self):
+        """
+        Verify the full _sse_event structure worker.py expects:
+            result["_sse_event"]["event"]       -> event type string
+            result["_sse_event"]["data"]        -> dict with at least "content"
+        worker.py line ~1957: _sse_event(sse["event"], sse.get("data", {}))
+        """
+        result = _run(handle_say({"message": "hello"}, _ctx()))
+        sse = result["_sse_event"]
+        assert isinstance(sse["event"], str)
+        assert isinstance(sse.get("data", None), dict)
+        assert "content" in sse["data"]

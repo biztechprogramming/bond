@@ -229,7 +229,10 @@ def select_tools(
     """
     selected: set[str] = set(ALWAYS_INCLUDE & set(enabled_tools))
 
-    # Deploy-* agents always get deployment tools + essential investigation tools
+    # Role-based always-include tools — exempt from MAX_TOOLS_PER_TURN capping.
+    role_always: set[str] = set()
+
+    # Deploy-* agents always get deployment tools + essential investigation tools.
     if agent_name and agent_name.startswith("deploy-"):
         DEPLOY_AGENT_ALWAYS = {
             "deploy_action", "deployment_query", "file_bug_ticket",
@@ -237,7 +240,8 @@ def select_tools(
             "code_execute", "web_search", "web_read",
             "search_memory", "memory_save", "work_plan",
         }
-        selected.update(DEPLOY_AGENT_ALWAYS & set(enabled_tools))
+        role_always = DEPLOY_AGENT_ALWAYS & set(enabled_tools)
+        selected.update(role_always)
 
     # Always include work_plan + parallel_orchestrate if agent has an active plan
     if has_active_plan and "work_plan" in enabled_tools:
@@ -307,22 +311,23 @@ def select_tools(
     # Additional shell utilities only when keyword-matched (not auto-included)
     # git_info, shell_find, shell_tree, shell_wc are niche enough to gate.
 
-    # Separate filesystem tools from regular tools for capping.
-    regular_selected = selected - FILESYSTEM_TOOLKIT - SHELL_UTILITY_TOOLS
-    fs_selected = selected & (FILESYSTEM_TOOLKIT | SHELL_UTILITY_TOOLS)
+    # Separate tools into exempt (filesystem + role-based) and cappable.
+    exempt = (FILESYSTEM_TOOLKIT | SHELL_UTILITY_TOOLS) & selected
+    exempt |= role_always  # role-based always-include tools skip the cap
+    cappable = selected - exempt
 
-    # Cap only non-filesystem tools at MAX_TOOLS_PER_TURN
-    if len(regular_selected) > MAX_TOOLS_PER_TURN:
+    # Cap only non-exempt tools at MAX_TOOLS_PER_TURN
+    if len(cappable) > MAX_TOOLS_PER_TURN:
         # Prioritize: always_include > keyword_matched > momentum
-        prioritized = list(ALWAYS_INCLUDE & regular_selected)
-        prioritized += [t for t in keyword_matched if t not in prioritized and t not in FILESYSTEM_TOOLKIT and t not in SHELL_UTILITY_TOOLS]
-        prioritized += [t for t in regular_selected if t not in prioritized]
-        regular_selected = set(prioritized[:MAX_TOOLS_PER_TURN])
+        prioritized = list(ALWAYS_INCLUDE & cappable)
+        prioritized += [t for t in keyword_matched if t not in prioritized and t not in exempt]
+        prioritized += [t for t in cappable if t not in prioritized]
+        cappable = set(prioritized[:MAX_TOOLS_PER_TURN])
 
-    selected = regular_selected | fs_selected
+    selected = cappable | exempt
 
     result = [t for t in selected if t in enabled_tools]
-    fs_count = len(fs_selected)
+    fs_count = len((FILESYSTEM_TOOLKIT | SHELL_UTILITY_TOOLS) & selected)
     logger.info(
         "Tool selection: %d/%d tools selected (keyword=%d, filesystem=%d, momentum=%d)",
         len(result), len(enabled_tools),
