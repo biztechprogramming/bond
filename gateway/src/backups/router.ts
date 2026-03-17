@@ -2,9 +2,10 @@
  * Backups API — list, preview, and restore SpacetimeDB backups.
  *
  * Backups are tar.gz archives of the full STDB data directory.
- * Restoring spins up a temporary STDB instance from the backup,
- * reads ALL tables, maps old-schema rows to the current schema
- * (filling in defaults for new fields), and imports via reducers.
+ * Restoring spins up a temporary standalone STDB instance from the backup,
+ * reads ALL tables via SQL, maps old-schema rows to the current schema
+ * (filling in defaults for new fields), and imports via reducers into the
+ * live bond-core-v2 database.
  */
 
 import { Router } from "express";
@@ -64,6 +65,7 @@ async function startTempInstance(backupPath: string): Promise<{
 }> {
   const tmpDir = mkdtempSync(join(tmpdir(), "bond-restore-"));
 
+  // Extract backup archive to temp directory
   await new Promise<void>((resolve, reject) => {
     const tar = spawn("tar", ["-xzf", backupPath, "-C", tmpDir]);
     tar.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`tar extract failed (code ${code})`))));
@@ -74,67 +76,77 @@ async function startTempInstance(backupPath: string): Promise<{
   const pidFile = join(tmpDir, "spacetime.pid");
   if (existsSync(pidFile)) try { unlinkSync(pidFile); } catch {}
 
+  // Pick a random high port for the temp instance
   const port = 19000 + Math.floor(Math.random() * 1000);
   const args = ["start", "--data-dir", tmpDir, "--listen-addr", `127.0.0.1:${port}`];
   if (existsSync(JWT_PUB_KEY) && existsSync(JWT_PRIV_KEY)) {
     args.push("--jwt-pub-key-path", JWT_PUB_KEY, "--jwt-priv-key-path", JWT_PRIV_KEY);
   }
 
+  console.log(`[backups] Starting temp STDB: ${SPACETIMEDB_BIN} ${args.join(" ")}`);
   const proc = spawn(SPACETIMEDB_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
   let stderrBuf = "";
   proc.stderr?.on("data", (chunk: Buffer) => { stderrBuf += chunk.toString(); });
+  proc.stdout?.on("data", (chunk: Buffer) => { /* drain stdout */ });
 
   const cleanup = () => {
     try { proc.kill("SIGTERM"); } catch {}
-    setTimeout(() => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch {} }, 1000);
+    setTimeout(() => { try { rmSync(tmpDir, { recursive: true, force: true }); } catch {} }, 2000);
   };
 
   // Wait for HTTP to be reachable (up to 90s for commit log replay)
   const deadline = Date.now() + 90_000;
+  let connected = false;
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 1000));
-    try {
-      await fetch(`http://127.0.0.1:${port}/`);
-      break;
-    } catch (e: any) {
-      if (e?.cause?.code !== "ECONNREFUSED" && e?.code !== "ECONNREFUSED") break;
-    }
+    // Check if process died
     if (proc.exitCode !== null) {
       cleanup();
       throw new Error(`SpacetimeDB temp instance died (code ${proc.exitCode}): ${stderrBuf.slice(-500)}`);
     }
+    await new Promise((r) => setTimeout(r, 1000));
+    try {
+      const resp = await fetch(`http://127.0.0.1:${port}/v1/health`);
+      if (resp.ok) {
+        connected = true;
+        break;
+      }
+    } catch {
+      // Not ready yet, keep waiting
+    }
   }
-  if (Date.now() >= deadline) {
+  if (!connected) {
     cleanup();
-    throw new Error("SpacetimeDB temp instance failed to start within 90s");
+    throw new Error(`SpacetimeDB temp instance failed to start within 90s. Stderr: ${stderrBuf.slice(-500)}`);
   }
 
+  console.log(`[backups] Temp STDB instance ready on port ${port}`);
   return { port, proc, tmpDir, cleanup };
 }
 
 // ─── Probe which module name exists in the backup ───────────────────────────
 
 /**
- * Discover which modules exist in a backup instance.
+ * Discover which module exists in a backup instance.
+ * Tries known module names in order, returns the first one that responds.
  */
-async function findModules(tempUrl: string): Promise<string[]> {
-  const found: string[] = [];
+async function findModuleName(tempUrl: string): Promise<string> {
   for (const mod of KNOWN_MODULE_NAMES) {
     try {
-      await sqlQuery(tempUrl, mod, "SELECT * FROM conversations LIMIT 1", "");
-      found.push(mod);
+      // Try a simple query — if the module exists, this will succeed or fail
+      // with a table-not-found error (which still means the module exists)
+      await sqlQuery(tempUrl, mod, "SELECT 1", "");
+      console.log(`[backups] Found module: ${mod}`);
+      return mod;
     } catch (e: any) {
       const msg = e?.message || "";
-      if (msg.includes("not found")) continue;
-      // Module exists but conversations table might not
-      found.push(mod);
+      // "not found" means the module doesn't exist — try next
+      if (msg.includes("not found") || msg.includes("No such")) continue;
+      // Any other error means the module exists but the query had issues
+      console.log(`[backups] Found module: ${mod} (query error: ${msg.slice(0, 100)})`);
+      return mod;
     }
   }
-  if (found.length === 0) {
-    throw new Error(`No known module found in backup. Tried: ${KNOWN_MODULE_NAMES.join(", ")}`);
-  }
-  console.log(`[backups] Found modules: ${found.join(", ")}`);
-  return found;
+  throw new Error(`No known module found in backup. Tried: ${KNOWN_MODULE_NAMES.join(", ")}`);
 }
 
 // ─── Read all restorable tables from the backup ─────────────────────────────
@@ -159,8 +171,9 @@ async function readBackupData(tempUrl: string): Promise<BackupData> {
       if (rows.length > 0) {
         console.log(`[backups]   ${tableDef.table}: ${rows.length} rows`);
       }
-    } catch {
+    } catch (e: any) {
       // Table doesn't exist in this backup version — that's fine, skip it
+      console.log(`[backups]   ${tableDef.table}: skipped (${e.message?.slice(0, 80)})`);
       tables[tableDef.table] = [];
     }
   }
@@ -211,7 +224,7 @@ export function createBackupsRouter(config: GatewayConfig) {
       const oldest = timestamps.length > 0 ? toISO(Math.min(...timestamps)) : null;
       const newest = timestamps.length > 0 ? toISO(Math.max(...timestamps)) : null;
 
-      // Sample conversations
+      // Sample conversations (most recent first)
       conversations.sort((a: any, b: any) => Number(b.updated_at) - Number(a.updated_at));
       const sample = conversations.slice(0, 10).map((c: any) => ({
         id: c.id,
@@ -258,7 +271,7 @@ export function createBackupsRouter(config: GatewayConfig) {
       const liveMod = config.spacetimedbModuleName;
       const liveToken = config.spacetimedbToken;
 
-      console.log(`[backups] Restore: temp instance on port ${temp.port}`);
+      console.log(`[backups] Restore: reading from temp instance on port ${temp.port}`);
       const data = await readBackupData(tempUrl);
 
       const currentTables = getCurrentTables();

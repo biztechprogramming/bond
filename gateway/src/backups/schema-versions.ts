@@ -110,7 +110,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "agents",
-    importReducer: "add_agent",
+    importReducer: "import_agent",
     fields: [
       { name: "id",             type: "string", default: "" },
       { name: "name",           type: "string", default: "" },
@@ -123,22 +123,24 @@ const V2_TABLES: TableDef[] = [
       { name: "max_iterations", type: "u32",    default: 200 },
       { name: "is_active",      type: "bool",   default: true },
       { name: "is_default",     type: "bool",   default: false },
+      { name: "created_at",     type: "u64",    default: 0 },
     ],
   },
   {
     table: "agent_channels",
-    importReducer: "add_agent_channel",
+    importReducer: "import_agent_channel",
     fields: [
       { name: "id",               type: "string", default: "" },
       { name: "agent_id",         type: "string", default: "" },
       { name: "channel",          type: "string", default: "" },
       { name: "sandbox_override", type: "string", default: "" },
       { name: "enabled",          type: "bool",   default: true },
+      { name: "created_at",       type: "u64",    default: 0 },
     ],
   },
   {
     table: "agent_workspace_mounts",
-    importReducer: "add_agent_mount",
+    importReducer: "import_agent_mount",
     fields: [
       { name: "id",             type: "string", default: "" },
       { name: "agent_id",       type: "string", default: "" },
@@ -150,16 +152,18 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "settings",
-    importReducer: "set_setting",
+    importReducer: "import_setting",
     fields: [
-      { name: "key",      type: "string", default: "" },
-      { name: "value",    type: "string", default: "" },
-      { name: "key_type", type: "string", default: "string" },
+      { name: "key",        type: "string", default: "" },
+      { name: "value",      type: "string", default: "" },
+      { name: "key_type",   type: "string", default: "string" },
+      { name: "created_at", type: "u64",    default: 0 },
+      { name: "updated_at", type: "u64",    default: 0 },
     ],
   },
   {
     table: "providers",
-    importReducer: "add_provider",
+    importReducer: "import_provider",
     fields: [
       { name: "id",                  type: "string",        default: "" },
       { name: "display_name",        type: "string",        default: "" },
@@ -176,7 +180,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "provider_api_keys",
-    importReducer: "set_provider_api_key",
+    importReducer: "import_provider_api_key",
     fields: [
       { name: "provider_id",     type: "string", default: "" },
       { name: "encrypted_value", type: "string", default: "" },
@@ -187,7 +191,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "provider_aliases",
-    importReducer: "set_provider_alias",
+    importReducer: "import_provider_alias",
     fields: [
       { name: "alias",       type: "string", default: "" },
       { name: "provider_id", type: "string", default: "" },
@@ -195,7 +199,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "llm_models",
-    importReducer: "add_model",
+    importReducer: "import_model",
     fields: [
       { name: "id",             type: "string", default: "" },
       { name: "provider",       type: "string", default: "" },
@@ -207,7 +211,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "prompt_fragments",
-    importReducer: "add_prompt_fragment",
+    importReducer: "import_prompt_fragment",
     fields: [
       { name: "id",             type: "string", default: "" },
       { name: "name",           type: "string", default: "" },
@@ -227,7 +231,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "prompt_templates",
-    importReducer: "add_prompt_template",
+    importReducer: "import_prompt_template",
     fields: [
       { name: "id",           type: "string", default: "" },
       { name: "name",         type: "string", default: "" },
@@ -243,7 +247,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "prompt_fragment_versions",
-    importReducer: "add_prompt_fragment_version",
+    importReducer: "import_prompt_fragment_version",
     fields: [
       { name: "id",            type: "string", default: "" },
       { name: "fragment_id",   type: "string", default: "" },
@@ -256,7 +260,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "prompt_template_versions",
-    importReducer: "add_prompt_template_version",
+    importReducer: "import_prompt_template_version",
     fields: [
       { name: "id",            type: "string", default: "" },
       { name: "template_id",   type: "string", default: "" },
@@ -269,7 +273,7 @@ const V2_TABLES: TableDef[] = [
   },
   {
     table: "agent_prompt_fragments",
-    importReducer: "add_agent_prompt_fragment",
+    importReducer: "import_agent_prompt_fragment",
     fields: [
       { name: "id",          type: "string", default: "" },
       { name: "agent_id",    type: "string", default: "" },

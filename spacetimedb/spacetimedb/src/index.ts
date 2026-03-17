@@ -889,6 +889,8 @@ export const importConversation = spacetimedb.reducer(
     updatedAt: t.u64(),
   },
   (ctx, conv) => {
+    const existing = ctx.db.conversations.id.find(conv.id);
+    if (existing) ctx.db.conversations.id.delete(conv.id);
     ctx.db.conversations.insert(conv);
   }
 );
@@ -906,6 +908,8 @@ export const importConversationMessage = spacetimedb.reducer(
     createdAt: t.u64(),
   },
   (ctx, msg) => {
+    const existing = ctx.db.conversationMessages.id.find(msg.id);
+    if (existing) ctx.db.conversationMessages.id.delete(msg.id);
     ctx.db.conversationMessages.insert(msg);
   }
 );
@@ -1178,6 +1182,239 @@ export const importWorkPlan = spacetimedb.reducer(
     } else {
       ctx.db.workPlans.insert(plan);
     }
+  }
+);
+
+// ─── Import Reducers (upsert — for backup restore & schema migration) ───────
+//
+// Each import reducer accepts ALL fields (including timestamps) and does
+// "delete-if-exists then insert" so it's safe to call on a DB that already
+// has data. Used by: restore dialog, migrate-schema.sh.
+
+export const importAgent = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    displayName: t.string(),
+    systemPrompt: t.string(),
+    model: t.string(),
+    utilityModel: t.string(),
+    tools: t.string(),
+    sandboxImage: t.string(),
+    maxIterations: t.u32(),
+    isActive: t.bool(),
+    isDefault: t.bool(),
+    createdAt: t.u64(),
+  },
+  (ctx, agent) => {
+    const existing = ctx.db.agents.id.find(agent.id);
+    if (existing) ctx.db.agents.id.delete(agent.id);
+    ctx.db.agents.insert(agent);
+  }
+);
+
+export const importAgentChannel = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    channel: t.string(),
+    sandboxOverride: t.string(),
+    enabled: t.bool(),
+    createdAt: t.u64(),
+  },
+  (ctx, ch) => {
+    const existing = ctx.db.agent_channels.id.find(ch.id);
+    if (existing) ctx.db.agent_channels.id.delete(ch.id);
+    ctx.db.agent_channels.insert(ch);
+  }
+);
+
+export const importAgentMount = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    hostPath: t.string(),
+    mountName: t.string(),
+    containerPath: t.string(),
+    readonly: t.bool(),
+  },
+  (ctx, mount) => {
+    const existing = ctx.db.agent_workspace_mounts.id.find(mount.id);
+    if (existing) ctx.db.agent_workspace_mounts.id.delete(mount.id);
+    ctx.db.agent_workspace_mounts.insert(mount);
+  }
+);
+
+export const importSetting = spacetimedb.reducer(
+  {
+    key: t.string(),
+    value: t.string(),
+    keyType: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, setting) => {
+    const existing = ctx.db.settings.key.find(setting.key);
+    if (existing) ctx.db.settings.key.delete(setting.key);
+    ctx.db.settings.insert(setting);
+  }
+);
+
+export const importProvider = spacetimedb.reducer(
+  {
+    id: t.string(),
+    displayName: t.string(),
+    litellmPrefix: t.string(),
+    apiBaseUrl: t.string().optional(),
+    modelsEndpoint: t.string().optional(),
+    modelsFetchMethod: t.string(),
+    authType: t.string(),
+    isEnabled: t.bool(),
+    config: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, prov) => {
+    const existing = ctx.db.providers.id.find(prov.id);
+    if (existing) ctx.db.providers.id.delete(prov.id);
+    ctx.db.providers.insert(prov);
+  }
+);
+
+export const importProviderApiKey = spacetimedb.reducer(
+  {
+    providerId: t.string(),
+    encryptedValue: t.string(),
+    keyType: t.string(),
+    createdAt: t.u64(),
+    updatedAt: t.u64(),
+  },
+  (ctx, key) => {
+    const existing = ctx.db.provider_api_keys.providerId.find(key.providerId);
+    if (existing) ctx.db.provider_api_keys.providerId.delete(key.providerId);
+    ctx.db.provider_api_keys.insert(key);
+  }
+);
+
+export const importProviderAlias = spacetimedb.reducer(
+  {
+    alias: t.string(),
+    providerId: t.string(),
+  },
+  (ctx, a) => {
+    const existing = ctx.db.provider_aliases.alias.find(a.alias);
+    if (existing) ctx.db.provider_aliases.alias.delete(a.alias);
+    ctx.db.provider_aliases.insert(a);
+  }
+);
+
+export const importModel = spacetimedb.reducer(
+  {
+    id: t.string(),
+    provider: t.string(),
+    modelId: t.string(),
+    displayName: t.string(),
+    contextWindow: t.u32(),
+    isEnabled: t.bool(),
+  },
+  (ctx, model) => {
+    const existing = ctx.db.llm_models.id.find(model.id);
+    if (existing) ctx.db.llm_models.id.delete(model.id);
+    ctx.db.llm_models.insert(model);
+  }
+);
+
+export const importPromptFragment = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    display_name: t.string(),
+    category: t.string(),
+    content: t.string(),
+    description: t.string(),
+    is_active: t.bool(),
+    is_system: t.bool(),
+    summary: t.string(),
+    tier: t.string(),
+    task_triggers: t.string(),
+    token_estimate: t.u32(),
+    created_at: t.u64(),
+    updated_at: t.u64(),
+  },
+  (ctx, frag) => {
+    const existing = ctx.db.prompt_fragments.id.find(frag.id);
+    if (existing) ctx.db.prompt_fragments.id.delete(frag.id);
+    ctx.db.prompt_fragments.insert(frag);
+  }
+);
+
+export const importPromptTemplate = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    display_name: t.string(),
+    category: t.string(),
+    content: t.string(),
+    variables: t.string(),
+    description: t.string(),
+    is_active: t.bool(),
+    created_at: t.u64(),
+    updated_at: t.u64(),
+  },
+  (ctx, tmpl) => {
+    const existing = ctx.db.prompt_templates.id.find(tmpl.id);
+    if (existing) ctx.db.prompt_templates.id.delete(tmpl.id);
+    ctx.db.prompt_templates.insert(tmpl);
+  }
+);
+
+export const importPromptFragmentVersion = spacetimedb.reducer(
+  {
+    id: t.string(),
+    fragment_id: t.string(),
+    version: t.u32(),
+    content: t.string(),
+    change_reason: t.string(),
+    changed_by: t.string(),
+    created_at: t.u64(),
+  },
+  (ctx, ver) => {
+    const existing = ctx.db.prompt_fragment_versions.id.find(ver.id);
+    if (existing) ctx.db.prompt_fragment_versions.id.delete(ver.id);
+    ctx.db.prompt_fragment_versions.insert(ver);
+  }
+);
+
+export const importPromptTemplateVersion = spacetimedb.reducer(
+  {
+    id: t.string(),
+    template_id: t.string(),
+    version: t.u32(),
+    content: t.string(),
+    change_reason: t.string(),
+    changed_by: t.string(),
+    created_at: t.u64(),
+  },
+  (ctx, ver) => {
+    const existing = ctx.db.prompt_template_versions.id.find(ver.id);
+    if (existing) ctx.db.prompt_template_versions.id.delete(ver.id);
+    ctx.db.prompt_template_versions.insert(ver);
+  }
+);
+
+export const importAgentPromptFragment = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agent_id: t.string(),
+    fragment_id: t.string(),
+    rank: t.u32(),
+    enabled: t.bool(),
+    created_at: t.u64(),
+  },
+  (ctx, apf) => {
+    const existing = ctx.db.agent_prompt_fragments.id.find(apf.id);
+    if (existing) ctx.db.agent_prompt_fragments.id.delete(apf.id);
+    ctx.db.agent_prompt_fragments.insert(apf);
   }
 );
 
