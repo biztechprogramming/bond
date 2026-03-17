@@ -26,6 +26,9 @@ This file defines what AI agents can and cannot modify when working on the Bond 
 
 ## What agents must NOT change
 
+### SpacetimeDB — CRITICAL
+- **NEVER run `spacetime publish` with `--delete-data`**. This wipes the entire database. There is no undo. If a migration requires schema changes, work with the human to plan it. No exceptions.
+
 ### Core infrastructure (human-only)
 - `backend/app/worker.py` — agent loop, LLM orchestration
 - `backend/app/agent/tools/native.py` — native tool handlers

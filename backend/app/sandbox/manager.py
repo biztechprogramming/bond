@@ -100,6 +100,7 @@ class SandboxManager:
             # prompt_fragments removed (Doc 027) — loaded from disk via manifest
             "api_keys": agent.get("api_keys", {}),
             "provider_aliases": agent.get("provider_aliases", {}),
+            "litellm_prefixes": agent.get("litellm_prefixes", {}),
         }
 
         # Use os.open with explicit mode to avoid race window between open() and chmod()
@@ -280,6 +281,12 @@ class SandboxManager:
                 [repr(m) for m in agent.get("workspace_mounts", [])],
             )
 
+            # Config fingerprint: detect model/utility_model changes so we
+            # recreate the container instead of serving stale config.
+            current_config_fingerprint = (
+                f"{agent.get('model', '')}|{agent.get('utility_model', '')}"
+            )
+
             # Check if container already running + healthy (Task 8)
             # First check in-memory tracking
             if key in self._containers:
@@ -287,10 +294,17 @@ class SandboxManager:
                 cid = info["container_id"]
                 worker_url = info.get("worker_url", "")
                 tracked_mounts = info.get("mounts", [])
+                tracked_config = info.get("config_fingerprint", "")
 
-                # If mounts changed, destroy and recreate
+                # If mounts or model config changed, destroy and recreate
                 if tracked_mounts != current_mounts:
                     logger.info("Agent %s mounts changed, recreating worker container %s", agent_id, key)
+                    await self.destroy_agent_container(agent_id)
+                elif tracked_config and tracked_config != current_config_fingerprint:
+                    logger.info(
+                        "Agent %s config changed (was: %s, now: %s), recreating worker container %s",
+                        agent_id, tracked_config, current_config_fingerprint, key,
+                    )
                     await self.destroy_agent_container(agent_id)
                 elif await self._is_running(cid):
                     try:
@@ -314,6 +328,9 @@ class SandboxManager:
                 # Not in memory — check Docker directly (e.g., after backend restart)
                 existing = await self._recover_existing_container(key, agent_id)
                 if existing:
+                    # Store config fingerprint so future model changes are detected
+                    if key in self._containers:
+                        self._containers[key]["config_fingerprint"] = current_config_fingerprint
                     return existing
 
             # Create new worker container
@@ -335,6 +352,7 @@ class SandboxManager:
                     "config_path": str(config_path),
                     "last_used": time.time(),
                     "mounts": current_mounts,
+                    "config_fingerprint": current_config_fingerprint,
                 }
 
                 # Wait for health

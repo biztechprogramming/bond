@@ -689,6 +689,18 @@ async def conversation_turn(
         except Exception as e:
             logger.warning(f"[CONVERSATIONS] Failed to load provider aliases: {e}")
 
+        # Load provider ID → litellm prefix mapping for model normalization
+        litellm_prefixes = {}
+        try:
+            prov_rows = await stdb.query("SELECT id, litellm_prefix FROM providers WHERE is_enabled = true")
+            for r in prov_rows:
+                pid = r.get("id")
+                prefix = r.get("litellm_prefix") or r.get("litellmPrefix")
+                if pid and prefix:
+                    litellm_prefixes[pid] = prefix
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to load litellm prefixes: {e}")
+
         agent_dict = {
             "id": agent_row["id"],
             "name": agent_row["name"],
@@ -696,11 +708,12 @@ async def conversation_turn(
             "model": agent_row["model"],
             "utility_model": agent_row.get("utility_model") or agent_row.get("utilityModel", "claude-sonnet-4-6"),
             "system_prompt": agent_row.get("system_prompt") or agent_row.get("systemPrompt"),
-            "tools": json.loads(agent_row["tools"]) if isinstance(agent_row["tools"], str) else agent_row["tools"],
+            "tools": json.loads(agent_row["tools"]) if isinstance(agent_row["tools"], str) and agent_row["tools"].strip() else (agent_row["tools"] if not isinstance(agent_row["tools"], str) else []),
             "max_iterations": int(agent_row.get("max_iterations") or agent_row.get("maxIterations") or 10),
             "workspace_mounts": workspace_mounts,
             "api_keys": api_keys,
             "provider_aliases": provider_aliases,
+            "litellm_prefixes": litellm_prefixes,
         }
 
         logger.info(f"[CONVERSATIONS] Ensuring container is running for agent {agent_id}")

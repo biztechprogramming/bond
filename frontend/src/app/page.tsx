@@ -8,6 +8,7 @@ import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
 import { useSpacetimeConnection, useConversations, useAgents } from "@/hooks/useSpacetimeDB";
 import { getAgentName } from "@/lib/spacetimedb-client";
+import RestoreDialog from "@/components/RestoreDialog";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
   if (name === "file_write" || name === "file_read") {
@@ -68,6 +69,7 @@ export default function Home() {
   const [codingAgentSummary, setCodingAgentSummary] = useState<string | null>(null);
   const [codingAgentOutput, setCodingAgentOutput] = useState<string[]>([]);
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
+  const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; message: string; repo: string; branch: string; actor?: string }[]>([]);
   const toastIdRef = useRef(0);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
@@ -83,6 +85,15 @@ export default function Home() {
 
 
 
+
+  // Show restore dialog when SpacetimeDB is connected but conversations are empty
+  useEffect(() => {
+    if (stdbConnected && spacetimeConversations.length === 0 && !sessionStorage.getItem("bond-restore-dismissed")) {
+      setShowRestoreDialog(true);
+    } else if (spacetimeConversations.length > 0) {
+      setShowRestoreDialog(false);
+    }
+  }, [stdbConnected, spacetimeConversations.length]);
 
   // Persist conversation ID
   useEffect(() => {
@@ -620,6 +631,11 @@ export default function Home() {
           selectedAgentName={selectedAgentName}
         />
       </div>
+
+      {/* Restore dialog */}
+      {showRestoreDialog && (
+        <RestoreDialog onDismiss={() => setShowRestoreDialog(false)} />
+      )}
 
       {/* Toast notifications */}
       {toasts.length > 0 && (
