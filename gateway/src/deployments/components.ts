@@ -26,6 +26,7 @@ export interface Component {
   created_at: number;
   updated_at: number;
   discovered_from?: string;
+  source_path?: string;
 }
 
 export interface ComponentResource {
@@ -84,6 +85,7 @@ function normalizeComponent(r: any): Component {
     created_at: Number(r.created_at),
     updated_at: Number(r.updated_at),
     discovered_from: r.discovered_from || undefined,
+    source_path: r.source_path || undefined,
   };
 }
 
@@ -189,6 +191,7 @@ export async function createComponent(
       created_at: now,
       updated_at: now,
       discovered_from: data.discovered_from || "",
+      source_path: data.source_path || "",
     }],
     cfg.spacetimedbToken,
   );

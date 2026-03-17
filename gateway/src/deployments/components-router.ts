@@ -84,6 +84,7 @@ export function createComponentsRouter(config: GatewayConfig): Router {
         icon: req.body.icon,
         description: req.body.description,
         discovered_from: req.body.discovered_from,
+        source_path: req.body.source_path,
       });
       const component = await getComponent(config, id);
       res.status(201).json(component);

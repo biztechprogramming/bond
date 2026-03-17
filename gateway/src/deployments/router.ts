@@ -43,6 +43,7 @@ import { createSecretsRouter } from "./secrets-router.js";
 import { createAlertRulesRouter } from "./alert-rules-router.js";
 import { createCompareRouter } from "./compare-router.js";
 import { createComponentsRouter } from "./components-router.js";
+import { createFolderBrowserRouter } from "./folder-browser.js";
 import { collectLogs } from "./log-stream.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
@@ -108,6 +109,9 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
   // Components (§045a)
   router.use("/components", createComponentsRouter(config));
+
+  // Folder browser (§044)
+  router.use("/browse", createFolderBrowserRouter(config));
 
   // Session token issue — Phase 1 helper for testing
   // In production this would be behind proper auth

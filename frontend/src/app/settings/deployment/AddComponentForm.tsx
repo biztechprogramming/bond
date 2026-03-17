@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { GATEWAY_API } from "@/lib/config";
 import { useResources, useComponents, callReducer } from "@/hooks/useSpacetimeDB";
+import FolderBrowser from "./FolderBrowser";
 
 interface AddComponentFormProps {
   onComplete: () => void;
@@ -50,6 +51,11 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
   const [port, setPort] = useState("");
   const [healthCheck, setHealthCheck] = useState("");
 
+  const [folderPath, setFolderPath] = useState("");
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [autoDetectedFields, setAutoDetectedFields] = useState<Set<string>>(new Set());
+
   const [systems, setSystems] = useState<ExistingComponent[]>([]);
   const [resources, setResources] = useState<ExistingResource[]>([]);
   const [saving, setSaving] = useState(false);
@@ -72,6 +78,43 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
   }, []);
 
   const slug = slugify(displayName);
+
+  const handleFolderSelect = async (selectedPath: string) => {
+    setShowFolderBrowser(false);
+    setFolderPath(selectedPath);
+    setAnalyzing(true);
+
+    try {
+      const res = await fetch(`${GATEWAY_API}/deployments/browse/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: selectedPath }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const detected = new Set<string>();
+
+      // Only fill empty fields
+      if (!displayName && data.display_name) { setDisplayName(data.display_name); detected.add("display_name"); }
+      if (data.component_type) { setComponentType(data.component_type); detected.add("component_type"); }
+      if (!description && data.description) { setDescription(data.description); detected.add("description"); }
+      if (!runtime && data.runtime) { setRuntime(data.runtime); detected.add("runtime"); }
+      if (!framework && data.framework) { setFramework(data.framework); detected.add("framework"); }
+      if (!repositoryUrl && data.repository_url) { setRepositoryUrl(data.repository_url); detected.add("repository_url"); }
+      if (!icon && data.icon) { setIcon(data.icon); detected.add("icon"); }
+      if (!port && data.port) { setPort(String(data.port)); detected.add("port"); }
+
+      setAutoDetectedFields(detected);
+    } catch { /* ignore */ }
+    finally { setAnalyzing(false); }
+  };
+
+  const AutoBadge = ({ field }: { field: string }) =>
+    autoDetectedFields.has(field) ? (
+      <span style={{ fontSize: "0.65rem", color: "#4a6a4a", backgroundColor: "#1a2a1a", padding: "1px 6px", borderRadius: 4, marginLeft: 6 }}>
+        Auto-detected
+      </span>
+    ) : null;
 
   const handleSubmit = async () => {
     if (!displayName.trim() || !componentType) return;
@@ -107,6 +150,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
         ...(repositoryUrl && { repository_url: repositoryUrl }),
         ...(icon && { icon }),
         ...(description && { description }),
+        ...(folderPath && { source_path: folderPath }),
       };
 
       const res = await fetch(`${GATEWAY_API}/deployments/components`, {
@@ -148,9 +192,41 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
         <button style={styles.secondaryButton} onClick={onCancel}>Cancel</button>
       </div>
 
+      {/* Source Folder */}
       <div style={styles.card}>
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>Display Name *</label>
+          <label style={styles.label}>Source Folder (optional)</label>
+          {folderPath ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <code style={{ fontSize: "0.8rem", color: "#a0a0b8", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {folderPath}
+              </code>
+              <button
+                style={{ ...styles.secondaryButton, padding: "4px 10px", fontSize: "0.75rem" }}
+                onClick={() => setShowFolderBrowser(true)}
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <button
+              style={{ ...styles.secondaryButton, width: "fit-content" }}
+              onClick={() => setShowFolderBrowser(true)}
+            >
+              Browse Workspace...
+            </button>
+          )}
+          {analyzing && (
+            <div style={{ fontSize: "0.75rem", color: "#6c8aff", marginTop: 4 }}>
+              Analyzing folder...
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.card}>
+        <div style={styles.fieldGroup}>
+          <label style={styles.label}>Display Name * <AutoBadge field="display_name" /></label>
           <input
             style={styles.input}
             value={displayName}
@@ -161,7 +237,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
         </div>
 
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>Component Type *</label>
+          <label style={styles.label}>Component Type * <AutoBadge field="component_type" /></label>
           <select style={styles.input} value={componentType} onChange={(e) => setComponentType(e.target.value)}>
             {COMPONENT_TYPES.map((t) => (
               <option key={t} value={t}>{t}</option>
@@ -170,7 +246,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
         </div>
 
         <div style={styles.fieldGroup}>
-          <label style={styles.label}>Description</label>
+          <label style={styles.label}>Description <AutoBadge field="description" /></label>
           <textarea
             style={{ ...styles.input, minHeight: 60, resize: "vertical" }}
             value={description}
@@ -183,19 +259,19 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
       <div style={styles.card}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div style={styles.fieldGroup}>
-            <label style={styles.label}>Runtime</label>
+            <label style={styles.label}>Runtime <AutoBadge field="runtime" /></label>
             <input style={styles.input} value={runtime} onChange={(e) => setRuntime(e.target.value)} placeholder="e.g. node, python, go" />
           </div>
           <div style={styles.fieldGroup}>
-            <label style={styles.label}>Framework</label>
+            <label style={styles.label}>Framework <AutoBadge field="framework" /></label>
             <input style={styles.input} value={framework} onChange={(e) => setFramework(e.target.value)} placeholder="e.g. express, django, gin" />
           </div>
           <div style={styles.fieldGroup}>
-            <label style={styles.label}>Repository URL</label>
+            <label style={styles.label}>Repository URL <AutoBadge field="repository_url" /></label>
             <input style={styles.input} value={repositoryUrl} onChange={(e) => setRepositoryUrl(e.target.value)} placeholder="https://github.com/..." />
           </div>
           <div style={styles.fieldGroup}>
-            <label style={styles.label}>Icon</label>
+            <label style={styles.label}>Icon <AutoBadge field="icon" /></label>
             <input style={styles.input} value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="emoji or icon name" />
           </div>
         </div>
@@ -234,7 +310,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
         {resourceId && (
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div style={styles.fieldGroup}>
-              <label style={styles.label}>Port</label>
+              <label style={styles.label}>Port <AutoBadge field="port" /></label>
               <input style={styles.input} type="number" value={port} onChange={(e) => setPort(e.target.value)} placeholder="e.g. 3000" />
             </div>
             <div style={styles.fieldGroup}>
@@ -257,6 +333,13 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
           {saving ? "Creating..." : "Create Component"}
         </button>
       </div>
+
+      {showFolderBrowser && (
+        <FolderBrowser
+          onSelect={handleFolderSelect}
+          onCancel={() => setShowFolderBrowser(false)}
+        />
+      )}
     </div>
   );
 }
