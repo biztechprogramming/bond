@@ -689,6 +689,18 @@ async def conversation_turn(
         except Exception as e:
             logger.warning(f"[CONVERSATIONS] Failed to load provider aliases: {e}")
 
+        # Load provider ID → litellm prefix mapping for model normalization
+        litellm_prefixes = {}
+        try:
+            prov_rows = await stdb.query("SELECT id, litellm_prefix FROM providers WHERE is_enabled = true")
+            for r in prov_rows:
+                pid = r.get("id")
+                prefix = r.get("litellm_prefix") or r.get("litellmPrefix")
+                if pid and prefix:
+                    litellm_prefixes[pid] = prefix
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Failed to load litellm prefixes: {e}")
+
         agent_dict = {
             "id": agent_row["id"],
             "name": agent_row["name"],
@@ -701,6 +713,7 @@ async def conversation_turn(
             "workspace_mounts": workspace_mounts,
             "api_keys": api_keys,
             "provider_aliases": provider_aliases,
+            "litellm_prefixes": litellm_prefixes,
         }
 
         logger.info(f"[CONVERSATIONS] Ensuring container is running for agent {agent_id}")

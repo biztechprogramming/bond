@@ -589,6 +589,26 @@ async def _run_agent_loop(
     # API keys + provider aliases injected from host DB at container launch
     injected_keys: dict[str, str] = config.get("api_keys", {})
     provider_aliases: dict[str, str] = config.get("provider_aliases", {})
+    # provider ID → litellm prefix (e.g., {"google": "gemini", "anthropic": "anthropic"})
+    litellm_prefixes: dict[str, str] = config.get("litellm_prefixes", {})
+
+    def _normalize_model_for_litellm(model_id: str) -> str:
+        """Normalize model string so litellm recognizes the provider prefix.
+
+        If the model uses a provider ID as prefix (e.g., 'google/gemini-2.5-flash'),
+        replace it with the litellm prefix (e.g., 'gemini/gemini-2.5-flash').
+        """
+        if "/" not in model_id or not litellm_prefixes:
+            return model_id
+        prefix, rest = model_id.split("/", 1)
+        if prefix in litellm_prefixes and litellm_prefixes[prefix] != prefix:
+            normalized = f"{litellm_prefixes[prefix]}/{rest}"
+            logger.info("Normalized model %s → %s for litellm", model_id, normalized)
+            return normalized
+        return model_id
+
+    # Normalize model strings so litellm recognizes the provider prefix.
+    model = _normalize_model_for_litellm(model)
 
     def _resolve_provider(model_id: str) -> str:
         """Resolve model prefix to canonical provider ID using DB aliases."""
@@ -721,7 +741,7 @@ async def _run_agent_loop(
         extra_kwargs["api_key"] = primary_key
 
     # Utility model kwargs (may be a different provider)
-    utility_model = config.get("utility_model", "claude-sonnet-4-6")
+    utility_model = _normalize_model_for_litellm(config.get("utility_model", "claude-sonnet-4-6"))
     utility_kwargs: dict = {}
     utility_key = await _resolve_api_key(utility_model)
     if utility_key:

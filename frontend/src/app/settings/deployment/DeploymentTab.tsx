@@ -379,7 +379,7 @@ export default function DeploymentTab() {
             <button style={styles.secondaryButton} onClick={() => setView("dashboard")}>Cancel Edit</button>
           </div>
           <SharedSettingsForm
-            settings={shared}
+            settings={effectiveShared}
             onChange={setSharedOverride}
             availableModels={availableModels}
             sandboxImages={sandboxImages}
