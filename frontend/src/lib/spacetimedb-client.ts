@@ -634,12 +634,28 @@ export function getResourceEnvironments(): ResourceEnvironmentRow[] {
   return rows;
 }
 
+// Fallback mapping from provider ID to litellm prefix.
+// Used when the providers table is empty or a provider row is missing litellmPrefix.
+const LITELLM_PREFIX_FALLBACKS: Record<string, string> = {
+  google: "gemini",
+  anthropic: "anthropic",
+  openai: "openai",
+  deepseek: "deepseek",
+  groq: "groq",
+  mistral: "mistral",
+  xai: "xai",
+  openrouter: "openrouter",
+};
+
 export function getAvailableModels(): { id: string; name: string }[] {
   const models = getLlmModels();
   const providers = getProviders();
   const providerMap = new Map(providers.map(p => [p.id, p.litellmPrefix]));
-  return models.map(m => ({
-    id: `${providerMap.get(m.provider) || m.provider}/${m.modelId}`,
-    name: m.displayName,
-  }));
+  return models.map(m => {
+    const prefix = providerMap.get(m.provider) || LITELLM_PREFIX_FALLBACKS[m.provider] || m.provider;
+    return {
+      id: `${prefix}/${m.modelId}`,
+      name: m.displayName,
+    };
+  });
 }
