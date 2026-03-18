@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TOP_K = 8
-MIN_SIMILARITY = 0.35
+MIN_SIMILARITY = 0.30
 MAX_SKILLS_DEFAULT = 3
 
 # Score boosting weights (Phase 3)
