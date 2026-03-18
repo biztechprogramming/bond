@@ -186,6 +186,24 @@ async def agent_turn(
     if rag_context:
         full_system += rag_context
 
+    # Auto-skills: surface relevant skills so the agent knows they exist
+    try:
+        from backend.app.agent.tools.skills import _get_router
+        skill_router = _get_router()
+        skills_prompt = await skill_router.get_relevant_skills_prompt(
+            user_message, session_id=str(agent.get("id", "")),
+        )
+        if skills_prompt:
+            full_system += (
+                "\n\n## Skills\n"
+                "Before answering, scan these matched skills. If one clearly applies, "
+                "use the `skills` tool with action='read' and the skill name to load "
+                "its full instructions, then follow them.\n"
+                + skills_prompt
+            )
+    except Exception:
+        logger.debug("Skills injection skipped", exc_info=True)
+
     # Build messages
     messages: list[dict] = [{"role": "system", "content": full_system}]
     if history:
@@ -211,7 +229,8 @@ async def agent_turn(
     except Exception as e:
         logger.error(f"Failed to refresh MCP tools: {e}")
 
-    tool_defs = registry.get_definitions_for(all_enabled_tools)
+    # Tool selection is done per-iteration inside the loop (with momentum).
+    from backend.app.agent.tool_selection import select_tools, compact_tool_schema
 
     # Build context for tool handlers
     workspace_dirs = [os.path.expanduser(m["host_path"]) for m in agent.get("workspace_mounts", [])]
@@ -235,7 +254,7 @@ async def agent_turn(
 
     logger.info(
         "Agent turn (tool-use): agent=%s model=%s tools=%d messages=%d",
-        agent["name"], model_string, len(tool_defs), len(messages),
+        agent["name"], model_string, len(all_enabled_tools), len(messages),
     )
 
     # Adaptive max_tokens: start low, escalate on truncation
@@ -246,8 +265,29 @@ async def agent_turn(
     # Tool-use loop
     for iteration in range(max_iterations):
         current_max_tokens = TOKEN_TIERS[current_tier]
+
+        # Re-select tools each iteration (momentum from recent tool calls)
+        recent_tools: list[str] = []
+        for msg in messages:
+            if msg.get("role") == "assistant":
+                tcs = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+                if tcs and isinstance(tcs, list):
+                    for tc in tcs:
+                        fn = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", None)
+                        name = fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", None)
+                        if name:
+                            recent_tools.append(name)
+        selected_tool_names = select_tools(
+            user_message=user_message,
+            enabled_tools=all_enabled_tools,
+            recent_tools_used=recent_tools[-10:] if recent_tools else None,
+            agent_name=agent.get("name"),
+        )
+        raw_defs = registry.get_definitions_for(selected_tool_names)
+        tool_defs = [compact_tool_schema(td) for td in raw_defs]
+
         # Use Instructor for validated tool calls
-        pydantic_tools = get_pydantic_definitions(all_enabled_tools)
+        pydantic_tools = get_pydantic_definitions(selected_tool_names)
         if pydantic_tools:
             # Create a Union of all available tools
             # Instructor will handle the routing and validation
