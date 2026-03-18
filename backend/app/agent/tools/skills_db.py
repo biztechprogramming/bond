@@ -1,12 +1,14 @@
 """Skills database — SQLite-backed skill index, usage tracking, and scoring.
 
-Uses aiosqlite for async access. Database lives at backend/data/skills.db.
+Uses aiosqlite for async access. Database lives at $BOND_WORKER_DATA_DIR/skills.db
+(consistent with all other agent DBs).
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import time
 import uuid
 from pathlib import Path
@@ -14,7 +16,21 @@ from typing import Any
 
 import aiosqlite
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent.parent / "data" / "skills.db"
+def _resolve_db_path() -> Path:
+    """Resolve skills.db path consistently across host and container.
+
+    Priority:
+    1. BOND_WORKER_DATA_DIR env var (set in containers)
+    2. Project-root/data/ (fallback for host — scheduler, CLI tools)
+    """
+    env = os.environ.get("BOND_WORKER_DATA_DIR")
+    if env:
+        return Path(env) / "skills.db"
+    # Host fallback: resolve relative to project root (repo/data/)
+    return Path(__file__).resolve().parent.parent.parent.parent.parent / "data" / "skills.db"
+
+
+DB_PATH = _resolve_db_path()
 
 # ---------------------------------------------------------------------------
 # Schema
