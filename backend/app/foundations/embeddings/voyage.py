@@ -48,6 +48,8 @@ class VoyageAPIProvider:
                     "output_dimension": self.dimension,
                 },
             )
+            if resp.status_code != 200:
+                logger.error("Voyage API error %d: %s", resp.status_code, resp.text[:500])
             resp.raise_for_status()
             data = resp.json()
             return [item["embedding"] for item in data["data"]]

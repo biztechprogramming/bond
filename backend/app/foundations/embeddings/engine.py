@@ -30,19 +30,26 @@ class EmbeddingEngine:
         model_name = settings.get("embedding.model", "voyage-4-nano")
         dimension = int(settings.get("embedding.output_dimension", "1024"))
         voyage_key = settings.get("embedding.api_key.voyage")
+        provider_name = settings.get("embedding.provider", "auto")
 
-        if voyage_key:
+        if provider_name == "local":
+            logger.info("Using local embedding provider (model=%s)", model_name)
+            self._provider = LocalEmbeddingProvider(
+                model_name=model_name,
+                dimension=dimension,
+            )
+        elif provider_name == "gemini":
+            logger.info("Using Gemini API embedding provider (model=%s)", model_name)
+            self._provider = GeminiAPIProvider(
+                model_name=model_name,
+                dimension=dimension,
+            )
+        elif voyage_key:
             logger.info("Using Voyage API embedding provider (model=%s)", model_name)
             self._provider = VoyageAPIProvider(
                 model_name=model_name,
                 dimension=dimension,
                 api_key=voyage_key,
-            )
-        elif settings.get("embedding.provider") == "gemini":
-            logger.info("Using Gemini API embedding provider (model=%s)", model_name)
-            self._provider = GeminiAPIProvider(
-                model_name=model_name,
-                dimension=dimension,
             )
         else:
             logger.info("Using local embedding provider (model=%s)", model_name)
