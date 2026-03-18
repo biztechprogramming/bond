@@ -2338,6 +2338,10 @@ async def _startup(config_path: str, data_dir: str) -> None:
     _state.start_time = time.time()
     _state.data_dir = Path(data_dir)
 
+    # Export data_dir so modules that resolve DB paths at import time
+    # (e.g. skills_db.py) can find it consistently.
+    os.environ["BOND_WORKER_DATA_DIR"] = data_dir
+
     # Load config
     config_file = Path(config_path)
     if config_file.exists():
@@ -2405,6 +2409,39 @@ async def _startup(config_path: str, data_dir: str) -> None:
     except Exception as e:
         logger.warning("Failed parallel schema reflection: %s", e)
     
+    # ── Skills: init router + ensure embeddings exist ──
+    try:
+        from backend.app.agent.tools.skills import init_router, _get_router
+        await init_router(persistence=_state.persistence)
+
+        from backend.app.agent.tools.skills_db import list_all_skills, DB_PATH
+        import aiosqlite
+        skills = await list_all_skills()
+        if skills:
+            async with aiosqlite.connect(str(DB_PATH)) as db:
+                row = await db.execute_fetchall(
+                    "SELECT COUNT(*) FROM skill_index WHERE embedding IS NULL"
+                )
+                missing = row[0][0] if row else 0
+
+            if missing > 0:
+                logger.info("Generating embeddings for %d/%d skills...", missing, len(skills))
+                from backend.app.agent.tools.skills import _router_settings
+                from backend.app.foundations.embeddings.engine import EmbeddingEngine
+                from backend.app.agent.skills_embedder import embed_all_skills
+                engine = EmbeddingEngine(
+                    settings=_router_settings or {"embedding.provider": "local"},
+                    db_engine=None,
+                )
+                count = await embed_all_skills(engine)
+                logger.info("Embedded %d skills on startup", count)
+            else:
+                logger.info("All %d skills already have embeddings", len(skills))
+        else:
+            logger.info("No skills in skill_index — skipping embedding")
+    except Exception:
+        logger.warning("Skills embedding on startup failed", exc_info=True)
+
     logger.info(
         "Agent worker initialized: agent_id=%s persistence_mode=%s",
         _state.agent_id, _state.persistence.mode,
