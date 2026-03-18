@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -281,10 +282,14 @@ class SandboxManager:
                 [repr(m) for m in agent.get("workspace_mounts", [])],
             )
 
-            # Config fingerprint: detect model/utility_model changes so we
+            # Config fingerprint: detect model/utility_model/api_key changes so we
             # recreate the container instead of serving stale config.
+            # Hash API keys so key rotations trigger recreation without logging secrets.
+            api_keys_hash = hashlib.sha256(
+                json.dumps(sorted(agent.get("api_keys", {}).items()), separators=(",", ":")).encode()
+            ).hexdigest()[:16]
             current_config_fingerprint = (
-                f"{agent.get('model', '')}|{agent.get('utility_model', '')}"
+                f"{agent.get('model', '')}|{agent.get('utility_model', '')}|{api_keys_hash}"
             )
 
             # Check if container already running + healthy (Task 8)

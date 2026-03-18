@@ -51,7 +51,7 @@ export function createEventsRouter(eventBus: EventBus): Router {
 
   // DELETE /api/v1/events/subscribe/:id — remove a subscription
   router.delete("/subscribe/:id", (req: Request, res: Response) => {
-    const { id } = req.params;
+    const id = req.params.id as string;
     const removed = eventBus.unsubscribe(id);
     if (!removed) {
       return res.status(404).json({ error: "Subscription not found" });

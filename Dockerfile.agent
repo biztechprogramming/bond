@@ -43,6 +43,11 @@ RUN pip install --no-cache-dir \
     semantic-router \
     fastembed
 
+# Pre-download the fastembed ONNX model so it's baked into the image
+# instead of downloaded on every container start.
+ENV FASTEMBED_CACHE_PATH=/opt/fastembed_cache
+RUN python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-small-en-v1.5')"
+
 # ---------------------------------------------------------------------------
 # Node.js + Coding Agent CLIs (037 §4.4.2)
 # ---------------------------------------------------------------------------

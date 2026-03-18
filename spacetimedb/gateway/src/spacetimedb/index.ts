@@ -82,8 +82,21 @@ import DeleteDeploymentTriggerReducer from "./delete_deployment_trigger_reducer"
 import DisableAlertRuleReducer from "./disable_alert_rule_reducer";
 import EnableAlertRuleReducer from "./enable_alert_rule_reducer";
 import EnqueueSystemEventReducer from "./enqueue_system_event_reducer";
+import ImportAgentReducer from "./import_agent_reducer";
+import ImportAgentChannelReducer from "./import_agent_channel_reducer";
+import ImportAgentMountReducer from "./import_agent_mount_reducer";
+import ImportAgentPromptFragmentReducer from "./import_agent_prompt_fragment_reducer";
 import ImportConversationReducer from "./import_conversation_reducer";
 import ImportConversationMessageReducer from "./import_conversation_message_reducer";
+import ImportModelReducer from "./import_model_reducer";
+import ImportPromptFragmentReducer from "./import_prompt_fragment_reducer";
+import ImportPromptFragmentVersionReducer from "./import_prompt_fragment_version_reducer";
+import ImportPromptTemplateReducer from "./import_prompt_template_reducer";
+import ImportPromptTemplateVersionReducer from "./import_prompt_template_version_reducer";
+import ImportProviderReducer from "./import_provider_reducer";
+import ImportProviderAliasReducer from "./import_provider_alias_reducer";
+import ImportProviderApiKeyReducer from "./import_provider_api_key_reducer";
+import ImportSettingReducer from "./import_setting_reducer";
 import ImportWorkItemReducer from "./import_work_item_reducer";
 import ImportWorkPlanReducer from "./import_work_plan_reducer";
 import InitiatePromotionReducer from "./initiate_promotion_reducer";
@@ -594,8 +607,21 @@ const reducersSchema = __reducers(
   __reducerSchema("disable_alert_rule", DisableAlertRuleReducer),
   __reducerSchema("enable_alert_rule", EnableAlertRuleReducer),
   __reducerSchema("enqueue_system_event", EnqueueSystemEventReducer),
+  __reducerSchema("import_agent", ImportAgentReducer),
+  __reducerSchema("import_agent_channel", ImportAgentChannelReducer),
+  __reducerSchema("import_agent_mount", ImportAgentMountReducer),
+  __reducerSchema("import_agent_prompt_fragment", ImportAgentPromptFragmentReducer),
   __reducerSchema("import_conversation", ImportConversationReducer),
   __reducerSchema("import_conversation_message", ImportConversationMessageReducer),
+  __reducerSchema("import_model", ImportModelReducer),
+  __reducerSchema("import_prompt_fragment", ImportPromptFragmentReducer),
+  __reducerSchema("import_prompt_fragment_version", ImportPromptFragmentVersionReducer),
+  __reducerSchema("import_prompt_template", ImportPromptTemplateReducer),
+  __reducerSchema("import_prompt_template_version", ImportPromptTemplateVersionReducer),
+  __reducerSchema("import_provider", ImportProviderReducer),
+  __reducerSchema("import_provider_alias", ImportProviderAliasReducer),
+  __reducerSchema("import_provider_api_key", ImportProviderApiKeyReducer),
+  __reducerSchema("import_setting", ImportSettingReducer),
   __reducerSchema("import_work_item", ImportWorkItemReducer),
   __reducerSchema("import_work_plan", ImportWorkPlanReducer),
   __reducerSchema("initiate_promotion", InitiatePromotionReducer),

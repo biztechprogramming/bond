@@ -112,6 +112,16 @@ export function createChannelRouter(channelManager: ChannelManager): Router {
     }
   });
 
+  // POST /channels/whatsapp/disconnect — force disconnect: stop + wipe auth, keep config
+  router.post("/channels/whatsapp/disconnect", async (_req: Request, res: Response) => {
+    try {
+      await channelManager.forceDisconnectWhatsApp();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : "Failed to disconnect" });
+    }
+  });
+
   // POST /channels/discord/setup — validate token, save config
   router.post("/channels/discord/setup", async (req: Request, res: Response) => {
     try {
