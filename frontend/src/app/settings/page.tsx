@@ -178,7 +178,10 @@ export default function SettingsPage() {
     const providerId = parts[parts.length - 1];
     const keyType = parts.slice(0, parts.length - 1).join(".");
     const found = providerApiKeys.find(k => k.providerId === providerId && k.keyType === keyType);
-    return found ? found.encryptedValue : "";
+    if (!found || !found.encryptedValue) return "";
+    const v = found.encryptedValue;
+    if (v.length <= 8) return "••••••••";
+    return v.slice(0, 7) + "••••••••" + v.slice(-4);
   };
 
   // ── Render ──
