@@ -35,11 +35,17 @@ async def embed_all_skills(
         logger.warning("No skills found in skill_index")
         return 0
 
-    # Build texts to embed: name + description
+    # Build texts to embed: name + description + l1_overview (if available)
+    # Richer text produces better semantic matching.
     texts = []
     skill_ids = []
     for s in skills:
-        text = f"{s['name']}: {s.get('description', '')}"
+        parts = [f"{s['name']}: {s.get('description', '')}"]
+        l1 = s.get("l1_overview", "")
+        if l1:
+            # Truncate l1 to ~500 chars to keep embedding input reasonable
+            parts.append(l1[:500])
+        text = "\n".join(parts)
         texts.append(text)
         skill_ids.append(s["id"])
 
