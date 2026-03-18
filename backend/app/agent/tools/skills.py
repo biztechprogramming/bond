@@ -13,22 +13,92 @@ _router = None
 
 
 def _get_router():
-    """Get or create the SkillRouter singleton with local embedding engine."""
+    """Get or create the SkillRouter singleton.
+
+    On first call, tries to build an EmbeddingEngine using settings from the DB
+    (populated by init_router). Falls back to local embeddings or LIKE matching.
+    """
     global _router
     if _router is None:
         from backend.app.agent.skills_router import SkillRouter
         try:
             from backend.app.foundations.embeddings.engine import EmbeddingEngine
             engine = EmbeddingEngine(
-                settings={"embedding.provider": "local", "embedding.model": "voyage-4-nano"},
+                settings=_router_settings or {"embedding.provider": "local", "embedding.model": "voyage-4-nano"},
                 db_engine=None,
             )
             _router = SkillRouter(embedding_engine=engine)
-            logger.info("Skills router initialized with local embedding engine")
+            provider_name = _router_settings.get("embedding.provider", "auto") if _router_settings else "local"
+            logger.info("Skills router initialized (provider=%s)", provider_name)
         except Exception:
             logger.warning("Failed to init embedding engine — skills router will use LIKE fallback", exc_info=True)
             _router = SkillRouter()
     return _router
+
+
+# Settings loaded async before first use
+_router_settings: dict | None = None
+
+
+async def init_router(db_session=None, persistence=None) -> None:
+    """Load embedding settings from the DB and pre-initialize the router.
+
+    Called from the agent loop before first use.
+    Args:
+        db_session: local SQLite session for reading settings
+        persistence: PersistenceClient for fetching API keys from gateway
+    """
+    global _router_settings, _router
+    if _router is not None:
+        return  # Already initialized
+
+    settings = {}
+    try:
+        if db_session:
+            from sqlalchemy import text as sa_text
+            # Read embedding settings from settings table
+            for key in ("embedding.model", "embedding.output_dimension", "embedding.provider"):
+                result = await db_session.execute(
+                    sa_text("SELECT value FROM settings WHERE key = :key"), {"key": key}
+                )
+                row = result.fetchone()
+                if row and row[0]:
+                    settings[key] = row[0]
+
+        # Read Voyage API key via persistence client (gateway → SpacetimeDB)
+        if "embedding.api_key.voyage" not in settings:
+            _persistence = persistence
+            if not _persistence:
+                try:
+                    from backend.app.worker import _state
+                    _persistence = _state.persistence
+                except Exception:
+                    pass
+            if _persistence:
+                try:
+                    encrypted = await _persistence.get_provider_api_key("voyage")
+                    if encrypted:
+                        from backend.app.core.crypto import decrypt_value, is_encrypted
+                        if is_encrypted(encrypted):
+                            settings["embedding.api_key.voyage"] = decrypt_value(encrypted)
+                        else:
+                            settings["embedding.api_key.voyage"] = encrypted
+                except Exception:
+                    logger.debug("Failed to read Voyage key via persistence client", exc_info=True)
+    except Exception:
+        logger.debug("Failed to load embedding settings from DB", exc_info=True)
+
+    # Defaults
+    if "embedding.model" not in settings:
+        settings["embedding.model"] = "voyage-4-large"
+    if "embedding.api_key.voyage" in settings and "embedding.provider" not in settings:
+        settings["embedding.provider"] = "auto"
+
+    _router_settings = settings
+    logger.info("Embedding settings loaded: provider=%s model=%s has_key=%s",
+                settings.get("embedding.provider", "auto"),
+                settings.get("embedding.model", "?"),
+                bool(settings.get("embedding.api_key.voyage")))
 
 
 def set_router_engine(embedding_engine, openviking_adapter=None) -> None:
