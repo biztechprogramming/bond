@@ -5,6 +5,7 @@ import AgentsTab from "./agents/AgentsTab";
 import DeploymentTab from "./deployment/DeploymentTab";
 import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
+import SkillsTab from "./skills/SkillsTab";
 import { BACKEND_API } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
@@ -19,6 +20,7 @@ const TABS = [
   { id: "llm", label: "LLM" },
   { id: "embedding", label: "Embedding" },
   { id: "api-keys", label: "API Keys" },
+  { id: "skills", label: "Skills" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -396,6 +398,8 @@ export default function SettingsPage() {
             {keySaveMsg && <div style={{ ...s.msg, color: "#6cffa0" }}>{keySaveMsg}</div>}
           </section>
         )}
+
+        {activeTab === "skills" && <SkillsTab />}
       </div>
     </div>
   );

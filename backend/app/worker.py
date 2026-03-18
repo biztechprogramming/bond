@@ -356,6 +356,7 @@ async def health() -> dict:
     }
 
 
+
 @app.post("/interrupt")
 async def interrupt(request: Request) -> dict:
     """Interrupt the current turn with new messages."""
@@ -569,6 +570,9 @@ async def _run_agent_loop(
     """
     from backend.app.agent.tools import TOOL_MAP
     from backend.app.agent.tools.native_registry import build_native_registry
+    from backend.app.agent.skills_tracker import SkillTracker
+
+    _skill_tracker = SkillTracker()
 
     config = _state.config
     model = config["model"]
@@ -1452,6 +1456,7 @@ async def _run_agent_loop(
                         content = messages[_budget_target_idx].get("content", "")
                         if isinstance(content, str) and content.endswith(_budget_note):
                             messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
+                    await _skill_tracker.flush()
                     _emit_cost_summary()
                     return "", tool_calls_made
 
@@ -1989,6 +1994,32 @@ async def _run_agent_loop(
                         "conversation_id": conversation_id,
                     }))
 
+                # Skill activated — emit SSE event for frontend toast
+                if isinstance(result, dict) and "_skill_activated" in result:
+                    _skill_info = result.pop("_skill_activated")
+                    import uuid as _uuid
+                    _act_id = f"act_{_uuid.uuid4().hex[:12]}"
+                    if event_queue is not None:
+                        await event_queue.put(_sse_event("skill_activated", {
+                            "id": _act_id,
+                            "skillName": _skill_info.get("name", ""),
+                            "skillSource": _skill_info.get("source", ""),
+                            "activatedAt": int(time.time()),
+                        }))
+                    # Track activation for adaptive learning (Phase 3)
+                    _skill_tracker.on_skill_activated(
+                        activation_id=_act_id,
+                        skill_id=_skill_info.get("id", _skill_info.get("name", "")),
+                        skill_path=_skill_info.get("path", ""),
+                        session_id=conversation_id,
+                    )
+
+                # Track file reads that may be skill references
+                if tool_name == "file_read" and _skill_tracker.has_activations:
+                    _read_path = tool_args.get("path", "")
+                    if _read_path:
+                        _skill_tracker.on_file_read(_read_path)
+
                 # Check for promotable memory -> emit SSE memory event
                 if "_promote" in result:
                     _state._last_sse_events = getattr(_state, "_last_sse_events", [])
@@ -2012,6 +2043,8 @@ async def _run_agent_loop(
 
                 # Check terminal tool
                 if result.get("_terminal"):
+                    _skill_tracker.on_turn_complete()
+                    await _skill_tracker.flush()
                     _emit_cost_summary()
                     return result.get("message", ""), tool_calls_made
 
@@ -2177,6 +2210,7 @@ async def _run_agent_loop(
                     _lifecycle_injected = False
 
         else:
+            await _skill_tracker.flush()
             _emit_cost_summary()
             return llm_message.content or "", tool_calls_made
 

@@ -9,6 +9,7 @@ import PlanCard from "@/components/shared/PlanCard";
 import { useSpacetimeConnection, useConversations, useAgents } from "@/hooks/useSpacetimeDB";
 import { getAgentName } from "@/lib/spacetimedb-client";
 import RestoreDialog from "@/components/RestoreDialog";
+import SkillFeedbackStack, { type SkillActivation } from "@/components/shared/SkillFeedbackToast";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
   if (name === "file_write" || name === "file_read") {
@@ -71,6 +72,7 @@ export default function Home() {
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; message: string; repo: string; branch: string; actor?: string }[]>([]);
+  const [skillActivations, setSkillActivations] = useState<SkillActivation[]>([]);
   const toastIdRef = useRef(0);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -309,6 +311,19 @@ export default function Home() {
       } else if (msg.type === "user_message" && msg.content) {
         // User message sent from another window/tab
         setMessages((prev) => [...prev, { role: "user", content: msg.content! }]);
+      } else if (msg.type === "skill_activated" && msg.content) {
+        try {
+          const data = JSON.parse(msg.content);
+          setSkillActivations((prev) => [
+            ...prev,
+            {
+              id: data.id,
+              skillName: data.skillName,
+              skillSource: data.skillSource,
+              activatedAt: data.activatedAt || Date.now(),
+            },
+          ]);
+        } catch { /* ignore parse errors */ }
       }
       // Webhook push toast
       if (msg.type === "webhook_push" && msg.content) {
@@ -381,6 +396,14 @@ export default function Home() {
     // with a "done" event. The agent status will update via status events.
     setAgentStatus("stopping");
   }, [conversationId]);
+
+  const handleSkillFeedback = useCallback((activationId: string, vote: "up" | "down") => {
+    wsRef.current?.sendSkillFeedback(activationId, vote);
+  }, []);
+
+  const handleSkillDismiss = useCallback((activationId: string) => {
+    setSkillActivations((prev) => prev.filter((a) => a.id !== activationId));
+  }, []);
 
   const handleNewConversation = async () => {
     setMessages([]);
@@ -688,6 +711,12 @@ export default function Home() {
           to { opacity: 1; transform: translateX(0); }
         }
       `}</style>
+
+      <SkillFeedbackStack
+        activations={skillActivations}
+        onFeedback={handleSkillFeedback}
+        onDismiss={handleSkillDismiss}
+      />
     </div>
   );
 }

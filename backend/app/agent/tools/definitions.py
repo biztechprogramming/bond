@@ -595,22 +595,18 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "skills",
-            "description": "List or execute a saved skill (reusable tool sequence).",
+            "description": "Search, read, or list skills from the federated skill catalog. Use 'search' to find skills by keyword, 'read' to load a skill's full instructions, or 'list' to see all available skills with scores.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "Action: list, execute, create.",
-                        "enum": ["list", "execute", "create"],
+                        "description": "Action: search, read, or list.",
+                        "enum": ["search", "read", "list"],
                     },
                     "skill_name": {
                         "type": "string",
-                        "description": "Name of the skill to execute or create.",
-                    },
-                    "parameters": {
-                        "type": "object",
-                        "description": "Parameters to pass to the skill.",
+                        "description": "Skill name or ID to read, or search query text.",
                     },
                 },
                 "required": ["action"],
