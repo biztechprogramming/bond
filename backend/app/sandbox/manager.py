@@ -483,6 +483,11 @@ class SandboxManager:
         os.makedirs(str(shared_dir), exist_ok=True)
         cmd.extend(["-v", f"{shared_dir}:/data/shared:ro"])
 
+        # Skills DB (shared between gateway and all agent containers)
+        skills_db = project_root / "data" / "skills.db"
+        if skills_db.exists():
+            cmd.extend(["-v", f"{skills_db}:/data/skills.db:rw"])
+
         # SSH keys (only if ~/.ssh exists and not already covered by a workspace mount)
         ssh_dir = Path.home() / ".ssh"
         workspace_targets = {m.get("container_path", "") for m in workspace_mounts}
