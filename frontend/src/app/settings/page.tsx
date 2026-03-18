@@ -172,6 +172,18 @@ export default function SettingsPage() {
     } catch { setKeySaveMsg("Failed."); }
   };
 
+  const deleteKey = async (fullKey: string) => {
+    setKeySaveMsg("");
+    try {
+      const conn = getConnection();
+      if (!conn) { setKeySaveMsg("Not connected."); return; }
+      const parts = fullKey.split(".");
+      const providerId = parts[parts.length - 1];
+      conn.reducers.deleteProviderApiKey({ providerId });
+      setKeySaveMsg("Deleted.");
+    } catch { setKeySaveMsg("Failed to delete."); }
+  };
+
   const masked = (key: string) => {
     // key is like "llm.api_key.anthropic" — match by providerId (last segment) and keyType (rest)
     const parts = key.split(".");
@@ -378,6 +390,7 @@ export default function SettingsPage() {
                 <div style={s.keyRow}>
                   <input type="password" style={s.input} value={state} onChange={(e) => set(e.target.value)} placeholder={placeholder} />
                   <button style={s.button} onClick={() => saveKey(key, state, set)}>Save</button>
+                  {masked(key) && <button style={s.deleteBtn} onClick={() => deleteKey(key)}>Delete</button>}
                 </div>
               </div>
             ))}
@@ -394,6 +407,7 @@ export default function SettingsPage() {
                 <div style={s.keyRow}>
                   <input type="password" style={s.input} value={state} onChange={(e) => set(e.target.value)} placeholder={placeholder} />
                   <button style={s.button} onClick={() => saveKey(key, state, set)}>Save</button>
+                  {masked(key) && <button style={s.deleteBtn} onClick={() => deleteKey(key)}>Delete</button>}
                 </div>
               </div>
             ))}
@@ -433,6 +447,7 @@ const s: Record<string, React.CSSProperties> = {
   radio: { accentColor: "#6c8aff" },
   button: { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer" },
   keyRow: { display: "flex", gap: "8px" },
+  deleteBtn: { backgroundColor: "#3a1a1e", color: "#ff6c8a", border: "1px solid #5a2a2e", borderRadius: "8px", padding: "10px 16px", cursor: "pointer", fontWeight: 500, fontSize: "0.9rem", whiteSpace: "nowrap" },
   masked: { color: "#6c8aff", fontSize: "0.8rem", marginLeft: "8px" },
   warning: { backgroundColor: "#2a2a1a", border: "1px solid #aa8800", borderRadius: "8px", padding: "12px 16px", color: "#ffcc44", fontSize: "0.85rem", marginBottom: "16px" },
   msg: { marginTop: "12px", fontSize: "0.85rem" },

@@ -404,6 +404,7 @@ class SandboxManager:
         cmd = [
             "docker", "run", "-d",
             "--name", key,
+            "--network", "bond-network",
             "--memory", "2048m",
             "--cpus", "2",
         ]
@@ -417,6 +418,9 @@ class SandboxManager:
         # Bond API URL so tools (e.g. work_plan) can call host API
         cmd.extend(["-e", "BOND_API_URL=http://host.docker.internal:18790"])
         cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
+
+        # SpacetimeDB URL — on bond-network, reachable by container name
+        cmd.extend(["-e", "BOND_SPACETIMEDB_URL=http://spacetimedb:3000"])
 
         # --- Agent identity & repo env vars ---
         cmd.extend(["-e", f"AGENT_NAME=bond-agent-{agent_id}"])
@@ -622,6 +626,7 @@ class SandboxManager:
         cmd = [
             "docker", "run", "-d",
             "--name", key,
+            "--network", "bond-network",
             "--memory", "2048m",
             "--cpus", "2",
         ]
