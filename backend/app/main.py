@@ -12,6 +12,8 @@ from backend.app.config import get_settings
 from backend.app.db.session import get_db, get_session_factory, init_db
 from backend.app.jobs import JobScheduler
 from backend.app.jobs.sync_models_stdb import sync_models_stdb
+from backend.app.jobs.recalculate_skill_scores import recalculate_skill_scores
+from backend.app.jobs.sync_skills import sync_skills
 from backend.app.mcp import mcp_manager, MCPServerConfig
 from backend.app.mediator import configure_logging
 from backend.app.api.v1.health import router as health_router
@@ -24,6 +26,7 @@ from backend.app.api.v1.prompts import router as prompts_router
 from backend.app.api.v1.plans import router as plans_router, items_router
 from backend.app.api.v1.mcp import router as mcp_router
 from backend.app.api.v1.deployments import router as deployments_router
+from backend.app.api.v1.skills import router as skills_router
 
 
 @asynccontextmanager
@@ -35,6 +38,8 @@ async def lifespan(app: FastAPI):
     # Background job scheduler - using SpacetimeDB
     scheduler = JobScheduler(get_session_factory())
     scheduler.register("sync_models", sync_models_stdb, interval_seconds=6 * 3600)
+    scheduler.register("recalculate_skill_scores", recalculate_skill_scores, interval_seconds=6 * 3600)
+    scheduler.register("sync_skills", sync_skills, interval_seconds=24 * 3600)
     await scheduler.start()
     app.state.scheduler = scheduler
 
@@ -116,3 +121,4 @@ app.include_router(plans_router, prefix="/api/v1")
 app.include_router(items_router, prefix="/api/v1")
 app.include_router(mcp_router, prefix="/api/v1")
 app.include_router(deployments_router, prefix="/api/v1")
+app.include_router(skills_router, prefix="/api/v1")

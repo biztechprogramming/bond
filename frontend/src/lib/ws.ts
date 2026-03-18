@@ -25,7 +25,8 @@ export interface GatewayMessage {
     | "plan_created" | "plan_updated" | "item_updated" | "plan_completed"
     | "user_message" | "pong"
     | "coding_agent_started" | "coding_agent_diff" | "coding_agent_done" | "coding_agent_output"
-    | "webhook_push";
+    | "webhook_push"
+    | "skill_activated" | "skill_feedback";
   sessionId?: string;
   content?: string;
   error?: string;
@@ -328,6 +329,17 @@ export class GatewayWebSocket {
         type: "inject",
         conversationId,
         content,
+      })
+    );
+  }
+
+  sendSkillFeedback(activationId: string, vote: "up" | "down"): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "skill_feedback",
+        activationId,
+        vote,
       })
     );
   }

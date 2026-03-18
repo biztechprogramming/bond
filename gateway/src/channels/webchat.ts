@@ -130,6 +130,9 @@ export class WebChatChannel {
       case "delete_conversation":
         await this.handleDeleteConversation(socket, session.id, msg);
         break;
+      case "skill_feedback":
+        await this.handleSkillFeedback(socket, session.id, msg);
+        break;
       case "ping":
         this.send(socket, { type: "pong" } as OutgoingMessage);
         break;
@@ -329,6 +332,13 @@ export class WebChatChannel {
             // Start background subscription to coding agent events
             this.subscribeToCodingAgentEvents(conversationId, sessionId);
             break;
+          case "skill_activated":
+            this.sendToConversation(conversationId, {
+              type: "skill_activated", sessionId,
+              content: JSON.stringify(data),
+              conversationId,
+            } as any);
+            break;
           case "error":
             this.sendToConversation(conversationId, {
               type: "error", sessionId,
@@ -443,6 +453,32 @@ export class WebChatChannel {
   }
 
   /**
+   * Forward skill feedback to the backend for scoring updates.
+   */
+  private async handleSkillFeedback(
+    socket: WebSocket,
+    sessionId: string,
+    msg: IncomingMessage,
+  ): Promise<void> {
+    const activationId = (msg as any).activationId;
+    const vote = (msg as any).vote;
+    if (!activationId || !vote) return;
+
+    try {
+      const baseUrl = (this.backendClient as any).baseUrl;
+      if (baseUrl) {
+        await fetch(`${baseUrl}/api/v1/skills/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ activation_id: activationId, vote }),
+        });
+      }
+    } catch (err) {
+      console.warn("[webchat] Failed to forward skill feedback:", err);
+    }
+  }
+
+  /**
    * Legacy direct turn execution — fallback when pipeline is not set.
    */
   private async startTurn(
@@ -537,6 +573,14 @@ export class WebChatChannel {
               conversationId,
             } as any);
             this.subscribeToCodingAgentEvents(conversationId, sessionId);
+            break;
+
+          case "skill_activated":
+            this.sendToConversation(conversationId, {
+              type: "skill_activated", sessionId,
+              content: JSON.stringify(event.data),
+              conversationId,
+            } as any);
             break;
 
           case "done":

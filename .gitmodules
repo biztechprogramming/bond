@@ -4,3 +4,15 @@
 [submodule "vendor/instructor"]
 	path = vendor/instructor
 	url = https://github.com/jxnl/instructor.git
+[submodule "vendor/skills/anthropics"]
+	path = vendor/skills/anthropics
+	url = https://github.com/anthropics/skills
+[submodule "vendor/skills/openai"]
+	path = vendor/skills/openai
+	url = https://github.com/openai/skills
+[submodule "vendor/skills/vercel-labs"]
+	path = vendor/skills/vercel-labs
+	url = https://github.com/vercel-labs/skills
+[submodule "vendor/skills/superpowers"]
+	path = vendor/skills/superpowers
+	url = https://github.com/obra/superpowers
