@@ -2,30 +2,46 @@
 
 Use the `coding_agent` tool to delegate complex coding tasks to a sub-agent (Claude Code, Codex, or Pi).
 
-## CRITICAL: Delegation is mandatory, not optional
+## The Investigation–Delegation Tradeoff
 
-If a task meets ANY delegation signal below, you **MUST** spawn a coding agent. Do not stop after planning. Do not save a "ready to execute" checkpoint. Do not ask the user to tell you to continue. **Spawn the agent and let it work.**
+**Investigation and delegation are inversely related.** The more you investigate, the less reason to delegate. The less you know, the more reason to delegate early.
 
-Failing to delegate when the task requires it is the same as not doing the task at all.
+- **Know little, scope looks big** → delegate NOW with rough direction. Don't burn 10 tool calls figuring it out first — that's the agent's job.
+- **Know everything, fix is clear** → just edit the file yourself. You already did the work; handing it off means the agent repeats it.
+- **The worst outcome:** full investigation → complete understanding → spawn agent. You wasted your own time on discovery, then wasted more time having the agent re-discover everything.
+
+### Decision rule
+
+Ask yourself: *"Do I already know the fix?"*
+- **Yes** → Do it yourself with `file_edit`. Done.
+- **No, and it needs exploration** → Delegate immediately. Give the agent the error, the rough area, and your best guess at direction. Let *it* explore.
 
 ## When to delegate
 
 | Signal | Action |
 |--------|--------|
-| Task spans 5+ files with exploration needed | **MUST delegate** |
-| You'd need 10+ tool calls to do it yourself | **MUST delegate** |
-| User says "use Claude Code / Codex / have an agent do it" | **MUST delegate** |
-| New feature with tests, build verification, iteration | **MUST delegate** |
-| User asks you to implement a design doc | **MUST delegate** — design docs describe multi-file features by definition |
-| You've finished discovery and have a plan but haven't written code | **MUST delegate NOW** |
-| Simple 1-3 file edit, you know exactly what to write | **Do it yourself** with `file_edit` |
+| Task spans 5+ files with exploration needed | **Delegate early** — don't investigate first |
+| You'd need 10+ tool calls to do it yourself | **Delegate early** |
+| User says "use Claude Code / Codex / have an agent do it" | **Delegate** |
+| New feature with tests, build verification, iteration | **Delegate** |
+| User asks you to implement a design doc | **Delegate** |
+| Simple 1-3 file edit, you know exactly what to write | **MUST do it yourself** with `file_edit` — no agent |
+| You can describe the fix in one sentence | **MUST do it yourself** — spawning an agent for a known fix is wasteful |
+| Error message points to a specific line and you know the fix | **MUST do it yourself** — the answer is already in the error |
 | Just need to read/understand code | Use `file_read` / `shell_grep` |
 | Single command (build, test, install) | Use `code_execute` |
-| You can describe the fix in one sentence | **Do it yourself** — this is NOT complex |
-| Error message points to a specific line and you know the fix | **Do it yourself** |
 
-### Do NOT over-delegate
-If you already know the exact change needed (e.g., "add `inspector: true` to the Prisma include block on line 30"), **just make the edit**. Spawning a coding agent for a fix you can already articulate is slower, more expensive, and frustrating for the user. The coding agent is for tasks that require *exploration and iteration*, not for tasks where you already have the answer.
+### Delegate early or fix it yourself — never both
+
+If you've done enough investigation to fully understand the problem, **you've passed the delegation window.** At that point you already have the answer — just apply it. Spawning a coding agent after full discovery means the agent re-does work you already did, which is slower, more expensive, and frustrating for the user.
+
+When delegating, give the agent:
+- The error or goal (what's wrong / what to build)
+- The rough area (which files/modules are involved)
+- Your best guess at direction (not the complete solution)
+- Acceptance criteria (build passes, tests pass, etc.)
+
+The agent will figure out the details. That's what it's for.
 
 ## Writing a good task description
 
