@@ -255,6 +255,23 @@ class CodingAgentProcess:
         # interfere with Claude CLI's auth.
         if self.agent_type == "claude":
             env.pop("ANTHROPIC_API_KEY", None)
+            # Claude CLI also requires ~/.claude.json (main config file).
+            # It lives outside ~/.claude/ and may be missing after container
+            # recreation. Restore from backup if available, or create minimal.
+            home = Path.home()
+            claude_json = home / ".claude.json"
+            if not claude_json.exists():
+                backup_dir = home / ".claude" / "backups"
+                if backup_dir.exists():
+                    backups = sorted(backup_dir.glob(".claude.json.backup.*"))
+                    if backups:
+                        import shutil as _shutil
+                        _shutil.copy2(str(backups[-1]), str(claude_json))
+                        logger.info("Restored %s from backup %s", claude_json, backups[-1].name)
+                if not claude_json.exists():
+                    # Minimal config so Claude CLI doesn't abort
+                    claude_json.write_text('{"hasCompletedOnboarding": true}')
+                    logger.info("Created minimal %s", claude_json)
 
         logger.info(
             "Spawning %s in %s (timeout=%ds)",
