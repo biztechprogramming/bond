@@ -248,13 +248,15 @@ export default function Home() {
         setAgentStatus("responding");
       } else if (msg.type === "done") {
         setStreamingContent((prev) => {
-          if (prev) {
+          // Use streamed content, or fall back to response in the done event
+          const finalContent = prev || (msg as any).response || "";
+          if (finalContent) {
             setMessages((msgs) => {
               const last = msgs[msgs.length - 1];
-              if (last?.role === "assistant" && last.content === prev) {
+              if (last?.role === "assistant" && last.content === finalContent) {
                 return msgs;
               }
-              return [...msgs, { id: msg.messageId, role: "assistant", content: prev, agentName: msg.agentName || currentAgentNameRef.current }];
+              return [...msgs, { id: msg.messageId, role: "assistant", content: finalContent, agentName: msg.agentName || currentAgentNameRef.current }];
             });
           }
           return "";

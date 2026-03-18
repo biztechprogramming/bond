@@ -354,6 +354,12 @@ export class WebChatChannel {
       await this.pipeline!.execute(pipelineMessage, context);
 
       session.agentBusy = false;
+
+      // Capture any buffered content before clearing — include it in the
+      // "done" event so the frontend can display the response even if
+      // streaming chunks were missed.
+      const finalBuffer = this.streamBuffers.get(conversationId);
+      const finalResponse = finalBuffer?.content || "";
       this.streamBuffers.delete(conversationId);
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -364,7 +370,8 @@ export class WebChatChannel {
         messageId: pipelineMessage.metadata.responseMessageId || "",
         agentName: pipelineMessage.agentName || "",
         queuedCount: 0, agentStatus: "idle",
-      });
+        ...(finalResponse ? { response: finalResponse } : {}),
+      } as any);
 
       this.handleListConversations(socket).catch(() => {});
     } catch (err) {
@@ -585,6 +592,17 @@ export class WebChatChannel {
 
           case "done":
             responseMessageId = (event.data.message_id as string) || "";
+            // Capture the final response text so it can be included in the
+            // websocket "done" event as a fallback when streaming chunks were
+            // missed or batched away by the frontend.
+            if (event.data.response) {
+              const buf = this.streamBuffers.get(conversationId);
+              if (buf && !buf.content) {
+                // No chunks were buffered — store the response so the
+                // final "done" message carries it to the frontend.
+                buf.content = event.data.response as string;
+              }
+            }
             if (conversationId) {
               this.sessionManager.setConversationId(sessionId, conversationId);
               session.conversationId = conversationId;
