@@ -310,6 +310,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
           icon: "",
           description: "",
           discoveredFrom: "",
+          sourcePath: "",
         }));
         parentId = sysId;
       } else if (parentSystem !== "none") {
@@ -330,6 +331,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
           icon: draft.icon || "",
           description: "",
           discoveredFrom: selectedServerId,
+          sourcePath: "",
         }));
 
         if (selectedServerId) {

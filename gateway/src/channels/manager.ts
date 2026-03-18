@@ -284,6 +284,16 @@ export class ChannelManager {
     }
   }
 
+  /**
+   * Force-disconnect WhatsApp: stop the channel, wipe auth state,
+   * but keep the config entry so the user can re-link via QR.
+   */
+  async forceDisconnectWhatsApp(): Promise<void> {
+    await this.stopChannel("whatsapp");
+    WhatsAppChannel.cleanAuthDir(this.whatsappAuthDir);
+    console.log("[channels] WhatsApp force-disconnected: auth state wiped");
+  }
+
   isChannelRunning(type: string): boolean {
     if (type === "telegram") return this.telegram?.isRunning() ?? false;
     if (type === "whatsapp") return this.whatsapp?.isRunning() ?? false;

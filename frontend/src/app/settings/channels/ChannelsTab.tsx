@@ -109,6 +109,15 @@ export default function ChannelsTab() {
     await fetchChannels();
   };
 
+  const forceDisconnectWhatsApp = async () => {
+    eventSourceRef.current?.close();
+    await fetch(`${GATEWAY}/channels/whatsapp/disconnect`, { method: "POST" });
+    setShowWhatsAppSetup(false);
+    setWhatsappQR("");
+    setWhatsappStatus("");
+    await fetchChannels();
+  };
+
   const stopChannel = async (type: string) => {
     await fetch(`${GATEWAY}/channels/${type}/stop`, { method: "POST" });
     await fetchChannels();
@@ -218,7 +227,12 @@ export default function ChannelsTab() {
         )}
 
         {whatsapp?.status !== "linked" && !showWhatsAppSetup && (
-          <button style={s.setupBtn} onClick={startWhatsAppQR}>Set Up</button>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            <button style={s.setupBtn} onClick={startWhatsAppQR}>Set Up</button>
+            {whatsapp && (
+              <button style={s.dangerBtn} onClick={forceDisconnectWhatsApp}>Force Disconnect</button>
+            )}
+          </div>
         )}
 
         {showWhatsAppSetup && whatsapp?.status !== "linked" && (
@@ -234,6 +248,9 @@ export default function ChannelsTab() {
                 {whatsappStatus === "error" ? "Connection error. Try again." : "Waiting for QR code..."}
               </div>
             )}
+            <div style={{ textAlign: "center" as const, marginTop: "8px" }}>
+              <button style={s.dangerBtn} onClick={forceDisconnectWhatsApp}>Force Disconnect &amp; Reset</button>
+            </div>
           </div>
         )}
       </div>
