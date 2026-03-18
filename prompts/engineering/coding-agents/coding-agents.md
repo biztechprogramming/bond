@@ -85,6 +85,14 @@ The sub-agent will work on this branch. After it completes, you can review the c
 | Large feature (5+ files with tests) | 30 minutes (default) |
 | Major refactor | 45-60 minutes |
 
+## Checking agent status
+
+When the user asks if a coding agent is still running, check its status, or see how it's doing:
+- **ONLY** check the agent's process status. Report whether it's running, completed, or failed.
+- **Do NOT** read any repo files, search the project, grep for patterns, or load any context. The user is asking about the agent, not asking you to do coding work.
+- If the agent is done, report its result (success/failure + summary from its output).
+- If the agent is still running, say so. Don't try to preview or inspect its work unless explicitly asked.
+
 ## After the sub-agent finishes
 
 1. Check `status` in the result — `completed` or `failed`
