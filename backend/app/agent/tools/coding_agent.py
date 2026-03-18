@@ -571,6 +571,24 @@ class CodingAgentSession:
                 parts.append(f"Log: {self.log_path}")
             if stat:
                 parts.append(f"\n```\n{stat}\n```")
+
+            # Include the agent's output log so the LLM can summarize what happened
+            if self.log_path and self.log_path.exists():
+                try:
+                    log_text = self.log_path.read_text(errors="replace")
+                    # Truncate to avoid blowing up context
+                    max_log_chars = 8000
+                    if len(log_text) > max_log_chars:
+                        log_text = (
+                            log_text[:max_log_chars // 2]
+                            + f"\n\n... [{len(log_text) - max_log_chars} chars truncated] ...\n\n"
+                            + log_text[-(max_log_chars // 2):]
+                        )
+                    if log_text.strip():
+                        parts.append(f"\nAgent output:\n```\n{log_text.strip()}\n```")
+                except Exception as e:
+                    logger.debug("Failed to read coding agent log: %s", e)
+
             self.final_summary = "\n".join(parts)
 
             await self.event_queue.put({
