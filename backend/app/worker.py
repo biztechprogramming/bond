@@ -911,6 +911,25 @@ async def _run_agent_loop(
     if _category_manifest:
         full_system_prompt = full_system_prompt + "\n\n" + _category_manifest
 
+    # Auto-skills: surface relevant skills so the agent knows they exist
+    try:
+        from backend.app.agent.tools.skills import _get_router, init_router
+        await init_router(db_session=_state.agent_db)
+        skill_router = _get_router()
+        skills_prompt = await skill_router.get_relevant_skills_prompt(
+            user_message, session_id=conversation_id,
+        )
+        if skills_prompt:
+            full_system_prompt += (
+                "\n\n## Skills\n"
+                "Before answering, scan these matched skills. If one clearly applies, "
+                "use the `skills` tool with action='read' and the skill name to load "
+                "its full instructions, then follow them.\n"
+                + skills_prompt
+            )
+    except Exception:
+        logger.debug("Skills injection skipped", exc_info=True)
+
     # Set process cwd to /workspace so file_read/file_edit/file_write resolve
     # relative paths the same way code_execute does.
     _workspace_ctx = _discover_workspace()
