@@ -189,7 +189,7 @@ async def agent_turn(
     # Auto-skills: surface relevant skills so the agent knows they exist
     try:
         from backend.app.agent.tools.skills import _get_router, init_router
-        await init_router(db_session=db)
+        await init_router()
         skill_router = _get_router()
         skills_prompt = await skill_router.get_relevant_skills_prompt(
             user_message, session_id=str(agent.get("id", "")),

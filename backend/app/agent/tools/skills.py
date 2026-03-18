@@ -40,12 +40,11 @@ def _get_router():
 _router_settings: dict | None = None
 
 
-async def init_router(db_session=None, persistence=None) -> None:
-    """Load embedding settings from the DB and pre-initialize the router.
+async def init_router(persistence=None) -> None:
+    """Load embedding settings and pre-initialize the router.
 
     Called from the agent loop before first use.
     Args:
-        db_session: local SQLite session for reading settings
         persistence: PersistenceClient for fetching API keys from gateway
     """
     global _router_settings, _router
@@ -53,40 +52,30 @@ async def init_router(db_session=None, persistence=None) -> None:
         return  # Already initialized
 
     settings = {}
-    try:
-        if db_session:
-            from sqlalchemy import text as sa_text
-            # Read embedding settings from settings table
-            for key in ("embedding.model", "embedding.output_dimension", "embedding.provider"):
-                result = await db_session.execute(
-                    sa_text("SELECT value FROM settings WHERE key = :key"), {"key": key}
-                )
-                row = result.fetchone()
-                if row and row[0]:
-                    settings[key] = row[0]
 
-        # Read Voyage API key via persistence client (gateway → SpacetimeDB)
-        if "embedding.api_key.voyage" not in settings:
-            _persistence = persistence
-            if not _persistence:
-                try:
-                    from backend.app.worker import _state
-                    _persistence = _state.persistence
-                except Exception:
-                    pass
-            if _persistence:
-                try:
-                    encrypted = await _persistence.get_provider_api_key("voyage")
-                    if encrypted:
-                        from backend.app.core.crypto import decrypt_value, is_encrypted
-                        if is_encrypted(encrypted):
-                            settings["embedding.api_key.voyage"] = decrypt_value(encrypted)
-                        else:
-                            settings["embedding.api_key.voyage"] = encrypted
-                except Exception:
-                    logger.debug("Failed to read Voyage key via persistence client", exc_info=True)
-    except Exception:
-        logger.debug("Failed to load embedding settings from DB", exc_info=True)
+    # Read Voyage API key via persistence client (gateway → SpacetimeDB)
+    if "embedding.api_key.voyage" not in settings:
+        _persistence = persistence
+        if not _persistence:
+            try:
+                from backend.app.worker import _state
+                _persistence = _state.persistence
+            except Exception:
+                pass
+        if _persistence:
+            try:
+                encrypted = await _persistence.get_provider_api_key("voyage")
+                if encrypted:
+                    from backend.app.core.crypto import decrypt_value, is_encrypted
+                    if is_encrypted(encrypted):
+                        settings["embedding.api_key.voyage"] = decrypt_value(encrypted)
+                    else:
+                        settings["embedding.api_key.voyage"] = encrypted
+                    logger.info("Voyage API key loaded via persistence client")
+                else:
+                    logger.warning("No Voyage API key found via persistence client")
+            except Exception:
+                logger.warning("Failed to read Voyage key via persistence client", exc_info=True)
 
     # Defaults
     if "embedding.model" not in settings:

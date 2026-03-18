@@ -914,7 +914,7 @@ async def _run_agent_loop(
     # Auto-skills: surface relevant skills so the agent knows they exist
     try:
         from backend.app.agent.tools.skills import _get_router, init_router
-        await init_router(db_session=_state.agent_db, persistence=_state.persistence)
+        await init_router(persistence=_state.persistence)
         skill_router = _get_router()
         skills_prompt = await skill_router.get_relevant_skills_prompt(
             user_message, session_id=conversation_id,
