@@ -74,9 +74,26 @@ engineering/code-quality/code-review/code-review.md:
   tier: 2
   phase: reviewing
 
+engineering/coding-agents/early-delegation/early-delegation.md:
+  tier: 2
+  phase: implementing
+
 engineering/code-quality/bugfix/bugfix.md:
   tier: 2
   phase: implementing
+
+engineering/coding-agents/early-delegation/early-delegation.md:
+  tier: 3
+  utterances:
+    - "I'm getting this error"
+    - "build error"
+    - "Failed to compile"
+    - "Type error"
+    - "TypeError"
+    - "does not exist on type"
+    - "fix this error"
+    - "compilation error"
+    - "build failed"
 
 engineering/planning/planning.md:
   tier: 2

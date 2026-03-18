@@ -367,6 +367,9 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
 
     Uses `git ls-files` (tracked + untracked-but-not-ignored) when inside a
     git repo, falls back to `find` with hardcoded exclusions otherwise.
+    When the search root is NOT a git repo, also checks immediate
+    subdirectories for nested git repos (multi-repo workspaces like
+    /workspace containing bond/ and ecoinspector/).
     Returns absolute paths. Always filters out excluded directories.
     """
     # Check if we're in a git repo
@@ -409,7 +412,22 @@ async def _get_file_listing(path: str, file_type: str | None, include: str | Non
                 ]
             return [f for f in files if not _is_excluded_path(f)]
         # git ls-files returned nothing — fall through to find
-    # Fallback for non-git directories
+    else:
+        # Not a git repo — check immediate subdirectories for nested git repos.
+        # This handles multi-repo workspaces (e.g. /workspace with bond/ + ecoinspector/).
+        sub_repo_files: list[str] = []
+        try:
+            for entry in os.scandir(path):
+                if entry.is_dir(follow_symlinks=False) and os.path.isdir(
+                    os.path.join(entry.path, ".git")
+                ):
+                    sub_files = await _get_file_listing(entry.path, file_type, include)
+                    sub_repo_files.extend(sub_files)
+        except OSError:
+            pass
+        if sub_repo_files:
+            return sub_repo_files
+    # Fallback for non-git directories (and non-multi-repo roots)
     prune_clause = (
         r"\( -name .venv -o -name venv -o -name node_modules -o -name __pycache__ -o -name .git "
         r"-o -name .next -o -name dist -o -name build -o -name .tox "
@@ -533,14 +551,43 @@ async def handle_project_search(
         )
         is_git = git_check["exit_code"] == 0 and git_check["stdout"].strip()
 
+        # Collect git roots for content search — either the current repo
+        # or nested sub-repos (multi-repo workspace).
+        git_roots: list[str] = []
         if is_git:
-            git_root = git_check["stdout"].strip()
-            # Use git grep — inherently respects .gitignore
-            content_cmd = (
-                f"cd {_shell_quote(git_root)} && "
-                f"git grep -lni {_shell_quote(grep_pattern)} -- {_shell_quote(path)} 2>/dev/null "
-                f"| head -{max_results * 2}"
-            )
+            git_roots.append(git_check["stdout"].strip())
+        else:
+            # Check immediate subdirectories for nested git repos
+            try:
+                for entry in os.scandir(path):
+                    if entry.is_dir(follow_symlinks=False) and os.path.isdir(
+                        os.path.join(entry.path, ".git")
+                    ):
+                        git_roots.append(entry.path)
+            except OSError:
+                pass
+
+        if git_roots:
+            # Use git grep on each repo — inherently respects .gitignore
+            all_content_stdout: list[str] = []
+            for git_root in git_roots:
+                content_cmd = (
+                    f"cd {_shell_quote(git_root)} && "
+                    f"git grep -lni {_shell_quote(grep_pattern)} 2>/dev/null "
+                    f"| head -{max_results * 2}"
+                )
+                grep_result = await _run_cmd(["sh", "-c", content_cmd], timeout=15)
+                if grep_result["exit_code"] == 0 and grep_result["stdout"].strip():
+                    for line in grep_result["stdout"].strip().split("\n"):
+                        if line:
+                            # Make absolute
+                            abs_line = (
+                                os.path.join(git_root, line)
+                                if not os.path.isabs(line)
+                                else line
+                            )
+                            all_content_stdout.append(abs_line)
+            content_files = all_content_stdout
         else:
             # Fallback: regular grep with hardcoded exclusions
             if include:
@@ -569,16 +616,17 @@ async def handle_project_search(
                 f"{_shell_quote(grep_pattern)} {_shell_quote(path)} 2>/dev/null "
                 f"| head -{max_results * 2}"
             )
+            grep_result = await _run_cmd(["sh", "-c", content_cmd], timeout=15)
+            content_files = (
+                grep_result["stdout"].strip().split("\n")
+                if grep_result["exit_code"] == 0 and grep_result["stdout"].strip()
+                else []
+            )
 
-        grep_result = await _run_cmd(["sh", "-c", content_cmd], timeout=15)
-        if grep_result["exit_code"] == 0 and grep_result["stdout"].strip():
-            content_files = grep_result["stdout"].strip().split("\n")
+        if content_files:
             for filepath in content_files:
                 if not filepath:
                     continue
-                # Make absolute if git grep returned relative paths
-                if not os.path.isabs(filepath) and is_git:
-                    filepath = os.path.join(git_check["stdout"].strip(), filepath)
                 if _is_excluded_path(filepath):
                     continue
                 if filepath in file_scores:
