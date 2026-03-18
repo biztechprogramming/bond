@@ -18,9 +18,14 @@ Failing to delegate when the task requires it is the same as not doing the task 
 | New feature with tests, build verification, iteration | **MUST delegate** |
 | User asks you to implement a design doc | **MUST delegate** — design docs describe multi-file features by definition |
 | You've finished discovery and have a plan but haven't written code | **MUST delegate NOW** |
-| Simple 1-3 file edit, you know exactly what to write | Do it yourself with `file_edit` |
+| Simple 1-3 file edit, you know exactly what to write | **Do it yourself** with `file_edit` |
 | Just need to read/understand code | Use `file_read` / `shell_grep` |
 | Single command (build, test, install) | Use `code_execute` |
+| You can describe the fix in one sentence | **Do it yourself** — this is NOT complex |
+| Error message points to a specific line and you know the fix | **Do it yourself** |
+
+### Do NOT over-delegate
+If you already know the exact change needed (e.g., "add `inspector: true` to the Prisma include block on line 30"), **just make the edit**. Spawning a coding agent for a fix you can already articulate is slower, more expensive, and frustrating for the user. The coding agent is for tasks that require *exploration and iteration*, not for tasks where you already have the answer.
 
 ## Writing a good task description
 
