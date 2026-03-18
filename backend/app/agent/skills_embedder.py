@@ -79,11 +79,24 @@ def _build_engine(api_key: str, model: str, dimension: int) -> EmbeddingEngine:
 
 async def main_async(args: argparse.Namespace) -> None:
     api_key = args.voyage_key or os.environ.get("VOYAGE_API_KEY", "")
-    if not api_key:
+    provider = args.provider
+
+    if provider == "auto":
+        provider = "voyage" if api_key else "local"
+
+    if provider == "voyage" and not api_key:
         logger.error("No Voyage API key provided. Use --voyage-key or set VOYAGE_API_KEY env var.")
         return
 
-    engine = _build_engine(api_key, args.model, args.dimension)
+    settings = {
+        "embedding.model": args.model,
+        "embedding.output_dimension": str(args.dimension),
+        "embedding.provider": provider,
+    }
+    if api_key:
+        settings["embedding.api_key.voyage"] = api_key
+
+    engine = EmbeddingEngine(settings=settings, db_engine=None)  # type: ignore[arg-type]
     count = await embed_all_skills(engine, batch_size=args.batch_size)
     print(f"Embedded {count} skills")
 
@@ -93,6 +106,8 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Generate embeddings for indexed skills")
     parser.add_argument("--voyage-key", help="Voyage API key")
+    parser.add_argument("--provider", default="auto", choices=["auto", "local", "voyage", "gemini"],
+                        help="Embedding provider (default: auto — local if no API key)")
     parser.add_argument("--model", default="voyage-4-nano", help="Embedding model name")
     parser.add_argument("--dimension", type=int, default=1024, help="Embedding dimension")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="Batch size for API calls")

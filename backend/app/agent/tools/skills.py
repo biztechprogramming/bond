@@ -13,11 +13,21 @@ _router = None
 
 
 def _get_router():
-    """Get or create the SkillRouter singleton."""
+    """Get or create the SkillRouter singleton with local embedding engine."""
     global _router
     if _router is None:
         from backend.app.agent.skills_router import SkillRouter
-        _router = SkillRouter()  # No embedding engine — will use LIKE fallback
+        try:
+            from backend.app.foundations.embeddings.engine import EmbeddingEngine
+            engine = EmbeddingEngine(
+                settings={"embedding.provider": "local", "embedding.model": "voyage-4-nano"},
+                db_engine=None,
+            )
+            _router = SkillRouter(embedding_engine=engine)
+            logger.info("Skills router initialized with local embedding engine")
+        except Exception:
+            logger.warning("Failed to init embedding engine — skills router will use LIKE fallback", exc_info=True)
+            _router = SkillRouter()
     return _router
 
 
