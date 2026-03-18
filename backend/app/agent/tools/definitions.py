@@ -1229,7 +1229,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "coding_agent",
-            "description": "Spawn a coding sub-agent to perform complex coding tasks. The sub-agent will have access to the specified working directory and can read/write files, run commands, and commit changes. Use for tasks that require multi-step file exploration, writing code across multiple files, running tests, and iterating. This tool blocks until the sub-agent completes.",
+            "description": "Spawn a coding sub-agent to perform complex coding tasks. The sub-agent will have access to the specified working directory and can read/write files, run commands, and commit changes. Use for tasks that require multi-step file exploration, writing code across multiple files, running tests, and iterating. This tool blocks until the sub-agent completes. The sub-agent MUST: (1) run the build/test to verify the fix, (2) commit to a feature/fix branch (never main/master), (3) push the branch. Include these requirements in your task description.",
             "parameters": {
                 "type": "object",
                 "properties": {

@@ -103,4 +103,16 @@ When the user asks if a coding agent is still running, check its status, or see 
 1. Check `status` in the result — `completed` or `failed`
 2. Review `git_changes` to see what was modified
 3. Read the `output` for the sub-agent's summary
-4. If it failed, read the output for errors and either retry with a refined task or fix it yourself
+4. **Verify the branch was pushed.** If the output doesn't mention a pushed branch, check with `git branch -r` and push manually if needed.
+5. **Verify build/tests passed.** If the output doesn't mention a build check, report that to the user — don't claim the fix is verified.
+6. If it failed, read the output for errors and either retry with a refined task or fix it yourself
+
+### Reporting to the user
+
+Always tell the user:
+- What was changed (files, summary)
+- Whether the build/tests passed or were not run
+- The branch name that was pushed (or that it wasn't pushed)
+- What follow-up is needed, if any
+
+Never say "the fix is complete" if you can't confirm the build passed and the branch was pushed.
