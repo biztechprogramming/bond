@@ -255,6 +255,23 @@ class CodingAgentProcess:
         # interfere with Claude CLI's auth.
         if self.agent_type == "claude":
             env.pop("ANTHROPIC_API_KEY", None)
+            # Claude CLI also requires ~/.claude.json (main config file).
+            # It lives outside ~/.claude/ and may be missing after container
+            # recreation. Restore from backup if available, or create minimal.
+            home = Path.home()
+            claude_json = home / ".claude.json"
+            if not claude_json.exists():
+                backup_dir = home / ".claude" / "backups"
+                if backup_dir.exists():
+                    backups = sorted(backup_dir.glob(".claude.json.backup.*"))
+                    if backups:
+                        import shutil as _shutil
+                        _shutil.copy2(str(backups[-1]), str(claude_json))
+                        logger.info("Restored %s from backup %s", claude_json, backups[-1].name)
+                if not claude_json.exists():
+                    # Minimal config so Claude CLI doesn't abort
+                    claude_json.write_text('{"hasCompletedOnboarding": true}')
+                    logger.info("Created minimal %s", claude_json)
 
         logger.info(
             "Spawning %s in %s (timeout=%ds)",
@@ -554,6 +571,24 @@ class CodingAgentSession:
                 parts.append(f"Log: {self.log_path}")
             if stat:
                 parts.append(f"\n```\n{stat}\n```")
+
+            # Include the agent's output log so the LLM can summarize what happened
+            if self.log_path and self.log_path.exists():
+                try:
+                    log_text = self.log_path.read_text(errors="replace")
+                    # Truncate to avoid blowing up context
+                    max_log_chars = 8000
+                    if len(log_text) > max_log_chars:
+                        log_text = (
+                            log_text[:max_log_chars // 2]
+                            + f"\n\n... [{len(log_text) - max_log_chars} chars truncated] ...\n\n"
+                            + log_text[-(max_log_chars // 2):]
+                        )
+                    if log_text.strip():
+                        parts.append(f"\nAgent output:\n```\n{log_text.strip()}\n```")
+                except Exception as e:
+                    logger.debug("Failed to read coding agent log: %s", e)
+
             self.final_summary = "\n".join(parts)
 
             await self.event_queue.put({

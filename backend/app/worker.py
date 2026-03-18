@@ -1651,6 +1651,29 @@ async def _run_agent_loop(
             messages.append({"role": "user", "content": _handoff_msg})
             logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, _adaptive_budget)
 
+            # After 4 ignored handoff hints, restrict tools to coding_agent + respond only
+            _overbudget_by = _iteration - _budget_threshold
+            if _overbudget_by >= 4:
+                from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
+                _forced_tools = []
+                for _tname in ("coding_agent", "respond"):
+                    if _tname in _FULL_TOOL_MAP:
+                        _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
+                if _forced_tools:
+                    tool_defs = _forced_tools
+                    logger.warning(
+                        "Budget hard restriction: iteration %d, forced tool set to coding_agent+respond",
+                        _iteration + 1,
+                    )
+
+            # After 8 ignored handoff hints, hard-stop the loop
+            if _overbudget_by >= 8:
+                logger.warning(
+                    "Budget hard cap: stopping loop at iteration %d (adaptive budget was %d)",
+                    _iteration + 1, _adaptive_budget,
+                )
+                break
+
         if llm_message.tool_calls:
             _iter_tool_names = [tc.function.name for tc in llm_message.tool_calls]
 
