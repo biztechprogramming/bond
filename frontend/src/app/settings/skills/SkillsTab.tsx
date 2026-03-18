@@ -286,7 +286,7 @@ export default function SkillsTab() {
                       {sk.excluded ? (
                         <span style={{ color: "#ff6c8a", fontSize: "0.8rem" }}>\u2716 Excluded</span>
                       ) : sk.pinned ? (
-                        <span style={{ color: "#6c8aff", fontSize: "0.8rem" }}>\u{1F4CC} Pinned</span>
+                        <span style={{ color: "#6c8aff", fontSize: "0.8rem" }}>📌 Pinned</span>
                       ) : (
                         <span style={{ color: "#6cffa0", fontSize: "0.8rem" }}>\u25CF Active</span>
                       )}
