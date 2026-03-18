@@ -145,10 +145,27 @@ async def get_current_embedding(db: AsyncSession = Depends(get_db)):
     raw_map = {row[0]: row[1] for row in result.fetchall()}
 
     # Decrypt API keys to check presence (but don't return values)
+    # Check both settings table and provider_api_keys table (frontend saves to the latter)
     voyage_raw = raw_map.get("embedding.api_key.voyage", "")
     gemini_raw = raw_map.get("embedding.api_key.gemini", "")
     has_voyage = bool(voyage_raw and decrypt_value(voyage_raw))
     has_gemini = bool(gemini_raw and decrypt_value(gemini_raw))
+
+    if not has_voyage or not has_gemini:
+        from backend.app.core.spacetimedb import get_stdb
+        stdb = get_stdb()
+        try:
+            pkeys = await stdb.query(
+                "SELECT provider_id, key_type FROM provider_api_keys "
+                "WHERE provider_id IN ('voyage', 'gemini')"
+            )
+            for pk in pkeys:
+                if pk["provider_id"] == "voyage":
+                    has_voyage = True
+                if pk["provider_id"] == "gemini":
+                    has_gemini = True
+        except Exception:
+            pass
 
     return {
         "model": raw_map.get("embedding.model", "voyage-4-nano"),

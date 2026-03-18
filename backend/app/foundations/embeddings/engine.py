@@ -27,7 +27,7 @@ class EmbeddingEngine:
         self._db_engine = db_engine
         self._provider: EmbeddingProvider | None = None
 
-        model_name = settings.get("embedding.model", "voyage-4-nano")
+        model_name = settings.get("embedding.model", "voyage-4-large")
         dimension = int(settings.get("embedding.output_dimension", "1024"))
         voyage_key = settings.get("embedding.api_key.voyage")
         provider_name = settings.get("embedding.provider", "auto")
@@ -39,10 +39,12 @@ class EmbeddingEngine:
                 dimension=dimension,
             )
         elif provider_name == "gemini":
+            gemini_key = settings.get("embedding.api_key.gemini", "")
             logger.info("Using Gemini API embedding provider (model=%s)", model_name)
             self._provider = GeminiAPIProvider(
                 model_name=model_name,
                 dimension=dimension,
+                api_key=gemini_key or None,
             )
         elif voyage_key:
             logger.info("Using Voyage API embedding provider (model=%s)", model_name)
