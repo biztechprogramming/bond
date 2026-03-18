@@ -250,6 +250,12 @@ class CodingAgentProcess:
         cmd = [binary] + config["args"] + [self.task]
         env = {**os.environ, "TERM": "dumb", "NO_COLOR": "1"}
 
+        # Claude CLI uses its own OAuth flow (~/.claude/.credentials.json),
+        # NOT ANTHROPIC_API_KEY.  Remove it from the env so it doesn't
+        # interfere with Claude CLI's auth.
+        if self.agent_type == "claude":
+            env.pop("ANTHROPIC_API_KEY", None)
+
         logger.info(
             "Spawning %s in %s (timeout=%ds)",
             self.agent_type, self.working_directory, self.timeout,
@@ -694,10 +700,11 @@ async def handle_coding_agent(
             f"Supported: {list(AGENT_COMMANDS.keys())}"
         }
 
-    # Resolve API key
+    # Resolve API key — Claude CLI uses its own OAuth flow
+    # (~/.claude/.credentials.json) so it doesn't need ANTHROPIC_API_KEY.
     env_var = REQUIRED_ENV.get(agent_type)
     resolved_api_key: str | None = None
-    if env_var:
+    if env_var and agent_type != "claude":
         injected_keys: dict[str, str] = context.get("api_keys", {})
         _env_to_provider = {
             "ANTHROPIC_API_KEY": "anthropic",
