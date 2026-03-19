@@ -14,6 +14,8 @@ _VEC_TABLES = [
     "memories_vec",
     "session_summaries_vec",
     "entities_vec",
+    "optimization_observations_vec",
+    "optimization_candidates_vec",
 ]
 
 

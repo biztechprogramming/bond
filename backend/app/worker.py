@@ -209,6 +209,90 @@ CREATE TABLE IF NOT EXISTS context_compression_log (
 
 CREATE INDEX IF NOT EXISTS idx_ccl_conv
     ON context_compression_log(conversation_id, turn_number);
+
+-- Doc 049: Closed-loop optimization engine — observation store
+CREATE TABLE IF NOT EXISTS optimization_observations (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    turn_index INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    task_category TEXT,
+    user_message_preview TEXT,
+    signals_json TEXT NOT NULL,
+    outcome_score REAL NOT NULL,
+    config_snapshot_json TEXT,
+    active_lessons_hash TEXT,
+    cohort TEXT DEFAULT 'control'
+);
+
+CREATE INDEX IF NOT EXISTS idx_oo_conv
+    ON optimization_observations(conversation_id, turn_index);
+CREATE INDEX IF NOT EXISTS idx_oo_score
+    ON optimization_observations(outcome_score);
+
+-- Doc 049: Lesson candidates (replaces candidates.jsonl)
+CREATE TABLE IF NOT EXISTS optimization_candidates (
+    id TEXT PRIMARY KEY,
+    lesson_text TEXT NOT NULL,
+    source_observation_id TEXT REFERENCES optimization_observations(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    similar_count INTEGER DEFAULT 0,
+    promoted BOOLEAN DEFAULT FALSE,
+    promoted_at TEXT
+);
+
+-- Doc 049: Parameter experiments
+CREATE TABLE IF NOT EXISTS optimization_experiments (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    param_key TEXT NOT NULL,
+    baseline_value TEXT NOT NULL,
+    proposed_value TEXT NOT NULL,
+    rationale TEXT,
+    status TEXT DEFAULT 'proposed',
+    control_obs_count INTEGER DEFAULT 0,
+    experiment_obs_count INTEGER DEFAULT 0,
+    control_mean_score REAL,
+    experiment_mean_score REAL,
+    p_value REAL,
+    concluded_at TEXT,
+    conclusion TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_oe_status
+    ON optimization_experiments(status);
+
+-- Doc 050: Parameter change history (rollback support)
+CREATE TABLE IF NOT EXISTS optimization_param_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    param_key TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT NOT NULL,
+    changed_by TEXT NOT NULL,
+    experiment_id TEXT,
+    changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_param_history_key
+    ON optimization_param_history(param_key, changed_at DESC);
+
+-- Doc 050: Performance indexes for dashboard queries
+CREATE INDEX IF NOT EXISTS idx_obs_created_at
+    ON optimization_observations(created_at);
+CREATE INDEX IF NOT EXISTS idx_obs_category_created
+    ON optimization_observations(task_category, created_at);
+CREATE INDEX IF NOT EXISTS idx_obs_cohort
+    ON optimization_observations(cohort);
+CREATE INDEX IF NOT EXISTS idx_candidates_promoted
+    ON optimization_candidates(promoted);
+
+-- Doc 049: Vec0 tables for semantic search (created by capabilities.py
+-- for the knowledge DB, but also needed in the agent DB)
+CREATE VIRTUAL TABLE IF NOT EXISTS optimization_observations_vec
+    USING vec0(id TEXT PRIMARY KEY, embedding FLOAT[1024]);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS optimization_candidates_vec
+    USING vec0(id TEXT PRIMARY KEY, embedding FLOAT[1024]);
 """
 
 # ---------------------------------------------------------------------------
@@ -936,6 +1020,16 @@ async def _run_agent_loop(
     if _workspace_ctx:
         full_system_prompt = full_system_prompt + "\n\n" + _workspace_ctx
 
+    # ── Doc 049: Inject learned lessons from approved/ directory ──
+    try:
+        from backend.app.agent.critic import load_lessons
+        _lessons_content = load_lessons()
+        if _lessons_content:
+            full_system_prompt += _lessons_content
+            logger.debug("Injected learned lessons (%d chars)", len(_lessons_content))
+    except Exception:
+        logger.debug("Lessons injection skipped", exc_info=True)
+
     # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
     windowed_history = history
     if history:
@@ -1150,6 +1244,115 @@ async def _run_agent_loop(
         "iterations_used": 0,
         "iteration_budget": max_iterations,
     }
+
+    # ── Doc 049: Outcome tracking for closed-loop optimization ──
+    _outcome_tool_names: list[str] = []
+    _outcome_fragment_names: list[str] = []
+    _outcome_had_loop_intervention = False
+    _outcome_had_continuation = False
+    _outcome_had_compression = False
+    _outcome_turn_counter = getattr(_state, "_optimization_turn_counter", 0)
+    _outcome_start_time_ms = int(time.time() * 1000)
+
+    # Collect fragment names from tiers 1 and 3
+    try:
+        for _m in _tier1_meta:
+            _n = _m.get("name") or _m.get("path", "")
+            if _n:
+                _outcome_fragment_names.append(_n)
+        for _m in _tier3_meta:
+            _n = _m.get("name") or _m.get("path", "")
+            if _n:
+                _outcome_fragment_names.append(_n)
+    except Exception:
+        pass
+
+    # Capture config snapshot for experiment tracking
+    _config_snapshot: dict[str, Any] = {}
+    _outcome_cohort = "control"
+    try:
+        from backend.app.agent.optimizer import TUNABLE_PARAMS, apply_experiment_overrides
+        for _pk in TUNABLE_PARAMS:
+            if _pk in config:
+                _config_snapshot[_pk] = config[_pk]
+        # Apply active experiment overrides
+        if _state.agent_db:
+            config, _outcome_cohort = await apply_experiment_overrides(
+                config, conversation_id, _state.agent_db,
+            )
+    except Exception:
+        logger.debug("Experiment override check skipped", exc_info=True)
+
+    async def _record_outcome():
+        """Doc 049: record outcome observation after the turn completes."""
+        try:
+            from backend.app.agent.outcome import collect_signals, classify_task
+            from ulid import ULID
+            import hashlib as _hl
+
+            _wall_time = int(time.time() * 1000) - _outcome_start_time_ms
+            _task_cat = classify_task(user_message, _outcome_tool_names)
+
+            signals = collect_signals(
+                tool_calls=tool_calls_made,
+                iterations=_cost_tracking["iterations_used"],
+                total_cost=_cost_tracking["total_cost"],
+                input_tokens=_cost_tracking["total_input_tokens"],
+                output_tokens=_cost_tracking["total_output_tokens"],
+                wall_time_ms=_wall_time,
+                had_loop_intervention=_outcome_had_loop_intervention,
+                had_continuation=_outcome_had_continuation,
+                had_compression=_outcome_had_compression,
+                fragments_selected=len(_outcome_fragment_names),
+                fragment_names=_outcome_fragment_names,
+                user_correction=False,  # detected retroactively on next message
+                task_category=_task_cat,
+                user_message_preview=user_message[:200] if user_message else "",
+                tool_names=_outcome_tool_names,
+            )
+
+            if _state.agent_db:
+                _obs_id = str(ULID())
+                _lessons_hash = _hl.md5((_lessons_content or "").encode()).hexdigest()[:12]
+                await _state.agent_db.execute(
+                    """
+                    INSERT INTO optimization_observations
+                        (id, conversation_id, turn_index, task_category,
+                         user_message_preview, signals_json, outcome_score,
+                         config_snapshot_json, active_lessons_hash, cohort)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        _obs_id, conversation_id, tool_calls_made, _task_cat,
+                        user_message[:200] if user_message else "",
+                        json.dumps(signals), signals["outcome_score"],
+                        json.dumps(_config_snapshot), _lessons_hash,
+                        _outcome_cohort,
+                    ),
+                )
+                await _state.agent_db.commit()
+
+                # Every 50 turns, trigger background analysis
+                _state._optimization_turn_counter = _outcome_turn_counter + 1
+                if (_outcome_turn_counter + 1) % 50 == 0:
+                    asyncio.ensure_future(_run_optimization_analysis())
+
+        except Exception:
+            logger.debug("Outcome recording failed (non-fatal)", exc_info=True)
+
+    async def _run_optimization_analysis():
+        """Spawn background optimization analysis."""
+        try:
+            from backend.app.agent.optimizer import run_analysis
+            from backend.app.agent.tools.skills import _router_settings
+            from backend.app.foundations.embeddings.engine import EmbeddingEngine
+            _engine = EmbeddingEngine(
+                settings=_router_settings or {"embedding.provider": "local"},
+                db_engine=None,
+            )
+            await run_analysis(_state.agent_db, _engine)
+        except Exception:
+            logger.debug("Background optimization analysis failed", exc_info=True)
 
     # ── Lifecycle phase tracking (Doc 024 — Tier 2 injection) ──
     _lifecycle_phase = Phase.IDLE
@@ -1476,6 +1679,7 @@ async def _run_agent_loop(
                         if isinstance(content, str) and content.endswith(_budget_note):
                             messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
                     await _skill_tracker.flush()
+                    await _record_outcome()
                     _emit_cost_summary()
                     return "", tool_calls_made
 
@@ -1546,6 +1750,7 @@ async def _run_agent_loop(
         # Handle finish_reason=length — output was truncated
         if choice.finish_reason == "length":
             continuation_attempts += 1
+            _outcome_had_continuation = True
             partial_content = llm_message.content or ""
 
             if continuation_attempts > MAX_CONTINUATIONS:
@@ -1553,6 +1758,7 @@ async def _run_agent_loop(
                     "Aborting after %d continuation attempts — response keeps exceeding token limit",
                     continuation_attempts,
                 )
+                await _record_outcome()
                 _emit_cost_summary()
                 return (
                     "I hit the output token limit multiple times even at the highest setting. "
@@ -2025,6 +2231,10 @@ async def _run_agent_loop(
                 logger.info("Tool result [%d]: %s",  tool_calls_made,
                             {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in result.items()} if isinstance(result, dict) else result)
 
+                # ── Doc 049: Track tool names for outcome signals ──
+                if tool_name not in _outcome_tool_names:
+                    _outcome_tool_names.append(tool_name)
+
                 # Coding agent started — emit SSE event so gateway subscribes
                 # to the background diff stream
                 if (tool_name == "coding_agent"
@@ -2087,6 +2297,7 @@ async def _run_agent_loop(
                 if result.get("_terminal"):
                     _skill_tracker.on_turn_complete()
                     await _skill_tracker.flush()
+                    await _record_outcome()
                     _emit_cost_summary()
                     return result.get("message", ""), tool_calls_made
 
@@ -2253,6 +2464,7 @@ async def _run_agent_loop(
 
         else:
             await _skill_tracker.flush()
+            await _record_outcome()
             _emit_cost_summary()
             return llm_message.content or "", tool_calls_made
 
@@ -2296,6 +2508,7 @@ async def _run_agent_loop(
     except Exception as e:
         logger.warning("Failed to save max-iterations memory: %s", e)
 
+    await _record_outcome()
     _emit_cost_summary()
     return (
         "I've reached my maximum number of steps. Please try rephrasing.",

@@ -27,6 +27,7 @@ from backend.app.api.v1.plans import router as plans_router, items_router
 from backend.app.api.v1.mcp import router as mcp_router
 from backend.app.api.v1.deployments import router as deployments_router
 from backend.app.api.v1.skills import router as skills_router
+from backend.app.api.v1.optimization import router as optimization_router
 
 
 @asynccontextmanager
@@ -122,3 +123,4 @@ app.include_router(items_router, prefix="/api/v1")
 app.include_router(mcp_router, prefix="/api/v1")
 app.include_router(deployments_router, prefix="/api/v1")
 app.include_router(skills_router, prefix="/api/v1")
+app.include_router(optimization_router, prefix="/api/v1")
