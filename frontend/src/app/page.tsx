@@ -196,7 +196,13 @@ export default function Home() {
         if (status === "interrupted") {
           // Agent was stopped — keep loading true briefly so progress stays visible
           // until the "done" event arrives to finalize
-        } else if (status !== "idle" && status !== "stopping") {
+        } else if (status === "idle") {
+          // Safety net: if we receive an explicit idle status (e.g., from
+          // a completion turn that sent no done event), clear loading state
+          // so the UI doesn't show a stuck thinking bubble.
+          setLoading(false);
+          setAgentStatus("idle");
+        } else if (status !== "stopping") {
           setLoading(true);
         }
       } else if (msg.type === "tool_call" && msg.content) {

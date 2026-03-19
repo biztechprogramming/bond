@@ -6,6 +6,7 @@ import DeploymentTab from "./deployment/DeploymentTab";
 import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
 import SkillsTab from "./skills/SkillsTab";
+import OptimizationTab from "./optimization/OptimizationTab";
 import { BACKEND_API } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
@@ -21,6 +22,7 @@ const TABS = [
   { id: "embedding", label: "Embedding" },
   { id: "api-keys", label: "API Keys" },
   { id: "skills", label: "Skills" },
+  { id: "optimization", label: "Optimization" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -417,6 +419,8 @@ export default function SettingsPage() {
         )}
 
         {activeTab === "skills" && <SkillsTab />}
+
+        {activeTab === "optimization" && <OptimizationTab />}
       </div>
     </div>
   );

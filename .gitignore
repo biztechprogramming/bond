@@ -37,3 +37,11 @@ tests/coding-runs/
 *.db
 data/agent-configs/
 *.tsbuildinfo
+
+# Doc 049: Optimization candidates are now stored in sqlite (agent DB)
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
+workspace-state.json

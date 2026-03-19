@@ -70,6 +70,7 @@ export class CompletionHandler {
       // Trigger agent turn with completion context
       let fullResponse = "";
       let toolCallsMade = 0;
+      let messageId = "";
 
       try {
         for await (const sse of this.backendClient.conversationTurnStream(
@@ -83,42 +84,56 @@ export class CompletionHandler {
           if (parsed.type === "chunk" && parsed.content) {
             fullResponse += parsed.content;
             this.broadcastToConversation(event.conversationId, {
-              type: "stream_chunk",
+              type: "chunk",
               content: parsed.content,
               conversationId: event.conversationId,
-              isCompletionTurn: true,
             });
           } else if (parsed.type === "done") {
             toolCallsMade = (parsed.tool_calls_made as number) ?? 0;
+            messageId = (parsed.message_id as string) ?? "";
           }
         }
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "Unknown error";
         console.error("[completion] Agent turn failed:", err);
+        // Set fullResponse so the done event has content and the user sees something
+        fullResponse =
+          "⚠️ Completion turn failed — the agent could not summarize the background task results.\n\n" +
+          `Error: ${errMsg}\n\nCheck the coding agent output above for what happened.`;
         this.broadcastToConversation(event.conversationId, {
-          type: "error",
-          error: "Completion turn failed — the agent could not summarize the background task results.",
+          type: "chunk",
+          content: fullResponse,
           conversationId: event.conversationId,
         });
       }
 
-      // Notify frontend the turn is done
+      // If the agent produced no response, send a fallback message so
+      // the user isn't left staring at a stuck thinking bubble.
+      if (!fullResponse) {
+        fullResponse =
+          "Background task completed but no summary was generated. " +
+          "Check the coding agent output above for details.";
+        this.broadcastToConversation(event.conversationId, {
+          type: "chunk",
+          content: fullResponse,
+          conversationId: event.conversationId,
+        });
+      }
+
+      // Send a proper "done" event so the frontend finalizes the message
+      // and clears the thinking/loading state. This matches the protocol
+      // used by regular conversation turns.
       this.broadcastToConversation(event.conversationId, {
-        type: "status",
-        agentStatus: "idle",
+        type: "done",
         conversationId: event.conversationId,
-        isCompletionTurn: true,
+        messageId: messageId || "",
+        agentName: "",
+        queuedCount: 0,
+        agentStatus: "idle",
+        // Include response in done event as fallback for when streaming
+        // chunks were missed (e.g., reconnection)
+        response: fullResponse,
       });
-
-      if (fullResponse) {
-        // Send the final complete message (frontend may need this for persistence)
-        this.broadcastToConversation(event.conversationId, {
-          type: "response",
-          response: fullResponse,
-          conversationId: event.conversationId,
-          isCompletionTurn: true,
-          toolCallsMade,
-        });
-      }
     } finally {
       // Always consume the event and clear processing flag
       await this.consumeEvent(event.id);

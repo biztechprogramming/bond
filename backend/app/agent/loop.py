@@ -205,6 +205,15 @@ async def agent_turn(
     except Exception:
         logger.debug("Skills injection skipped", exc_info=True)
 
+    # Doc 049: Inject learned lessons from approved/ directory
+    try:
+        from backend.app.agent.critic import load_lessons
+        _lessons = load_lessons()
+        if _lessons:
+            full_system += _lessons
+    except Exception:
+        pass
+
     # Build messages
     messages: list[dict] = [{"role": "system", "content": full_system}]
     if history:
@@ -232,6 +241,9 @@ async def agent_turn(
 
     # Tool selection is done per-iteration inside the loop (with momentum).
     from backend.app.agent.tool_selection import select_tools, compact_tool_schema
+
+    # Doc 049: simplified outcome tracking (loop.py is the fallback path)
+    # Full outcome tracking is in worker.py; loop.py just avoids errors.
 
     # Build context for tool handlers
     workspace_dirs = [os.path.expanduser(m["host_path"]) for m in agent.get("workspace_mounts", [])]
@@ -432,6 +444,7 @@ async def agent_turn(
                         tc, result = item
 
                     if result.get("_terminal"):
+                        
                         return result.get("message", "")
 
                     messages.append({
@@ -444,6 +457,7 @@ async def agent_turn(
             for tool_call, tool_name, tool_args in sequential_batch:
                 logger.info("Tool call [%d]: %s(%s)", iteration, tool_name, list(tool_args.keys()))
 
+
                 if tool_name not in all_enabled_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled for this agent."}
                 else:
@@ -451,6 +465,7 @@ async def agent_turn(
 
                 # Check for terminal tool (respond)
                 if result.get("_terminal"):
+                    
                     return result.get("message", "")
 
                 messages.append({
@@ -460,7 +475,9 @@ async def agent_turn(
                 })
         else:
             # Text response — return it
+            
             return message.content or ""
 
+    
     logger.warning("Agent hit max iterations (%d)", max_iterations)
     return "I've reached my maximum number of steps for this request. Please try rephrasing or breaking your request into smaller parts."
