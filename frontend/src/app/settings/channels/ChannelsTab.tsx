@@ -85,14 +85,18 @@ export default function ChannelsTab() {
           setWhatsappStatus("connected");
           es.close();
           fetchChannels();
+        } else if (data.status) {
+          setWhatsappStatus(data.status);
         }
-        if (data.status) setWhatsappStatus(data.status);
       } catch { /* ignore */ }
     };
 
+    // Let EventSource auto-reconnect on transient errors.
+    // Only give up after repeated failures (readyState CLOSED means browser gave up).
     es.onerror = () => {
-      setWhatsappStatus("error");
-      es.close();
+      if (es.readyState === EventSource.CLOSED) {
+        setWhatsappStatus("error");
+      }
     };
   };
 

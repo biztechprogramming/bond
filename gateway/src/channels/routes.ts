@@ -82,9 +82,16 @@ export function createChannelRouter(channelManager: ChannelManager): Router {
       statusCleanup();
     });
 
-    // Start WhatsApp connection if not running so QR codes are generated
-    if (!channelManager.isChannelRunning("whatsapp")) {
+    // Ensure a fresh WhatsApp connection so QR codes are generated promptly.
+    // If the channel is running but not connected (stuck in reconnect backoff),
+    // restart it to reset the backoff and emit a QR immediately.
+    const waRunning = channelManager.isChannelRunning("whatsapp");
+    const waConnected = channelManager.isWhatsAppConnected();
+    if (!waRunning || (!waConnected && waRunning)) {
       try {
+        if (waRunning) {
+          await channelManager.stopChannel("whatsapp");
+        }
         await channelManager.startChannel("whatsapp");
       } catch (err) {
         res.write(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : "Failed to start" })}\n\n`);
