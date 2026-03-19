@@ -23,6 +23,7 @@ import { WebhookRegistrar } from "./webhooks/registrar.js";
 import { createBrokerRouter } from "./broker/router.js";
 import { createDeploymentsRouter } from "./deployments/router.js";
 import { createBackupsRouter } from "./backups/router.js";
+import { initBackupScheduler } from "./backups/scheduler.js";
 import { initSessionTokens } from "./deployments/session-tokens.js";
 import { EventBus, EventHistory, CompletionDispatcher, createEventsRouter } from "./events/index.js";
 import { ChannelManager } from "./channels/manager.js";
@@ -283,32 +284,14 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     console.log(`[gateway] Bond gateway listening on ws://${config.host}:${config.port}/ws`);
     console.log(`[gateway] Backend URL: ${config.backendUrl}`);
 
-    // Non-blocking backup on startup — delayed until we confirm the database has data.
-    // The backup script also checks independently, but we avoid even spawning it for
-    // an empty database to prevent rotation from deleting older, valuable backups.
-    setTimeout(async () => {
-      try {
-        const { sqlQuery: sq } = await import("./spacetimedb/client.js");
-        const rows = await sq(config.spacetimedbUrl, config.spacetimedbModuleName,
-          "SELECT COUNT(*) AS cnt FROM conversations", config.spacetimedbToken);
-        const count = rows?.[0]?.cnt ?? rows?.[0]?.CNT ?? 0;
-        if (Number(count) === 0) {
-          console.log("[gateway] Skipping backup — database has 0 conversations");
-          return;
-        }
-        console.log(`[gateway] Database has ${count} conversations — running backup`);
-        const { spawn } = await import("node:child_process");
-        const backupScript = new URL("../../scripts/backup-spacetimedb.sh", import.meta.url).pathname;
-        const child = spawn("bash", [backupScript], { stdio: "ignore", detached: true });
-        child.unref();
-        child.on("exit", (code) => {
-          if (code === 0) console.log("[gateway] SpacetimeDB backup completed on startup");
-          else console.warn(`[gateway] SpacetimeDB backup exited with code ${code}`);
-        });
-      } catch (err) {
-        console.warn("[gateway] Backup check failed (non-fatal):", err);
-      }
-    }, 10_000); // Wait 10s for SpacetimeDB to be fully ready
+    // Initialize the backup scheduler (replaces the old shell-script cron approach).
+    // Handles tiered backups (hourly/daily/weekly/monthly), catch-up for missed windows,
+    // and optional startup backup. Delayed 10s to let SpacetimeDB settle.
+    setTimeout(() => {
+      initBackupScheduler(config).catch(err => {
+        console.warn("[gateway] Backup scheduler init failed (non-fatal):", err?.message ?? err);
+      });
+    }, 10_000);
 
     // Initialize SpacetimeDB real-time subscription for system events.
     // This enables the completion loop: when a background coding agent finishes,

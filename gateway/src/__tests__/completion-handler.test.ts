@@ -69,7 +69,7 @@ describe("CompletionHandler", () => {
       expect(msg).toContain("[System: Background coding agent completed successfully]");
       expect(msg).toContain("completed in 42.1s");
       expect(msg).toContain("3 files changed");
-      expect(msg).toContain("Do NOT spawn another coding agent");
+      expect(msg).toContain("you may spawn additional coding agents");
     });
 
     it("builds a failure message", () => {
@@ -133,40 +133,45 @@ describe("CompletionHandler", () => {
   });
 
   describe("broadcasting", () => {
-    it("broadcasts status, chunks, and response to the conversation", async () => {
+    it("broadcasts status(thinking), chunk, and done to the conversation", async () => {
       await handler.handleEvent(makeEvent());
 
       const calls = broadcastFn.mock.calls;
-      // Should have: status(thinking), stream_chunk, status(idle), response
+      // Should have: status(thinking), chunk, done
       expect(calls.some(([, msg]: any) => msg.type === "status" && msg.agentStatus === "thinking")).toBe(true);
-      expect(calls.some(([, msg]: any) => msg.type === "stream_chunk")).toBe(true);
-      expect(calls.some(([, msg]: any) => msg.type === "status" && msg.agentStatus === "idle")).toBe(true);
-      expect(calls.some(([, msg]: any) => msg.type === "response")).toBe(true);
+      expect(calls.some(([, msg]: any) => msg.type === "chunk" && msg.content === "The coding agent finished.")).toBe(true);
+      expect(calls.some(([, msg]: any) => msg.type === "done" && msg.agentStatus === "idle")).toBe(true);
     });
 
-    it("marks all broadcasts as completion turns", async () => {
+    it("done event includes response as fallback", async () => {
       await handler.handleEvent(makeEvent());
 
       const calls = broadcastFn.mock.calls;
-      for (const [, msg] of calls) {
-        expect(msg.isCompletionTurn).toBe(true);
-      }
+      const doneCall = calls.find(([, msg]: any) => msg.type === "done");
+      expect(doneCall).toBeDefined();
+      expect(doneCall![1].response).toBe("The coding agent finished.");
     });
   });
 
   describe("error handling", () => {
-    it("still consumes the event on backend error", async () => {
+    it("still consumes the event and sends done on backend error", async () => {
       backendClient.conversationTurnStream.mockImplementation(async function* () {
         throw new Error("Backend down");
       });
 
       await handler.handleEvent(makeEvent());
 
-      // Should have broadcast an error
-      expect(broadcastFn).toHaveBeenCalledWith(
-        "conv-001",
-        expect.objectContaining({ type: "error" }),
-      );
+      const calls = broadcastFn.mock.calls;
+
+      // Should have broadcast a chunk with the error info
+      expect(calls.some(([, msg]: any) =>
+        msg.type === "chunk" && msg.content.includes("Completion turn failed"),
+      )).toBe(true);
+
+      // Should still send a done event to clear the thinking state
+      expect(calls.some(([, msg]: any) =>
+        msg.type === "done" && msg.agentStatus === "idle",
+      )).toBe(true);
 
       // Event should still be consumed (callReducer called with consume_system_event)
       const { callReducer } = await import("../spacetimedb/client.js");
