@@ -23,6 +23,7 @@ from typing import Any
 import hashlib
 
 import aiosqlite
+import sqlite_vec
 import httpx
 import litellm
 from litellm.cost_calculator import completion_cost as _litellm_completion_cost
@@ -2527,6 +2528,8 @@ async def _init_agent_db(data_dir: Path) -> aiosqlite.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     db = await aiosqlite.connect(str(db_path))
+    await db.enable_load_extension(True)
+    await db.load_extension(sqlite_vec.loadable_path())
     await db.execute("PRAGMA journal_mode=WAL")
     await db.execute("PRAGMA foreign_keys=ON")
 
