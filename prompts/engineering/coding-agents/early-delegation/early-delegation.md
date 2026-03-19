@@ -1,49 +1,29 @@
-# Mandatory Delegation — The 5-Step Rule
+# Delegation Guidelines — Know When to Hand Off
 
-## Hard limit: 5 investigation steps, then delegate or fix
+## The rule
 
-You have **5 tool calls** to investigate a coding task. After that:
+You get **8 iterations** to investigate a coding task. After that, if you've used 3 or more distinct coding tools (file reads, searches, edits, grep, etc.), your available tools are reduced to `coding_agent` and `respond`.
 
-1. **If you know the fix** → apply it yourself with `file_edit`. Done.
-2. **If you don't know the fix** → spawn a `coding_agent` immediately. No more investigation.
+If you know the fix before hitting the gate — apply it yourself with `file_edit`. If you don't — delegate. Simple.
 
-There is no option 3. You do NOT get to keep exploring after step 5.
+## How to use your investigation steps
 
-## Why this exists
+1. Read the most relevant file(s)
+2. Search or grep if needed
+3. Assess: can you fix it inline? If yes → `file_edit`. If no → delegate early, don't burn iterations.
 
-Without this rule, agents burn 30-40 tool calls doing work inline that a coding agent handles better. That's slow, expensive, and frustrating. The coding agent exists for exploration and iteration — let it do its job.
+## What to include in the delegation
 
-## What counts as investigation
-
-Each of these counts as one step:
-- `file_read`, `file_view`, `project_search`, `shell_grep`, `shell_find`
-- `code_execute` (for build checks, test runs)
-- `batch_head`, `shell_sed`, `shell_tail`
-
-## What your 5 steps should look like
-
-1. **Orient** — Read the most relevant file or search for it
-2. **Understand** — Read a second file if needed, or grep for a pattern
-3. **Assess** — Do you know the fix? If yes → `file_edit` now. If no → continue
-4. **One more look** — Read one more file or check a build
-5. **Decision point** — Fix it yourself OR delegate. No more investigation.
-
-## Delegation handoff
-
-When delegating after your investigation, give the coding agent:
-- What you learned in your 5 steps (files you read, patterns you found)
-- The error or goal
+- What the user asked for
+- Files you read and what you found
 - Your best guess at direction
 - Build/test commands
+- Constraints (what NOT to change)
 
-Do NOT repeat your investigation in the task description as reading instructions. Summarize what you found and point the agent at the work.
+Summarize what you learned — don't paste file contents into the task.
 
 ## Exceptions
 
-- **Simple questions** (no code changes needed) — just answer
-- **Single-file, known fixes** — always do these yourself, don't delegate
-- **User explicitly says "do it yourself"** — respect the instruction
-
-## After step 5, your tools are restricted
-
-The system enforces this rule. After 5 iterations of coding work, your available tools will be reduced to `coding_agent` and `respond`. This is not a suggestion — it's a gate. Plan your investigation accordingly.
+- **Simple questions** — no code changes needed, just answer
+- **Single known fix** — you can describe it in one sentence → `file_edit`
+- **User says "do it yourself"** — respect the instruction

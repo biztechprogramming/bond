@@ -208,9 +208,9 @@ for _tool, _keywords in TOOL_KEYWORDS.items():
 
 
 # Iteration threshold for mandatory coding agent delegation.
-# After this many iterations, if coding_agent is available and the agent
-# has been doing file/code work, restrict tools to coding_agent + respond.
-DELEGATION_THRESHOLD = 5
+# After this many iterations of coding work (3+ distinct coding tools),
+# restrict available tools to coding_agent + respond.
+DELEGATION_THRESHOLD = 8
 
 # Tools that signal "coding work" when used in recent history
 CODING_SIGNAL_TOOLS = frozenset({
@@ -244,18 +244,17 @@ def select_tools(
         List of tool names to include in this turn's API call.
     """
     # ── Delegation gate ──────────────────────────────────────────────
-    # After DELEGATION_THRESHOLD iterations of coding work, force the
-    # agent to either delegate to coding_agent or respond.  This prevents
-    # the anti-pattern of doing 30+ inline tool calls instead of spawning
-    # a sub-agent for complex tasks.
+    # After DELEGATION_THRESHOLD iterations with 3+ distinct coding tools
+    # used, restrict to coding_agent + respond.  Prevents the anti-pattern
+    # of 30+ inline tool calls instead of spawning a sub-agent.
     if (
-        iteration >= DELEGATION_THRESHOLD
-        and "coding_agent" in enabled_tools
+        "coding_agent" in enabled_tools
+        and iteration >= DELEGATION_THRESHOLD
         and recent_tools_used
-        and len(set(recent_tools_used) & CODING_SIGNAL_TOOLS) >= 2
+        and len(set(recent_tools_used) & CODING_SIGNAL_TOOLS) >= 3
     ):
         logger.info(
-            "Delegation gate: iteration %d >= %d with coding signals — "
+            "Delegation gate: iteration %d >= %d with 3+ coding signals — "
             "restricting to coding_agent + respond",
             iteration, DELEGATION_THRESHOLD,
         )
