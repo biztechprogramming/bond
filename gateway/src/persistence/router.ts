@@ -192,10 +192,21 @@ export function createPersistenceRouter(config: GatewayConfig) {
     const { agent_id } = req.query;
     try {
       const servers = await sqlQuery(spacetimedbUrl, spacetimedbModuleName, "SELECT * FROM mcp_servers", token);
+      const isOptionNone = (val: any) =>
+        val === null || val === undefined || val === "" ||
+        (typeof val === "object" && val !== null && "none" in val) ||
+        (Array.isArray(val) && val[0] === 1);
+      const optionValue = (val: any): string | null =>
+        isOptionNone(val) ? null :
+        (typeof val === "object" && val !== null && "some" in val) ? val.some :
+        (Array.isArray(val) && val[0] === 0) ? val[1] :
+        typeof val === "string" ? val : null;
+
       const filtered = servers.filter((s: any) => {
         const isEnabled = s.enabled === true || s.enabled === 1;
-        const isGlobal = s.agent_id === null || s.agent_id === "" || s.agent_id === undefined;
-        const isForAgent = agent_id ? s.agent_id === agent_id : false;
+        const agentVal = optionValue(s.agent_id);
+        const isGlobal = agentVal === null;
+        const isForAgent = agent_id ? agentVal === agent_id : false;
         return isEnabled && (isGlobal || isForAgent);
       });
       res.json(
@@ -206,7 +217,7 @@ export function createPersistenceRouter(config: GatewayConfig) {
           args: safeParseJson(s.args, []),
           env: safeParseJson(s.env, {}),
           enabled: s.enabled === true || s.enabled === 1,
-          agent_id: s.agent_id || null,
+          agent_id: optionValue(s.agent_id),
         }))
       );
     } catch (err: any) {
