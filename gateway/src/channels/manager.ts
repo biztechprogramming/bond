@@ -302,6 +302,10 @@ export class ChannelManager {
     return false;
   }
 
+  isWhatsAppConnected(): boolean {
+    return this.whatsapp?.isConnected() ?? false;
+  }
+
   subscribeWhatsAppQR(cb: (qr: string) => void): () => void {
     this.qrSubscribers.add(cb);
     return () => { this.qrSubscribers.delete(cb); };

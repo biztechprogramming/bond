@@ -111,7 +111,15 @@ engineering/code-quality/code-quality.md:
   tier: 2
   phase: implementing
 
+engineering/code-quality/error-handling/error-handling.md:
+  tier: 2
+  phase: implementing
+
 engineering/engineering.md:
+  tier: 2
+  phase: implementing
+
+architecture/architecture.md:
   tier: 2
   phase: implementing
 
@@ -119,6 +127,23 @@ engineering/engineering.md:
 # Tier 3: Context-Dependent
 # ══════════════════════════════════════════════════════════════════════════
 # Selected by semantic router when user message matches utterances.
+
+# ── Error Handling ────────────────────────────────────────────────────────
+
+engineering/code-quality/error-handling/error-handling.md:
+  tier: 3
+  utterances:
+    - "error handling"
+    - "exception handling"
+    - "try catch"
+    - "swallowing errors"
+    - "error messages"
+    - "logging errors"
+    - "error boundary"
+    - "global exception handler"
+    - "the error just disappears"
+    - "users don't see the error"
+    - "silent failure"
 
 # ── Backend ──────────────────────────────────────────────────────────────
 
