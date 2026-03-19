@@ -25,6 +25,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # These are the direct imports of worker.py + native tools
 RUN pip install --no-cache-dir \
     aiosqlite \
+    sqlite-vec \
     beautifulsoup4 \
     cryptography \
     duckduckgo-search \
