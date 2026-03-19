@@ -207,6 +207,20 @@ for _tool, _keywords in TOOL_KEYWORDS.items():
     ]
 
 
+# Iteration threshold for mandatory coding agent delegation.
+# After this many iterations, if coding_agent is available and the agent
+# has been doing file/code work, restrict tools to coding_agent + respond.
+DELEGATION_THRESHOLD = 5
+
+# Tools that signal "coding work" when used in recent history
+CODING_SIGNAL_TOOLS = frozenset({
+    "file_read", "file_write", "file_edit", "file_view", "file_replace",
+    "file_smart_edit", "file_search", "file_open",
+    "project_search", "shell_grep", "shell_find", "shell_sed",
+    "code_execute", "batch_head",
+})
+
+
 def select_tools(
     user_message: str,
     enabled_tools: list[str],
@@ -214,6 +228,7 @@ def select_tools(
     last_assistant_content: str | None = None,
     has_active_plan: bool = False,
     agent_name: str | None = None,
+    iteration: int = 0,
 ) -> list[str]:
     """Select relevant tools for this turn.
 
@@ -223,10 +238,30 @@ def select_tools(
         recent_tools_used: Tools used in recent turns (for momentum)
         last_assistant_content: Last assistant message (for context)
         agent_name: Agent name (used for role-based tool inclusion)
+        iteration: Current loop iteration (0-indexed)
 
     Returns:
         List of tool names to include in this turn's API call.
     """
+    # ── Delegation gate ──────────────────────────────────────────────
+    # After DELEGATION_THRESHOLD iterations of coding work, force the
+    # agent to either delegate to coding_agent or respond.  This prevents
+    # the anti-pattern of doing 30+ inline tool calls instead of spawning
+    # a sub-agent for complex tasks.
+    if (
+        iteration >= DELEGATION_THRESHOLD
+        and "coding_agent" in enabled_tools
+        and recent_tools_used
+        and len(set(recent_tools_used) & CODING_SIGNAL_TOOLS) >= 2
+    ):
+        logger.info(
+            "Delegation gate: iteration %d >= %d with coding signals — "
+            "restricting to coding_agent + respond",
+            iteration, DELEGATION_THRESHOLD,
+        )
+        gate_tools = {"coding_agent", "respond"} & set(enabled_tools)
+        return list(gate_tools)
+
     selected: set[str] = set(ALWAYS_INCLUDE & set(enabled_tools))
 
     # Role-based always-include tools — exempt from MAX_TOOLS_PER_TURN capping.
