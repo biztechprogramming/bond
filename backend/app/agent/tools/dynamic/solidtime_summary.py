@@ -4,6 +4,7 @@ from __future__ import annotations
 SCHEMA = {
     "name": "solidtime_summary",
     "description": "Get SolidTime summary data. Actions: 'weekly' (weekly tracked hours chart), 'clients' (list clients), 'tags' (list tags).",
+    "keywords": ["solidtime", "solid time", "weekly hours", "time summary", "hours this week", "time report", "how much time", "billable hours"],
     "parameters": {
         "type": "object",
         "properties": {

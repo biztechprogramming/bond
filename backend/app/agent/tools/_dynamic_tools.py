@@ -106,3 +106,18 @@ def register_dynamic_tools(registry: "ToolRegistry") -> None:  # type: ignore
 
         registry.register(tool_name, _create_handler(execute_fn, is_async))
         logger.info("Registered dynamic tool: %s", tool_name)
+
+        # Auto-register keywords for heuristic tool selection
+        keywords = schema.get("keywords")
+        if keywords and isinstance(keywords, list):
+            try:
+                from backend.app.agent.tool_selection import TOOL_KEYWORDS, _COMPILED_PATTERNS
+                if tool_name not in TOOL_KEYWORDS:
+                    TOOL_KEYWORDS[tool_name] = keywords
+                    _COMPILED_PATTERNS[tool_name] = [
+                        __import__("re").compile(__import__("re").escape(kw), __import__("re").IGNORECASE)
+                        for kw in keywords
+                    ]
+                    logger.info("Registered %d keywords for dynamic tool: %s", len(keywords), tool_name)
+            except Exception:
+                logger.debug("Could not auto-register keywords for %s", tool_name, exc_info=True)

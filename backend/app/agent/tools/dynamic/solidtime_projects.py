@@ -4,6 +4,7 @@ from __future__ import annotations
 SCHEMA = {
     "name": "solidtime_projects",
     "description": "List or create SolidTime projects. Use action='list' to see all projects, or action='create' to make a new one.",
+    "keywords": ["solidtime", "solid time", "time tracking project", "billable project"],
     "parameters": {
         "type": "object",
         "properties": {

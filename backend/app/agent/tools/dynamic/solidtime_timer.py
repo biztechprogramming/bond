@@ -4,6 +4,7 @@ from __future__ import annotations
 SCHEMA = {
     "name": "solidtime_timer",
     "description": "Manage SolidTime timer. Actions: 'active' (get running timer), 'start' (start a new timer), 'stop' (stop the running timer).",
+    "keywords": ["timer", "start timer", "stop timer", "clock in", "clock out", "running timer", "active timer", "solidtime", "solid time"],
     "parameters": {
         "type": "object",
         "properties": {

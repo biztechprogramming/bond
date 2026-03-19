@@ -4,6 +4,7 @@ from __future__ import annotations
 SCHEMA = {
     "name": "solidtime_time_entries",
     "description": "List or create SolidTime time entries. Use action='list' to view entries (with optional date filters), or action='create' to log a new entry.",
+    "keywords": ["time entry", "time entries", "log time", "track time", "tracked time", "hours logged", "time log", "solidtime", "solid time", "timesheet"],
     "parameters": {
         "type": "object",
         "properties": {
