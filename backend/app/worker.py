@@ -1031,6 +1031,39 @@ async def _run_agent_loop(
     except Exception:
         logger.debug("Lessons injection skipped", exc_info=True)
 
+    # Inject MCP integrations summary so the agent knows what external services
+    # are available (or NOT available) without having to search the filesystem.
+    try:
+        from backend.app.mcp import mcp_manager
+        if mcp_manager.connections:
+            _mcp_names = sorted(mcp_manager.connections.keys())
+            _mcp_connected = [
+                n for n in _mcp_names if mcp_manager.connections[n].session
+            ]
+            _mcp_summary = (
+                "## MCP Integrations\n"
+                "Connected external services (via MCP servers): "
+                + ", ".join(_mcp_connected)
+            )
+            if len(_mcp_connected) < len(_mcp_names):
+                _mcp_disconnected = [n for n in _mcp_names if n not in _mcp_connected]
+                _mcp_summary += "\nDisconnected: " + ", ".join(_mcp_disconnected)
+            _mcp_summary += (
+                "\nTools from these servers are prefixed `mcp_<server>_`. "
+                "If asked about a service you don't have an MCP connection for, "
+                "say so directly — don't search the filesystem for it."
+            )
+            full_system_prompt += "\n\n" + _mcp_summary
+        else:
+            full_system_prompt += (
+                "\n\n## MCP Integrations\n"
+                "No MCP servers are connected. If asked about external service "
+                "integrations (e.g. time tracking, CRM), say you don't currently "
+                "have access rather than searching the filesystem."
+            )
+    except Exception:
+        pass
+
     # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
     windowed_history = history
     if history:
@@ -1155,6 +1188,17 @@ async def _run_agent_loop(
 
     # Use compact schemas to further reduce token usage
     tool_defs = [compact_tool_schema(TOOL_MAP[name]) for name in selected_tool_names if name in TOOL_MAP]
+
+    # Append MCP tool definitions (not in TOOL_MAP — they live in mcp_manager)
+    try:
+        from backend.app.mcp import mcp_manager
+        mcp_selected = [n for n in selected_tool_names if n.startswith("mcp_") and n not in TOOL_MAP]
+        if mcp_selected:
+            mcp_defs = mcp_manager.get_definitions(mcp_selected)
+            tool_defs.extend([compact_tool_schema(d) for d in mcp_defs])
+            logger.info("Added %d MCP tool definition(s) to LLM call", len(mcp_defs))
+    except Exception as e:
+        logger.debug("MCP tool defs injection skipped: %s", e)
 
     # Read coding agent settings from local DB (if available)
     coding_agent_settings: dict[str, str] = {}
@@ -2150,6 +2194,13 @@ async def _run_agent_loop(
                         selected_tool_names.append(tool_name)
                         if tool_name in TOOL_MAP:
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
+                        elif tool_name.startswith("mcp_"):
+                            try:
+                                from backend.app.mcp import mcp_manager
+                                _mcp_dyn = mcp_manager.get_definitions([tool_name])
+                                tool_defs.extend([compact_tool_schema(d) for d in _mcp_dyn])
+                            except Exception:
+                                pass
                     
                     # Use precomputed parallel result if available
                     if tool_call.id in _parallel_precomputed:
