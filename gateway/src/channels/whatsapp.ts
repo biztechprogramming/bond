@@ -14,6 +14,7 @@
 import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
+  fetchLatestBaileysVersion,
   type WASocket,
   type ConnectionState,
 } from "@whiskeysockets/baileys";
@@ -46,6 +47,8 @@ export class WhatsAppChannel implements ChannelAdapter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectionFailures = 0;
+  private hasEverConnected = false;
 
   constructor(options: WhatsAppChannelOptions) {
     this.authDir = options.authDir;
@@ -61,6 +64,7 @@ export class WhatsAppChannel implements ChannelAdapter {
     this.running = true;
     this.connected = false;
     this.reconnectAttempts = 0;
+    this.connectionFailures = 0;
     await this.connect();
   }
 
@@ -73,8 +77,13 @@ export class WhatsAppChannel implements ChannelAdapter {
     // If we were stopped during async auth state load, bail out
     if (!this.running) return;
 
+    const { version } = await fetchLatestBaileysVersion();
+    console.log(`[whatsapp] Using WA version ${version.join(".")}`);
+
     this.socket = makeWASocket({
       auth: state,
+      version,
+      browser: ["Bond", "Chrome", "1.0.0"],
       printQRInTerminal: false,
     });
 
@@ -86,7 +95,9 @@ export class WhatsAppChannel implements ChannelAdapter {
       if (update.connection === "open") {
         console.log("[whatsapp] Connected");
         this.connected = true;
+        this.hasEverConnected = true;
         this.reconnectAttempts = 0;
+        this.connectionFailures = 0;
         this.onStatusChangeCb?.("open");
 
         // Auto allow-list: the linked phone number is the owner
@@ -123,6 +134,18 @@ export class WhatsAppChannel implements ChannelAdapter {
             this.scheduleReconnect();
           });
           return;
+        }
+
+        // Track connection failures during initial pairing phase.
+        // If we get repeated failures before ever connecting, creds may be corrupt.
+        const errorMsg = update.lastDisconnect?.error?.message || "";
+        if (errorMsg.includes("Connection Failure")) {
+          this.connectionFailures++;
+          if (!this.hasEverConnected && this.connectionFailures >= 3) {
+            console.warn("[whatsapp] Repeated connection failures during pairing — clearing corrupt creds");
+            WhatsAppChannel.cleanAuthDir(this.authDir);
+            this.connectionFailures = 0;
+          }
         }
 
         this.scheduleReconnect();
