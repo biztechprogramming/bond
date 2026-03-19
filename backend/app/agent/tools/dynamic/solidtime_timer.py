@@ -46,7 +46,7 @@ def execute(action: str, project_id: str = None, task_id: str = None,
         url = f"{config['url']}/api/v1/users/me/time-entries/active"
         headers = {"Authorization": config["apiToken"], "Accept": "application/json"}
         resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code == 204:
+        if resp.status_code in (204, 404):
             return {"active": False, "message": "No timer running"}
         resp.raise_for_status()
         return {"active": True, "entry": resp.json().get("data")}
@@ -71,7 +71,7 @@ def execute(action: str, project_id: str = None, task_id: str = None,
         url = f"{config['url']}/api/v1/users/me/time-entries/active"
         headers = {"Authorization": config["apiToken"], "Accept": "application/json"}
         resp = requests.get(url, headers=headers, timeout=15)
-        if resp.status_code == 204:
+        if resp.status_code in (204, 404):
             return {"error": "No active timer to stop"}
         resp.raise_for_status()
         entry = resp.json().get("data", {})
