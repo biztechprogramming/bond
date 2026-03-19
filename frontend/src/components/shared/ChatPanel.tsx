@@ -159,8 +159,8 @@ export default function ChatPanel({
             key={msg.id ? `${msg.id}-${i}` : i}
             style={{
               ...s.chatMsg,
-              ...(msg.role === "user" ? s.chatMsgUser : {}),
-              ...(msg.role === "system" ? s.chatMsgSystem : {}),
+              ...(msg.role === "user" && !msg.content.startsWith("[System:") ? s.chatMsgUser : {}),
+              ...(msg.role === "system" || (msg.role === "user" && msg.content.startsWith("[System:")) ? s.chatMsgSystem : {}),
               position: "relative" as const,
             }}
             onMouseEnter={() => setHoveredIdx(i)}
@@ -211,9 +211,9 @@ export default function ChatPanel({
               </div>
             )}
             <div style={s.chatMsgRole}>
-              {msg.role === "user" ? "You" : msg.role === "assistant" ? (msg.agentName || selectedAgentName || "Agent") : "System"}
+              {msg.role === "user" && msg.content.startsWith("[System:") ? "System" : msg.role === "user" ? "You" : msg.role === "assistant" ? (msg.agentName || selectedAgentName || "Agent") : "System"}
             </div>
-            <div style={s.chatMsgContent}>{msg.content}</div>
+            <div style={{...s.chatMsgContent, ...(msg.role === "user" && msg.content.startsWith("[System:") ? { color: "#8888a0", fontSize: "0.85rem", fontStyle: "italic" } : {})}}>{msg.content}</div>
           </div>
         ))}
         {(loading || streamingContent) && (
