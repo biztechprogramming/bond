@@ -28,6 +28,7 @@ import { initSessionTokens } from "./deployments/session-tokens.js";
 import { EventBus, EventHistory, CompletionDispatcher, createEventsRouter } from "./events/index.js";
 import { ChannelManager } from "./channels/manager.js";
 import { createChannelRouter } from "./channels/routes.js";
+import { createSolidTimeRouter } from "./integrations/solidtime.js";
 import {
   MessagePipeline,
   RateLimitHandler,
@@ -252,6 +253,9 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   channelManager.setPipeline(pipeline);
 
   app.use("/api/v1", createChannelRouter(channelManager));
+
+  // SolidTime integration API
+  app.use("/api/v1", createSolidTimeRouter());
   // Auto-start previously enabled channels (non-blocking)
   channelManager.autoStart().catch((err) => {
     console.warn("[gateway] Channel auto-start error:", err);

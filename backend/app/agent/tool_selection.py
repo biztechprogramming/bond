@@ -197,6 +197,28 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "pull request", "open pr", "create tool", "propose change",
         "add prompt", "push branch", "new tool", "submit pr",
     ],
+    "solidtime_time_entries": [
+        "time entry", "time entries", "log time", "track time", "tracked time",
+        "hours logged", "time log", "log hours", "record time", "time tracking",
+        "solidtime", "solid time", "time sheet", "timesheet",
+    ],
+    "solidtime_timer": [
+        "timer", "start timer", "stop timer", "clock in", "clock out",
+        "start tracking", "stop tracking", "am I tracking", "running timer",
+        "active timer", "what am I working on", "solidtime", "solid time",
+    ],
+    "solidtime_projects": [
+        "solidtime", "solid time", "time tracking project", "tracked project",
+        "billable project",
+    ],
+    "solidtime_tasks": [
+        "solidtime", "solid time", "time tracking task",
+    ],
+    "solidtime_summary": [
+        "solidtime", "solid time", "weekly hours", "time summary",
+        "hours this week", "tracked this week", "time report",
+        "how much time", "billable hours",
+    ],
 }
 
 # Pre-compile patterns for efficiency
@@ -330,6 +352,14 @@ def select_tools(
         if "search_memory" in enabled_tools:
             selected.add("search_memory")
 
+    # SolidTime toolkit: if any solidtime tool matched, include the full set
+    solidtime_tools = {
+        "solidtime_time_entries", "solidtime_timer", "solidtime_projects",
+        "solidtime_tasks", "solidtime_summary",
+    }
+    if solidtime_tools & selected:
+        selected.update(solidtime_tools & set(enabled_tools))
+
     # Filesystem toolkit: if ANY file/coding/search tool matched, include
     # the full toolkit (~2,000 tokens). This is cheaper than one wasted
     # iteration where the agent can't read a file it just found.
@@ -448,6 +478,25 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
     "file_bug_ticket": (
         " Create a GitHub issue for deployment failures. Include error output,"
         " environment, severity, and suggested fix."
+    ),
+    "solidtime_time_entries": (
+        " List or create SolidTime time entries. Use for logging hours,"
+        " viewing tracked time, or adding manual time entries."
+    ),
+    "solidtime_timer": (
+        " Start, stop, or check the SolidTime timer. Use for real-time tracking"
+        " (clock in/out). Use solidtime_time_entries for manual/past entries."
+    ),
+    "solidtime_projects": (
+        " List or create SolidTime projects. Use before creating time entries"
+        " to find the right project_id."
+    ),
+    "solidtime_tasks": (
+        " List or create SolidTime tasks within projects."
+    ),
+    "solidtime_summary": (
+        " Get SolidTime weekly hours, client list, or tag list."
+        " Use for time reports and overviews."
     ),
 }
 
