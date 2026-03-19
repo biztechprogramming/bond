@@ -6,6 +6,7 @@ import logging
 from typing import Any, Callable, Awaitable
 
 from .definitions import TOOL_DEFINITIONS, TOOL_MAP, TOOL_SUMMARIES  # noqa: F401
+from ._dynamic_tools import load_dynamic_tool_definitions  # noqa: F401
 
 logger = logging.getLogger("bond.agent.tools")
 
@@ -140,4 +141,9 @@ def build_registry() -> ToolRegistry:
     registry.register("file_bug_ticket", lambda args, ctx: handle_deploy_tool("file_bug_ticket", args))
     # Deployment query — read-only access to deployment data via Gateway APIs
     registry.register("deployment_query", handle_deployment_query)
+
+    # Register dynamic tools from dynamic/ directory
+    from ._dynamic_tools import register_dynamic_tools
+    register_dynamic_tools(registry)
+
     return registry

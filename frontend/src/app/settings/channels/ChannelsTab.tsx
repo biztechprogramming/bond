@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 
 import { GATEWAY_API } from "@/lib/config";
+import SolidTimeCard from "./SolidTimeCard";
 
 const GATEWAY = GATEWAY_API;
 
@@ -276,6 +277,9 @@ export default function ChannelsTab() {
         </div>
         <p style={s.desc}>Slack workspace integration</p>
       </div>
+
+      <h2 style={{ ...s.sectionTitle, marginTop: "16px" }}>Integrations</h2>
+      <SolidTimeCard />
     </section>
   );
 }
