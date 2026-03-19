@@ -1,38 +1,49 @@
-# Fast Resolution for Known-Path Errors
+# Mandatory Delegation — The 5-Step Rule
 
-When the user reports a **build error or bug** and their message already contains:
-1. The **file path** where the error occurs (e.g. `./src/components/InspectionForm.tsx:117`)
-2. The **error message** (e.g. `Property 'lead_rooms' does not exist on type 'InspectionFormData'`)
-3. Enough context to describe the fix
+## Hard limit: 5 investigation steps, then delegate or fix
 
-**Skip discovery.** Do NOT burn iterations on `project_search`, `shell_find`, or `file_read` to "verify" what the user already told you. The error output IS the discovery.
+You have **5 tool calls** to investigate a coding task. After that:
 
-## CRITICAL: Fix it yourself first
+1. **If you know the fix** → apply it yourself with `file_edit`. Done.
+2. **If you don't know the fix** → spawn a `coding_agent` immediately. No more investigation.
 
-**If you can describe the fix in one sentence, you MUST do it yourself with `file_edit`. Do NOT spawn a coding agent.**
+There is no option 3. You do NOT get to keep exploring after step 5.
 
-Examples of fixes you MUST do yourself:
-- "Change `sampling_date: string | null` to `Date | null`" → **just edit the file**
-- "Add `lead_rooms` to the interface" → **just edit the file**
-- "Add the missing import for `UserRole`" → **just edit the file**
-- "Update the Prisma include to add `inspector: true`" → **just edit the file**
+## Why this exists
 
-Spawning a coding agent for a fix you can already articulate is slower, more expensive, and **frustrating for the user**. The coding agent adds value through *exploration and iteration* — if the answer is already known, it's pure overhead.
+Without this rule, agents burn 30-40 tool calls doing work inline that a coding agent handles better. That's slow, expensive, and frustrating. The coding agent exists for exploration and iteration — let it do its job.
 
-## When to delegate instead
+## What counts as investigation
 
-Only spawn a coding agent if the fix genuinely requires exploration:
-- You can see the error but the root cause could be in multiple places
-- The fix involves coordinated changes across 5+ files you haven't seen
-- You need to run tests iteratively to get it right
+Each of these counts as one step:
+- `file_read`, `file_view`, `project_search`, `shell_grep`, `shell_find`
+- `code_execute` (for build checks, test runs)
+- `batch_head`, `shell_sed`, `shell_tail`
 
-**Delegate early — don't over-investigate.** If you're going to delegate, do it within 8-10 tool calls. Give the agent:
-- The error message and file path
-- Your rough sense of direction ("probably a type mismatch in the Prisma model" is enough)
-- Build/test instructions
+## What your 5 steps should look like
 
-Do NOT read every related file, trace every import, and map the full dependency graph before delegating. That's the agent's job. If you do all that work yourself, you'll already know the fix — at which point you should just apply it directly instead of delegating.
+1. **Orient** — Read the most relevant file or search for it
+2. **Understand** — Read a second file if needed, or grep for a pattern
+3. **Assess** — Do you know the fix? If yes → `file_edit` now. If no → continue
+4. **One more look** — Read one more file or check a build
+5. **Decision point** — Fix it yourself OR delegate. No more investigation.
 
-## Why this matters
+## Delegation handoff
 
-The alternative — searching a multi-repo workspace for a file the user already named — can burn 5-7 iterations and exhaust the budget before any work gets done. The user gave you the answer; use it.
+When delegating after your investigation, give the coding agent:
+- What you learned in your 5 steps (files you read, patterns you found)
+- The error or goal
+- Your best guess at direction
+- Build/test commands
+
+Do NOT repeat your investigation in the task description as reading instructions. Summarize what you found and point the agent at the work.
+
+## Exceptions
+
+- **Simple questions** (no code changes needed) — just answer
+- **Single-file, known fixes** — always do these yourself, don't delegate
+- **User explicitly says "do it yourself"** — respect the instruction
+
+## After step 5, your tools are restricted
+
+The system enforces this rule. After 5 iterations of coding work, your available tools will be reduced to `coding_agent` and `respond`. This is not a suggestion — it's a gate. Plan your investigation accordingly.

@@ -38,7 +38,7 @@ async def _load_default_agent(db: AsyncSession) -> dict[str, Any]:
         "model": "anthropic/claude-sonnet-4-20250514",
         "sandbox_image": None,
         "tools": '["respond","search_memory","memory_save","memory_update"]',
-        "max_iterations": 25,
+        "max_iterations": 20,
         "auto_rag": 1,
         "auto_rag_limit": 5,
         "workspace_mounts": [],
@@ -101,7 +101,7 @@ async def _load_agent_by_id(db: AsyncSession, agent_id: str) -> dict[str, Any]:
         "model": "anthropic/claude-sonnet-4-20250514",
         "sandbox_image": None,
         "tools": '["respond","search_memory","memory_save","memory_update"]',
-        "max_iterations": 25,
+        "max_iterations": 20,
         "auto_rag": 1,
         "auto_rag_limit": 5,
         "workspace_mounts": [],
@@ -283,6 +283,7 @@ async def agent_turn(
             enabled_tools=all_enabled_tools,
             recent_tools_used=recent_tools[-10:] if recent_tools else None,
             agent_name=agent.get("name"),
+            iteration=iteration,
         )
         raw_defs = registry.get_definitions_for(selected_tool_names)
         tool_defs = [compact_tool_schema(td) for td in raw_defs]
