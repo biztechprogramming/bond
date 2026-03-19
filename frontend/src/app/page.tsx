@@ -8,6 +8,7 @@ import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
 import { useSpacetimeConnection, useConversations, useAgents } from "@/hooks/useSpacetimeDB";
 import { getAgentName } from "@/lib/spacetimedb-client";
+import { useMessages } from "@/hooks/useMessages";
 import RestoreDialog from "@/components/RestoreDialog";
 import SkillFeedbackStack, { type SkillActivation } from "@/components/shared/SkillFeedbackToast";
 
@@ -90,6 +91,38 @@ export default function Home() {
 
 
 
+
+  // SpacetimeDB message subscription — reactively picks up new messages
+  // (e.g., from the completion handler's agent turn) that weren't streamed via WebSocket.
+  const stdbMessages = useMessages(conversationId);
+  const prevStdbCountRef = useRef(0);
+  useEffect(() => {
+    if (!stdbMessages.length || stdbMessages.length <= prevStdbCountRef.current) {
+      prevStdbCountRef.current = stdbMessages.length;
+      return;
+    }
+    // New messages appeared in SpacetimeDB — check if any are missing from local state
+    const newDbMessages = stdbMessages.slice(prevStdbCountRef.current);
+    prevStdbCountRef.current = stdbMessages.length;
+
+    setMessages((prev) => {
+      const existingIds = new Set(prev.map((m) => m.id).filter(Boolean));
+      const existingContents = new Set(
+        prev.slice(-5).map((m) => `${m.role}:${m.content?.slice(0, 100)}`)
+      );
+      const toAdd: ChatMessage[] = [];
+      for (const msg of newDbMessages) {
+        if (msg.id && existingIds.has(msg.id)) continue;
+        // Fuzzy dedup: skip if role+content prefix matches a recent message
+        const key = `${msg.role}:${msg.content?.slice(0, 100)}`;
+        if (existingContents.has(key)) continue;
+        if (msg.role === "user" || msg.role === "assistant" || msg.role === "system") {
+          toAdd.push({ id: msg.id, role: msg.role as "user" | "assistant" | "system", content: msg.content });
+        }
+      }
+      return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+    });
+  }, [stdbMessages]);
 
   // Show restore dialog when SpacetimeDB is connected but conversations are empty
   useEffect(() => {
@@ -287,15 +320,16 @@ export default function Home() {
           )
         );
       } else if (msg.type === "history" && msg.messages) {
-        setMessages(
-          msg.messages
+        const historyMsgs = msg.messages
             .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
             .map((m) => ({
               id: m.id,
               role: m.role as "user" | "assistant" | "system",
               content: m.content,
-            }))
-        );
+            }));
+        setMessages(historyMsgs);
+        // Reset SpacetimeDB sync counter so we don't re-append history messages
+        prevStdbCountRef.current = 0;
         if (msg.conversationId) {
           setConversationId(msg.conversationId);
         }

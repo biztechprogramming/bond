@@ -379,6 +379,58 @@ class SandboxManager:
                 raise
 
     # ------------------------------------------------------------------
+    # Shared retry helper for docker run
+    # ------------------------------------------------------------------
+
+    async def _docker_run_with_conflict_retry(
+        self,
+        cmd: list[str],
+        container_name: str,
+        agent_id: str,
+        max_retries: int = 5,
+    ) -> bytes:
+        """Run a docker command with exponential backoff retry on Conflict errors.
+
+        Returns the stdout bytes on success. Raises RuntimeError on failure.
+        """
+        last_err_msg = ""
+        stdout = b""
+        for attempt in range(max_retries + 1):
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode == 0:
+                return stdout
+
+            last_err_msg = stderr.decode()
+
+            if "Conflict" in last_err_msg and attempt < max_retries:
+                backoff = 2 ** attempt  # 1s, 2s, 4s, 8s, 16s
+                logger.warning(
+                    "Container name conflict for agent %s (attempt %d/%d), "
+                    "removing stale container %s and retrying in %ds",
+                    agent_id, attempt + 1, max_retries, container_name, backoff,
+                )
+                rm_proc = await asyncio.create_subprocess_exec(
+                    "docker", "rm", "-f", container_name,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await rm_proc.communicate()
+                await asyncio.sleep(backoff)
+                continue
+
+            # Non-conflict error or retries exhausted
+            break
+
+        logger.error("Failed to create container for agent %s: %s", agent_id, last_err_msg)
+        raise RuntimeError(f"Failed to create container for agent {agent_id}: {last_err_msg}")
+
+    # ------------------------------------------------------------------
     # Worker container creation (Tasks 1, 2)
     # ------------------------------------------------------------------
 
@@ -524,18 +576,7 @@ class SandboxManager:
             "--config", "/config/agent.json",
         ])
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            err_msg = stderr.decode()
-            logger.error("Failed to create container for agent %s: %s", agent_id, err_msg)
-            raise RuntimeError(f"Failed to create container for agent {agent_id}: {err_msg}")
-
+        stdout = await self._docker_run_with_conflict_retry(cmd, key, agent_id)
         container_id = stdout.decode().strip()[:12]
         logger.info(
             "Created worker container %s for agent %s (port=%d, image=%s)",
@@ -645,16 +686,7 @@ class SandboxManager:
 
         cmd.extend([sandbox_image, "sleep", "infinity"])
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            raise RuntimeError(f"Failed to create container: {stderr.decode()}")
-
+        stdout = await self._docker_run_with_conflict_retry(cmd, key, agent_id)
         container_id = stdout.decode().strip()[:12]
         self._containers[key] = {
             "container_id": container_id,
