@@ -64,12 +64,15 @@ export default function Home() {
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
   const currentAgentNameRef = useRef<string>("Agent");
+  const conversationIdRef = useRef<string | null>(conversationId);
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
   const [codingAgentActive, setCodingAgentActive] = useState(false);
   const [codingAgentDiffs, setCodingAgentDiffs] = useState<Record<string, { diff: string; count: number }>>({});
   const [codingAgentSummary, setCodingAgentSummary] = useState<string | null>(null);
   const [codingAgentOutput, setCodingAgentOutput] = useState<string[]>([]);
   const [activePlan, setActivePlan] = useState<PlanCardData | null>(null);
+  const [planConversationId, setPlanConversationId] = useState<string | null>(null);
+  const [planDismissed, setPlanDismissed] = useState(false);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; message: string; repo: string; branch: string; actor?: string }[]>([]);
   const [skillActivations, setSkillActivations] = useState<SkillActivation[]>([]);
@@ -97,8 +100,9 @@ export default function Home() {
     }
   }, [stdbConnected, spacetimeConversations.length]);
 
-  // Persist conversation ID
+  // Persist conversation ID and keep ref in sync
   useEffect(() => {
+    conversationIdRef.current = conversationId;
     if (conversationId) {
       localStorage.setItem("bond-conversation-id", conversationId);
     } else {
@@ -348,6 +352,8 @@ export default function Home() {
       // Plan events
       if (msg.type === "plan_created" && msg.planId && msg.planTitle) {
         setActivePlan({ id: msg.planId, title: msg.planTitle, status: "active", items: [] });
+        setPlanConversationId(msg.conversationId || conversationIdRef.current || null);
+        setPlanDismissed(false);
       } else if (msg.type === "item_updated" && msg.itemId && activePlan) {
         setActivePlan(prev => {
           if (!prev) return prev;
@@ -410,6 +416,17 @@ export default function Home() {
   const handleNewConversation = async () => {
     setMessages([]);
     setConversationId(null);
+    setLoading(false);
+    setStreamingContent("");
+    setAgentStatus("idle");
+    setToolActivity([]);
+    setActivePlan(null);
+    setPlanConversationId(null);
+    setPlanDismissed(false);
+    setCodingAgentActive(false);
+    setCodingAgentDiffs({});
+    setCodingAgentOutput([]);
+    setCodingAgentSummary(null);
     // Don't pre-create the conversation via REST — let the first message
     // create it through the WebSocket path, which passes the selected
     // agentId correctly. Pre-creating caused a bug where the conversation
@@ -421,6 +438,16 @@ export default function Home() {
     if (id === conversationId) return;
     setMessages([]);
     setLoading(false);
+    setStreamingContent("");
+    setAgentStatus("idle");
+    setToolActivity([]);
+    // Don't clear activePlan — keep it so the header link shows when switching back.
+    // The inline card is already gated by planConversationId === conversationId.
+    setPlanDismissed(false);
+    setCodingAgentActive(false);
+    setCodingAgentDiffs({});
+    setCodingAgentOutput([]);
+    setCodingAgentSummary(null);
     const conv = conversations.find(c => c.id === id);
     if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
     wsRef.current?.switchConversation(id);
@@ -560,6 +587,23 @@ export default function Home() {
               {sidebarOpen ? "\u2190" : "\u2261"}
             </button>
             <h1 style={styles.title}>{selectedAgentName}</h1>
+            {activePlan && planConversationId === conversationId && (
+              <a
+                href={`/board?plan=${activePlan.id}`}
+                style={{
+                  color: activePlan.status === "completed" ? "#4ec994" : "#6c8aff",
+                  textDecoration: "none",
+                  fontSize: "0.78rem",
+                  padding: "3px 10px",
+                  borderRadius: "6px",
+                  border: `1px solid ${activePlan.status === "completed" ? "#4ec99444" : "#6c8aff44"}`,
+                  whiteSpace: "nowrap",
+                }}
+                title={`Plan: ${activePlan.title}`}
+              >
+                📋 {activePlan.title.length > 24 ? activePlan.title.slice(0, 24) + "…" : activePlan.title}
+              </a>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
             {agents.length > 1 && (
@@ -625,10 +669,23 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Inline Plan Card */}
-        {activePlan && (
-          <div style={{ padding: "12px 24px 0", display: "flex", justifyContent: "center" }}>
+        {/* Inline Plan Card — only show for the conversation it was created in, and allow dismiss */}
+        {activePlan && !planDismissed && planConversationId === conversationId && (
+          <div style={{ padding: "12px 24px 0", display: "flex", justifyContent: "center", position: "relative" }}>
             <PlanCard plan={activePlan} />
+            <button
+              onClick={() => setPlanDismissed(true)}
+              title="Dismiss plan card"
+              style={{
+                position: "absolute", top: "16px", right: "calc(7.5% + 28px)",
+                background: "rgba(90,90,110,0.3)", border: "none", borderRadius: "50%",
+                width: "22px", height: "22px", color: "#8888a0", fontSize: "0.75rem",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                lineHeight: 1, padding: 0,
+              }}
+            >
+              ✕
+            </button>
           </div>
         )}
 
