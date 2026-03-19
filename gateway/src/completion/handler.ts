@@ -150,7 +150,7 @@ export class CompletionHandler {
       parts.push(
         "",
         "Summarize the results for the user. Describe what was built or changed and suggest next steps (e.g., run tests, review the diff, create a PR).",
-        "Do NOT spawn another coding agent in this response.",
+        "If there is more work to do, you may spawn additional coding agents.",
       );
       return parts.filter((p) => p !== undefined).join("\n");
     }
@@ -169,7 +169,7 @@ export class CompletionHandler {
       parts.push(
         "",
         "Explain what went wrong to the user and suggest how to fix it or retry.",
-        "Do NOT spawn another coding agent in this response.",
+        "You may spawn another coding agent to retry if appropriate.",
       );
       return parts.filter((p) => p !== undefined).join("\n");
     }
