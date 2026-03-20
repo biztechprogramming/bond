@@ -276,14 +276,15 @@ def detect_loop(
     tool_args: dict,
     loop_state: Any,
 ) -> tuple[bool, str]:
-    """Detect consecutive and cyclical loop patterns.
+    """Detect consecutive, name-only, and cyclical loop patterns.
 
     Returns (is_loop_detected, loop_message).
     """
     args_sig = hashlib.md5(f"{tool_name}:{json.dumps(tool_args)[:200]}".encode()).hexdigest()[:8]
     loop_state.recent_tool_calls.append((tool_name, args_sig))
+    loop_state.recent_tool_names.append(tool_name)
 
-    # 1. Consecutive repetition
+    # 1. Consecutive repetition (exact args match)
     if len(loop_state.recent_tool_calls) >= loop_state.REPETITION_THRESHOLD:
         last_n = loop_state.recent_tool_calls[-loop_state.REPETITION_THRESHOLD:]
         if all(tc == last_n[0] for tc in last_n):
@@ -293,10 +294,25 @@ def detect_loop(
             )
             return True, (
                 f"SYSTEM: You have called '{tool_name}' with the same arguments "
-                f"{loop_state.REPETITION_THRESHOLD} times in a row. You appear to be in a loop."
+                f"{loop_state.REPETITION_THRESHOLD} times in a row. You appear to be in a loop. "
+                f"STOP. Report what you've found to the user and ask how to proceed."
             )
 
-    # 2. Cyclical repetition
+    # 2. Name-only repetition (same tool, different args — catches wrapper tools)
+    if len(loop_state.recent_tool_names) >= loop_state.NAME_ONLY_THRESHOLD:
+        last_n_names = loop_state.recent_tool_names[-loop_state.NAME_ONLY_THRESHOLD:]
+        if all(n == last_n_names[0] for n in last_n_names):
+            logger.warning(
+                "Name-only repetition detected: %s called %d times with varying args",
+                tool_name, loop_state.NAME_ONLY_THRESHOLD,
+            )
+            return True, (
+                f"SYSTEM: You have called '{tool_name}' {loop_state.NAME_ONLY_THRESHOLD} times "
+                f"with different arguments but getting the same kind of results. "
+                f"STOP. Report your findings to the user and ask how to proceed."
+            )
+
+    # 3. Cyclical repetition
     if len(loop_state.recent_tool_calls) >= loop_state.CYCLE_MIN_PERIOD * loop_state.CYCLE_REPEATS:
         for period in range(loop_state.CYCLE_MIN_PERIOD, loop_state.CYCLE_MAX_PERIOD + 1):
             needed = period * loop_state.CYCLE_REPEATS
@@ -317,10 +333,59 @@ def detect_loop(
                 return True, (
                     f"SYSTEM: You are in a cyclical loop — repeating the pattern "
                     f"{' → '.join(cycle_tools)} ({loop_state.CYCLE_REPEATS} times). "
-                    f"These actions have already been completed. Stop repeating them."
+                    f"These actions have already been completed. "
+                    f"STOP. Report what you have to the user NOW."
                 )
 
     return False, ""
+
+
+def detect_empty_result(
+    tool_name: str,
+    result: dict,
+    loop_state: Any,
+) -> str | None:
+    """Detect consecutive empty or failed tool results.
+
+    Returns a system message to inject if threshold is reached, else None.
+    Call this after each tool execution in the main loop.
+    """
+    is_empty = False
+
+    if isinstance(result, dict):
+        # Check for explicit errors
+        if result.get("error") or result.get("success") is False:
+            is_empty = True
+        # Check for empty list results
+        elif result.get("results") == [] or result.get("data") == []:
+            is_empty = True
+        # Check parallel_orchestrate returning empty batches
+        elif (result.get("status") == "completed"
+              and isinstance(result.get("results"), list)):
+            batch_results = result["results"]
+            if all(
+                isinstance(b, dict) and b.get("results") == []
+                for b in batch_results
+            ):
+                is_empty = True
+
+    if is_empty:
+        loop_state.consecutive_empty_results += 1
+        if loop_state.consecutive_empty_results >= loop_state.EMPTY_RESULT_THRESHOLD:
+            logger.warning(
+                "Empty result threshold reached: %d consecutive empty/failed results from %s",
+                loop_state.consecutive_empty_results, tool_name,
+            )
+            return (
+                f"SYSTEM: You have received {loop_state.consecutive_empty_results} consecutive "
+                f"empty or failed results. The tool/integration you're calling is not returning data. "
+                f"STOP trying. Report this to the user immediately — tell them what you tried, "
+                f"what came back empty, and what likely needs to be configured or fixed."
+            )
+    else:
+        loop_state.consecutive_empty_results = 0
+
+    return None
 
 
 async def execute_tool_call(

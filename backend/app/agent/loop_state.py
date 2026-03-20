@@ -20,16 +20,24 @@ class LoopState:
     MAX_CONTINUATIONS: int = 3
 
     # Repetition detection
-    REPETITION_THRESHOLD: int = 3
+    REPETITION_THRESHOLD: int = 2
     recent_tool_calls: list[tuple[str, str]] = field(default_factory=list)
+
+    # Name-only repetition detection (catches varied args for same tool)
+    NAME_ONLY_THRESHOLD: int = 3
+    recent_tool_names: list[str] = field(default_factory=list)
 
     # Cyclical loop detection
     CYCLE_WINDOW: int = 30
     CYCLE_MIN_PERIOD: int = 2
     CYCLE_MAX_PERIOD: int = 8
-    CYCLE_REPEATS: int = 3
+    CYCLE_REPEATS: int = 2
     loop_intervention_count: int = 0
     LOOP_MAX_INTERVENTIONS: int = 2
+
+    # Empty/failed result tracking
+    consecutive_empty_results: int = 0
+    EMPTY_RESULT_THRESHOLD: int = 2
 
     # Pre-turn message tracking
     preturn_msg_count: int = 0
