@@ -136,6 +136,24 @@ class MCPConnectionPool:
         return sum(1 for c in self._connections if c.is_healthy)
 
 
+def _is_stdb_none(value: Any) -> bool:
+    """Check if a SpacetimeDB value represents None/null.
+
+    SpacetimeDB encodes Option<T> as tagged enums that show up as:
+      - {"none": []}  (dict format)
+      - [1, []]       (array-tagged format, tag 1 = None variant)
+      - None           (Python None)
+      - ""             (empty string)
+    """
+    if value is None or value == "":
+        return True
+    if isinstance(value, dict) and "none" in value:
+        return True
+    if isinstance(value, list) and len(value) == 2 and value[0] == 1:
+        return True
+    return False
+
+
 def parse_connection_key(key: str) -> tuple[str, str]:
     """Parse a connection pool key into (server_name, scope)."""
     parts = key.split("::", 1)
@@ -180,7 +198,7 @@ class MCPManager:
             filtered_rows = []
             for row in rows:
                 row_agent_id = row.get("agent_id")
-                is_global = isinstance(row_agent_id, dict) and "none" in row_agent_id
+                is_global = _is_stdb_none(row_agent_id)
                 if agent_id:
                     if is_global or row_agent_id == agent_id:
                         filtered_rows.append(row)

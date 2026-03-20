@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.core.spacetimedb import get_stdb
 from backend.app.mcp import mcp_manager, MCPServerConfig
+from backend.app.mcp.manager import _is_stdb_none
 
 logger = logging.getLogger("bond.mcp.api")
 
@@ -129,14 +130,14 @@ async def list_servers(agent_id: Optional[str] = None):
         filtered_rows = []
         for row in rows:
             row_agent_id = row.get("agent_id")
-            if (isinstance(row_agent_id, dict) and "none" in row_agent_id) or row_agent_id == agent_id:
+            if _is_stdb_none(row_agent_id) or row_agent_id == agent_id:
                 filtered_rows.append(row)
         rows = filtered_rows
 
     servers = []
     for row in rows:
         server = dict(row)
-        if isinstance(server.get("agent_id"), dict) and "none" in server["agent_id"]:
+        if _is_stdb_none(server.get("agent_id")):
             server["agent_id"] = None
         elif server.get("agent_id") == "":
             server["agent_id"] = None
