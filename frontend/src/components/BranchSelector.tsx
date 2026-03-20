@@ -20,9 +20,10 @@ interface BranchStatus {
 interface BranchSelectorProps {
   branchChangedSignal: number;
   turnCompleted: number;
+  agentId?: string | null;
 }
 
-export default function BranchSelector({ branchChangedSignal, turnCompleted }: BranchSelectorProps) {
+export default function BranchSelector({ branchChangedSignal, turnCompleted, agentId }: BranchSelectorProps) {
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [status, setStatus] = useState<BranchStatus | null>(null);
@@ -31,10 +32,11 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted }: B
 
   const fetchStatus = useCallback(async () => {
     try {
-      const resp = await fetch(`${GATEWAY_API}/container/branch`);
+      const params = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
+      const resp = await fetch(`${GATEWAY_API}/container/branch${params}`);
       if (resp.ok) setStatus(await resp.json());
     } catch { /* ignore */ }
-  }, []);
+  }, [agentId]);
 
   const fetchBranches = useCallback(async () => {
     try {
@@ -70,7 +72,7 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted }: B
       const resp = await fetch(`${GATEWAY_API}/container/branch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch }),
+        body: JSON.stringify({ branch, ...(agentId ? { agent_id: agentId } : {}) }),
       });
       if (resp.ok) {
         await fetchStatus();

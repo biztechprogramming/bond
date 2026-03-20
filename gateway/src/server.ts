@@ -224,11 +224,29 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     }
   });
 
-  app.get("/api/v1/container/branch", async (_req: any, res: any) => {
+  // Helper: resolve worker URL for an agent (returns null to use default)
+  async function resolveWorkerUrl(agentId?: string): Promise<{ workerUrl: string | null; containerId: string }> {
+    if (!agentId) return { workerUrl: null, containerId: "default" };
     try {
-      const containerId = "default";
+      const resp = await fetch(`${config.backendUrl}/api/v1/agent/resolve?agent_id=${encodeURIComponent(agentId)}`);
+      if (resp.ok) {
+        const resolved = await resp.json();
+        if (resolved.mode === "container" && resolved.worker_url) {
+          return { workerUrl: resolved.worker_url, containerId: agentId };
+        }
+      }
+    } catch (err) {
+      console.warn("[branches] Failed to resolve agent worker:", (err as Error).message);
+    }
+    return { workerUrl: null, containerId: "default" };
+  }
+
+  app.get("/api/v1/container/branch", async (req: any, res: any) => {
+    try {
+      const agentId = req.query?.agent_id as string | undefined;
+      const { workerUrl, containerId } = await resolveWorkerUrl(agentId);
       const branch = branchManager.getPreference(containerId);
-      const status = await branchManager.getWorkerStatus();
+      const status = await branchManager.getWorkerStatus(workerUrl || undefined);
       res.json({
         container_id: containerId,
         branch,
@@ -244,12 +262,12 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   app.post("/api/v1/container/branch", async (req: any, res: any) => {
     try {
-      const { branch } = req.body || {};
+      const { branch, agent_id: agentId } = req.body || {};
       if (!branch || typeof branch !== "string") {
         return res.status(400).json({ error: "branch is required" });
       }
-      const containerId = "default";
-      const result = await branchManager.setPreference(containerId, branch);
+      const { workerUrl, containerId } = await resolveWorkerUrl(agentId);
+      const result = await branchManager.setPreference(containerId, branch, workerUrl || undefined);
       webchat.broadcast({
         type: "branch_changed" as any,
         content: JSON.stringify({ branch, reason: "user" }),

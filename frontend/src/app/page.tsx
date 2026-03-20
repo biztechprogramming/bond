@@ -636,7 +636,7 @@ export default function Home() {
               {sidebarOpen ? "\u2190" : "\u2261"}
             </button>
             <h1 style={styles.title}>{selectedAgentName}</h1>
-            <BranchSelector branchChangedSignal={branchChangedSignal} turnCompleted={turnCompletedSignal} />
+            <BranchSelector branchChangedSignal={branchChangedSignal} turnCompleted={turnCompletedSignal} agentId={selectedAgentId} />
             {activePlan && planConversationId === conversationId && (
               <a
                 href={`/board?plan=${activePlan.id}`}

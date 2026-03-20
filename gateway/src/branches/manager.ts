@@ -150,18 +150,21 @@ export class BranchManager {
   async setPreference(
     containerId = "default",
     branch: string,
+    workerUrl?: string,
   ): Promise<{ deferred: boolean; activeTurns: number | null }> {
     this.prefs[containerId] = branch;
     this.savePrefs();
 
+    const targetUrl = workerUrl || this.workerUrl;
+
     // Try to notify the worker
     try {
-      const status = await this.getWorkerStatus();
+      const status = await this.getWorkerStatus(workerUrl);
       if (!status.online) {
         return { deferred: false, activeTurns: null };
       }
 
-      const resp = await fetch(`${this.workerUrl}/reload`, {
+      const resp = await fetch(`${targetUrl}/reload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ branch }),
@@ -184,12 +187,13 @@ export class BranchManager {
   /**
    * Check worker health and current branch.
    */
-  async getWorkerStatus(): Promise<WorkerStatus> {
+  async getWorkerStatus(workerUrl?: string): Promise<WorkerStatus> {
+    const targetUrl = workerUrl || this.workerUrl;
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 3000);
 
-      const resp = await fetch(`${this.workerUrl}/branch`, {
+      const resp = await fetch(`${targetUrl}/branch`, {
         signal: controller.signal,
       });
       clearTimeout(timeout);
