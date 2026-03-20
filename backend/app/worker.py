@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 import hashlib
-import subprocess as _sp_module
 
 import aiosqlite
 import sqlite_vec
@@ -430,12 +429,6 @@ app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 # Module-level manifest cache (updated by /reload)
 _prompt_manifest_cache: str | None = None
 
-# Turn refcounting for safe branch switching / reload
-_active_turns: int = 0
-_active_turns_lock: asyncio.Lock = asyncio.Lock()
-_pending_reload: bool = False
-_pending_branch: str | None = None
-
 
 @app.get("/health")
 async def health() -> dict:
@@ -459,18 +452,18 @@ async def interrupt(request: Request) -> dict:
     return {"acknowledged": True}
 
 
-async def _execute_reload(branch: str) -> dict:
-    """Pull latest code from the given branch and regenerate prompt manifest."""
+@app.post("/reload")
+async def reload_prompts():
+    """Called by Gateway after main branch merge to refresh prompt manifest."""
     global _prompt_manifest_cache
+    import subprocess as _sp
     from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
 
+    # Pull latest from main
     bond_root = Path("/bond")
     try:
-        _sp_module.run(
-            ["git", "fetch", "origin"], cwd=bond_root, capture_output=True, timeout=30,
-        )
-        _sp_module.run(
-            ["git", "pull", "origin", branch, "--ff-only"],
+        _sp.run(
+            ["git", "pull", "origin", "main", "--ff-only"],
             cwd=bond_root, capture_output=True, timeout=30,
         )
     except Exception:
@@ -483,159 +476,7 @@ async def _execute_reload(branch: str) -> dict:
     else:
         count = 0
 
-    os.environ["BOND_GIT_BRANCH"] = branch
     return {"ok": True, "categories": count}
-
-
-@app.post("/reload")
-async def reload_prompts(request: Request):
-    """Called by Gateway after branch push to refresh prompt manifest."""
-    global _pending_reload, _pending_branch
-
-    # Accept branch from query param or JSON body
-    branch = request.query_params.get("branch")
-    if not branch:
-        try:
-            body = await request.json()
-            branch = body.get("branch")
-        except Exception:
-            pass
-    if not branch:
-        branch = os.environ.get("BOND_GIT_BRANCH", "main")
-
-    async with _active_turns_lock:
-        if _active_turns > 0:
-            _pending_reload = True
-            _pending_branch = branch
-            return {"ok": True, "deferred": True, "active_turns": _active_turns}
-
-    result = await _execute_reload(branch)
-    return result
-
-
-def _git_current_branch() -> str:
-    """Get the current git branch name."""
-    bond_root = Path("/bond")
-    try:
-        result = _sp_module.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=bond_root, capture_output=True, text=True, timeout=5,
-        )
-        return result.stdout.strip() or "unknown"
-    except Exception:
-        return "unknown"
-
-
-@app.get("/branch")
-async def get_branch():
-    """Return current branch name, active turn count, and pending reload status."""
-    container_id = os.environ.get('BOND_CONTAINER_ID', os.environ.get('HOSTNAME', 'default'))
-    return {
-        "branch": _git_current_branch(),
-        "active_turns": _active_turns,
-        "pending_reload": _pending_reload,
-        "container_id": container_id,
-    }
-
-
-@app.post("/branch")
-async def switch_branch(request: Request):
-    """Switch to a different git branch. Defers if turns are active."""
-    global _pending_reload, _pending_branch
-
-    body = await request.json()
-    branch = body.get("branch")
-    if not branch:
-        return {"ok": False, "error": "Missing 'branch' field"}
-
-    async with _active_turns_lock:
-        if _active_turns > 0:
-            _pending_reload = True
-            _pending_branch = branch
-            return {"ok": True, "deferred": True, "active_turns": _active_turns, "branch": branch}
-
-    bond_root = Path("/bond")
-    try:
-        # Fetch latest
-        _sp_module.run(
-            ["git", "fetch", "origin", "--prune"],
-            cwd=bond_root, capture_output=True, timeout=30,
-        )
-        # Checkout
-        checkout = _sp_module.run(
-            ["git", "checkout", branch],
-            cwd=bond_root, capture_output=True, text=True, timeout=15,
-        )
-        if checkout.returncode != 0:
-            return {"ok": False, "error": f"Checkout failed: {checkout.stderr.strip()}"}
-        # Pull
-        pull = _sp_module.run(
-            ["git", "pull", "origin", branch, "--ff-only"],
-            cwd=bond_root, capture_output=True, text=True, timeout=30,
-        )
-        if pull.returncode != 0:
-            return {"ok": False, "error": f"Pull failed: {pull.stderr.strip()}"}
-
-        os.environ["BOND_GIT_BRANCH"] = branch
-
-        # Regenerate prompt manifest
-        from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
-        global _prompt_manifest_cache
-        prompts_dir = bond_root / "prompts"
-        if prompts_dir.exists():
-            _prompt_manifest_cache = _gen_manifest(prompts_dir)
-
-        return {"ok": True, "deferred": False, "branch": _git_current_branch()}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-
-@app.get("/branches")
-async def list_branches():
-    """Return available remote branches for the UI."""
-    bond_root = Path("/bond")
-    try:
-        _sp_module.run(
-            ["git", "fetch", "origin", "--prune"],
-            cwd=bond_root, capture_output=True, timeout=30,
-        )
-        result = _sp_module.run(
-            ["git", "branch", "-r", "--sort=-committerdate",
-             "--format=%(refname:short) %(committerdate:iso8601)"],
-            cwd=bond_root, capture_output=True, text=True, timeout=10,
-        )
-        lines = result.stdout.strip().split("\n") if result.stdout.strip() else []
-
-        branches = []
-        seen = set()
-        for line in lines:
-            parts = line.strip().split(" ", 1)
-            if not parts:
-                continue
-            ref = parts[0]
-            last_push = parts[1].strip() if len(parts) > 1 else ""
-            # Strip origin/ prefix
-            name = ref.replace("origin/", "", 1)
-            if name in seen or name == "HEAD":
-                continue
-            seen.add(name)
-            branches.append({"name": name, "last_push": last_push})
-
-        # Prioritize main and dev, then most recent 5
-        priority = []
-        rest = []
-        for b in branches:
-            if b["name"] in ("main", "dev"):
-                priority.append(b)
-            else:
-                rest.append(b)
-        # Sort priority: main first, then dev
-        priority.sort(key=lambda x: 0 if x["name"] == "main" else 1)
-        result_branches = priority + rest[:5]
-
-        return {"branches": result_branches}
-    except Exception as e:
-        return {"branches": [], "error": str(e)}
 
 
 
@@ -757,10 +598,6 @@ async def coding_agent_events(conversation_id: str) -> StreamingResponse:
 @app.post("/turn")
 async def turn(request: Request) -> StreamingResponse:
     """Execute an agent turn and stream SSE events."""
-    global _active_turns
-    async with _active_turns_lock:
-        _active_turns += 1
-
     body = await request.json()
     message = body.get("message", "")
     history = body.get("history", [])
@@ -789,26 +626,15 @@ async def turn(request: Request) -> StreamingResponse:
         await event_queue.put(None)  # sentinel
 
     async def event_stream():
-        global _active_turns, _pending_reload, _pending_branch
-        try:
-            yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
+        yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
 
-            task = asyncio.create_task(run_loop())
-            while True:
-                event = await event_queue.get()
-                if event is None:
-                    break
-                yield event
-            await task
-        finally:
-            async with _active_turns_lock:
-                _active_turns -= 1
-                if _active_turns == 0 and _pending_reload:
-                    branch = _pending_branch or os.environ.get("BOND_GIT_BRANCH", "main")
-                    _pending_reload = False
-                    _pending_branch = None
-                    # Execute deferred reload
-                    asyncio.create_task(_execute_reload(branch))
+        task = asyncio.create_task(run_loop())
+        while True:
+            event = await event_queue.get()
+            if event is None:
+                break
+            yield event
+        await task
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
