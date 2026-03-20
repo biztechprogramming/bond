@@ -58,3 +58,11 @@ export interface BrokerConfig {
   dataDir: string;
   policyDir: string;
 }
+
+export interface MCPPolicyRule {
+  name?: string;
+  tools: string[];          // glob patterns for tool names (e.g. "mcp_*", "mcp_github_*")
+  agent_ids?: string[];     // glob patterns for agent IDs (empty = all agents)
+  decision: "allow" | "deny";
+  reason?: string;
+}

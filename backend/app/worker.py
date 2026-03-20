@@ -318,6 +318,7 @@ class WorkerState:
         self.turn_lock: asyncio.Lock = asyncio.Lock()
         self.pending_reload: bool = False
         self.pending_reload_branch: str | None = None
+        self.mcp_proxy: Any = None  # MCPProxyClient instance (Design Doc 054)
 
 
 _state = WorkerState()
@@ -375,25 +376,30 @@ async def _lifespan(application: FastAPI):
     # Startup branch checkout
     await _checkout_preferred_branch()
 
-    # MCP Setup for worker
+    # MCP Proxy Setup (Design Doc 054: host-side MCP via broker)
     try:
-        from backend.app.mcp import mcp_manager
-        # In worker, we can load servers from the local agent_db if they exist
-        if _state.agent_db:
-            # We need to wrap the aiosqlite connection in something load_servers_from_db accepts
-            # Or just implement a simplified version for aiosqlite
-            await _worker_load_mcp_servers(mcp_manager)
+        from backend.app.agent.tools.mcp_proxy import MCPProxyClient
+        agent_token = os.environ.get("BOND_AGENT_TOKEN", "")
+        if _state.persistence and _state.persistence.mode == "api" and agent_token:
+            gateway_url = _state.persistence.gateway_url
+            _state.mcp_proxy = MCPProxyClient(gateway_url, _state.agent_id, agent_token)
+            await _state.mcp_proxy.list_tools()
+            logger.info("MCP proxy client initialized (gateway=%s, tools=%d)", gateway_url, len(_state.mcp_proxy._tool_cache))
+        else:
+            _state.mcp_proxy = None
+            logger.info("MCP proxy client not initialized (no API persistence or token)")
     except Exception as e:
-        logger.error(f"Failed to load MCP servers in worker: {e}")
-        
+        _state.mcp_proxy = None
+        logger.error(f"Failed to initialize MCP proxy client: {e}")
+
     yield
-    
-    # MCP Shutdown
-    try:
-        from backend.app.mcp import mcp_manager
-        await mcp_manager.stop_all()
-    except:
-        pass
+
+    # MCP Proxy Shutdown
+    if getattr(_state, 'mcp_proxy', None):
+        try:
+            await _state.mcp_proxy.close()
+        except Exception:
+            pass
 
     # Kill any active coding agent sub-processes
     try:
@@ -405,32 +411,6 @@ async def _lifespan(application: FastAPI):
         pass
 
     await _shutdown()
-
-async def _worker_load_mcp_servers(manager):
-    """Load MCP servers from SpacetimeDB via the Gateway API."""
-    from backend.app.mcp import MCPServerConfig
-    if not _state.persistence or _state.persistence.mode != "api":
-        logger.warning("Cannot load MCP servers: persistence not in API mode")
-        return
-    try:
-        gateway_url = _state.persistence.gateway_url.rstrip("/")
-        url = f"{gateway_url}/api/v1/mcp?agent_id={_state.agent_id}"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            servers = resp.json()
-        for s in servers:
-            config = MCPServerConfig(
-                name=s["name"],
-                command=s["command"],
-                args=s.get("args", []),
-                env=s.get("env", {}),
-                enabled=s.get("enabled", True),
-            )
-            await manager.add_server(config)
-        logger.info("Loaded %d MCP server(s) from SpacetimeDB", len(servers))
-    except Exception as e:
-        logger.error("Failed to load MCP servers from Gateway: %s", e)
 
 async def _checkout_preferred_branch():
     """Checkout the preferred branch on startup."""
@@ -467,6 +447,18 @@ async def _checkout_preferred_branch():
             os.environ["BOND_GIT_BRANCH"] = target_branch
     except Exception as e:
         logger.warning("Startup branch checkout failed: %s", e)
+
+
+async def _shutdown_for_branch_change():
+    """Shut down the worker so the container gets destroyed and recreated on the new branch.
+
+    Waits briefly to let the current SSE response stream finish, then exits.
+    The gateway saves the branch preference; the next container start will
+    checkout the correct branch via _checkout_preferred_branch().
+    """
+    await asyncio.sleep(2)  # Give SSE stream time to flush
+    logger.info("Exiting for branch change — container will be recreated")
+    os._exit(0)
 
 
 async def _do_branch_reload(branch: str):
@@ -539,7 +531,12 @@ async def get_branch():
 
 @app.post("/reload")
 async def reload_prompts(request: Request):
-    """Called by Gateway to switch branch and refresh prompt manifest."""
+    """Called by Gateway to switch branch.
+
+    Instead of hot-reloading, the worker exits so the container gets
+    destroyed and recreated on the correct branch.  If a turn is active,
+    the exit is deferred until the turn completes.
+    """
     body = {}
     try:
         body = await request.json()
@@ -558,15 +555,22 @@ async def reload_prompts(request: Request):
                 "active_turns": _state.active_turns,
             }
 
-    try:
-        await _do_branch_reload(branch)
-    except Exception as e:
-        logger.error("Reload failed: %s", e)
-        return {"ok": False, "error": str(e)}
-
-    return {"ok": True, "deferred": False}
+    # No active turns — schedule shutdown for container recreation
+    logger.info("Branch change to '%s' requested (idle) — shutting down for container recreation", branch)
+    asyncio.create_task(_shutdown_for_branch_change())
+    return {"ok": True, "deferred": False, "shutting_down": True}
 
 
+
+
+def _tool_not_found_message(tool_name: str, agent_tools: list[str]) -> str:
+    """Return an error message with fuzzy-match suggestions for misnamed tools."""
+    from difflib import get_close_matches
+    suggestions = get_close_matches(tool_name, agent_tools, n=3, cutoff=0.5)
+    msg = f"Tool '{tool_name}' is not enabled."
+    if suggestions:
+        msg += f" Did you mean: {', '.join(suggestions)}?"
+    return msg
 
 
 def _discover_workspace() -> str | None:
@@ -733,7 +737,11 @@ async def turn(request: Request) -> StreamingResponse:
                     branch = _state.pending_reload_branch or os.environ.get("BOND_GIT_BRANCH", "main")
                     _state.pending_reload = False
                     _state.pending_reload_branch = None
-                    asyncio.create_task(_do_branch_reload(branch))
+                    # Exit the process so the container gets destroyed and recreated
+                    # on the correct branch. The gateway has already saved the branch
+                    # preference; the next container start will checkout that branch.
+                    logger.info("Branch change to '%s' pending — shutting down for container recreation", branch)
+                    asyncio.create_task(_shutdown_for_branch_change())
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -814,6 +822,7 @@ async def _run_agent_loop(
         sse_event_fn=_sse_event,
         utility_kwargs=utility_kwargs,
         discover_workspace_fn=_discover_workspace,
+        mcp_proxy=getattr(_state, 'mcp_proxy', None),
     )
     full_system_prompt = ctx.full_system_prompt
     compressed_history = ctx.compressed_history
@@ -864,15 +873,16 @@ async def _run_agent_loop(
     # ── 3. Tool setup ──
     registry = build_native_registry()
 
-    # Refresh MCP tools
-    try:
-        from backend.app.mcp import mcp_manager
-        await mcp_manager.refresh_tools(registry)
-        for name in registry.registered_names:
-            if name.startswith("mcp_") and name not in agent_tools:
-                agent_tools.append(name)
-    except Exception as e:
-        logger.error(f"Failed to refresh MCP tools in worker loop: {e}")
+    # Register MCP proxy tools (Design Doc 054)
+    mcp_proxy = getattr(_state, 'mcp_proxy', None)
+    if mcp_proxy:
+        try:
+            mcp_tool_names = await mcp_proxy.register_proxy_handlers(registry)
+            for name in mcp_tool_names:
+                if name not in agent_tools:
+                    agent_tools.append(name)
+        except Exception as e:
+            logger.error(f"Failed to register MCP proxy tools: {e}")
 
     # Extract last assistant message for tool selection context
     last_assistant = ""
@@ -904,16 +914,14 @@ async def _run_agent_loop(
     # Use compact schemas to further reduce token usage
     tool_defs = [compact_tool_schema(TOOL_MAP[name]) for name in selected_tool_names if name in TOOL_MAP]
 
-    # Append MCP tool definitions (not in TOOL_MAP — they live in mcp_manager)
-    try:
-        from backend.app.mcp import mcp_manager
+    # Append MCP proxy tool definitions (Design Doc 054)
+    mcp_proxy = getattr(_state, 'mcp_proxy', None)
+    if mcp_proxy:
         mcp_selected = [n for n in selected_tool_names if n.startswith("mcp_") and n not in TOOL_MAP]
         if mcp_selected:
-            mcp_defs = mcp_manager.get_definitions(mcp_selected)
+            mcp_defs = mcp_proxy.get_tool_definitions(mcp_selected)
             tool_defs.extend([compact_tool_schema(d) for d in mcp_defs])
-            logger.info("Added %d MCP tool definition(s) to LLM call", len(mcp_defs))
-    except Exception as e:
-        logger.debug("MCP tool defs injection skipped: %s", e)
+            logger.info("Added %d MCP proxy tool definition(s) to LLM call", len(mcp_defs))
 
     # Read coding agent settings from local DB (if available)
     coding_agent_settings: dict[str, str] = {}
@@ -1360,7 +1368,7 @@ async def _run_agent_loop(
                     outcome.had_loop_intervention = True
 
                     if tool_name not in agent_tools:
-                        result = {"error": f"Tool '{tool_name}' is not enabled."}
+                        result = {"error": _tool_not_found_message(tool_name, agent_tools)}
                     else:
                         result = await registry.execute(tool_name, tool_args, tool_context)
                     messages.append({
@@ -1447,20 +1455,16 @@ async def _run_agent_loop(
                         )
 
                 if tool_name not in agent_tools:
-                    result = {"error": f"Tool '{tool_name}' is not enabled."}
+                    result = {"error": _tool_not_found_message(tool_name, agent_tools)}
                 else:
                     if tool_name not in selected_tool_names:
                         logger.info("Tool %s not in selected set but enabled — adding dynamically", tool_name)
                         selected_tool_names.append(tool_name)
                         if tool_name in TOOL_MAP:
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
-                        elif tool_name.startswith("mcp_"):
-                            try:
-                                from backend.app.mcp import mcp_manager
-                                _mcp_dyn = mcp_manager.get_definitions([tool_name])
-                                tool_defs.extend([compact_tool_schema(d) for d in _mcp_dyn])
-                            except Exception:
-                                pass
+                        elif tool_name.startswith("mcp_") and mcp_proxy:
+                            _mcp_dyn = mcp_proxy.get_tool_definitions([tool_name])
+                            tool_defs.extend([compact_tool_schema(d) for d in _mcp_dyn])
 
                     if tool_call.id in _parallel_precomputed:
                         result, duration = _parallel_precomputed[tool_call.id]

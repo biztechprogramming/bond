@@ -29,6 +29,9 @@ universal/proactive-workflow.md:
 universal/act-before-responding.md:
   tier: 1
 
+universal/message-handling.md:
+  tier: 1
+
 # Demoted from Tier 1 — only needed during active work phases
 universal/reasoning.md:
   tier: 2

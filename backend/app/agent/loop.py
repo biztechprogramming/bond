@@ -223,16 +223,14 @@ async def agent_turn(
     # Build tool definitions
     registry = build_registry()
     
-    # Inject MCP tools
+    # Inject MCP tools (Design Doc 054: host-side via proxy or direct manager)
     all_enabled_tools = list(agent_tools)
     try:
         from backend.app.mcp import mcp_manager
-        # Load both global and agent-specific servers for this turn
-        # NO SQLITE FALLBACK - use SpacetimeDB directly
-        await mcp_manager.load_servers_from_db(None, agent_id=agent["id"])
+        # Host-side loop: use MCPManager directly (connection pools)
+        await mcp_manager.ensure_servers_loaded(agent_id=agent["id"])
         await mcp_manager.refresh_tools(registry)
-        
-        # Add MCP tools to the agent_tools list
+
         for name in registry.registered_names:
             if name.startswith("mcp_") and name not in all_enabled_tools:
                 all_enabled_tools.append(name)
@@ -330,8 +328,8 @@ async def agent_turn(
                 # (Simulating a LiteLLM response object for minimum code disruption)
                 
                 # Resolve tool name (handles both native snake_case and MCP PascalCase)
-                from backend.app.mcp import mcp_manager
-                tool_name = mcp_manager.resolve_tool_name(tool_call_obj.__class__.__name__)
+                from backend.app.mcp import mcp_manager as _loop_mcp_manager
+                tool_name = _loop_mcp_manager.resolve_tool_name(tool_call_obj.__class__.__name__)
                 
                 args = tool_call_obj.model_dump(exclude_none=True)
                 

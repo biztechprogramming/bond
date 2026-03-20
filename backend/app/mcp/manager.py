@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("bond.mcp")
 
+
 class MCPServerConfig(BaseModel):
     name: str
     command: str
@@ -23,8 +24,9 @@ class MCPServerConfig(BaseModel):
     env: Dict[str, str] = {}
     enabled: bool = True
 
+
 class MCPConnection:
-    """Manages a single MCP server connection."""
+    """Manages a single MCP server connection with auto-recovery."""
     def __init__(self, config: MCPServerConfig):
         self.config = config
         self.params = StdioServerParameters(
@@ -35,6 +37,7 @@ class MCPConnection:
         self.session: Optional[ClientSession] = None
         self._exit_stack = AsyncExitStack()
         self._lock = asyncio.Lock()
+        self._healthy = False
 
     async def start(self):
         async with self._lock:
@@ -45,60 +48,306 @@ class MCPConnection:
                 read, write = await self._exit_stack.enter_async_context(stdio_client(self.params))
                 self.session = await self._exit_stack.enter_async_context(ClientSession(read, write))
                 await self.session.initialize()
+                self._healthy = True
             except Exception as e:
                 logger.error(f"Failed to start MCP server {self.config.name}: {e}")
+                self._healthy = False
                 await self._exit_stack.aclose()
                 raise
 
     async def stop(self):
         async with self._lock:
+            self._healthy = False
             if self.session:
                 logger.info(f"Stopping MCP server: {self.config.name}")
-                # mcp sessions/stdio clients can be very picky about cleanup
-                # especially with anyio's cancel scopes. 
-                # We try a clean close but don't let it crash the manager.
                 try:
                     await asyncio.wait_for(self._exit_stack.aclose(), timeout=2.0)
                 except (asyncio.TimeoutError, Exception) as e:
                     logger.debug(f"Non-critical cleanup error for {self.config.name}: {e}")
-                
                 self.session = None
                 self._exit_stack = AsyncExitStack()
 
-class MCPManager:
-    """Manages multiple MCP connections and tool integration."""
-    def __init__(self):
-        self.connections: Dict[str, MCPConnection] = {}
-        self._dynamic_definitions: Dict[str, dict] = {} # tool_name -> json_schema
-        self._bond_to_class_map: Dict[str, str] = {} # ClassName -> bond_tool_name
+    async def restart(self):
+        """Stop and restart the connection (auto-recovery)."""
+        await self.stop()
+        await self.start()
 
-    async def add_server(self, config: MCPServerConfig):
-        # Prevent duplicate servers with same name
-        if config.name in self.connections:
-            await self.connections[config.name].stop()
-            
-        conn = MCPConnection(config)
-        self.connections[config.name] = conn
-        await conn.start()
+    @property
+    def is_healthy(self) -> bool:
+        return self._healthy and self.session is not None
+
+
+class MCPConnectionPool:
+    """Pool of connections to a single MCP server for concurrency."""
+    def __init__(self, config: MCPServerConfig, pool_size: int = 2):
+        self.config = config
+        self.pool_size = pool_size
+        self._connections: List[MCPConnection] = []
+        self._semaphore = asyncio.Semaphore(pool_size)
+        self._robin_index = 0
+        self._lock = asyncio.Lock()
+
+    async def start(self):
+        """Start all connections in the pool."""
+        for _ in range(self.pool_size):
+            conn = MCPConnection(self.config)
+            try:
+                await conn.start()
+                self._connections.append(conn)
+            except Exception as e:
+                logger.error(f"Failed to start pool connection for {self.config.name}: {e}")
+                # Start at least one - if first fails, raise
+                if not self._connections:
+                    raise
+
+    async def stop(self):
+        """Stop all connections in the pool."""
+        for conn in self._connections:
+            await conn.stop()
+        self._connections.clear()
+
+    async def acquire(self) -> MCPConnection:
+        """Acquire a connection from the pool (round-robin with semaphore)."""
+        await self._semaphore.acquire()
+        async with self._lock:
+            if not self._connections:
+                self._semaphore.release()
+                raise RuntimeError(f"No connections available for {self.config.name}")
+            conn = self._connections[self._robin_index % len(self._connections)]
+            self._robin_index += 1
+            # Auto-recover dead connections
+            if not conn.is_healthy:
+                try:
+                    await conn.restart()
+                except Exception:
+                    pass
+            return conn
+
+    def release(self):
+        """Release a connection back to the pool."""
+        self._semaphore.release()
+
+    @property
+    def has_healthy_connection(self) -> bool:
+        return any(c.is_healthy for c in self._connections)
+
+    @property
+    def healthy_count(self) -> int:
+        return sum(1 for c in self._connections if c.is_healthy)
+
+
+def _is_stdb_none(value: Any) -> bool:
+    """Check if a SpacetimeDB value represents None/null.
+
+    SpacetimeDB encodes Option<T> as tagged enums that show up as:
+      - {"none": []}  (dict format)
+      - [1, []]       (array-tagged format, tag 1 = None variant)
+      - None           (Python None)
+      - ""             (empty string)
+    """
+    if value is None or value == "":
+        return True
+    if isinstance(value, dict) and "none" in value:
+        return True
+    if isinstance(value, list) and len(value) == 2 and value[0] == 1:
+        return True
+    return False
+
+
+def parse_connection_key(key: str) -> tuple[str, str]:
+    """Parse a connection pool key into (server_name, scope)."""
+    parts = key.split("::", 1)
+    return (parts[0], parts[1]) if len(parts) == 2 else (parts[0], "global")
+
+
+def _format_result(result) -> str:
+    """Format an MCP call result into a string."""
+    output = []
+    for content in result.content:
+        if hasattr(content, 'text') and content.text:
+            output.append(content.text)
+        elif hasattr(content, 'data') and content.data:
+            output.append(f"[Data content: {len(content.data)} bytes]")
+        elif hasattr(content, 'uri') and content.uri:
+            output.append(f"[Resource: {content.uri}]")
+    return "\n".join(output) if output else "Tool executed successfully (no output)."
+
+
+class MCPManager:
+    """Manages MCP connection pools with health monitoring."""
+    def __init__(self, pool_size: int = 2, health_interval: float = 30.0):
+        self.connection_pools: Dict[str, MCPConnectionPool] = {}
+        self._pool_size = pool_size
+        self._health_interval = health_interval
+        self._health_task: Optional[asyncio.Task] = None
+        self._dynamic_definitions: Dict[str, dict] = {}
+        self._bond_to_class_map: Dict[str, str] = {}
+
+    async def ensure_servers_loaded(self, agent_id: Optional[str] = None):
+        """Load enabled MCP servers from SpacetimeDB if not already loaded."""
+        try:
+            from backend.app.core.spacetimedb import get_stdb
+            stdb = get_stdb()
+
+            sql = "SELECT * FROM mcp_servers WHERE enabled = true"
+            rows = await stdb.query(sql)
+
+            scope = agent_id or "global"
+
+            # Filter rows
+            filtered_rows = []
+            for row in rows:
+                row_agent_id = row.get("agent_id")
+                is_global = _is_stdb_none(row_agent_id)
+                if agent_id:
+                    if is_global or row_agent_id == agent_id:
+                        filtered_rows.append(row)
+                else:
+                    if is_global:
+                        filtered_rows.append(row)
+
+            for row in filtered_rows:
+                config = MCPServerConfig(
+                    name=row["name"],
+                    command=row["command"],
+                    args=json.loads(row["args"]),
+                    env=json.loads(row["env"]),
+                    enabled=bool(row["enabled"])
+                )
+                key = f"{config.name}::{scope}"
+                if key not in self.connection_pools:
+                    pool = MCPConnectionPool(config, self._pool_size)
+                    await pool.start()
+                    self.connection_pools[key] = pool
+                    logger.info(f"Started connection pool: {key}")
+
+        except Exception as e:
+            logger.error(f"Failed to load MCP servers from DB: {e}")
+
+    async def add_server(self, config: MCPServerConfig, scope: str = "global"):
+        """Add a server connection pool."""
+        key = f"{config.name}::{scope}"
+        if key in self.connection_pools:
+            await self.connection_pools[key].stop()
+
+        pool = MCPConnectionPool(config, self._pool_size)
+        self.connection_pools[key] = pool
+        await pool.start()
 
     async def stop_all(self):
-        for conn in self.connections.values():
-            await conn.stop()
-
-    async def refresh_tools(self, registry: ToolRegistry):
-        """Fetch tools from all servers and register them."""
-        self._dynamic_definitions.clear()
-        for server_name, conn in self.connections.items():
-            if not conn.session:
-                continue
-            
+        """Stop all connection pools and the health monitor."""
+        if self._health_task and not self._health_task.done():
+            self._health_task.cancel()
             try:
+                await self._health_task
+            except asyncio.CancelledError:
+                pass
+        for pool in self.connection_pools.values():
+            await pool.stop()
+        self.connection_pools.clear()
+
+    def start_health_monitor(self):
+        """Start the background health monitoring loop."""
+        if self._health_task and not self._health_task.done():
+            return
+        self._health_task = asyncio.create_task(self._health_loop())
+
+    async def _health_loop(self):
+        """Periodically check pool health and restart dead connections."""
+        while True:
+            try:
+                await asyncio.sleep(self._health_interval)
+                for key, pool in list(self.connection_pools.items()):
+                    if not pool.has_healthy_connection:
+                        logger.warning(f"Pool {key} has no healthy connections, restarting...")
+                        try:
+                            await pool.stop()
+                            await pool.start()
+                        except Exception as e:
+                            logger.error(f"Failed to restart pool {key}: {e}")
+                    else:
+                        unhealthy = pool.pool_size - pool.healthy_count
+                        if unhealthy > 0:
+                            logger.info(f"Pool {key}: {pool.healthy_count}/{pool.pool_size} healthy")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Health monitor error: {e}")
+
+    async def call_tool(self, server_name: str, tool_name: str, arguments: dict, scope: str = "global") -> dict:
+        """Call an MCP tool through the connection pool."""
+        key = f"{server_name}::{scope}"
+        pool = self.connection_pools.get(key)
+        # Fall back to global scope if agent-scoped pool not found
+        if not pool and scope != "global":
+            key = f"{server_name}::global"
+            pool = self.connection_pools.get(key)
+
+        if not pool:
+            return {"error": f"MCP server '{server_name}' is not connected (scope={scope})."}
+
+        conn = await pool.acquire()
+        try:
+            if not conn.session:
+                return {"error": f"MCP server '{server_name}' session is not active."}
+            result = await conn.session.call_tool(tool_name, arguments)
+            return {"result": _format_result(result)}
+        except Exception as e:
+            return {"error": f"MCP tool call failed: {str(e)}"}
+        finally:
+            pool.release()
+
+    async def list_tools(self, scope: str = "global") -> list[dict]:
+        """List all available tools across all servers for a scope."""
+        all_tools = []
+        seen_servers = set()
+        for key, pool in self.connection_pools.items():
+            server_name, pool_scope = parse_connection_key(key)
+            if pool_scope != scope and pool_scope != "global":
+                continue
+            if server_name in seen_servers:
+                continue
+            seen_servers.add(server_name)
+
+            if not pool.has_healthy_connection:
+                continue
+
+            conn = await pool.acquire()
+            try:
+                if conn.session:
+                    result = await conn.session.list_tools()
+                    for mcp_tool in result.tools:
+                        bond_tool_name = f"mcp_{server_name}_{mcp_tool.name}"
+                        all_tools.append({
+                            "name": bond_tool_name,
+                            "server": server_name,
+                            "mcp_name": mcp_tool.name,
+                            "description": mcp_tool.description or f"MCP tool {mcp_tool.name}",
+                            "parameters": mcp_tool.inputSchema,
+                        })
+            except Exception as e:
+                logger.error(f"Failed to list tools for {server_name}: {e}")
+            finally:
+                pool.release()
+        return all_tools
+
+    async def refresh_tools(self, registry: "ToolRegistry"):
+        """Fetch tools from all servers and register them (host-side only)."""
+        self._dynamic_definitions.clear()
+        for key, pool in self.connection_pools.items():
+            server_name, _ = parse_connection_key(key)
+            if not pool.has_healthy_connection:
+                continue
+
+            conn = await pool.acquire()
+            try:
+                if not conn.session:
+                    continue
+
                 result = await conn.session.list_tools()
                 for mcp_tool in result.tools:
-                    # Prefix tool name to avoid collisions
                     bond_tool_name = f"mcp_{server_name}_{mcp_tool.name}"
-                    
-                    # Store definition for LLM
+
                     self._dynamic_definitions[bond_tool_name] = {
                         "type": "function",
                         "function": {
@@ -108,180 +357,43 @@ class MCPManager:
                         }
                     }
 
-                    # Register handler
                     registry.register(
-                        bond_tool_name, 
+                        bond_tool_name,
                         self._create_handler(server_name, mcp_tool.name)
                     )
-                    # Cache the mapping for easy retrieval during Instructor response processing
+
                     class_name = "".join(x.capitalize() for x in bond_tool_name.replace("-", "_").split("_"))
                     self._bond_to_class_map[class_name] = bond_tool_name
                     self._dynamic_definitions[bond_tool_name]["class_name"] = class_name
-                    
+
                     logger.info(f"Registered MCP tool: {bond_tool_name}")
             except Exception as e:
                 logger.error(f"Failed to refresh tools for {server_name}: {e}")
+            finally:
+                pool.release()
 
     def _create_handler(self, server_name: str, mcp_tool_name: str):
         async def handler(arguments: dict, context: dict) -> dict:
-            conn = self.connections.get(server_name)
-            if not conn or not conn.session:
-                return {"error": f"MCP server '{server_name}' is not connected."}
-            
-            try:
-                result = await conn.session.call_tool(mcp_tool_name, arguments)
-                # MCP results can be complex (content list), we'll simplify for now
-                # Result can contain text, image, or resource content
-                output = []
-                for content in result.content:
-                    if hasattr(content, 'text') and content.text:
-                        output.append(content.text)
-                    elif hasattr(content, 'data') and content.data:
-                        output.append(f"[Data content: {len(content.data)} bytes]")
-                    elif hasattr(content, 'uri') and content.uri:
-                        output.append(f"[Resource: {content.uri}]")
-                
-                return {"result": "\n".join(output) if output else "Tool executed successfully (no output)."}
-            except Exception as e:
-                return {"error": f"MCP tool call failed: {str(e)}"}
-        
+            return await self.call_tool(server_name, mcp_tool_name, arguments)
         return handler
-
-    def _create_handler_from_name(self, bond_tool_name: str):
-        """Reconstruct a handler from a bond_tool_name (used by worker registry)."""
-        # bond_tool_name = f"mcp_{server_name}_{mcp_tool_name}"
-        if not bond_tool_name.startswith("mcp_"):
-            raise ValueError(f"Invalid MCP tool name: {bond_tool_name}")
-        
-        # This is a bit brittle if server names have underscores, but let's try
-        # Better: find the longest matching server name
-        for server_name in self.connections:
-            prefix = f"mcp_{server_name}_"
-            if bond_tool_name.startswith(prefix):
-                mcp_tool_name = bond_tool_name[len(prefix):]
-                return self._create_handler(server_name, mcp_tool_name)
-        
-        raise ValueError(f"Server not found for tool: {bond_tool_name}")
 
     def get_definitions(self, tool_names: list[str]) -> list[dict]:
         return [self._dynamic_definitions[name] for name in tool_names if name in self._dynamic_definitions]
 
     def resolve_tool_name(self, class_name: str) -> str:
-        """Resolve a Pydantic class name back to its bond_tool_name."""
-        # Check the bond_to_class_map first (contains PascalCase class name -> snake_case bond name)
         if class_name in self._bond_to_class_map:
             return self._bond_to_class_map[class_name]
-        
-        # Static tools like 'Respond' or 'FileRead' are in the map too if they use this manager
-        # But they don't. So we fall back to regex for native tools.
         import re
         return re.sub(r'(?<!^)(?=[A-Z])', '_', class_name).lower()
 
-    def get_pydantic_models(self, tool_names: list[str]) -> list[Type[BaseModel]]:
-        """Generate Pydantic models for requested MCP tools."""
-        models: list[Type[BaseModel]] = []
-        for name in tool_names:
-            if name not in self._dynamic_definitions:
-                continue
-            
-            # If we already have a Pydantic model in our INSTRUCTOR_TOOL_MAP, don't recreate
-            # Actually MCP tools are always prefixed so they won't be in the map.
-            
-            schema = self._dynamic_definitions[name]["function"]["parameters"]
-            
-            # Simple dynamic model generation using pydantic.create_model
-            # Note: This is a basic implementation. Complex nested schemas might need recursion.
-            fields = {}
-            for prop_name, prop_info in schema.get("properties", {}).items():
-                prop_type = prop_info.get("type")
-                description = prop_info.get("description", "")
-                
-                field_type: Any = Any
-                if prop_type == "string":
-                    field_type = str
-                elif prop_type == "integer":
-                    field_type = int
-                elif prop_type == "number":
-                    field_type = float
-                elif prop_type == "boolean":
-                    field_type = bool
-                elif prop_type == "array":
-                    field_type = list
-                elif prop_type == "object":
-                    field_type = dict
-
-                if prop_name in schema.get("required", []):
-                    fields[prop_name] = (field_type, Field(..., description=description))
-                else:
-                    fields[prop_name] = (Optional[field_type], Field(None, description=description))
-
-            # Create the model class
-            class_name = self._dynamic_definitions[name]["class_name"]
-            from pydantic import BaseModel
-            try:
-                model = create_model(class_name, __base__=BaseModel, **fields)
-                model.__doc__ = self._dynamic_definitions[name]["function"]["description"]
-                models.append(model)
-            except Exception as e:
-                logger.error(f"Failed to create Pydantic model for {name}: {e}")
-                continue
-            
-        return models
-
-    async def load_servers_from_db(self, db: Optional[AsyncSession] = None, agent_id: Optional[str] = None):
-        """Load and start all enabled MCP servers from SpacetimeDB.
-        
-        Note: db parameter is kept for backward compatibility but is not used.
-        All data is now in SpacetimeDB - NO SQLITE FALLBACK!
-        """
-        try:
-            # Use SpacetimeDB - NO FALLBACK!
-            from backend.app.core.spacetimedb import get_stdb
-            stdb = get_stdb()
-            
-            # Get all enabled servers from SpacetimeDB
-            sql = "SELECT * FROM mcp_servers WHERE enabled = true"
-            rows = await stdb.query(sql)
-            
-            # Filter by agent_id if specified
-            if agent_id is not None:
-                # Include both global (agent_id is None/none) and agent-specific servers
-                filtered_rows = []
-                for row in rows:
-                    row_agent_id = row.get("agent_id")
-                    # Check if this is a global server or matches the agent_id
-                    if (isinstance(row_agent_id, dict) and "none" in row_agent_id) or row_agent_id == agent_id:
-                        filtered_rows.append(row)
-                rows = filtered_rows
-            else:
-                # Only global servers (agent_id is None/none)
-                filtered_rows = []
-                for row in rows:
-                    row_agent_id = row.get("agent_id")
-                    if isinstance(row_agent_id, dict) and "none" in row_agent_id:
-                        filtered_rows.append(row)
-                rows = filtered_rows
-            
-            for row in rows:
-                # Handle both dict (SpacetimeDB) and Row (SQLAlchemy) types
-                if isinstance(row, dict):
-                    config = MCPServerConfig(
-                        name=row["name"],
-                        command=row["command"],
-                        args=json.loads(row["args"]),
-                        env=json.loads(row["env"]),
-                        enabled=bool(row["enabled"])
-                    )
-                else:
-                    # SQLAlchemy Row object
-                    config = MCPServerConfig(
-                        name=row["name"],
-                        command=row["command"],
-                        args=json.loads(row["args"]),
-                        env=json.loads(row["env"]),
-                        enabled=bool(row["enabled"])
-                    )
-                if config.name not in self.connections:
-                    await self.add_server(config)
-        except Exception as e:
-            logger.error(f"Failed to load MCP servers from DB: {e}")
+    def get_pool_status(self) -> dict[str, dict]:
+        """Get status of all connection pools."""
+        status = {}
+        for key, pool in self.connection_pools.items():
+            status[key] = {
+                "server": pool.config.name,
+                "pool_size": pool.pool_size,
+                "healthy": pool.healthy_count,
+                "has_healthy": pool.has_healthy_connection,
+            }
+        return status

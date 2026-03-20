@@ -55,6 +55,7 @@ class Settings(BaseModel):
     backend_port: int = 18790
 
     # Gateway
+    gateway_scheme: str = "http"
     gateway_host: str = "127.0.0.1"
     gateway_port: int = 18789
 
@@ -115,6 +116,7 @@ def get_settings() -> Settings:
         llm_model=os.environ.get("BOND_LLM_MODEL", llm.get("model", "claude-sonnet-4-20250514")),
         backend_host=os.environ.get("BOND_BACKEND_HOST", backend.get("host", "127.0.0.1")),
         backend_port=int(os.environ.get("BOND_BACKEND_PORT", backend.get("port", 18790))),
+        gateway_scheme=os.environ.get("BOND_GATEWAY_SCHEME", gateway.get("scheme", "http")),
         gateway_host=os.environ.get("BOND_GATEWAY_HOST", gateway.get("host", "127.0.0.1")),
         gateway_port=int(os.environ.get("BOND_GATEWAY_PORT", gateway.get("port", 18789))),
         frontend_port=int(os.environ.get("BOND_FRONTEND_PORT", frontend.get("port", 18788))),
