@@ -46,7 +46,7 @@ class MCPProxyClient:
         client = self._get_client()
         try:
             resp = await client.get(
-                f"{self.gateway_url}/broker/mcp/tools",
+                f"{self.gateway_url}/api/v1/broker/mcp/tools",
                 params={"agent_id": self.agent_id},
             )
             resp.raise_for_status()
@@ -75,7 +75,7 @@ class MCPProxyClient:
         client = self._get_client()
         try:
             resp = await client.post(
-                f"{self.gateway_url}/broker/mcp",
+                f"{self.gateway_url}/api/v1/broker/mcp",
                 json={
                     "tool_name": tool_name,
                     "arguments": arguments,

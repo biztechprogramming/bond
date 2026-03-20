@@ -40,7 +40,8 @@ function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   next();
 }
 
-const BACKEND_BASE = process.env.BOND_BACKEND_URL || "http://localhost:18790";
+const BACKEND_BASE = process.env.BOND_BACKEND_URL
+  || `${process.env.BOND_BACKEND_SCHEME || "http"}://${process.env.BOND_BACKEND_HOST || "127.0.0.1"}:${process.env.BOND_BACKEND_PORT || "18790"}`;
 
 export function createBrokerRouter(config: BrokerConfig, gatewayConfig?: GatewayConfig): Router {
   initTokens(config.dataDir);
@@ -58,6 +59,18 @@ export function createBrokerRouter(config: BrokerConfig, gatewayConfig?: Gateway
       service: "permission-broker",
       uptime_ms: Date.now() - startTime,
     });
+  });
+
+  // POST /token/issue — issue a new agent token (internal, no auth required)
+  // Called by the Backend when spawning containers.
+  router.post("/token/issue", (req: Request, res: Response) => {
+    const { agent_id, session_id, ttl } = req.body || {};
+    if (!agent_id || typeof agent_id !== "string") {
+      res.status(400).json({ error: "agent_id is required" });
+      return;
+    }
+    const token = issueToken(agent_id, session_id || "default", ttl || 86400);
+    res.json({ token });
   });
 
   // All other routes require auth
