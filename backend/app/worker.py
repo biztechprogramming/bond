@@ -549,6 +549,16 @@ async def reload_prompts(request: Request):
 
 
 
+def _tool_not_found_message(tool_name: str, agent_tools: list[str]) -> str:
+    """Return an error message with fuzzy-match suggestions for misnamed tools."""
+    from difflib import get_close_matches
+    suggestions = get_close_matches(tool_name, agent_tools, n=3, cutoff=0.5)
+    msg = f"Tool '{tool_name}' is not enabled."
+    if suggestions:
+        msg += f" Did you mean: {', '.join(suggestions)}?"
+    return msg
+
+
 def _discover_workspace() -> str | None:
     """Set process cwd to /workspace (if mounted) and return a listing for the system prompt.
 
@@ -1340,7 +1350,7 @@ async def _run_agent_loop(
                     outcome.had_loop_intervention = True
 
                     if tool_name not in agent_tools:
-                        result = {"error": f"Tool '{tool_name}' is not enabled."}
+                        result = {"error": _tool_not_found_message(tool_name, agent_tools)}
                     else:
                         result = await registry.execute(tool_name, tool_args, tool_context)
                     messages.append({
@@ -1427,7 +1437,7 @@ async def _run_agent_loop(
                         )
 
                 if tool_name not in agent_tools:
-                    result = {"error": f"Tool '{tool_name}' is not enabled."}
+                    result = {"error": _tool_not_found_message(tool_name, agent_tools)}
                 else:
                     if tool_name not in selected_tool_names:
                         logger.info("Tool %s not in selected set but enabled — adding dynamically", tool_name)
