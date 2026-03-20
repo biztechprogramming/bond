@@ -421,8 +421,10 @@ async def _checkout_preferred_branch():
     if _state.persistence and _state.persistence.mode == "api":
         try:
             gateway_url = _state.persistence.gateway_url.rstrip("/")
+            # Pass agent_id so the gateway returns the branch preference for THIS agent
+            params = f"?agent_id={_state.agent_id}" if _state.agent_id else ""
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{gateway_url}/api/v1/container/branch")
+                resp = await client.get(f"{gateway_url}/api/v1/container/branch{params}")
                 if resp.status_code == 200:
                     data = resp.json()
                     target_branch = data.get("branch", target_branch)
