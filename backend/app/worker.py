@@ -449,6 +449,18 @@ async def _checkout_preferred_branch():
         logger.warning("Startup branch checkout failed: %s", e)
 
 
+async def _shutdown_for_branch_change():
+    """Shut down the worker so the container gets destroyed and recreated on the new branch.
+
+    Waits briefly to let the current SSE response stream finish, then exits.
+    The gateway saves the branch preference; the next container start will
+    checkout the correct branch via _checkout_preferred_branch().
+    """
+    await asyncio.sleep(2)  # Give SSE stream time to flush
+    logger.info("Exiting for branch change — container will be recreated")
+    os._exit(0)
+
+
 async def _do_branch_reload(branch: str):
     """Execute a branch switch: fetch, checkout, pull, rebuild manifest."""
     import subprocess as _sp
@@ -519,7 +531,12 @@ async def get_branch():
 
 @app.post("/reload")
 async def reload_prompts(request: Request):
-    """Called by Gateway to switch branch and refresh prompt manifest."""
+    """Called by Gateway to switch branch.
+
+    Instead of hot-reloading, the worker exits so the container gets
+    destroyed and recreated on the correct branch.  If a turn is active,
+    the exit is deferred until the turn completes.
+    """
     body = {}
     try:
         body = await request.json()
@@ -538,13 +555,10 @@ async def reload_prompts(request: Request):
                 "active_turns": _state.active_turns,
             }
 
-    try:
-        await _do_branch_reload(branch)
-    except Exception as e:
-        logger.error("Reload failed: %s", e)
-        return {"ok": False, "error": str(e)}
-
-    return {"ok": True, "deferred": False}
+    # No active turns — schedule shutdown for container recreation
+    logger.info("Branch change to '%s' requested (idle) — shutting down for container recreation", branch)
+    asyncio.create_task(_shutdown_for_branch_change())
+    return {"ok": True, "deferred": False, "shutting_down": True}
 
 
 
@@ -723,7 +737,11 @@ async def turn(request: Request) -> StreamingResponse:
                     branch = _state.pending_reload_branch or os.environ.get("BOND_GIT_BRANCH", "main")
                     _state.pending_reload = False
                     _state.pending_reload_branch = None
-                    asyncio.create_task(_do_branch_reload(branch))
+                    # Exit the process so the container gets destroyed and recreated
+                    # on the correct branch. The gateway has already saved the branch
+                    # preference; the next container start will checkout that branch.
+                    logger.info("Branch change to '%s' pending — shutting down for container recreation", branch)
+                    asyncio.create_task(_shutdown_for_branch_change())
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

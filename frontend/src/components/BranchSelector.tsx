@@ -20,21 +20,31 @@ interface BranchStatus {
 interface BranchSelectorProps {
   branchChangedSignal: number;
   turnCompleted: number;
+  agentId?: string | null;
 }
 
-export default function BranchSelector({ branchChangedSignal, turnCompleted }: BranchSelectorProps) {
+export default function BranchSelector({ branchChangedSignal, turnCompleted, agentId }: BranchSelectorProps) {
   const [open, setOpen] = useState(false);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [status, setStatus] = useState<BranchStatus | null>(null);
   const [switching, setSwitching] = useState(false);
+  const [pendingBranch, setPendingBranch] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
-      const resp = await fetch(`${GATEWAY_API}/container/branch`);
-      if (resp.ok) setStatus(await resp.json());
+      const params = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
+      const resp = await fetch(`${GATEWAY_API}/container/branch${params}`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setStatus(data);
+        // Clear pending branch once the container has been recreated on the new branch
+        if (pendingBranch && !data.pending_reload && data.branch === pendingBranch) {
+          setPendingBranch(null);
+        }
+      }
     } catch { /* ignore */ }
-  }, []);
+  }, [agentId, pendingBranch]);
 
   const fetchBranches = useCallback(async () => {
     try {
@@ -70,9 +80,14 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted }: B
       const resp = await fetch(`${GATEWAY_API}/container/branch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch }),
+        body: JSON.stringify({ branch, ...(agentId ? { agent_id: agentId } : {}) }),
       });
       if (resp.ok) {
+        const data = await resp.json();
+        if (data.deferred) {
+          // Turn is active — container will be recreated after it finishes
+          setPendingBranch(branch);
+        }
         await fetchStatus();
       }
     } catch { /* ignore */ }
@@ -80,8 +95,10 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted }: B
     setOpen(false);
   };
 
-  const currentBranch = status?.branch || "main";
-  const disabled = (status?.active_turns ?? 0) > 0;
+  const currentBranch = pendingBranch || status?.branch || "main";
+  const activeTurns = status?.active_turns ?? 0;
+  // Allow branch selection even during active turns — the switch is deferred
+  const disabled = false;
   const workerOffline = status !== null && !status.worker_online;
 
   return (
@@ -90,8 +107,8 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted }: B
         onClick={() => !disabled && setOpen(!open)}
         disabled={disabled}
         title={
-          disabled
-            ? "Another conversation is in progress \u2014 branch switching unavailable until it completes."
+          pendingBranch
+            ? `Switching to ${pendingBranch} after current turn completes (container will be recreated)`
             : `Current branch: ${currentBranch}`
         }
         style={{
@@ -124,8 +141,8 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted }: B
             }}
           />
         )}
-        {status?.pending_reload && (
-          <span style={{ fontSize: "0.7rem", color: "#ffa06c" }}>*</span>
+        {(status?.pending_reload || pendingBranch) && (
+          <span title={`Switching to ${pendingBranch || "new branch"} after turn completes`} style={{ fontSize: "0.7rem", color: "#ffa06c" }}>⏳</span>
         )}
       </button>
 
@@ -189,7 +206,7 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted }: B
                 fontSize: "0.72rem",
               }}
             >
-              Worker offline \u2014 preference saved for next startup
+              Container offline \u2014 will start on selected branch
             </div>
           )}
           {status?.container_id && status.container_id !== "default" && (
