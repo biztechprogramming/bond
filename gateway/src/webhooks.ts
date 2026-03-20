@@ -5,9 +5,9 @@ import type { EventBus } from "./events/index.js";
 import type { GatewayEvent } from "./events/index.js";
 
 export interface WebhookRouterOptions {
-  onMainMerge?: () => void;
+  onMainMerge?: () => void | Promise<void>;
   eventBus?: EventBus;
-  onPush?: (repo: string, branch: string, actor?: string) => void;
+  onPush?: (repo: string, branch: string, actor?: string) => void | Promise<void>;
 }
 
 /**

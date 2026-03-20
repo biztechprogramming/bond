@@ -197,32 +197,9 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "pull request", "open pr", "create tool", "propose change",
         "add prompt", "push branch", "new tool", "submit pr",
     ],
-    # SolidTime MCP tools — keyword triggers for heuristic tool selection.
-    # The MCP server registers tools as mcp_solidtime_<name>.
-    # We add broad "solidtime" keywords to a representative subset;
-    # the group-trigger below ensures all solidtime tools load together.
-    "mcp_solidtime_list_time_entries": [
-        "time entry", "time entries", "log time", "track time", "tracked time",
-        "hours logged", "time log", "log hours", "record time", "time tracking",
-        "solidtime", "solid time", "time sheet", "timesheet",
-    ],
-    "mcp_solidtime_start_timer": [
-        "timer", "start timer", "stop timer", "clock in", "clock out",
-        "start tracking", "stop tracking", "am I tracking", "running timer",
-        "active timer", "what am I working on", "solidtime", "solid time",
-    ],
-    "mcp_solidtime_list_projects": [
-        "solidtime", "solid time", "time tracking project", "tracked project",
-        "billable project",
-    ],
-    "mcp_solidtime_list_tasks": [
-        "solidtime", "solid time", "time tracking task",
-    ],
-    "mcp_solidtime_aggregate_time_entries": [
-        "solidtime", "solid time", "weekly hours", "time summary",
-        "hours this week", "tracked this week", "time report",
-        "how much time", "billable hours",
-    ],
+    # SolidTime keywords removed — dynamic tools in dynamic/ register
+    # their own keywords via SCHEMA["keywords"] at import time.
+    # See: solidtime_time_entries.py, solidtime_timer.py, etc.
 }
 
 # Pre-compile patterns for efficiency
@@ -356,10 +333,11 @@ def select_tools(
         if "search_memory" in enabled_tools:
             selected.add("search_memory")
 
-    # SolidTime MCP toolkit: if any solidtime tool matched, include the full set
-    solidtime_mcp_tools = {t for t in enabled_tools if t.startswith("mcp_solidtime_")}
-    if solidtime_mcp_tools & selected:
-        selected.update(solidtime_mcp_tools)
+    # SolidTime toolkit: if any solidtime tool matched, include the full set
+    # Matches both dynamic (solidtime_*) and MCP (mcp_solidtime_*) tools
+    solidtime_tools = {t for t in enabled_tools if t.startswith("solidtime_") or t.startswith("mcp_solidtime_")}
+    if solidtime_tools & selected:
+        selected.update(solidtime_tools)
 
     # Filesystem toolkit: if ANY file/coding/search tool matched, include
     # the full toolkit (~2,000 tokens). This is cheaper than one wasted
@@ -480,28 +458,23 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
         " Create a GitHub issue for deployment failures. Include error output,"
         " environment, severity, and suggested fix."
     ),
-    # MCP SolidTime routing hints — applied to mcp_solidtime_* tools
-    "mcp_solidtime_list_time_entries": (
-        " List SolidTime time entries. Use for viewing tracked time and hours logged."
+    # SolidTime routing hints — dynamic tools (routing hints help the agent
+    # pick the right tool when multiple solidtime tools are in context)
+    "solidtime_time_entries": (
+        " List or create SolidTime time entries. Use for viewing/logging tracked time."
+        " Get project_id from solidtime_projects first."
     ),
-    "mcp_solidtime_create_time_entry": (
-        " Create a SolidTime time entry. Use for logging hours manually."
-        " Get project_id from list_projects first."
+    "solidtime_timer": (
+        " Manage SolidTime timer — start, stop, or check active timer."
     ),
-    "mcp_solidtime_start_timer": (
-        " Start a SolidTime timer for real-time tracking (clock in)."
-    ),
-    "mcp_solidtime_stop_timer": (
-        " Stop the running SolidTime timer (clock out)."
-    ),
-    "mcp_solidtime_get_active_timer": (
-        " Check if a SolidTime timer is currently running."
-    ),
-    "mcp_solidtime_list_projects": (
+    "solidtime_projects": (
         " List SolidTime projects. Use to find project_id for time entries."
     ),
-    "mcp_solidtime_aggregate_time_entries": (
-        " Get aggregated time reports — by day, week, project, or client."
+    "solidtime_tasks": (
+        " List SolidTime tasks, optionally filtered by project."
+    ),
+    "solidtime_summary": (
+        " Get aggregated time reports — weekly hours, clients, tags."
     ),
 }
 
