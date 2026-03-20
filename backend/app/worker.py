@@ -318,6 +318,7 @@ class WorkerState:
         self.turn_lock: asyncio.Lock = asyncio.Lock()
         self.pending_reload: bool = False
         self.pending_reload_branch: str | None = None
+        self.mcp_proxy: Any = None  # MCPProxyClient instance (Design Doc 054)
 
 
 _state = WorkerState()
@@ -375,25 +376,29 @@ async def _lifespan(application: FastAPI):
     # Startup branch checkout
     await _checkout_preferred_branch()
 
-    # MCP Setup for worker
+    # MCP Proxy Setup (Design Doc 054: host-side MCP via broker)
     try:
-        from backend.app.mcp import mcp_manager
-        # In worker, we can load servers from the local agent_db if they exist
-        if _state.agent_db:
-            # We need to wrap the aiosqlite connection in something load_servers_from_db accepts
-            # Or just implement a simplified version for aiosqlite
-            await _worker_load_mcp_servers(mcp_manager)
+        from backend.app.agent.tools.mcp_proxy import MCPProxyClient
+        agent_token = os.environ.get("BOND_AGENT_TOKEN", "")
+        if _state.persistence and _state.persistence.mode == "api" and agent_token:
+            gateway_url = _state.persistence.gateway_url
+            _state.mcp_proxy = MCPProxyClient(gateway_url, _state.agent_id, agent_token)
+            logger.info("MCP proxy client initialized (gateway=%s)", gateway_url)
+        else:
+            _state.mcp_proxy = None
+            logger.info("MCP proxy client not initialized (no API persistence or token)")
     except Exception as e:
-        logger.error(f"Failed to load MCP servers in worker: {e}")
-        
+        _state.mcp_proxy = None
+        logger.error(f"Failed to initialize MCP proxy client: {e}")
+
     yield
-    
-    # MCP Shutdown
-    try:
-        from backend.app.mcp import mcp_manager
-        await mcp_manager.stop_all()
-    except:
-        pass
+
+    # MCP Proxy Shutdown
+    if getattr(_state, 'mcp_proxy', None):
+        try:
+            await _state.mcp_proxy.close()
+        except Exception:
+            pass
 
     # Kill any active coding agent sub-processes
     try:
@@ -405,32 +410,6 @@ async def _lifespan(application: FastAPI):
         pass
 
     await _shutdown()
-
-async def _worker_load_mcp_servers(manager):
-    """Load MCP servers from SpacetimeDB via the Gateway API."""
-    from backend.app.mcp import MCPServerConfig
-    if not _state.persistence or _state.persistence.mode != "api":
-        logger.warning("Cannot load MCP servers: persistence not in API mode")
-        return
-    try:
-        gateway_url = _state.persistence.gateway_url.rstrip("/")
-        url = f"{gateway_url}/api/v1/mcp?agent_id={_state.agent_id}"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            servers = resp.json()
-        for s in servers:
-            config = MCPServerConfig(
-                name=s["name"],
-                command=s["command"],
-                args=s.get("args", []),
-                env=s.get("env", {}),
-                enabled=s.get("enabled", True),
-            )
-            await manager.add_server(config)
-        logger.info("Loaded %d MCP server(s) from SpacetimeDB", len(servers))
-    except Exception as e:
-        logger.error("Failed to load MCP servers from Gateway: %s", e)
 
 async def _checkout_preferred_branch():
     """Checkout the preferred branch on startup."""
@@ -864,15 +843,16 @@ async def _run_agent_loop(
     # ── 3. Tool setup ──
     registry = build_native_registry()
 
-    # Refresh MCP tools
-    try:
-        from backend.app.mcp import mcp_manager
-        await mcp_manager.refresh_tools(registry)
-        for name in registry.registered_names:
-            if name.startswith("mcp_") and name not in agent_tools:
-                agent_tools.append(name)
-    except Exception as e:
-        logger.error(f"Failed to refresh MCP tools in worker loop: {e}")
+    # Register MCP proxy tools (Design Doc 054)
+    mcp_proxy = getattr(_state, 'mcp_proxy', None)
+    if mcp_proxy:
+        try:
+            mcp_tool_names = await mcp_proxy.register_proxy_handlers(registry)
+            for name in mcp_tool_names:
+                if name not in agent_tools:
+                    agent_tools.append(name)
+        except Exception as e:
+            logger.error(f"Failed to register MCP proxy tools: {e}")
 
     # Extract last assistant message for tool selection context
     last_assistant = ""
@@ -904,16 +884,14 @@ async def _run_agent_loop(
     # Use compact schemas to further reduce token usage
     tool_defs = [compact_tool_schema(TOOL_MAP[name]) for name in selected_tool_names if name in TOOL_MAP]
 
-    # Append MCP tool definitions (not in TOOL_MAP — they live in mcp_manager)
-    try:
-        from backend.app.mcp import mcp_manager
+    # Append MCP proxy tool definitions (Design Doc 054)
+    mcp_proxy = getattr(_state, 'mcp_proxy', None)
+    if mcp_proxy:
         mcp_selected = [n for n in selected_tool_names if n.startswith("mcp_") and n not in TOOL_MAP]
         if mcp_selected:
-            mcp_defs = mcp_manager.get_definitions(mcp_selected)
+            mcp_defs = mcp_proxy.get_tool_definitions(mcp_selected)
             tool_defs.extend([compact_tool_schema(d) for d in mcp_defs])
-            logger.info("Added %d MCP tool definition(s) to LLM call", len(mcp_defs))
-    except Exception as e:
-        logger.debug("MCP tool defs injection skipped: %s", e)
+            logger.info("Added %d MCP proxy tool definition(s) to LLM call", len(mcp_defs))
 
     # Read coding agent settings from local DB (if available)
     coding_agent_settings: dict[str, str] = {}
@@ -1454,13 +1432,9 @@ async def _run_agent_loop(
                         selected_tool_names.append(tool_name)
                         if tool_name in TOOL_MAP:
                             tool_defs.append(compact_tool_schema(TOOL_MAP[tool_name]))
-                        elif tool_name.startswith("mcp_"):
-                            try:
-                                from backend.app.mcp import mcp_manager
-                                _mcp_dyn = mcp_manager.get_definitions([tool_name])
-                                tool_defs.extend([compact_tool_schema(d) for d in _mcp_dyn])
-                            except Exception:
-                                pass
+                        elif tool_name.startswith("mcp_") and mcp_proxy:
+                            _mcp_dyn = mcp_proxy.get_tool_definitions([tool_name])
+                            tool_defs.extend([compact_tool_schema(d) for d in _mcp_dyn])
 
                     if tool_call.id in _parallel_precomputed:
                         result, duration = _parallel_precomputed[tool_call.id]

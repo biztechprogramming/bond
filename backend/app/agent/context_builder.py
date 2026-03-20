@@ -230,35 +230,55 @@ async def build_agent_context(
     except Exception:
         logger.debug("Lessons injection skipped", exc_info=True)
 
-    # MCP integrations summary
+    # MCP integrations summary (Design Doc 054: proxy-aware)
     try:
-        from backend.app.mcp import mcp_manager
-        if mcp_manager.connections:
-            _mcp_names = sorted(mcp_manager.connections.keys())
-            _mcp_connected = [
-                n for n in _mcp_names if mcp_manager.connections[n].session
-            ]
+        # Check for proxy client first (worker context), then host-side manager
+        import backend.app.worker as _w
+        _mcp_proxy = getattr(getattr(_w, '_state', None), 'mcp_proxy', None)
+        if _mcp_proxy and _mcp_proxy._tool_cache:
+            _mcp_server_names = sorted(set(t.get("server", "") for t in _mcp_proxy._tool_cache))
             _mcp_summary = (
                 "## MCP Integrations\n"
-                "Connected external services (via MCP servers): "
-                + ", ".join(_mcp_connected)
-            )
-            if len(_mcp_connected) < len(_mcp_names):
-                _mcp_disconnected = [n for n in _mcp_names if n not in _mcp_connected]
-                _mcp_summary += "\nDisconnected: " + ", ".join(_mcp_disconnected)
-            _mcp_summary += (
-                "\nTools from these servers are prefixed `mcp_<server>_`. "
+                "Connected external services (via MCP proxy): "
+                + ", ".join(_mcp_server_names)
+                + "\nTools from these servers are prefixed `mcp_<server>_`. "
                 "If asked about a service you don't have an MCP connection for, "
                 "say so directly — don't search the filesystem for it."
             )
             full_system_prompt += "\n\n" + _mcp_summary
         else:
-            full_system_prompt += (
-                "\n\n## MCP Integrations\n"
-                "No MCP servers are connected. If asked about external service "
-                "integrations (e.g. time tracking, CRM), say you don't currently "
-                "have access rather than searching the filesystem."
-            )
+            # Host-side: check MCPManager connection pools
+            from backend.app.mcp import mcp_manager
+            if mcp_manager.connection_pools:
+                from backend.app.mcp.manager import parse_connection_key
+                _pool_servers = sorted(set(
+                    parse_connection_key(k)[0] for k in mcp_manager.connection_pools
+                ))
+                _healthy = [s for s in _pool_servers if any(
+                    p.has_healthy_connection for k, p in mcp_manager.connection_pools.items()
+                    if parse_connection_key(k)[0] == s
+                )]
+                _mcp_summary = (
+                    "## MCP Integrations\n"
+                    "Connected external services (via MCP servers): "
+                    + ", ".join(_healthy)
+                )
+                _unhealthy = [s for s in _pool_servers if s not in _healthy]
+                if _unhealthy:
+                    _mcp_summary += "\nDisconnected: " + ", ".join(_unhealthy)
+                _mcp_summary += (
+                    "\nTools from these servers are prefixed `mcp_<server>_`. "
+                    "If asked about a service you don't have an MCP connection for, "
+                    "say so directly — don't search the filesystem for it."
+                )
+                full_system_prompt += "\n\n" + _mcp_summary
+            else:
+                full_system_prompt += (
+                    "\n\n## MCP Integrations\n"
+                    "No MCP servers are connected. If asked about external service "
+                    "integrations (e.g. time tracking, CRM), say you don't currently "
+                    "have access rather than searching the filesystem."
+                )
     except Exception:
         pass
 

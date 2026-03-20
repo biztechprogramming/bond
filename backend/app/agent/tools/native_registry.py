@@ -56,17 +56,8 @@ def build_native_registry() -> ToolRegistry:
     from .work_plan import handle_work_plan
 
     registry = ToolRegistry()
-    
-    # Register MCP tools if available
-    try:
-        from backend.app.mcp import mcp_manager
-        # We need to make sure tools are refreshed. 
-        # In worker, this might need a different approach if manager isn't initialized yet.
-        # But we'll assume the registry caller will handle refresh if needed.
-        for name in mcp_manager._dynamic_definitions:
-            registry.register(name, mcp_manager._create_handler_from_name(name))
-    except (ImportError, Exception):
-        pass
+    # MCP tools are registered via MCPProxyClient.register_proxy_handlers() in worker.py
+    # (Design Doc 054: no direct mcp_manager usage in containers)
 
     registry.register("respond", handle_respond)
     registry.register("say", handle_say)

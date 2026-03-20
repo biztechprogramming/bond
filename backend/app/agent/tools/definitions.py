@@ -1715,15 +1715,6 @@ INSTRUCTOR_TOOL_MAP = {
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:
-    # 1. Get static native tool models
-    models: List[Type[BaseModel]] = [INSTRUCTOR_TOOL_MAP[name] for name in enabled_tools if name in INSTRUCTOR_TOOL_MAP]
-    
-    # 2. Add dynamic MCP tool models
-    try:
-        from backend.app.mcp import mcp_manager
-        mcp_models = mcp_manager.get_pydantic_models(enabled_tools)
-        models.extend(mcp_models)
-    except (ImportError, Exception):
-        pass
-        
-    return models
+    # Static native tool models only — MCP proxy tools don't need Pydantic models
+    # (Design Doc 054: MCP tools are handled via proxy, not Instructor)
+    return [INSTRUCTOR_TOOL_MAP[name] for name in enabled_tools if name in INSTRUCTOR_TOOL_MAP]
