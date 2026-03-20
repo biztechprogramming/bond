@@ -19,6 +19,7 @@ import { createPersistenceRouter } from "./persistence/index.js";
 import { createConversationsRouter } from "./conversations/index.js";
 import { createPlansRouter } from "./plans/index.js";
 import { createWebhookRouter } from "./webhooks.js";
+import { BranchManager } from "./branches/manager.js";
 import { WebhookRegistrar } from "./webhooks/registrar.js";
 import { createBrokerRouter } from "./broker/router.js";
 import { createDeploymentsRouter } from "./deployments/router.js";
@@ -179,20 +180,90 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // GitHub webhook handler for repo update notifications
 
+  // Branch manager (gateway owns all branch state)
+  const branchManager = new BranchManager(config.backendUrl);
+
   const webhookRouter = createWebhookRouter({
     eventBus,
     onMainMerge: async () => {
-      // Notify all known workers to reload
-      console.log("[webhook] TODO: notify connected workers to /reload");
+      const pref = branchManager.getPreference("default");
+      if (pref === "main") {
+        const ok = await branchManager.notifyWorkerReload("main");
+        console.log(`[webhook] main branch updated — worker reload ${ok ? "sent" : "skipped (offline)"}`);
+      }
+      webchat.broadcast({
+        type: "branch_changed" as any,
+        content: JSON.stringify({ branch: pref, reason: "main_merge" }),
+      });
     },
-    onPush: (repo, branch, actor) => {
+    onPush: async (repo, branch, actor) => {
       webchat.broadcast({
         type: "webhook_push" as any,
         content: JSON.stringify({ repo, branch, actor }),
       });
+      const pref = branchManager.getPreference("default");
+      if (branch === pref) {
+        const ok = await branchManager.notifyWorkerReload(pref);
+        console.log(`[webhook] push to tracked branch '${pref}' — worker reload ${ok ? "sent" : "skipped (offline)"}`);
+        webchat.broadcast({
+          type: "branch_changed" as any,
+          content: JSON.stringify({ branch: pref, reason: "push" }),
+        });
+      }
     },
   });
   app.use("/webhooks", webhookRouter);
+
+  // Branch management API
+  app.get("/api/v1/container/branches", async (_req: any, res: any) => {
+    try {
+      const branches = await branchManager.listBranches();
+      res.json({ branches });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to list branches" });
+    }
+  });
+
+  app.get("/api/v1/container/branch", async (_req: any, res: any) => {
+    try {
+      const containerId = "default";
+      const branch = branchManager.getPreference(containerId);
+      const status = await branchManager.getWorkerStatus();
+      res.json({
+        container_id: containerId,
+        branch,
+        worker_online: status.online,
+        worker_branch: status.branch,
+        active_turns: status.activeTurns,
+        pending_reload: status.pendingReload,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to get branch" });
+    }
+  });
+
+  app.post("/api/v1/container/branch", async (req: any, res: any) => {
+    try {
+      const { branch } = req.body || {};
+      if (!branch || typeof branch !== "string") {
+        return res.status(400).json({ error: "branch is required" });
+      }
+      const containerId = "default";
+      const result = await branchManager.setPreference(containerId, branch);
+      webchat.broadcast({
+        type: "branch_changed" as any,
+        content: JSON.stringify({ branch, reason: "user" }),
+      });
+      res.json({
+        ok: true,
+        deferred: result.deferred,
+        branch,
+        ...(result.activeTurns !== null ? { active_turns: result.activeTurns } : {}),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to set branch" });
+    }
+  });
 
   // Event subscription API
   app.use("/api/v1/events", createEventsRouter(eventBus));

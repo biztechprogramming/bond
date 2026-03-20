@@ -313,6 +313,11 @@ class WorkerState:
         self.data_dir: Path = Path("/data")
         self.interrupt_event: asyncio.Event = asyncio.Event()
         self.pending_messages: list[dict] = []
+        # Turn refcounting for branch reload deferral
+        self.active_turns: int = 0
+        self.turn_lock: asyncio.Lock = asyncio.Lock()
+        self.pending_reload: bool = False
+        self.pending_reload_branch: str | None = None
 
 
 _state = WorkerState()
@@ -366,7 +371,10 @@ async def _lifespan(application: FastAPI):
     config_path = os.environ.get("BOND_WORKER_CONFIG", "/config/agent.json")
     data_dir = os.environ.get("BOND_WORKER_DATA_DIR", "/data")
     await _startup(config_path, data_dir)
-    
+
+    # Startup branch checkout
+    await _checkout_preferred_branch()
+
     # MCP Setup for worker
     try:
         from backend.app.mcp import mcp_manager
@@ -424,6 +432,63 @@ async def _worker_load_mcp_servers(manager):
     except Exception as e:
         logger.error("Failed to load MCP servers from Gateway: %s", e)
 
+async def _checkout_preferred_branch():
+    """Checkout the preferred branch on startup."""
+    import subprocess as _sp
+
+    # Try to get preferred branch from gateway
+    target_branch = os.environ.get("BOND_GIT_BRANCH", "main")
+    if _state.persistence and _state.persistence.mode == "api":
+        try:
+            gateway_url = _state.persistence.gateway_url.rstrip("/")
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{gateway_url}/api/v1/container/branch")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    target_branch = data.get("branch", target_branch)
+        except Exception as e:
+            logger.debug("Could not fetch branch preference from gateway: %s", e)
+
+    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
+    if not bond_root.exists():
+        return
+
+    try:
+        current = _sp.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=bond_root, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+
+        if current != target_branch:
+            logger.info("Switching from branch '%s' to '%s'", current, target_branch)
+            _sp.run(["git", "fetch", "origin"], cwd=bond_root, capture_output=True, timeout=30)
+            _sp.run(["git", "checkout", target_branch], cwd=bond_root, capture_output=True, timeout=10)
+            _sp.run(["git", "pull", "--ff-only"], cwd=bond_root, capture_output=True, timeout=30)
+            os.environ["BOND_GIT_BRANCH"] = target_branch
+    except Exception as e:
+        logger.warning("Startup branch checkout failed: %s", e)
+
+
+async def _do_branch_reload(branch: str):
+    """Execute a branch switch: fetch, checkout, pull, rebuild manifest."""
+    import subprocess as _sp
+    from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
+    global _prompt_manifest_cache
+
+    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
+    if not bond_root.exists():
+        return
+
+    _sp.run(["git", "fetch", "origin"], cwd=bond_root, capture_output=True, timeout=30)
+    _sp.run(["git", "checkout", branch], cwd=bond_root, capture_output=True, timeout=10)
+    _sp.run(["git", "pull", "--ff-only"], cwd=bond_root, capture_output=True, timeout=30)
+    os.environ["BOND_GIT_BRANCH"] = branch
+
+    prompts_dir = bond_root / "prompts"
+    if prompts_dir.exists():
+        _prompt_manifest_cache = _gen_manifest(prompts_dir)
+
+
 app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 
 # Module-level manifest cache (updated by /reload)
@@ -452,31 +517,54 @@ async def interrupt(request: Request) -> dict:
     return {"acknowledged": True}
 
 
-@app.post("/reload")
-async def reload_prompts():
-    """Called by Gateway after main branch merge to refresh prompt manifest."""
-    global _prompt_manifest_cache
+@app.get("/branch")
+async def get_branch():
+    """Return current branch and turn status."""
     import subprocess as _sp
-    from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
-
-    # Pull latest from main
-    bond_root = Path("/bond")
+    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
+    branch = "unknown"
     try:
-        _sp.run(
-            ["git", "pull", "origin", "main", "--ff-only"],
-            cwd=bond_root, capture_output=True, timeout=30,
-        )
+        branch = _sp.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=bond_root, capture_output=True, text=True, timeout=5,
+        ).stdout.strip() or "unknown"
     except Exception:
-        pass  # Non-fatal — manifest still regenerates from current state
+        pass
+    return {
+        "branch": branch,
+        "active_turns": _state.active_turns,
+        "pending_reload": _state.pending_reload,
+    }
 
-    prompts_dir = bond_root / "prompts"
-    if prompts_dir.exists():
-        _prompt_manifest_cache = _gen_manifest(prompts_dir)
-        count = _prompt_manifest_cache.count(",") + 1
-    else:
-        count = 0
 
-    return {"ok": True, "categories": count}
+@app.post("/reload")
+async def reload_prompts(request: Request):
+    """Called by Gateway to switch branch and refresh prompt manifest."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    branch = body.get("branch") or os.environ.get("BOND_GIT_BRANCH", "main")
+
+    async with _state.turn_lock:
+        if _state.active_turns > 0:
+            _state.pending_reload = True
+            _state.pending_reload_branch = branch
+            return {
+                "ok": True,
+                "deferred": True,
+                "active_turns": _state.active_turns,
+            }
+
+    try:
+        await _do_branch_reload(branch)
+    except Exception as e:
+        logger.error("Reload failed: %s", e)
+        return {"ok": False, "error": str(e)}
+
+    return {"ok": True, "deferred": False}
 
 
 
@@ -626,15 +714,26 @@ async def turn(request: Request) -> StreamingResponse:
         await event_queue.put(None)  # sentinel
 
     async def event_stream():
-        yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
+        async with _state.turn_lock:
+            _state.active_turns += 1
+        try:
+            yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
 
-        task = asyncio.create_task(run_loop())
-        while True:
-            event = await event_queue.get()
-            if event is None:
-                break
-            yield event
-        await task
+            task = asyncio.create_task(run_loop())
+            while True:
+                event = await event_queue.get()
+                if event is None:
+                    break
+                yield event
+            await task
+        finally:
+            async with _state.turn_lock:
+                _state.active_turns -= 1
+                if _state.active_turns <= 0 and _state.pending_reload:
+                    branch = _state.pending_reload_branch or os.environ.get("BOND_GIT_BRANCH", "main")
+                    _state.pending_reload = False
+                    _state.pending_reload_branch = None
+                    asyncio.create_task(_do_branch_reload(branch))
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
