@@ -11,6 +11,7 @@ import { getAgentName } from "@/lib/spacetimedb-client";
 import { useMessages } from "@/hooks/useMessages";
 import RestoreDialog from "@/components/RestoreDialog";
 import SkillFeedbackStack, { type SkillActivation } from "@/components/shared/SkillFeedbackToast";
+import BranchSelector from "@/components/BranchSelector";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
   if (name === "file_write" || name === "file_read") {
@@ -78,6 +79,8 @@ export default function Home() {
   const [toasts, setToasts] = useState<{ id: number; message: string; repo: string; branch: string; actor?: string }[]>([]);
   const [skillActivations, setSkillActivations] = useState<SkillActivation[]>([]);
   const toastIdRef = useRef(0);
+  const [branchChangedSignal, setBranchChangedSignal] = useState(0);
+  const [turnCompletedSignal, setTurnCompletedSignal] = useState(0);
   const agentDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const wsRef = useRef<GatewayWebSocket | null>(null);
@@ -307,6 +310,7 @@ export default function Home() {
         setLoading(false);
         setAgentStatus("idle");
         setToolActivity([]);
+        setTurnCompletedSignal((n) => n + 1);
         if (msg.conversationId) {
           setConversationId(msg.conversationId);
         }
@@ -370,6 +374,10 @@ export default function Home() {
             },
           ]);
         } catch { /* ignore parse errors */ }
+      }
+      // Branch changed event
+      if (msg.type === "branch_changed") {
+        setBranchChangedSignal((n) => n + 1);
       }
       // Webhook push toast
       if (msg.type === "webhook_push" && msg.content) {
@@ -627,6 +635,10 @@ export default function Home() {
               {sidebarOpen ? "\u2190" : "\u2261"}
             </button>
             <h1 style={styles.title}>{selectedAgentName}</h1>
+            <BranchSelector
+              branchChangedSignal={branchChangedSignal}
+              turnCompleted={turnCompletedSignal}
+            />
             {activePlan && planConversationId === conversationId && (
               <a
                 href={`/board?plan=${activePlan.id}`}
