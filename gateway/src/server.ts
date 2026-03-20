@@ -267,10 +267,16 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
         return res.status(400).json({ error: "branch is required" });
       }
       const { workerUrl, containerId } = await resolveWorkerUrl(agentId);
-      const result = await branchManager.setPreference(containerId, branch, workerUrl || undefined);
+      const result = await branchManager.setPreference(
+        containerId,
+        branch,
+        workerUrl || undefined,
+        config.backendUrl,
+        agentId || undefined,
+      );
       webchat.broadcast({
         type: "branch_changed" as any,
-        content: JSON.stringify({ branch, reason: "user" }),
+        content: JSON.stringify({ branch, reason: "user", deferred: result.deferred }),
       });
       res.json({
         ok: true,

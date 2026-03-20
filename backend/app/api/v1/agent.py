@@ -491,6 +491,23 @@ async def resolve_agent(
         }
 
 
+class DestroyContainerRequest(BaseModel):
+    agent_id: str
+
+
+@router.post("/container/destroy")
+async def destroy_agent_container(req: DestroyContainerRequest):
+    """Destroy the running container for an agent.
+
+    Called by the gateway after a branch change to ensure the container
+    is removed.  The next message will trigger ensure_running() which
+    creates a fresh container on the correct branch.
+    """
+    sandbox_manager = get_sandbox_manager()
+    destroyed = await sandbox_manager.destroy_agent_container(req.agent_id)
+    return {"ok": True, "destroyed": destroyed}
+
+
 async def _conversation_exists(db: AsyncSession, conversation_id: str) -> bool:
     """Check if a conversation exists."""
     result = await db.execute(

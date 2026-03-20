@@ -144,13 +144,23 @@ export class BranchManager {
   }
 
   /**
-   * Set branch preference. Notifies worker if running.
+   * Set branch preference. Notifies worker and destroys/schedules destruction of the container.
+   *
+   * Flow:
+   *   1. Save preference to disk (survives restarts).
+   *   2. Notify the worker via /reload — the worker will shut itself down
+   *      (immediately if idle, after the current turn if busy).
+   *   3. If the worker is idle (not deferred), proactively destroy the
+   *      container via the backend API so it's cleaned up right away.
+   *
    * Returns { deferred, activeTurns } indicating whether the switch was deferred.
    */
   async setPreference(
     containerId = "default",
     branch: string,
     workerUrl?: string,
+    backendUrl?: string,
+    agentId?: string,
   ): Promise<{ deferred: boolean; activeTurns: number | null }> {
     this.prefs[containerId] = branch;
     this.savePrefs();
@@ -161,6 +171,10 @@ export class BranchManager {
     try {
       const status = await this.getWorkerStatus(workerUrl);
       if (!status.online) {
+        // Worker offline — just destroy any lingering container
+        if (backendUrl && agentId) {
+          await this.destroyContainer(backendUrl, agentId);
+        }
         return { deferred: false, activeTurns: null };
       }
 
@@ -172,8 +186,16 @@ export class BranchManager {
 
       if (resp.ok) {
         const data = await resp.json();
+        const deferred = data.deferred || false;
+
+        // If the worker is shutting down (idle case), proactively destroy the container
+        if (!deferred && data.shutting_down && backendUrl && agentId) {
+          // Give the worker a moment to exit cleanly before destroying
+          setTimeout(() => this.destroyContainer(backendUrl!, agentId!), 3000);
+        }
+
         return {
-          deferred: data.deferred || false,
+          deferred,
           activeTurns: data.active_turns ?? null,
         };
       }
@@ -182,6 +204,27 @@ export class BranchManager {
     }
 
     return { deferred: false, activeTurns: null };
+  }
+
+  /**
+   * Destroy an agent's container via the backend API.
+   */
+  async destroyContainer(backendUrl: string, agentId: string): Promise<boolean> {
+    try {
+      const resp = await fetch(`${backendUrl}/api/v1/agent/container/destroy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: agentId }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        console.log(`[branches] Container destroyed for agent ${agentId}: ${data.destroyed}`);
+        return data.destroyed || false;
+      }
+    } catch (err) {
+      console.warn(`[branches] Failed to destroy container for agent ${agentId}:`, (err as Error).message);
+    }
+    return false;
   }
 
   /**
