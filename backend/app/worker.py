@@ -1271,6 +1271,12 @@ async def _run_agent_loop(
     # ── Phase 1B: Batching nudge tracking ──
     _consecutive_single_info_iterations = 0
 
+    # ── Coding-task detection for budget escalation ──
+    _CODING_TOOLS = frozenset({"file_edit", "file_write", "work_plan", "coding_agent"})
+    _is_coding_task = bool(
+        _pre_gather_result and _pre_gather_result.delegate_to_coding_agent
+    )
+
     # ── Phase 2A: Adaptive iteration budget ──
     _adaptive_budget_set = False
     _adaptive_budget = max_iterations
@@ -1666,10 +1672,11 @@ async def _run_agent_loop(
                     ),
                 })
             elif _iteration >= 15:
-                # Force respond-only tool set
+                # Force respond+say tool set
                 from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-                tool_defs = [compact_tool_schema(_FULL_TOOL_MAP["respond"])] if "respond" in _FULL_TOOL_MAP else tool_defs
-                logger.info("Phase 2B: forced respond-only tool set at iteration %d", _iteration)
+                _forced = [compact_tool_schema(_FULL_TOOL_MAP[t]) for t in ("respond", "say") if t in _FULL_TOOL_MAP]
+                tool_defs = _forced or tool_defs
+                logger.info("Phase 2B: forced respond+say tool set at iteration %d", _iteration)
 
         # Log the API key info before calling LiteLLM
         if "api_key" in _iter_kwargs:
@@ -1871,57 +1878,92 @@ async def _run_agent_loop(
                     logger.info("Phase 2A: file lookup, budget=%d", _adaptive_budget)
             _cost_tracking["iteration_budget"] = _adaptive_budget
 
-        # ── Approaching budget: hand off to coding_agent (enhanced with Doc 038 handoff context) ──
-        _budget_threshold = int(_adaptive_budget * 0.8)
-        if (_iteration >= _budget_threshold
+        # ── Approaching budget: hand off or wrap up ──
+        # Coding tasks: use adaptive budget with 80% threshold → coding_agent handoff
+        # Non-coding tasks: warn at iteration 15, full budget (max_iterations), no coding_agent
+        _NON_CODING_WARN_THRESHOLD = 15
+        if _is_coding_task:
+            _effective_threshold = int(_adaptive_budget * 0.8)
+            _effective_budget = _adaptive_budget
+        else:
+            _effective_threshold = _NON_CODING_WARN_THRESHOLD
+            _effective_budget = max_iterations
+
+        if (_iteration >= _effective_threshold
             and _iteration > 2
             and not any(tc.function.name == "coding_agent" for tc in (llm_message.tool_calls or []))):
-            _remaining = _adaptive_budget - _iteration - 1
-            # Build structured handoff context from what the agent has done so far
-            try:
-                from backend.app.agent.pre_gather import build_handoff_context
-                _handoff_ctx = build_handoff_context(messages)
-                _handoff_msg = (
-                    f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}. "
-                    f"You have {_remaining} iterations left. Hand off your remaining work "
-                    f"to the coding_agent tool NOW.\n\n"
-                    f"**Files you've read:**\n{_handoff_ctx['files_read']}\n\n"
-                    f"**Changes you've made:**\n{_handoff_ctx['edits_made']}\n\n"
-                    f"Write a coding_agent task prompt that covers the remaining work. "
-                    f"Include the file paths you've already identified. "
-                    f"The coding agent has access to the same repo — reference files by path, "
-                    f"don't paste their contents.\n\n"
-                    f"Spawn coding_agent in your next response. Do not read more files."
-                )
-            except Exception:
-                _handoff_msg = (
-                    f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}. "
-                    f"You have {_remaining} iterations left. Hand off your remaining work "
-                    f"to the coding_agent tool now. Summarize what's done and what's left."
-                )
-            messages.append({"role": "user", "content": _handoff_msg})
-            logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, _adaptive_budget)
+            _remaining = _effective_budget - _iteration - 1
+            _overbudget_by = _iteration - _effective_threshold
 
-            # After 4 ignored handoff hints, restrict tools to coding_agent + respond only
-            _overbudget_by = _iteration - _budget_threshold
-            if _overbudget_by >= 4:
-                from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-                _forced_tools = []
-                for _tname in ("coding_agent", "respond"):
-                    if _tname in _FULL_TOOL_MAP:
-                        _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
-                if _forced_tools:
-                    tool_defs = _forced_tools
-                    logger.warning(
-                        "Budget hard restriction: iteration %d, forced tool set to coding_agent+respond",
-                        _iteration + 1,
+            if _is_coding_task:
+                # Coding task: hand off to coding_agent
+                try:
+                    from backend.app.agent.pre_gather import build_handoff_context
+                    _handoff_ctx = build_handoff_context(messages)
+                    _handoff_msg = (
+                        f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget}. "
+                        f"You have {_remaining} iterations left. Hand off your remaining work "
+                        f"to the coding_agent tool NOW.\n\n"
+                        f"**Files you've read:**\n{_handoff_ctx['files_read']}\n\n"
+                        f"**Changes you've made:**\n{_handoff_ctx['edits_made']}\n\n"
+                        f"Write a coding_agent task prompt that covers the remaining work. "
+                        f"Include the file paths you've already identified. "
+                        f"The coding agent has access to the same repo — reference files by path, "
+                        f"don't paste their contents.\n\n"
+                        f"Spawn coding_agent in your next response. Do not read more files."
                     )
+                except Exception:
+                    _handoff_msg = (
+                        f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget}. "
+                        f"You have {_remaining} iterations left. Hand off your remaining work "
+                        f"to the coding_agent tool now. Summarize what's done and what's left."
+                    )
+                messages.append({"role": "user", "content": _handoff_msg})
+                logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, _effective_budget)
 
-            # After 8 ignored handoff hints, hard-stop the loop
+                # After 4 ignored handoff hints, restrict tools to coding_agent + respond only
+                if _overbudget_by >= 4:
+                    from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
+                    _forced_tools = []
+                    for _tname in ("coding_agent", "respond", "say"):
+                        if _tname in _FULL_TOOL_MAP:
+                            _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
+                    if _forced_tools:
+                        tool_defs = _forced_tools
+                        logger.warning(
+                            "Budget hard restriction: iteration %d, forced tool set to coding_agent+respond+say",
+                            _iteration + 1,
+                        )
+            else:
+                # Non-coding task: tell the agent how many iterations remain
+                _wrapup_msg = (
+                    f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget} "
+                    f"with {_remaining} iteration{'s' if _remaining != 1 else ''} remaining. "
+                    f"Finish up your current approach and respond to the user."
+                )
+                messages.append({"role": "user", "content": _wrapup_msg})
+                logger.info("Budget wrap-up: iteration %d/%d, %d remaining (non-coding task)",
+                            _iteration + 1, _effective_budget, _remaining)
+
+                # After 4 ignored wrap-up hints, restrict tools to respond only
+                if _overbudget_by >= 4:
+                    from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
+                    _forced_tools = []
+                    for _tname in ("respond", "say"):
+                        if _tname in _FULL_TOOL_MAP:
+                            _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
+                    if _forced_tools:
+                        tool_defs = _forced_tools
+                        logger.warning(
+                            "Budget hard restriction: iteration %d, forced tool set to respond+say (non-coding)",
+                            _iteration + 1,
+                        )
+
+            # After 8 ignored hints, hard-stop the loop regardless of task type
             if _overbudget_by >= 8:
                 logger.warning(
-                    "Budget hard cap: stopping loop at iteration %d (adaptive budget was %d)",
-                    _iteration + 1, _adaptive_budget,
+                    "Budget hard cap: stopping loop at iteration %d (effective budget was %d)",
+                    _iteration + 1, _effective_budget,
                 )
                 break
 
@@ -1931,6 +1973,10 @@ async def _run_agent_loop(
             # ── Phase 2B: Track consequential calls ──
             if any(t in CONSEQUENTIAL_TOOLS for t in _iter_tool_names):
                 _has_made_consequential_call = True
+
+            # ── Track whether this looks like a coding task ──
+            if any(t in _CODING_TOOLS for t in _iter_tool_names):
+                _is_coding_task = True
 
             # ── Phase 1B: Batching nudge for single info-gathering calls ──
             _is_single_info = (
@@ -2515,10 +2561,26 @@ async def _run_agent_loop(
                     _lifecycle_injected = False
 
         else:
-            await _skill_tracker.flush()
-            await _record_outcome()
-            _emit_cost_summary()
-            return llm_message.content or "", tool_calls_made
+            _final_content = llm_message.content or ""
+            if _final_content.strip():
+                await _skill_tracker.flush()
+                await _record_outcome()
+                _emit_cost_summary()
+                return _final_content, tool_calls_made
+
+            # Model ended with no content and no tool calls — force a response
+            logger.warning("Model returned empty content with no tool calls at iteration %d; forcing response", _iteration)
+            messages.append(llm_message.model_dump())
+            messages.append({
+                "role": "user",
+                "content": (
+                    "SYSTEM: You ended your turn without sending a response to the user. "
+                    "You MUST respond. Use the respond tool now to tell the user the outcome "
+                    "of what you were working on."
+                ),
+            })
+            # Continue the loop — next iteration will produce a response
+            continue
 
     # Hit max iterations — save work plan checkpoint if active
     if _has_active_plan and _state.agent_db:
