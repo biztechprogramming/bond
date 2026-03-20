@@ -755,12 +755,26 @@ async def _run_agent_loop(
     from backend.app.agent.tools import TOOL_MAP
     from backend.app.agent.tools.native_registry import build_native_registry
     from backend.app.agent.skills_tracker import SkillTracker
+    from backend.app.agent.api_key_resolver import ApiKeyResolver
+    from backend.app.agent.context_builder import build_agent_context
+    from backend.app.agent.loop_state import LoopState
+    from backend.app.agent.cost_tracker import CostTracker
+    from backend.app.agent.outcome_recorder import OutcomeRecorder
+    from backend.app.agent.iteration_handlers import (
+        handle_truncation,
+        handle_adaptive_budget,
+        handle_budget_escalation,
+        handle_early_termination,
+        handle_batching_nudge,
+        detect_loop,
+        execute_tool_call,
+        handle_lifecycle_injection,
+    )
 
     _skill_tracker = SkillTracker()
 
     config = _state.config
     model = config["model"]
-    system_prompt = config["system_prompt"] or "You are a helpful AI assistant."
     max_iterations = config["max_iterations"]
 
     # Use all registered tools. The DB tools field is legacy — tool
@@ -774,445 +788,48 @@ async def _run_agent_loop(
     if not agent_name.startswith("deploy-"):
         agent_tools = [t for t in agent_tools if t not in DEPLOY_ONLY_TOOLS]
 
-    # API keys + provider aliases injected from host DB at container launch
+    # ── 1. API key resolution ──
     injected_keys: dict[str, str] = config.get("api_keys", {})
-    provider_aliases: dict[str, str] = config.get("provider_aliases", {})
-    # provider ID → litellm prefix (e.g., {"google": "gemini", "anthropic": "anthropic"})
-    litellm_prefixes: dict[str, str] = config.get("litellm_prefixes", {})
-
-    def _normalize_model_for_litellm(model_id: str) -> str:
-        """Normalize model string so litellm recognizes the provider prefix.
-
-        If the model uses a provider ID as prefix (e.g., 'google/gemini-2.5-flash'),
-        replace it with the litellm prefix (e.g., 'gemini/gemini-2.5-flash').
-        """
-        if "/" not in model_id or not litellm_prefixes:
-            return model_id
-        prefix, rest = model_id.split("/", 1)
-        if prefix in litellm_prefixes and litellm_prefixes[prefix] != prefix:
-            normalized = f"{litellm_prefixes[prefix]}/{rest}"
-            logger.info("Normalized model %s → %s for litellm", model_id, normalized)
-            return normalized
-        return model_id
-
-    # Normalize model strings so litellm recognizes the provider prefix.
-    model = _normalize_model_for_litellm(model)
-
-    def _resolve_provider(model_id: str) -> str:
-        """Resolve model prefix to canonical provider ID using DB aliases."""
-        # First, check if model_id has provider/model format
-        if "/" in model_id:
-            prefix = model_id.split("/")[0]
-            return provider_aliases.get(prefix, prefix)
-        
-        # Check if model_id starts with any known alias
-        # Common patterns: gemini-..., claude-..., gpt-..., o1-..., o3-..., o4-...
-        model_lower = model_id.lower()
-        for alias in provider_aliases:
-            if model_lower.startswith(alias.lower() + "-"):
-                return provider_aliases.get(alias, alias)
-        
-        # Default to anthropic for backward compatibility
-        return "anthropic"
-
-    async def _resolve_api_key(model_id: str) -> str | None:
-        """Resolve API key: injected from host DB → SpacetimeDB → Vault → env var."""
-        prov = _resolve_provider(model_id)
-        logger.error("DEBUG: Resolving API key for provider: %s (model: %s)", prov, model_id)
-
-        # 1. Keys from provider_api_keys (injected at container launch)
-        key = injected_keys.get(prov)
-        if key:
-            logger.error("DEBUG: Got API key for %s from injected_keys (length: %d, starts with: %s)", 
-                       prov, len(key), key[:10] if len(key) > 10 else key)
-            return key
-        else:
-            logger.error("DEBUG: No API key for %s in injected_keys", prov)
-
-        # 2. SpacetimeDB via Gateway (encrypted API keys)
-        try:
-            if _state.persistence and _state.persistence.mode == "api":
-                logger.error("DEBUG: Trying to get API key for %s from SpacetimeDB (mode: api)", prov)
-                
-                # Try provider_api_keys table first
-                encrypted_key = await _state.persistence.get_provider_api_key(prov)
-                if not encrypted_key and prov == "gemini":
-                    # Try "google" as fallback for gemini models
-                    logger.error("DEBUG: No key found for provider 'gemini', trying 'google' as fallback")
-                    encrypted_key = await _state.persistence.get_provider_api_key("google")
-                
-                if encrypted_key:
-                    logger.error("DEBUG: Got encrypted key for %s from provider_api_keys table (encrypted length: %d, starts with: %s)", 
-                               prov, len(encrypted_key), encrypted_key[:20])
-                    # Decrypt the key using the crypto module
-                    from backend.app.core.crypto import decrypt_value
-                    decrypted = decrypt_value(encrypted_key)
-                    logger.error("DEBUG: Decrypted key for %s (length: %d, starts with: %s, is_encrypted: %s)", 
-                               prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted, 
-                               encrypted_key.startswith("enc:"))
-                    if decrypted and decrypted != encrypted_key:  # Check if decryption worked
-                        # Trim whitespace from the key
-                        decrypted = decrypted.strip()
-                        logger.error("DEBUG: Got API key for %s from SpacetimeDB provider_api_keys (length: %d, starts with: %s)", 
-                                   prov, len(decrypted), decrypted[:10] if len(decrypted) > 10 else decrypted)
-                        return decrypted
-                    else:
-                        logger.error("DEBUG: Decryption failed or returned same value for %s", prov)
-                
-                # Try provider_api_keys table for LLM API keys {provider}
-                logger.error("DEBUG: Trying provider_api_keys table with key: %s", prov)
-                encrypted_llm_key = await _state.persistence.get_provider_api_key(prov)
-                if not encrypted_llm_key and prov == "gemini":
-                    # Try "google" as fallback for gemini models
-                    logger.error("DEBUG: No llm.api_key.gemini setting found, trying google")
-                    encrypted_llm_key = await _state.persistence.get_provider_api_key("google")
-
-                    
-                logger.error("DEBUG: encrypted_llm_key: %s", encrypted_llm_key)
-                
-                if encrypted_llm_key:
-                    logger.error("DEBUG: Got encrypted key for %s from settings table (encrypted length: %d)", prov, len(encrypted_llm_key))
-                    from backend.app.core.crypto import decrypt_value
-                    decrypted = decrypt_value(encrypted_llm_key)
-                    if decrypted and decrypted != encrypted_llm_key:
-                        # Trim whitespace from the key
-                        decrypted = decrypted.strip()
-                        logger.error("DEBUG: Got API key for %s from SpacetimeDB settings (llm.api_key) (length: %d)", prov, len(decrypted))
-                        return decrypted
-                
-                # Try settings table for embedding API keys (embedding.api_key.{provider})
-                # Note: Google provider uses gemini for embedding
-                if prov == "google":
-                    embedding_key_name = "embedding.api_key.gemini"
-                    logger.debug("Trying embedding API key with key: %s", embedding_key_name)
-                    embedding_key = await _state.persistence.get_setting(embedding_key_name)
-                    if embedding_key:
-                        logger.debug("Got encrypted embedding key for google/gemini (encrypted length: %d)", len(embedding_key))
-                        from backend.app.core.crypto import decrypt_value
-                        decrypted = decrypt_value(embedding_key)
-                        if decrypted and decrypted != embedding_key:
-                            # Trim whitespace from the key
-                            decrypted = decrypted.strip()
-                            logger.debug("Got embedding API key for google/gemini from SpacetimeDB settings (length: %d)", len(decrypted))
-                            return decrypted
-            else:
-                logger.debug("Not trying SpacetimeDB (persistence: %s, mode: %s)", 
-                           _state.persistence, _state.persistence.mode if _state.persistence else "none")
-        except Exception as e:
-            logger.debug("Could not read API key from SpacetimeDB for %s: %s", prov, e, exc_info=True)
-
-        # 3. Vault (mounted from host)
-        try:
-            from backend.app.core.vault import Vault
-            vault = Vault()
-            key = vault.get_api_key(prov)
-            if key:
-                return key
-        except Exception as e:
-            logger.debug("Could not read API key from vault for %s: %s", prov, e)
-
-        # 4. Environment variable
-        env_key = os.environ.get(f"{prov.upper()}_API_KEY")
-        if env_key:
-            return env_key
-        
-        # Special case: Google provider can use GEMINI_API_KEY
-        if prov == "google":
-            return os.environ.get("GEMINI_API_KEY")
-        
-        return None
-
-    # Primary model kwargs
-    extra_kwargs: dict = {}
-    primary_key = await _resolve_api_key(model)
-    if primary_key:
-        extra_kwargs["api_key"] = primary_key
-
-    # Utility model kwargs (may be a different provider)
-    utility_model = _normalize_model_for_litellm(config.get("utility_model", "claude-sonnet-4-6"))
-    utility_kwargs: dict = {}
-    utility_key = await _resolve_api_key(utility_model)
-    if utility_key:
-        utility_kwargs["api_key"] = utility_key
-
-    # --- Plan-Aware Continuation (Design Doc 034) ---
-    # Classify intent, load plan, and build minimal context for continuations.
-    _has_active_plan = False
-    _active_plan_id: str | None = None
-    _is_continuation = False
-    try:
-        from backend.app.agent.tools.work_plan import load_active_plan, format_plan_context, format_recovery_context
-        from backend.app.agent.continuation import (
-            classify_intent,
-            ContinuationIntent,
-            resolve_plan_position,
-            build_continuation_context,
-            build_checkpoint_from_history,
-            format_checkpoint_context,
-        )
-
-        active_plan = await load_active_plan(_state.agent_db, _state.agent_id, conversation_id=conversation_id, plan_id=plan_id)
-        if active_plan:
-            _has_active_plan = True
-            _active_plan_id = active_plan["id"]
-
-        # Classify user intent
-        intent = classify_intent(user_message, _has_active_plan)
-        logger.info("Continuation intent: %s (has_plan=%s)", intent.value, _has_active_plan)
-
-        if intent in (ContinuationIntent.CONTINUE, ContinuationIntent.ADJUST) and active_plan:
-            # --- Plan-Aware Fresh Context ---
-            # Instead of injecting bloated history, build minimal continuation context.
-            _is_continuation = True
-
-            # Resolve position against real state
-            _workspace_dir_for_plan = os.environ.get("WORKSPACE_DIR", "/workspace")
-            position = await resolve_plan_position(active_plan, _workspace_dir_for_plan)
-
-            # Build focused context
-            adjustment = user_message if intent == ContinuationIntent.ADJUST else None
-            continuation_ctx = build_continuation_context(position, active_plan, adjustment)
-
-            # Also include plan IDs for the work_plan tool
-            plan_id_ctx = format_plan_context(active_plan)
-
-            # Replace history with minimal continuation context
-            # This is the key optimization: ~2K tokens instead of ~100K
-            history = [{"role": "user", "content": continuation_ctx + "\n\n" + plan_id_ctx}]
-
-            logger.info(
-                "Continuation: plan %s, %d/%d complete, next=%s, history replaced (%d tokens)",
-                _active_plan_id,
-                len(position.completed_items),
-                position.total_items,
-                position.next_item.get("title", "none") if position.next_item else "none",
-                len(continuation_ctx) // 4,
-            )
-
-            # Emit continuation event for the frontend
-            if event_queue is not None:
-                await event_queue.put(_sse_event("status", {
-                    "state": "continuing",
-                    "plan_id": _active_plan_id,
-                    "progress": f"{len(position.completed_items)}/{position.total_items}",
-                    "next_item": position.next_item.get("title", "") if position.next_item else "",
-                }))
-
-        elif intent == ContinuationIntent.CONTINUE and not active_plan and history:
-            # --- Fallback: No Work Plan ---
-            # Build a lightweight checkpoint from history instead of sending it all.
-            _is_continuation = True
-            checkpoint = build_checkpoint_from_history(history)
-            checkpoint_ctx = format_checkpoint_context(checkpoint)
-
-            # Replace history with checkpoint (~500 tokens)
-            history = [{"role": "user", "content": checkpoint_ctx}]
-
-            logger.info("Continuation (no plan): checkpoint built, history replaced")
-
-        elif active_plan:
-            # Normal message with active plan — use existing format_plan_context
-            in_progress = [i for i in active_plan.get("items", []) if i["status"] == "in_progress"]
-            if in_progress:
-                plan_ctx = format_recovery_context(active_plan) + "\n\n" + format_plan_context(active_plan)
-            else:
-                plan_ctx = format_plan_context(active_plan)
-
-            # Inject as a system message prefix so the agent always has IDs in context
-            history = [{"role": "user", "content": plan_ctx}] + history
-            logger.info("Injected active plan context for plan %s (%d items)", _active_plan_id, len(active_plan.get("items", [])))
-
-    except Exception as e:
-        logger.debug("Plan-aware continuation skipped: %s", e)
-
-    # --- Context Distillation Pipeline ---
-
-    # Stage 1: Memory search (fragments are now loaded from disk via manifest)
-    recent_memories: list[dict] = []
-    try:
-        from backend.app.agent.tools.native import handle_search_memory
-        res = await handle_search_memory(
-            {"query": user_message, "limit": 3},
-            {"agent_db": _state.agent_db}
-        )
-        recent_memories = res.get("results", [])
-    except Exception:
-        pass
-
-    prompt_parts = [system_prompt]
-
-    # Inject relevant memories directly into the system prompt prefix
-    if recent_memories:
-        mem_text = "\n".join([f"- {m['content']}" for m in recent_memories])
-        prompt_parts.append(f"## Relevant Memories\n{mem_text}")
-        
-    full_system_prompt = "\n\n".join(prompt_parts)
-
-    # Inject prompt hierarchy: Tier 1 fragments + category manifest from disk
-    from backend.app.agent.manifest import load_manifest, get_tier1_content, get_tier1_meta
-    from backend.app.agent.tools.dynamic_loader import generate_manifest as _generate_category_manifest
-
-    _prompts_dir = Path("/bond/prompts")
-    if not _prompts_dir.exists():
-        # dev fallback
-        _prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
-
-    # Load the three-tier manifest (cached, hot-reloads on file change)
-    _fragment_manifest = load_manifest(_prompts_dir)
-
-    # Tier 1: always-on fragments → system prompt
-    _tier1_content = get_tier1_content(_fragment_manifest)
-    _tier1_meta = get_tier1_meta(_fragment_manifest)
-    if _tier1_content:
-        full_system_prompt = full_system_prompt + "\n\n" + _tier1_content
-
-    # Tier 3: semantic router selects context-dependent fragments
-    # Requires numpy + semantic_router + sentence-transformers (heavy deps).
-    # Gracefully skip if not installed in this environment.
-    _tier3_meta: list[dict] = []
-    try:
-        from backend.app.agent.fragment_router import (
-            build_route_layer,
-            get_tier3_meta,
-            select_fragments_by_similarity,
-        )
-
-        build_route_layer(_prompts_dir)
-        tier3_picks = await select_fragments_by_similarity(user_message, top_k=5)
-        if tier3_picks:
-            tier3_content = "\n\n---\n\n".join(f.content for f in tier3_picks)
-            full_system_prompt = full_system_prompt + "\n\n" + tier3_content
-            _tier3_meta = get_tier3_meta(tier3_picks)
-    except ImportError as e:
-        logger.debug("Tier 3 semantic router unavailable (missing dep: %s) — skipping", e.name)
-
-    # Category manifest for load_context tool (still useful for Tier 3 categories)
-    import backend.app.worker as _worker_module
-    _category_manifest = _worker_module._prompt_manifest_cache
-    if _category_manifest is None:
-        _category_manifest = _generate_category_manifest(_prompts_dir)
-        _worker_module._prompt_manifest_cache = _category_manifest
-    if _category_manifest:
-        full_system_prompt = full_system_prompt + "\n\n" + _category_manifest
-
-    # Auto-skills: surface relevant skills so the agent knows they exist
-    try:
-        from backend.app.agent.tools.skills import _get_router, init_router
-        await init_router(persistence=_state.persistence)
-        skill_router = _get_router()
-        skills_prompt = await skill_router.get_relevant_skills_prompt(
-            user_message, session_id=conversation_id,
-        )
-        if skills_prompt:
-            full_system_prompt += (
-                "\n\n## Skills\n"
-                "Before answering, scan these matched skills. If one clearly applies, "
-                "use the `skills` tool with action='read' and the skill name to load "
-                "its full instructions, then follow them.\n"
-                + skills_prompt
-            )
-    except Exception:
-        logger.debug("Skills injection skipped", exc_info=True)
-
-    # Set process cwd to /workspace so file_read/file_edit/file_write resolve
-    # relative paths the same way code_execute does.
-    _workspace_ctx = _discover_workspace()
-    if _workspace_ctx:
-        full_system_prompt = full_system_prompt + "\n\n" + _workspace_ctx
-
-    # ── Doc 049: Inject learned lessons from approved/ directory ──
-    try:
-        from backend.app.agent.critic import load_lessons
-        _lessons_content = load_lessons()
-        if _lessons_content:
-            full_system_prompt += _lessons_content
-            logger.debug("Injected learned lessons (%d chars)", len(_lessons_content))
-    except Exception:
-        logger.debug("Lessons injection skipped", exc_info=True)
-
-    # Inject MCP integrations summary so the agent knows what external services
-    # are available (or NOT available) without having to search the filesystem.
-    try:
-        from backend.app.mcp import mcp_manager
-        if mcp_manager.connections:
-            _mcp_names = sorted(mcp_manager.connections.keys())
-            _mcp_connected = [
-                n for n in _mcp_names if mcp_manager.connections[n].session
-            ]
-            _mcp_summary = (
-                "## MCP Integrations\n"
-                "Connected external services (via MCP servers): "
-                + ", ".join(_mcp_connected)
-            )
-            if len(_mcp_connected) < len(_mcp_names):
-                _mcp_disconnected = [n for n in _mcp_names if n not in _mcp_connected]
-                _mcp_summary += "\nDisconnected: " + ", ".join(_mcp_disconnected)
-            _mcp_summary += (
-                "\nTools from these servers are prefixed `mcp_<server>_`. "
-                "If asked about a service you don't have an MCP connection for, "
-                "say so directly — don't search the filesystem for it."
-            )
-            full_system_prompt += "\n\n" + _mcp_summary
-        else:
-            full_system_prompt += (
-                "\n\n## MCP Integrations\n"
-                "No MCP servers are connected. If asked about external service "
-                "integrations (e.g. time tracking, CRM), say you don't currently "
-                "have access rather than searching the filesystem."
-            )
-    except Exception:
-        pass
-
-    # Stage 2: Sliding window — limit history to WINDOW_SIZE + rolling summary
-    windowed_history = history
-    if history:
-        windowed_history = await _apply_sliding_window(
-            history, conversation_id, config, utility_kwargs,
-            agent_db=_state.agent_db,
-        )
-
-    # Stage 3: Progressive decay on tool results
-    # Only decay messages that will remain verbatim — messages above the
-    # compression threshold will be summarized anyway, so decaying them
-    # is wasted work (and the decay output gets discarded).
-    if windowed_history:
-        total_tokens = sum(_estimate_tokens(m.get("content", "")) for m in windowed_history)
-        if total_tokens >= COMPRESSION_THRESHOLD and len(windowed_history) > VERBATIM_MESSAGE_COUNT:
-            # Only decay the verbatim tail — the rest will be compressed
-            head = windowed_history[:-VERBATIM_MESSAGE_COUNT]
-            tail = windowed_history[-VERBATIM_MESSAGE_COUNT:]
-            tail = apply_progressive_decay(tail)
-            windowed_history = head + tail
-        else:
-            windowed_history = apply_progressive_decay(windowed_history)
-
-    # Stage 4: Compress remaining history if still over threshold
-    compressed_history = windowed_history
-    compression_stats = {"original_tokens": 0, "compressed_tokens": 0}
-    if windowed_history:
-        compressed_history, compression_stats = await _compress_history(
-            windowed_history, conversation_id, config, utility_kwargs,
-            agent_db=_state.agent_db,
-        )
-
-    # Emit compression stats via SSE
-    if event_queue is not None and compression_stats.get("original_tokens", 0) > COMPRESSION_THRESHOLD:
-        await event_queue.put(_sse_event("status", {
-            "state": "context_compressed",
-            "original_tokens": compression_stats["original_tokens"],
-            "compressed_tokens": compression_stats["compressed_tokens"],
-            "tools_pruned": compression_stats.get("tools_pruned", 0),
-        }))
-
-    # Log compression audit trail
-    await _log_compression_stats(
-        conversation_id, 0, compression_stats, {"selected": len(_tier1_meta), "total": len(_fragment_manifest)},
-        config.get("utility_model", "claude-sonnet-4-6"),
-        agent_db=_state.agent_db,
+    resolver = ApiKeyResolver(
+        injected_keys=injected_keys,
+        provider_aliases=config.get("provider_aliases", {}),
+        litellm_prefixes=config.get("litellm_prefixes", {}),
+        persistence=_state.persistence,
+    )
+    model, extra_kwargs, utility_kwargs, utility_model = await resolver.resolve_all(
+        model, config.get("utility_model", "claude-sonnet-4-6"),
     )
 
+    # ── 2. Context building ──
+    ctx = await build_agent_context(
+        user_message=user_message,
+        history=history,
+        conversation_id=conversation_id,
+        config=config,
+        agent_db=_state.agent_db,
+        agent_id=_state.agent_id,
+        persistence=_state.persistence,
+        plan_id=plan_id,
+        event_queue=event_queue,
+        sse_event_fn=_sse_event,
+        utility_kwargs=utility_kwargs,
+        discover_workspace_fn=_discover_workspace,
+    )
+    full_system_prompt = ctx.full_system_prompt
+    compressed_history = ctx.compressed_history
+    compression_stats = ctx.compression_stats
+    _has_active_plan = ctx.has_active_plan
+    _active_plan_id = ctx.active_plan_id
+    _is_continuation = ctx.is_continuation
+    _tier1_meta = ctx.tier1_meta
+    _tier3_meta = ctx.tier3_meta
+    _fragment_manifest = ctx.fragment_manifest
+    _category_manifest = ctx.category_manifest
+    _lessons_content = ctx.lessons_content
+    windowed_history = ctx.windowed_history
+
     # Determine if the primary model supports Anthropic prompt caching
-    _is_anthropic_model = _resolve_provider(model) == "anthropic"
+    _is_anthropic_model = resolver.resolve_provider(model) == "anthropic"
 
     # Build messages with distilled context
     # Breakpoint 1: system prompt — cached across turns and tool loops
@@ -1231,7 +848,7 @@ async def _run_agent_loop(
     if compressed_history:
         messages.extend(compressed_history)
     messages.append({"role": "user", "content": user_message})
-    
+
     # Persist user message
     if _state.persistence:
         try:
@@ -1244,14 +861,13 @@ async def _run_agent_loop(
         except Exception as e:
             logger.error("Failed to persist user message: %s", e)
 
-    # Build tool definitions + registry with heuristic selection
+    # ── 3. Tool setup ──
     registry = build_native_registry()
-    
+
     # Refresh MCP tools
     try:
         from backend.app.mcp import mcp_manager
         await mcp_manager.refresh_tools(registry)
-        # Add any mcp tools to the enabled set for heuristic selection
         for name in registry.registered_names:
             if name.startswith("mcp_") and name not in agent_tools:
                 agent_tools.append(name)
@@ -1321,217 +937,48 @@ async def _run_agent_loop(
         "coding_agent_settings": coding_agent_settings,
     }
 
-    tool_calls_made = 0
-    sse_events: list[str] = []  # collected for the SSE stream
-
-    # File re-read dedup: avoid wasting tokens on identical file content
-    # _file_read_cache removed — see comment at "File re-read dedup — DISABLED"
-
-    # Adaptive max_tokens: start low (fast + cheap), escalate on truncation
-    # Tiers: 32768 → 65536. Reset after each successful completion.
-    TOKEN_TIERS = [32768, 65536]
-    current_tier = 0  # index into TOKEN_TIERS
-    continuation_attempts = 0  # consecutive continuations for a single response
-    MAX_CONTINUATIONS = 3  # max times we'll try to continue a truncated response
-
-    # Repetition detection — break out of loops where agent keeps calling
-    # the same tool with similar args
-    REPETITION_THRESHOLD = 3  # consecutive similar calls before intervention
-    recent_tool_calls: list[tuple[str, str]] = []  # (tool_name, args_hash)
-
-    # Cyclical loop detection — catches patterns like A→B→C→A→B→C
-    # where individual calls differ but the sequence repeats
-    _CYCLE_WINDOW = 30  # track last N tool calls for cycle detection
-    _CYCLE_MIN_PERIOD = 2  # shortest cycle to look for (e.g. A→B→A→B)
-    _CYCLE_MAX_PERIOD = 8  # longest cycle to look for
-    _CYCLE_REPEATS = 3  # how many times a cycle must repeat to trigger
-    _loop_intervention_count = 0  # how many times we've intervened
-    _LOOP_MAX_INTERVENTIONS = 2  # after this many, hard-stop the loop
-
-    # Track where the pre-turn messages end so we know which are in-loop
-    _preturn_msg_count = len(messages)
-
-    # Track cache breakpoint 2 position for Anthropic prompt caching stability.
-    # Initialize to after history + user message (the last pre-turn message).
-    _cache_bp2_index = len(messages) - 1
-
-    # Info-gathering tools — used for batching nudge detection (Phase 1B)
-    # and early termination tracking (Phase 2B)
-    INFO_GATHERING_TOOLS = frozenset({
-        "file_read", "search_memory",
-        "web_search", "web_read", "work_plan",
-        "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree", "project_search",
-    })
-    CONSEQUENTIAL_TOOLS = frozenset({
-        "file_write", "file_edit", "code_execute", "respond", "memory_save",
-    })
-
-    # ── Phase 1B: Batching nudge tracking ──
-    _consecutive_single_info_iterations = 0
-
-    # ── Coding-task detection for budget escalation ──
-    _CODING_TOOLS = frozenset({"file_edit", "file_write", "work_plan", "coding_agent"})
-    _is_coding_task = bool(
-        _pre_gather_result and _pre_gather_result.delegate_to_coding_agent
+    # ── 4. Loop state + cost + outcome init ──
+    loop = LoopState.create(
+        max_iterations=max_iterations,
+        preturn_msg_count=len(messages),
+        cache_bp2_index=len(messages) - 1,
     )
 
-    # ── Phase 2A: Adaptive iteration budget ──
-    _adaptive_budget_set = False
-    _adaptive_budget = max_iterations
+    cost = CostTracker(conversation_id, max_iterations)
 
-    # ── Phase 2B: Early termination for read-only tasks ──
-    _has_made_consequential_call = False
+    outcome = OutcomeRecorder(
+        conversation_id=conversation_id,
+        user_message=user_message,
+        agent_db=_state.agent_db,
+        config=config,
+        tier1_meta=_tier1_meta,
+        tier3_meta=_tier3_meta,
+        lessons_content=_lessons_content,
+        state=_state,
+    )
+    config = await outcome.apply_experiment_overrides()
 
-    # ── Phase 4B: Per-session cost tracking ──
-    _cost_tracking = {
-        "primary_calls": 0,
-        "filter_calls": 0,
-        "compression_calls": 0,
-        "total_input_tokens": 0,
-        "total_output_tokens": 0,
-        "total_cost": 0.0,  # Real cost from litellm.completion_cost()
-        "iterations_used": 0,
-        "iteration_budget": max_iterations,
-    }
-
-    # ── Doc 049: Outcome tracking for closed-loop optimization ──
-    _outcome_tool_names: list[str] = []
-    _outcome_fragment_names: list[str] = []
-    _outcome_had_loop_intervention = False
-    _outcome_had_continuation = False
-    _outcome_had_compression = False
-    _outcome_turn_counter = getattr(_state, "_optimization_turn_counter", 0)
-    _outcome_start_time_ms = int(time.time() * 1000)
-
-    # Collect fragment names from tiers 1 and 3
-    try:
-        for _m in _tier1_meta:
-            _n = _m.get("name") or _m.get("path", "")
-            if _n:
-                _outcome_fragment_names.append(_n)
-        for _m in _tier3_meta:
-            _n = _m.get("name") or _m.get("path", "")
-            if _n:
-                _outcome_fragment_names.append(_n)
-    except Exception:
-        pass
-
-    # Capture config snapshot for experiment tracking
-    _config_snapshot: dict[str, Any] = {}
-    _outcome_cohort = "control"
-    try:
-        from backend.app.agent.optimizer import TUNABLE_PARAMS, apply_experiment_overrides
-        for _pk in TUNABLE_PARAMS:
-            if _pk in config:
-                _config_snapshot[_pk] = config[_pk]
-        # Apply active experiment overrides
-        if _state.agent_db:
-            config, _outcome_cohort = await apply_experiment_overrides(
-                config, conversation_id, _state.agent_db,
-            )
-    except Exception:
-        logger.debug("Experiment override check skipped", exc_info=True)
-
-    async def _record_outcome():
-        """Doc 049: record outcome observation after the turn completes."""
-        try:
-            from backend.app.agent.outcome import collect_signals, classify_task
-            from ulid import ULID
-            import hashlib as _hl
-
-            _wall_time = int(time.time() * 1000) - _outcome_start_time_ms
-            _task_cat = classify_task(user_message, _outcome_tool_names)
-
-            signals = collect_signals(
-                tool_calls=tool_calls_made,
-                iterations=_cost_tracking["iterations_used"],
-                total_cost=_cost_tracking["total_cost"],
-                input_tokens=_cost_tracking["total_input_tokens"],
-                output_tokens=_cost_tracking["total_output_tokens"],
-                wall_time_ms=_wall_time,
-                had_loop_intervention=_outcome_had_loop_intervention,
-                had_continuation=_outcome_had_continuation,
-                had_compression=_outcome_had_compression,
-                fragments_selected=len(_outcome_fragment_names),
-                fragment_names=_outcome_fragment_names,
-                user_correction=False,  # detected retroactively on next message
-                task_category=_task_cat,
-                user_message_preview=user_message[:200] if user_message else "",
-                tool_names=_outcome_tool_names,
-            )
-
-            if _state.agent_db:
-                _obs_id = str(ULID())
-                _lessons_hash = _hl.md5((_lessons_content or "").encode()).hexdigest()[:12]
-                await _state.agent_db.execute(
-                    """
-                    INSERT INTO optimization_observations
-                        (id, conversation_id, turn_index, task_category,
-                         user_message_preview, signals_json, outcome_score,
-                         config_snapshot_json, active_lessons_hash, cohort)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        _obs_id, conversation_id, tool_calls_made, _task_cat,
-                        user_message[:200] if user_message else "",
-                        json.dumps(signals), signals["outcome_score"],
-                        json.dumps(_config_snapshot), _lessons_hash,
-                        _outcome_cohort,
-                    ),
-                )
-                await _state.agent_db.commit()
-
-                # Every 50 turns, trigger background analysis
-                _state._optimization_turn_counter = _outcome_turn_counter + 1
-                if (_outcome_turn_counter + 1) % 50 == 0:
-                    asyncio.ensure_future(_run_optimization_analysis())
-
-        except Exception:
-            logger.debug("Outcome recording failed (non-fatal)", exc_info=True)
-
-    async def _run_optimization_analysis():
-        """Spawn background optimization analysis."""
-        try:
-            from backend.app.agent.optimizer import run_analysis
-            from backend.app.agent.tools.skills import _router_settings
-            from backend.app.foundations.embeddings.engine import EmbeddingEngine
-            _engine = EmbeddingEngine(
-                settings=_router_settings or {"embedding.provider": "local"},
-                db_engine=None,
-            )
-            await run_analysis(_state.agent_db, _engine)
-        except Exception:
-            logger.debug("Background optimization analysis failed", exc_info=True)
-
-    # ── Lifecycle phase tracking (Doc 024 — Tier 2 injection) ──
+    # Initialize lifecycle phase
     _lifecycle_phase = Phase.IDLE
-    _lifecycle_injected = False  # whether Tier 2 content is in the system prompt
-    _lifecycle_turn_number = 0  # logical turn counter for lifecycle detection
+    _prompts_dir = Path("/bond/prompts")
+    if not _prompts_dir.exists():
+        _prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+    loop._lifecycle_phase = _lifecycle_phase
 
     # ── Langfuse metadata for observability ──
-    # Build once before the loop. Updated if load_context adds fragments mid-turn.
     _langfuse_meta: dict[str, Any] = {}
     if os.environ.get("LANGFUSE_PUBLIC_KEY"):
         _audit_fragments: list[dict] = []
-
-        # Tier 1 fragments (from manifest)
         for meta in _tier1_meta:
             _audit_fragments.append(meta)
-
-        # Tier 3 fragments (from semantic router)
         for meta in _tier3_meta:
             _audit_fragments.append(meta)
-
-        # Category manifest
         if _category_manifest:
             _audit_fragments.append({
                 "source": "category-manifest",
                 "name": "prompt_manifest",
                 "tokenEstimate": _estimate_tokens(_category_manifest),
             })
-
-        # Build fragment names and metadata summary
         _fragment_names = [f.get("name", "") for f in _audit_fragments]
         _fragment_total_tokens = sum(f.get("tokens", f.get("tokenEstimate", 0)) for f in _audit_fragments)
 
@@ -1542,10 +989,6 @@ async def _run_agent_loop(
                 f"agent:{_state.agent_id}",
                 f"fragments:{len(_audit_fragments)}",
             ] + [f"prompt:{n}" for n in _fragment_names],
-
-            # trace_metadata puts data on the TRACE level (visible without
-            # clicking into a generation). Keys prefixed with trace_ are
-            # hoisted by litellm's langfuse callback.
             "trace_metadata": {
                 "fragment_count": len(_audit_fragments),
                 "fragment_names": _fragment_names,
@@ -1555,8 +998,6 @@ async def _run_agent_loop(
                 "had_history_compression": compression_stats.get("original_tokens", 0) > COMPRESSION_THRESHOLD,
                 "had_sliding_window": len(history) != len(windowed_history) if history else False,
             },
-
-            # Full detail stays on the generation level
             "fragments_injected": _audit_fragments,
             "fragment_count": len(_audit_fragments),
             "fragment_names": _fragment_names,
@@ -1567,66 +1008,7 @@ async def _run_agent_loop(
             "had_sliding_window": len(history) != len(windowed_history) if history else False,
         }
 
-    # ── Phase 4B/4C: Cost tracking helper ──
-    _raw_cost_thresh = os.environ.get("LLM_COST_ALERT_THRESHOLD")
-    _raw_iter_thresh = os.environ.get("LLM_ITERATION_ALERT_THRESHOLD")
-    try:
-        _cost_alert_threshold = float(_raw_cost_thresh) if isinstance(_raw_cost_thresh, str) else 0.25
-    except (TypeError, ValueError):
-        _cost_alert_threshold = 0.25
-    try:
-        _iteration_alert_threshold = int(_raw_iter_thresh) if isinstance(_raw_iter_thresh, str) else 20
-    except (TypeError, ValueError):
-        _iteration_alert_threshold = 20
-
-    def _calc_call_cost(resp, resp_model: str) -> float:
-        """Calculate real cost for a single LLM call via litellm's cost calculator.
-
-        Falls back to token-based estimate if the calculator doesn't have pricing
-        for the model (e.g. custom/self-hosted models).
-        """
-        try:
-            return _litellm_completion_cost(completion_response=resp, model=resp_model)
-        except Exception:
-            # Fallback: rough estimate using Opus pricing
-            _usage = getattr(resp, "usage", None)
-            _in = getattr(_usage, "prompt_tokens", 0) or 0
-            _out = getattr(_usage, "completion_tokens", 0) or 0
-            return _in * 15.0 / 1_000_000 + _out * 75.0 / 1_000_000
-
-    def _emit_cost_summary():
-        """Log per-session cost summary (Phase 4B) and check for cost alerts (Phase 4C)."""
-        _total = _cost_tracking["total_cost"]
-
-        logger.info(
-            "Cost summary: calls=%d (primary=%d, filter=%d, compression=%d) "
-            "tokens_in=%d tokens_out=%d cost=$%.4f iterations=%d/%d",
-            _cost_tracking["primary_calls"] + _cost_tracking["filter_calls"] + _cost_tracking["compression_calls"],
-            _cost_tracking["primary_calls"],
-            _cost_tracking["filter_calls"],
-            _cost_tracking["compression_calls"],
-            _cost_tracking["total_input_tokens"],
-            _cost_tracking["total_output_tokens"],
-            _total,
-            _cost_tracking["iterations_used"],
-            _cost_tracking["iteration_budget"],
-        )
-
-        # Phase 4C: Cost alerting
-        try:
-            _cost_exceeded = _total > _cost_alert_threshold or _cost_tracking["iterations_used"] > _iteration_alert_threshold
-        except TypeError:
-            _cost_exceeded = False
-        if _cost_exceeded:
-            logger.warning(
-                "COST ALERT: session %s exceeded thresholds (cost=$%.4f > $%.2f or iterations=%d > %d)",
-                conversation_id, _total, _cost_alert_threshold,
-                _cost_tracking["iterations_used"], _iteration_alert_threshold,
-            )
-            if _langfuse_meta:
-                _langfuse_meta.setdefault("tags", []).append("cost:high")
-
-    # ── Phase 0-2: Pre-gathering (Design Doc 038) ──
+    # ── 5. Pre-gathering (Design Doc 038) ──
     _pre_gather_result = None
     if not _is_continuation:
         try:
@@ -1652,7 +1034,6 @@ async def _run_agent_loop(
             )
 
             if _pre_gather_result and _pre_gather_result.context_bundle:
-                # Inject gathered context as a user message before the loop
                 messages.append({
                     "role": "user",
                     "content": f"[Pre-gathered context for this task]\n\n{_pre_gather_result.context_bundle}",
@@ -1663,20 +1044,30 @@ async def _run_agent_loop(
                 )
 
             if _pre_gather_result and _pre_gather_result.adaptive_budget is not None:
-                _adaptive_budget = min(max_iterations, _pre_gather_result.adaptive_budget)
-                _adaptive_budget_set = True
-                _cost_tracking["iteration_budget"] = _adaptive_budget
-                logger.info("Pre-gather: set adaptive budget to %d", _adaptive_budget)
+                loop.adaptive_budget = min(max_iterations, _pre_gather_result.adaptive_budget)
+                loop.adaptive_budget_set = True
+                cost.tracking["iteration_budget"] = loop.adaptive_budget
+                logger.info("Pre-gather: set adaptive budget to %d", loop.adaptive_budget)
         except Exception as e:
             logger.warning("Pre-gather phase failed, falling through to normal loop: %s", e)
+
+    loop.is_coding_task = bool(
+        _pre_gather_result and _pre_gather_result.delegate_to_coding_agent
+    )
 
     # Reset per-turn budgets
     from backend.app.agent.tools.native import reset_load_context_budget
     reset_load_context_budget()
 
+    # Helper closures for clean return paths
+    async def _finish():
+        await _skill_tracker.flush()
+        await outcome.record(loop.tool_calls_made, cost.tracking)
+        cost.emit_summary(_langfuse_meta)
+
+    # ── 6. Main loop ──
     for _iteration in range(max_iterations):
-        # Check interrupt: if pending messages, inject them and continue.
-        # If no messages, this is a pure pause signal — break the loop.
+        # Check interrupt
         if _state.interrupt_event.is_set():
             _state.interrupt_event.clear()
             if _state.pending_messages:
@@ -1689,26 +1080,17 @@ async def _run_agent_loop(
                     await event_queue.put(_sse_event("status", {"state": "paused"}))
                 break
 
-        # ── Phase 3B: In-loop tool result decay — DISABLED ──
-        # Previously compressed older tool results to save context, but this
-        # destroys file content the agent paid for. Combined with file_read
-        # dedup (which correctly refuses re-reads), this created an impossible
-        # loop: agent loses content to compression, tries to re-read, dedup
-        # blocks it saying "you already have it", agent is stuck.
-        # The ~2K tokens saved per compression is not worth a wasted iteration.
-
-        current_max_tokens = TOKEN_TIERS[current_tier]
+        current_max_tokens = loop.TOKEN_TIERS[loop.current_tier]
         context_tokens = _estimate_messages_tokens(messages) + _estimate_tokens(json.dumps(tool_defs))
 
-        # All iterations use the primary model (Phase 1A: removed speculative utility routing)
         _iter_model = model
         _iter_kwargs = extra_kwargs
 
-        # Advance prompt cache breakpoint 2 before each call (Anthropic only).
+        # Advance prompt cache breakpoint 2 (Anthropic only)
         if _is_anthropic_model:
-            _cache_bp2_index = _advance_cache_breakpoint(messages, _cache_bp2_index)
+            loop.cache_bp2_index = _advance_cache_breakpoint(messages, loop.cache_bp2_index)
 
-        # ── Phase 4A: Distinguished Langfuse trace naming ──
+        # Langfuse trace naming
         _iter_langfuse_meta = dict(_langfuse_meta) if _langfuse_meta else {}
         if _iter_langfuse_meta:
             _iter_langfuse_meta["trace_name"] = f"agent-turn-{_state.agent_id}-iter-{_iteration}"
@@ -1718,29 +1100,27 @@ async def _run_agent_loop(
 
         logger.info(
             "LLM request: model=%s tools=%d max_tokens=%d tier=%d context_tokens=~%d msgs=%d cache=%s",
-            _iter_model, len(tool_defs), current_max_tokens, current_tier,
+            _iter_model, len(tool_defs), current_max_tokens, loop.current_tier,
             context_tokens, len(messages),
             "anthropic" if _is_anthropic_model else "none",
         )
 
-        # Token budget injection: append brief context to the last tool result
+        # Token budget injection
         _budget_note = ""
         _budget_target_idx = -1
         if _iteration > 0 and messages and messages[-1].get("role") == "tool":
-            _budget_note = f"\n[Turn {_iteration + 1}/{max_iterations} | ~{context_tokens} tokens | {tool_calls_made} tool calls]"
+            _budget_note = f"\n[Turn {_iteration + 1}/{max_iterations} | ~{context_tokens} tokens | {loop.tool_calls_made} tool calls]"
             _budget_target_idx = len(messages) - 1
             content = messages[_budget_target_idx].get("content", "")
             if isinstance(content, str):
                 messages[_budget_target_idx]["content"] = content + _budget_note
 
-        # ── Phase 2A + Doc 034: Plan-aware iteration budget ──
-        # Uses IterationBudget for 50%/80%/95% thresholds with plan context.
+        # Plan-aware iteration budget
         try:
             from backend.app.agent.continuation import IterationBudget
             _iter_budget = IterationBudget(total=max_iterations, used=_iteration)
             _budget_msg = _iter_budget.get_budget_message()
             if _budget_msg:
-                # At 95%: checkpoint the plan before it's too late
                 if _iter_budget.should_stop and _has_active_plan:
                     try:
                         from backend.app.agent.tools.work_plan import checkpoint_active_plan
@@ -1752,41 +1132,23 @@ async def _run_agent_loop(
                         pass
                 messages.append({"role": "user", "content": f"SYSTEM: {_budget_msg}"})
         except Exception:
-            # Fallback to simple 80% check
             if _iteration > 0 and _iteration >= int(max_iterations * 0.8):
                 messages.append({
                     "role": "user",
                     "content": "SYSTEM: You're approaching your iteration limit. Wrap up or synthesize what you have.",
                 })
 
-        # ── Phase 2B: Early termination nudges for read-only tasks ──
-        if not _has_made_consequential_call:
-            if _iteration == 10:
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "SYSTEM: You've gathered substantial context over 10 iterations without making "
-                        "any changes. Synthesize your findings and respond to the user now. "
-                        "Do not read more files."
-                    ),
-                })
-            elif _iteration >= 15:
-                # Force respond+say tool set
-                from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-                _forced = [compact_tool_schema(_FULL_TOOL_MAP[t]) for t in ("respond", "say") if t in _FULL_TOOL_MAP]
-                tool_defs = _forced or tool_defs
-                logger.info("Phase 2B: forced respond+say tool set at iteration %d", _iteration)
+        # Early termination nudges
+        handle_early_termination(_iteration, loop, messages, tool_defs)
 
-        # Log the API key info before calling LiteLLM
+        # Log API key info
         if "api_key" in _iter_kwargs:
-            _dbg_key = _iter_kwargs["api_key"]
             logger.debug("Calling LiteLLM with model %s, API key length: %d",
-                       _iter_model, len(_dbg_key))
+                       _iter_model, len(_iter_kwargs["api_key"]))
         else:
             logger.debug("Calling LiteLLM with model %s, no API key in kwargs", _iter_model)
-        # ── LLM call with retry on empty responses (rate limiting) ──
-        # Uses _cancellable_llm_call (037 §5.2.1) so interrupts take effect
-        # mid-call instead of waiting for the full response.
+
+        # ── LLM call with retry ──
         _retry_max = int(os.environ.get("LLM_RETRY_MAX_ATTEMPTS", "10"))
         _retry_max_wait = float(os.environ.get("LLM_RETRY_MAX_WAIT_SECONDS", "180"))
         response = None
@@ -1803,7 +1165,6 @@ async def _run_agent_loop(
                 **_iter_kwargs,
             )
 
-            # Interrupted mid-call — check for injected context or stop
             if response is None:
                 _state.interrupt_event.clear()
                 if _state.pending_messages:
@@ -1816,30 +1177,24 @@ async def _run_agent_loop(
                     _state.pending_messages.clear()
                     if event_queue is not None:
                         await event_queue.put(_sse_event("status", {"state": "context_injected"}))
-                    break  # break retry loop, continue outer iteration
+                    break
                 else:
                     logger.info("LLM call interrupted — stopping agent loop")
-                    # Kill any active coding agent sub-processes
                     from backend.app.agent.tools.coding_agent import kill_coding_agent
                     await kill_coding_agent(_state.agent_id)
                     if event_queue is not None:
                         await event_queue.put(_sse_event("status", {"state": "interrupted"}))
-                    # Strip budget note before returning
                     if _budget_note and _budget_target_idx >= 0:
                         content = messages[_budget_target_idx].get("content", "")
                         if isinstance(content, str) and content.endswith(_budget_note):
                             messages[_budget_target_idx]["content"] = content[:-len(_budget_note)]
-                    await _skill_tracker.flush()
-                    await _record_outcome()
-                    _emit_cost_summary()
-                    return "", tool_calls_made
+                    await _finish()
+                    return "", loop.tool_calls_made
 
             if response.choices:
                 break
 
-            # Empty response — compute exponential backoff delay.
-            # Delays form a geometric series that sums to _retry_max_wait,
-            # so the last attempt fires right around the configured ceiling.
+            # Empty response — exponential backoff
             if _retry_max > 1:
                 _ratio = (_retry_max_wait / 1.0) ** (1.0 / (_retry_max - 1))
                 _delay = 1.0 * (_ratio ** _retry_attempt)
@@ -1868,11 +1223,10 @@ async def _run_agent_loop(
                     "This may indicate rate limiting, content filtering, or a malformed request."
                 )
 
-        # If we broke out of retry loop due to context injection, continue outer loop
         if response is None:
             continue
 
-        # Strip budget note from the tool result after the LLM call
+        # Strip budget note
         if _budget_note and _budget_target_idx >= 0:
             content = messages[_budget_target_idx].get("content", "")
             if isinstance(content, str) and content.endswith(_budget_note):
@@ -1881,7 +1235,6 @@ async def _run_agent_loop(
         choice = response.choices[0]
         llm_message = choice.message
 
-        # Log cache usage if available (Anthropic returns cache_creation_input_tokens / cache_read_input_tokens)
         usage = getattr(response, "usage", None)
         cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
         cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
@@ -1898,221 +1251,52 @@ async def _run_agent_loop(
             input_tokens, output_tokens, cache_read, cache_write,
         )
 
-        # Handle finish_reason=length — output was truncated
-        if choice.finish_reason == "length":
-            continuation_attempts += 1
-            _outcome_had_continuation = True
-            partial_content = llm_message.content or ""
-
-            if continuation_attempts > MAX_CONTINUATIONS:
-                logger.error(
-                    "Aborting after %d continuation attempts — response keeps exceeding token limit",
-                    continuation_attempts,
-                )
-                await _record_outcome()
-                _emit_cost_summary()
-                return (
-                    "I hit the output token limit multiple times even at the highest setting. "
-                    "This usually happens with very large file writes. Try asking me to write "
-                    "the file in smaller sections, or break the task into smaller pieces."
-                ), tool_calls_made
-
-            # Escalate to next tier
-            if current_tier < len(TOKEN_TIERS) - 1:
-                current_tier += 1
-                logger.info(
-                    "Truncated response — escalating max_tokens to %d (tier %d), attempting continuation %d/%d",
-                    TOKEN_TIERS[current_tier], current_tier, continuation_attempts, MAX_CONTINUATIONS,
-                )
-
-            # Assistant prefill continuation (like Aider/Claude Code):
-            # Append partial response as assistant, ask model to continue
-            if partial_content:
-                messages.append({"role": "assistant", "content": partial_content})
-                messages.append({
-                    "role": "user",
-                    "content": "Your response was cut off due to the output length limit. Please continue exactly where you left off.",
-                })
-            else:
-                # Truncated with no content (truncated tool call) — retry at higher tier
-                logger.warning("Truncated with no content — retrying at higher tier")
-
-            continue  # retry this iteration
+        # Handle truncation
+        trunc_action = handle_truncation(choice, llm_message, loop, messages, outcome, cost, _langfuse_meta)
+        if trunc_action == "abort":
+            await _finish()
+            return (
+                "I hit the output token limit multiple times even at the highest setting. "
+                "This usually happens with very large file writes. Try asking me to write "
+                "the file in smaller sections, or break the task into smaller pieces."
+            ), loop.tool_calls_made
+        if trunc_action == "continue":
+            continue
 
         # Successful completion — reset adaptive tokens
-        current_tier = 0
-        continuation_attempts = 0
+        loop.current_tier = 0
+        loop.continuation_attempts = 0
 
-        # ── Phase 4B: Track cost per iteration ──
-        _iter_cost = _calc_call_cost(response, _iter_model)
-        _cost_tracking["primary_calls"] += 1
-        _cost_tracking["total_input_tokens"] += input_tokens
-        _cost_tracking["total_output_tokens"] += output_tokens
-        _cost_tracking["total_cost"] += _iter_cost
-        _cost_tracking["iterations_used"] = _iteration + 1
-        logger.debug("Iteration %d cost: $%.4f (cumulative: $%.4f)", _iteration, _iter_cost, _cost_tracking["total_cost"])
+        # Track cost
+        cost.track_primary_call(response, _iter_model, _iteration, input_tokens, output_tokens)
 
-        # ── Phase 2A: Adaptive iteration budget ──
-        if _iteration == 0 and not _adaptive_budget_set:
-            _adaptive_budget_set = True
-            if not llm_message.tool_calls:
-                _adaptive_budget = min(max_iterations, 2)
-                logger.info("Phase 2A: simple Q&A, budget=%d", _adaptive_budget)
-            else:
-                _first_tool_names = [tc.function.name for tc in llm_message.tool_calls]
-                _has_edits = any(t in ("file_edit", "file_write") for t in _first_tool_names)
-                _has_plan = any(t == "work_plan" for t in _first_tool_names)
-                _has_reads = any(t in ("file_read", "shell_grep", "search_memory") for t in _first_tool_names)
-                if _has_plan and len(_first_tool_names) >= 5:
-                    _adaptive_budget = min(max_iterations, 25)
-                    logger.info("Phase 2A: complex multi-file, budget=%d", _adaptive_budget)
-                elif _has_edits:
-                    _adaptive_budget = min(max_iterations, 20)
-                    logger.info("Phase 2A: implementation, budget=%d", _adaptive_budget)
-                elif _has_reads and not _has_edits:
-                    _adaptive_budget = min(max_iterations, 10)
-                    logger.info("Phase 2A: analysis, budget=%d", _adaptive_budget)
-                else:
-                    _adaptive_budget = min(max_iterations, 8)
-                    logger.info("Phase 2A: file lookup, budget=%d", _adaptive_budget)
-            _cost_tracking["iteration_budget"] = _adaptive_budget
+        # Adaptive budget
+        handle_adaptive_budget(_iteration, llm_message, loop, cost)
 
-        # ── Approaching budget: hand off or wrap up ──
-        # Coding tasks: use adaptive budget with 80% threshold → coding_agent handoff
-        # Non-coding tasks: warn at iteration 15, full budget (max_iterations), no coding_agent
-        _NON_CODING_WARN_THRESHOLD = 15
-        if _is_coding_task:
-            _effective_threshold = int(_adaptive_budget * 0.8)
-            _effective_budget = _adaptive_budget
-        else:
-            _effective_threshold = _NON_CODING_WARN_THRESHOLD
-            _effective_budget = max_iterations
-
-        if (_iteration >= _effective_threshold
-            and _iteration > 2
-            and not any(tc.function.name == "coding_agent" for tc in (llm_message.tool_calls or []))):
-            _remaining = _effective_budget - _iteration - 1
-            _overbudget_by = _iteration - _effective_threshold
-
-            if _is_coding_task:
-                # Coding task: hand off to coding_agent
-                try:
-                    from backend.app.agent.pre_gather import build_handoff_context
-                    _handoff_ctx = build_handoff_context(messages)
-                    _handoff_msg = (
-                        f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget}. "
-                        f"You have {_remaining} iterations left. Hand off your remaining work "
-                        f"to the coding_agent tool NOW.\n\n"
-                        f"**Files you've read:**\n{_handoff_ctx['files_read']}\n\n"
-                        f"**Changes you've made:**\n{_handoff_ctx['edits_made']}\n\n"
-                        f"Write a coding_agent task prompt that covers the remaining work. "
-                        f"Include the file paths you've already identified. "
-                        f"The coding agent has access to the same repo — reference files by path, "
-                        f"don't paste their contents.\n\n"
-                        f"Spawn coding_agent in your next response. Do not read more files."
-                    )
-                except Exception:
-                    _handoff_msg = (
-                        f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget}. "
-                        f"You have {_remaining} iterations left. Hand off your remaining work "
-                        f"to the coding_agent tool now. Summarize what's done and what's left."
-                    )
-                messages.append({"role": "user", "content": _handoff_msg})
-                logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, _effective_budget)
-
-                # After 4 ignored handoff hints, restrict tools to coding_agent + respond only
-                if _overbudget_by >= 4:
-                    from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-                    _forced_tools = []
-                    for _tname in ("coding_agent", "respond", "say"):
-                        if _tname in _FULL_TOOL_MAP:
-                            _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
-                    if _forced_tools:
-                        tool_defs = _forced_tools
-                        logger.warning(
-                            "Budget hard restriction: iteration %d, forced tool set to coding_agent+respond+say",
-                            _iteration + 1,
-                        )
-            else:
-                # Non-coding task: tell the agent how many iterations remain
-                _wrapup_msg = (
-                    f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget} "
-                    f"with {_remaining} iteration{'s' if _remaining != 1 else ''} remaining. "
-                    f"Finish up your current approach and respond to the user."
-                )
-                messages.append({"role": "user", "content": _wrapup_msg})
-                logger.info("Budget wrap-up: iteration %d/%d, %d remaining (non-coding task)",
-                            _iteration + 1, _effective_budget, _remaining)
-
-                # After 4 ignored wrap-up hints, restrict tools to respond only
-                if _overbudget_by >= 4:
-                    from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-                    _forced_tools = []
-                    for _tname in ("respond", "say"):
-                        if _tname in _FULL_TOOL_MAP:
-                            _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
-                    if _forced_tools:
-                        tool_defs = _forced_tools
-                        logger.warning(
-                            "Budget hard restriction: iteration %d, forced tool set to respond+say (non-coding)",
-                            _iteration + 1,
-                        )
-
-            # After 8 ignored hints, hard-stop the loop regardless of task type
-            if _overbudget_by >= 8:
-                logger.warning(
-                    "Budget hard cap: stopping loop at iteration %d (effective budget was %d)",
-                    _iteration + 1, _effective_budget,
-                )
-                break
+        # Budget escalation
+        if handle_budget_escalation(_iteration, llm_message, loop, messages, tool_defs):
+            break
 
         if llm_message.tool_calls:
             _iter_tool_names = [tc.function.name for tc in llm_message.tool_calls]
 
-            # ── Phase 2B: Track consequential calls ──
-            if any(t in CONSEQUENTIAL_TOOLS for t in _iter_tool_names):
-                _has_made_consequential_call = True
+            # Track consequential calls
+            if any(t in loop.CONSEQUENTIAL_TOOLS for t in _iter_tool_names):
+                loop.has_made_consequential_call = True
 
-            # ── Track whether this looks like a coding task ──
-            if any(t in _CODING_TOOLS for t in _iter_tool_names):
-                _is_coding_task = True
+            # Track coding task
+            if any(t in loop.CODING_TOOLS for t in _iter_tool_names):
+                loop.is_coding_task = True
 
-            # ── Phase 1B: Batching nudge for single info-gathering calls ──
-            _is_single_info = (
-                len(llm_message.tool_calls) == 1
-                and _iter_tool_names[0] in INFO_GATHERING_TOOLS
-                and not (llm_message.content and llm_message.content.strip())
-            )
-            if _is_single_info:
-                _consecutive_single_info_iterations += 1
-                if _consecutive_single_info_iterations >= 3:
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "SYSTEM: You have made 3+ consecutive single-tool info-gathering calls. "
-                            "This is inefficient. Batch ALL remaining information needs into a SINGLE "
-                            "response with multiple tool calls. The system executes them in parallel."
-                        ),
-                    })
-                    logger.info("Phase 1B: strong batching nudge after %d consecutive single-tool iterations",
-                              _consecutive_single_info_iterations)
-                else:
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "SYSTEM: You made a single info-gathering call. If you need more information, "
-                            "batch multiple tool calls in your next response."
-                        ),
-                    })
-            else:
-                _consecutive_single_info_iterations = 0
-            # Update last_assistant for tool result filter context
+            # Batching nudge
+            handle_batching_nudge(llm_message, loop, messages)
+
             if llm_message.content:
                 last_assistant = llm_message.content
             messages.append(llm_message.model_dump())
 
-            # ── Parallel pre-execution: classify & batch parallel-safe calls ──
-            _parallel_precomputed: dict[str, tuple[dict, float]] = {}  # tool_call.id -> (result, duration)
+            # ── Parallel pre-execution ──
+            _parallel_precomputed: dict[str, tuple[dict, float]] = {}
             if len(llm_message.tool_calls) > 1:
                 _parallel_candidates = []
                 _all_parsed_args: dict[str, dict] = {}
@@ -2150,7 +1334,6 @@ async def _run_agent_loop(
                             _parallel_precomputed[_tcid] = (_pr["result"], _pr.get("elapsed", 0))
                     logger.info(format_parallel_summary(_par_results))
 
-                    # Emit parallel execution SSE event
                     if event_queue is not None:
                         await event_queue.put(_sse_event("status", {
                             "state": "parallel_execution",
@@ -2158,10 +1341,6 @@ async def _run_agent_loop(
                             "total_count": len(llm_message.tool_calls),
                         }))
 
-            # Collect lifecycle hook messages to append AFTER all tool
-            # results.  Injecting user messages between tool_use and
-            # tool_result violates Anthropic's message contract and
-            # causes "tool_use ids without tool_result" errors.
             _deferred_injections: list[dict] = []
 
             for tool_call in llm_message.tool_calls:
@@ -2171,60 +1350,15 @@ async def _run_agent_loop(
                 except json.JSONDecodeError:
                     tool_args = {}
 
-                tool_calls_made += 1
+                loop.tool_calls_made += 1
 
-                # Repetition detection: hash tool name + first 200 chars of args
-                args_sig = hashlib.md5(f"{tool_name}:{json.dumps(tool_args)[:200]}".encode()).hexdigest()[:8]
-                recent_tool_calls.append((tool_name, args_sig))
-
-                # ── Loop detection (consecutive + cyclical) ──
-                _loop_detected = False
-                _loop_msg = ""
-
-                # 1. Consecutive repetition: same call N times in a row
-                if len(recent_tool_calls) >= REPETITION_THRESHOLD:
-                    last_n = recent_tool_calls[-REPETITION_THRESHOLD:]
-                    if all(tc == last_n[0] for tc in last_n):
-                        _loop_detected = True
-                        _loop_msg = (
-                            f"SYSTEM: You have called '{tool_name}' with the same arguments "
-                            f"{REPETITION_THRESHOLD} times in a row. You appear to be in a loop."
-                        )
-                        logger.warning(
-                            "Consecutive repetition detected: %s called %d times with same args",
-                            tool_name, REPETITION_THRESHOLD,
-                        )
-
-                # 2. Cyclical repetition: A→B→C→A→B→C pattern
-                if not _loop_detected and len(recent_tool_calls) >= _CYCLE_MIN_PERIOD * _CYCLE_REPEATS:
-                    for period in range(_CYCLE_MIN_PERIOD, _CYCLE_MAX_PERIOD + 1):
-                        needed = period * _CYCLE_REPEATS
-                        if len(recent_tool_calls) < needed:
-                            continue
-                        tail = recent_tool_calls[-needed:]
-                        cycle = tail[:period]
-                        is_cycle = all(
-                            tail[i] == cycle[i % period]
-                            for i in range(needed)
-                        )
-                        if is_cycle:
-                            cycle_tools = [c[0] for c in cycle]
-                            _loop_detected = True
-                            _loop_msg = (
-                                f"SYSTEM: You are in a cyclical loop — repeating the pattern "
-                                f"{' → '.join(cycle_tools)} ({_CYCLE_REPEATS} times). "
-                                f"These actions have already been completed. Stop repeating them."
-                            )
-                            logger.warning(
-                                "Cyclical loop detected: pattern %s repeated %d times (period=%d)",
-                                cycle_tools, _CYCLE_REPEATS, period,
-                            )
-                            break
+                # Loop detection
+                _loop_detected, _loop_msg = detect_loop(tool_name, tool_args, loop)
 
                 if _loop_detected:
-                    _loop_intervention_count += 1
+                    loop.loop_intervention_count += 1
+                    outcome.had_loop_intervention = True
 
-                    # Execute this tool call so there's a result for the tool_call_id
                     if tool_name not in agent_tools:
                         result = {"error": f"Tool '{tool_name}' is not enabled."}
                     else:
@@ -2235,18 +1369,12 @@ async def _run_agent_loop(
                         "content": json.dumps(result),
                     })
 
-                    if _loop_intervention_count > _LOOP_MAX_INTERVENTIONS:
-                        # Hard stop — we've already warned and the model keeps looping
+                    if loop.loop_intervention_count > loop.LOOP_MAX_INTERVENTIONS:
                         logger.error(
                             "Loop intervention limit reached (%d interventions). "
                             "Force-stopping agent loop at iteration %d, tool call %d.",
-                            _loop_intervention_count, _iteration, tool_calls_made,
+                            loop.loop_intervention_count, _iteration, loop.tool_calls_made,
                         )
-                        # Defer the user message so it comes AFTER all tool_result
-                        # messages (including orphan fillers).  Inserting a user
-                        # message between tool_results violates Anthropic's
-                        # requirement that every tool_use has a matching
-                        # tool_result immediately after.
                         _deferred_injections.append({
                             "role": "user",
                             "content": (
@@ -2258,19 +1386,12 @@ async def _run_agent_loop(
                         if event_queue is not None:
                             await event_queue.put(_sse_event("status", {
                                 "state": "loop_terminated",
-                                "interventions": _loop_intervention_count,
-                                "tool_calls_made": tool_calls_made,
+                                "interventions": loop.loop_intervention_count,
+                                "tool_calls_made": loop.tool_calls_made,
                             }))
-                        # Give the model one last chance to respond
-                        # by continuing the outer loop (it will see the HARD STOP)
-                        recent_tool_calls.clear()
+                        loop.recent_tool_calls.clear()
                         break
 
-                    # Defer the loop intervention message so it comes AFTER all
-                    # tool_result messages (including orphan fillers for any
-                    # remaining tool_calls in this batch).  Appending a user
-                    # message here would violate Anthropic's requirement that
-                    # every tool_use has a matching tool_result immediately after.
                     _deferred_injections.append({
                         "role": "user",
                         "content": (
@@ -2280,26 +1401,22 @@ async def _run_agent_loop(
                             "explain what's blocking you."
                         ),
                     })
-                    recent_tool_calls.clear()
-                    break  # break inner tool_call loop, continue outer iteration
+                    loop.recent_tool_calls.clear()
+                    break
 
-                logger.info("Tool call [%d]: %s args=%s", tool_calls_made, tool_name,
+                logger.info("Tool call [%d]: %s args=%s", loop.tool_calls_made, tool_name,
                             {k: (v[:80] + '...' if isinstance(v, str) and len(v) > 80 else v) for k, v in tool_args.items()})
 
-                # Emit tool_call event for live progress
+                # Emit tool_call event
                 if event_queue is not None:
                     await event_queue.put(_sse_event("status", {"state": "tool_calling"}))
                     await event_queue.put(_sse_event("tool_call", {
                         "tool_name": tool_name,
                         "args": {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in tool_args.items()},
-                        "tool_calls_made": tool_calls_made,
+                        "tool_calls_made": loop.tool_calls_made,
                     }))
 
-                # ── Pre-execution lifecycle hook (Doc 024) ──
-                # Collect phase-specific guidance for consequential git
-                # operations.  These are DEFERRED and appended after all
-                # tool_result messages to avoid breaking Anthropic's
-                # requirement that tool_results follow tool_use immediately.
+                # Pre-execution lifecycle hooks (Doc 024)
                 if is_git_commit_command(tool_name, tool_args):
                     _commit_frags = load_lifecycle_fragments(Phase.COMMITTING, _prompts_dir)
                     if _commit_frags:
@@ -2332,8 +1449,6 @@ async def _run_agent_loop(
                 if tool_name not in agent_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled."}
                 else:
-                    # If model called a tool not in the selected set but still enabled,
-                    # execute it and add to selected set for future iterations
                     if tool_name not in selected_tool_names:
                         logger.info("Tool %s not in selected set but enabled — adding dynamically", tool_name)
                         selected_tool_names.append(tool_name)
@@ -2346,48 +1461,24 @@ async def _run_agent_loop(
                                 tool_defs.extend([compact_tool_schema(d) for d in _mcp_dyn])
                             except Exception:
                                 pass
-                    
-                    # Use precomputed parallel result if available
+
                     if tool_call.id in _parallel_precomputed:
                         result, duration = _parallel_precomputed[tool_call.id]
                         logger.info("Using precomputed parallel result for %s (%.2fs)", tool_name, duration)
                     else:
-                        start_ts = time.time()
-                        # For long-running tools (coding_agent), make execution
-                        # interruptible (037 §5.2.2)
-                        tool_task = asyncio.create_task(
-                            registry.execute(tool_name, tool_args, tool_context)
+                        result, duration = await execute_tool_call(
+                            tool_call, tool_name, tool_args,
+                            agent_tools, registry, tool_context,
+                            _parallel_precomputed,
+                            _state.interrupt_event, _state,
+                            conversation_id, event_queue,
                         )
-                        interrupt_task = asyncio.create_task(
-                            _state.interrupt_event.wait()
-                        )
-                        _done, _pending = await asyncio.wait(
-                            {tool_task, interrupt_task},
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        for _t in _pending:
-                            _t.cancel()
-                            try:
-                                await _t
-                            except asyncio.CancelledError:
-                                pass
+                        # Check for injected context from interrupt
+                        if _state.pending_messages:
+                            for msg in _state.pending_messages:
+                                messages.append(msg)
+                            _state.pending_messages.clear()
 
-                        if tool_task in _done:
-                            result = tool_task.result()
-                        else:
-                            # Tool was interrupted
-                            logger.info("Tool %s interrupted by user", tool_name)
-                            from backend.app.agent.tools.coding_agent import kill_coding_agent
-                            await kill_coding_agent(_state.agent_id)
-                            result = {"error": "Tool execution interrupted by user"}
-                            _state.interrupt_event.clear()
-                            # Check for injected context
-                            if _state.pending_messages:
-                                for msg in _state.pending_messages:
-                                    messages.append(msg)
-                                _state.pending_messages.clear()
-                        duration = time.time() - start_ts
-                    
                     # Persist tool log
                     if _state.persistence:
                         try:
@@ -2402,12 +1493,12 @@ async def _run_agent_loop(
                         except Exception as e:
                             logger.error("Failed to persist tool log: %s", e)
 
-                # Emit any SSE events from tool results (e.g., plan/item updates)
+                # Emit SSE events from tool results
                 if isinstance(result, dict) and "_sse_event" in result and event_queue is not None:
                     sse = result.pop("_sse_event")
                     await event_queue.put(_sse_event(sse["event"], sse.get("data", {})))
 
-                # Smart build output parsing: compress verbose build/test output
+                # Smart build output parsing
                 if tool_name == "code_execute" and isinstance(result, dict):
                     from backend.app.agent.build_output_parser import parse_build_output
                     _bstdout = result.get("stdout", "")
@@ -2418,22 +1509,13 @@ async def _run_agent_loop(
                         if _parsed is not None:
                             result = {**result, "stdout": _parsed, "_build_parsed": True}
 
-                # File re-read dedup — DISABLED.
-                # Previously blocked re-reads of files already in context, but combined
-                # with in-loop decay (also disabled), this trapped agents in an impossible
-                # loop. The agent should be free to re-read any file at any time.
-                # If we re-enable this, it MUST be aware of what's actually still in
-                # the message context, not just what was read at some point.
-
-                logger.info("Tool result [%d]: %s",  tool_calls_made,
+                logger.info("Tool result [%d]: %s",  loop.tool_calls_made,
                             {k: (v[:100] + '...' if isinstance(v, str) and len(v) > 100 else v) for k, v in result.items()} if isinstance(result, dict) else result)
 
-                # ── Doc 049: Track tool names for outcome signals ──
-                if tool_name not in _outcome_tool_names:
-                    _outcome_tool_names.append(tool_name)
+                # Track tool names for outcome
+                outcome.track_tool(tool_name)
 
-                # Coding agent started — emit SSE event so gateway subscribes
-                # to the background diff stream
+                # Coding agent started SSE
                 if (tool_name == "coding_agent"
                     and isinstance(result, dict)
                     and result.get("status") == "started"
@@ -2443,7 +1525,7 @@ async def _run_agent_loop(
                         "conversation_id": conversation_id,
                     }))
 
-                # Skill activated — emit SSE event for frontend toast
+                # Skill activated SSE
                 if isinstance(result, dict) and "_skill_activated" in result:
                     _skill_info = result.pop("_skill_activated")
                     import uuid as _uuid
@@ -2455,7 +1537,6 @@ async def _run_agent_loop(
                             "skillSource": _skill_info.get("source", ""),
                             "activatedAt": int(time.time()),
                         }))
-                    # Track activation for adaptive learning (Phase 3)
                     _skill_tracker.on_skill_activated(
                         activation_id=_act_id,
                         skill_id=_skill_info.get("id", _skill_info.get("name", "")),
@@ -2463,47 +1544,39 @@ async def _run_agent_loop(
                         session_id=conversation_id,
                     )
 
-                # Track file reads that may be skill references
                 if tool_name == "file_read" and _skill_tracker.has_activations:
                     _read_path = tool_args.get("path", "")
                     if _read_path:
                         _skill_tracker.on_file_read(_read_path)
 
-                # Check for promotable memory -> emit SSE memory event
                 if "_promote" in result:
                     _state._last_sse_events = getattr(_state, "_last_sse_events", [])
                     _state._last_sse_events.append(("memory", result["_promote"]))
                     del result["_promote"]
 
-                # Work plan SSE events -> emit to event queue
                 if "_sse_event" in result:
                     sse_evt = result.pop("_sse_event")
                     if event_queue is not None:
                         await event_queue.put(_sse_event(sse_evt["event"], sse_evt["data"]))
-                    # Track active plan for tool selection
                     if sse_evt["event"] == "plan_created":
                         _has_active_plan = True
                         _active_plan_id = sse_evt["data"].get("plan_id")
-                        # Ensure work_plan stays in tool set
                         if "work_plan" not in selected_tool_names and "work_plan" in agent_tools:
                             selected_tool_names.append("work_plan")
                             if "work_plan" in TOOL_MAP:
                                 tool_defs.append(compact_tool_schema(TOOL_MAP["work_plan"]))
 
-                # Check terminal tool
+                # Terminal tool
                 if result.get("_terminal"):
                     _skill_tracker.on_turn_complete()
-                    await _skill_tracker.flush()
-                    await _record_outcome()
-                    _emit_cost_summary()
-                    return result.get("message", ""), tool_calls_made
+                    await _finish()
+                    return result.get("message", ""), loop.tool_calls_made
 
-                # Rule-based pruning (no LLM call) before utility model filter
+                # Tool result filtering
                 pruned = rule_based_prune(tool_name, tool_args, result)
                 if pruned is not None:
                     result_json = json.dumps(pruned)
                 else:
-                    # Fall through to utility model filter
                     _filter_langfuse = {}
                     if _langfuse_meta:
                         _filter_langfuse = {
@@ -2524,8 +1597,7 @@ async def _run_agent_loop(
                         result_json, _filter_cost = _filter_result
                     else:
                         result_json, _filter_cost = _filter_result, 0.0
-                    _cost_tracking["filter_calls"] += 1
-                    _cost_tracking["total_cost"] += _filter_cost
+                    cost.track_filter_cost(_filter_cost)
 
                 messages.append({
                     "role": "tool",
@@ -2533,13 +1605,11 @@ async def _run_agent_loop(
                     "content": result_json,
                 })
 
-            # Ensure every tool_use in this batch has a matching tool_result.
-            # If the inner loop broke early (loop detection, etc.) some
-            # tool calls may be orphaned — Anthropic rejects those.
+            # Fill orphaned tool calls
             _expected_tc_ids = {tc.id for tc in llm_message.tool_calls}
             _emitted_tc_ids = {
                 m["tool_call_id"]
-                for m in messages[-len(_expected_tc_ids) * 3:]  # scan recent tail only
+                for m in messages[-len(_expected_tc_ids) * 3:]
                 if m.get("role") == "tool" and m.get("tool_call_id") in _expected_tc_ids
             }
             for _tc in llm_message.tool_calls:
@@ -2550,124 +1620,21 @@ async def _run_agent_loop(
                         "content": json.dumps({"error": "Skipped — agent loop intervention"}),
                     })
 
-            # Flush deferred lifecycle injections now that all tool_result
-            # messages have been appended (safe for Anthropic).
             for _inj in _deferred_injections:
                 messages.append(_inj)
 
-            # ── Between-turn lifecycle injection (Doc 024) ──
-            # After processing all tool calls for this iteration, detect the
-            # lifecycle phase and inject Tier 2 fragments into the system prompt
-            # for the next iteration. This ensures the agent sees phase-specific
-            # guidance (e.g. testing rules during implementation, git rules during
-            # committing) on the NEXT LLM call.
-            _lifecycle_turn_number += 1
-            _tool_call_strings = [
-                f"{tc.function.name}:{tc.function.arguments}"
-                for tc in llm_message.tool_calls
-            ]
-            _lc_state = LifecycleState(
-                turn_number=_lifecycle_turn_number,
-                last_tool_calls=_tool_call_strings,
-                has_work_plan=_has_active_plan,
-                work_plan_status="in_progress" if _has_active_plan else None,
+            # Between-turn lifecycle injection (Doc 024)
+            handle_lifecycle_injection(
+                llm_message, loop, messages, _has_active_plan,
+                _langfuse_meta, _state.agent_id,
             )
-            _new_phase = detect_phase(_lc_state)
-
-            if _new_phase != _lifecycle_phase:
-                _lifecycle_phase = _new_phase
-                logger.info("Lifecycle phase changed to: %s", _lifecycle_phase.name)
-
-                # Remove previous lifecycle injection from system prompt
-                # (it's appended at the end, so we strip it)
-                sys_content = messages[0].get("content", "")
-                if isinstance(sys_content, list):
-                    # Anthropic cached format — modify text block
-                    for block in sys_content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text = block["text"]
-                            marker = "\n\n## Current Phase: "
-                            if marker in text:
-                                block["text"] = text[:text.index(marker)]
-                            break
-                elif isinstance(sys_content, str):
-                    marker = "\n\n## Current Phase: "
-                    if marker in sys_content:
-                        sys_content = sys_content[:sys_content.index(marker)]
-                        messages[0]["content"] = sys_content
-
-                # Inject new lifecycle fragments if not idle
-                if _new_phase != Phase.IDLE:
-                    _lc_frags = load_lifecycle_fragments(_new_phase, _prompts_dir)
-                    _lc_injection = format_lifecycle_injection(_new_phase, _lc_frags)
-                    if _lc_injection:
-                        if isinstance(messages[0].get("content"), list):
-                            for block in messages[0]["content"]:
-                                if isinstance(block, dict) and block.get("type") == "text":
-                                    block["text"] += _lc_injection
-                                    break
-                        else:
-                            messages[0]["content"] += _lc_injection
-                        _lifecycle_injected = True
-                        logger.info(
-                            "Lifecycle injection: phase=%s fragments=%s",
-                            _new_phase.name,
-                            [f.path for f in _lc_frags],
-                        )
-
-                        # Update Langfuse metadata with Tier 2 fragments
-                        if _langfuse_meta:
-                            _lc_meta = [
-                                {
-                                    "source": "lifecycle-tier2",
-                                    "path": f.path,
-                                    "name": Path(f.path).stem,
-                                    "phase": _new_phase.name,
-                                    "tokenEstimate": f.token_estimate,
-                                }
-                                for f in _lc_frags
-                            ]
-                            # Rebuild audit list: remove old tier2, add new
-                            _audit_fragments = [
-                                f for f in _audit_fragments
-                                if f.get("source") != "lifecycle-tier2"
-                            ] + _lc_meta
-                            _fragment_names = [f.get("name", "") for f in _audit_fragments]
-                            _fragment_total_tokens = sum(
-                                f.get("tokens", f.get("tokenEstimate", 0))
-                                for f in _audit_fragments
-                            )
-                            _langfuse_meta.update({
-                                "fragments_injected": _audit_fragments,
-                                "fragment_count": len(_audit_fragments),
-                                "fragment_names": _fragment_names,
-                                "fragment_total_tokens": _fragment_total_tokens,
-                                "tags": [
-                                    f"agent:{_state.agent_id}",
-                                    f"fragments:{len(_audit_fragments)}",
-                                    f"phase:{_new_phase.name}",
-                                ] + [f"prompt:{n}" for n in _fragment_names],
-                            })
-                            _langfuse_meta["trace_metadata"].update({
-                                "fragment_count": len(_audit_fragments),
-                                "fragment_names": _fragment_names,
-                                "fragment_total_tokens": _fragment_total_tokens,
-                                "lifecycle_phase": _new_phase.name,
-                            })
-                    else:
-                        _lifecycle_injected = False
-                else:
-                    _lifecycle_injected = False
 
         else:
             _final_content = llm_message.content or ""
             if _final_content.strip():
-                await _skill_tracker.flush()
-                await _record_outcome()
-                _emit_cost_summary()
-                return _final_content, tool_calls_made
+                await _finish()
+                return _final_content, loop.tool_calls_made
 
-            # Model ended with no content and no tool calls — force a response
             logger.warning("Model returned empty content with no tool calls at iteration %d; forcing response", _iteration)
             messages.append(llm_message.model_dump())
             messages.append({
@@ -2678,26 +1645,23 @@ async def _run_agent_loop(
                     "of what you were working on."
                 ),
             })
-            # Continue the loop — next iteration will produce a response
             continue
 
-    # Hit max iterations — save work plan checkpoint if active
+    # ── 7. Max iterations cleanup ──
     if _has_active_plan and _state.agent_db:
         try:
             from backend.app.agent.tools.work_plan import checkpoint_active_plan
             saved = await checkpoint_active_plan(
                 _state.agent_db, _state.agent_id,
                 f"Max iterations ({max_iterations}) reached — saving checkpoint. "
-                f"Tool calls made: {tool_calls_made}.",
+                f"Tool calls made: {loop.tool_calls_made}.",
             )
             if saved:
                 logger.info("Work plan checkpoint saved at max iterations")
         except Exception as e:
             logger.warning("Failed to save work plan checkpoint: %s", e)
 
-    # Hit max iterations — save a memory of what was attempted
     try:
-        # Build a summary from the tool calls in the conversation
         tool_summary_parts = []
         for msg in messages:
             if msg.get("role") == "assistant" and msg.get("tool_calls"):
@@ -2721,11 +1685,10 @@ async def _run_agent_loop(
     except Exception as e:
         logger.warning("Failed to save max-iterations memory: %s", e)
 
-    await _record_outcome()
-    _emit_cost_summary()
+    await _finish()
     return (
         "I've reached my maximum number of steps. Please try rephrasing.",
-        tool_calls_made,
+        loop.tool_calls_made,
     )
 
 
