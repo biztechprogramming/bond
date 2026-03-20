@@ -383,7 +383,8 @@ async def _lifespan(application: FastAPI):
         if _state.persistence and _state.persistence.mode == "api" and agent_token:
             gateway_url = _state.persistence.gateway_url
             _state.mcp_proxy = MCPProxyClient(gateway_url, _state.agent_id, agent_token)
-            logger.info("MCP proxy client initialized (gateway=%s)", gateway_url)
+            await _state.mcp_proxy.list_tools()
+            logger.info("MCP proxy client initialized (gateway=%s, tools=%d)", gateway_url, len(_state.mcp_proxy._tool_cache))
         else:
             _state.mcp_proxy = None
             logger.info("MCP proxy client not initialized (no API persistence or token)")
