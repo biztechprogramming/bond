@@ -16,7 +16,8 @@ export interface OutgoingMessage {
     | "queued" | "status" | "tool_call" | "tool_result" | "new_input" | "done"
     | "plan_created" | "item_updated" | "plan_completed"
     | "user_message" | "pong"
-    | "webhook_push";
+    | "webhook_push"
+    | "branch_changed";
   sessionId?: string;
   content?: string;
   error?: string;

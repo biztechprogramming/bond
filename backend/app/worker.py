@@ -313,6 +313,11 @@ class WorkerState:
         self.data_dir: Path = Path("/data")
         self.interrupt_event: asyncio.Event = asyncio.Event()
         self.pending_messages: list[dict] = []
+        # Turn refcounting for branch reload deferral
+        self.active_turns: int = 0
+        self.turn_lock: asyncio.Lock = asyncio.Lock()
+        self.pending_reload: bool = False
+        self.pending_reload_branch: str | None = None
 
 
 _state = WorkerState()
@@ -366,7 +371,10 @@ async def _lifespan(application: FastAPI):
     config_path = os.environ.get("BOND_WORKER_CONFIG", "/config/agent.json")
     data_dir = os.environ.get("BOND_WORKER_DATA_DIR", "/data")
     await _startup(config_path, data_dir)
-    
+
+    # Startup branch checkout
+    await _checkout_preferred_branch()
+
     # MCP Setup for worker
     try:
         from backend.app.mcp import mcp_manager
@@ -424,6 +432,63 @@ async def _worker_load_mcp_servers(manager):
     except Exception as e:
         logger.error("Failed to load MCP servers from Gateway: %s", e)
 
+async def _checkout_preferred_branch():
+    """Checkout the preferred branch on startup."""
+    import subprocess as _sp
+
+    # Try to get preferred branch from gateway
+    target_branch = os.environ.get("BOND_GIT_BRANCH", "main")
+    if _state.persistence and _state.persistence.mode == "api":
+        try:
+            gateway_url = _state.persistence.gateway_url.rstrip("/")
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{gateway_url}/api/v1/container/branch")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    target_branch = data.get("branch", target_branch)
+        except Exception as e:
+            logger.debug("Could not fetch branch preference from gateway: %s", e)
+
+    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
+    if not bond_root.exists():
+        return
+
+    try:
+        current = _sp.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=bond_root, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+
+        if current != target_branch:
+            logger.info("Switching from branch '%s' to '%s'", current, target_branch)
+            _sp.run(["git", "fetch", "origin"], cwd=bond_root, capture_output=True, timeout=30)
+            _sp.run(["git", "checkout", target_branch], cwd=bond_root, capture_output=True, timeout=10)
+            _sp.run(["git", "pull", "--ff-only"], cwd=bond_root, capture_output=True, timeout=30)
+            os.environ["BOND_GIT_BRANCH"] = target_branch
+    except Exception as e:
+        logger.warning("Startup branch checkout failed: %s", e)
+
+
+async def _do_branch_reload(branch: str):
+    """Execute a branch switch: fetch, checkout, pull, rebuild manifest."""
+    import subprocess as _sp
+    from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
+    global _prompt_manifest_cache
+
+    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
+    if not bond_root.exists():
+        return
+
+    _sp.run(["git", "fetch", "origin"], cwd=bond_root, capture_output=True, timeout=30)
+    _sp.run(["git", "checkout", branch], cwd=bond_root, capture_output=True, timeout=10)
+    _sp.run(["git", "pull", "--ff-only"], cwd=bond_root, capture_output=True, timeout=30)
+    os.environ["BOND_GIT_BRANCH"] = branch
+
+    prompts_dir = bond_root / "prompts"
+    if prompts_dir.exists():
+        _prompt_manifest_cache = _gen_manifest(prompts_dir)
+
+
 app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 
 # Module-level manifest cache (updated by /reload)
@@ -452,31 +517,54 @@ async def interrupt(request: Request) -> dict:
     return {"acknowledged": True}
 
 
-@app.post("/reload")
-async def reload_prompts():
-    """Called by Gateway after main branch merge to refresh prompt manifest."""
-    global _prompt_manifest_cache
+@app.get("/branch")
+async def get_branch():
+    """Return current branch and turn status."""
     import subprocess as _sp
-    from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
-
-    # Pull latest from main
-    bond_root = Path("/bond")
+    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
+    branch = "unknown"
     try:
-        _sp.run(
-            ["git", "pull", "origin", "main", "--ff-only"],
-            cwd=bond_root, capture_output=True, timeout=30,
-        )
+        branch = _sp.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=bond_root, capture_output=True, text=True, timeout=5,
+        ).stdout.strip() or "unknown"
     except Exception:
-        pass  # Non-fatal — manifest still regenerates from current state
+        pass
+    return {
+        "branch": branch,
+        "active_turns": _state.active_turns,
+        "pending_reload": _state.pending_reload,
+    }
 
-    prompts_dir = bond_root / "prompts"
-    if prompts_dir.exists():
-        _prompt_manifest_cache = _gen_manifest(prompts_dir)
-        count = _prompt_manifest_cache.count(",") + 1
-    else:
-        count = 0
 
-    return {"ok": True, "categories": count}
+@app.post("/reload")
+async def reload_prompts(request: Request):
+    """Called by Gateway to switch branch and refresh prompt manifest."""
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    branch = body.get("branch") or os.environ.get("BOND_GIT_BRANCH", "main")
+
+    async with _state.turn_lock:
+        if _state.active_turns > 0:
+            _state.pending_reload = True
+            _state.pending_reload_branch = branch
+            return {
+                "ok": True,
+                "deferred": True,
+                "active_turns": _state.active_turns,
+            }
+
+    try:
+        await _do_branch_reload(branch)
+    except Exception as e:
+        logger.error("Reload failed: %s", e)
+        return {"ok": False, "error": str(e)}
+
+    return {"ok": True, "deferred": False}
 
 
 
@@ -626,15 +714,26 @@ async def turn(request: Request) -> StreamingResponse:
         await event_queue.put(None)  # sentinel
 
     async def event_stream():
-        yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
+        async with _state.turn_lock:
+            _state.active_turns += 1
+        try:
+            yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
 
-        task = asyncio.create_task(run_loop())
-        while True:
-            event = await event_queue.get()
-            if event is None:
-                break
-            yield event
-        await task
+            task = asyncio.create_task(run_loop())
+            while True:
+                event = await event_queue.get()
+                if event is None:
+                    break
+                yield event
+            await task
+        finally:
+            async with _state.turn_lock:
+                _state.active_turns -= 1
+                if _state.active_turns <= 0 and _state.pending_reload:
+                    branch = _state.pending_reload_branch or os.environ.get("BOND_GIT_BRANCH", "main")
+                    _state.pending_reload = False
+                    _state.pending_reload_branch = None
+                    asyncio.create_task(_do_branch_reload(branch))
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -1271,6 +1370,12 @@ async def _run_agent_loop(
     # ── Phase 1B: Batching nudge tracking ──
     _consecutive_single_info_iterations = 0
 
+    # ── Coding-task detection for budget escalation ──
+    _CODING_TOOLS = frozenset({"file_edit", "file_write", "work_plan", "coding_agent"})
+    _is_coding_task = bool(
+        _pre_gather_result and _pre_gather_result.delegate_to_coding_agent
+    )
+
     # ── Phase 2A: Adaptive iteration budget ──
     _adaptive_budget_set = False
     _adaptive_budget = max_iterations
@@ -1666,10 +1771,11 @@ async def _run_agent_loop(
                     ),
                 })
             elif _iteration >= 15:
-                # Force respond-only tool set
+                # Force respond+say tool set
                 from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-                tool_defs = [compact_tool_schema(_FULL_TOOL_MAP["respond"])] if "respond" in _FULL_TOOL_MAP else tool_defs
-                logger.info("Phase 2B: forced respond-only tool set at iteration %d", _iteration)
+                _forced = [compact_tool_schema(_FULL_TOOL_MAP[t]) for t in ("respond", "say") if t in _FULL_TOOL_MAP]
+                tool_defs = _forced or tool_defs
+                logger.info("Phase 2B: forced respond+say tool set at iteration %d", _iteration)
 
         # Log the API key info before calling LiteLLM
         if "api_key" in _iter_kwargs:
@@ -1871,57 +1977,92 @@ async def _run_agent_loop(
                     logger.info("Phase 2A: file lookup, budget=%d", _adaptive_budget)
             _cost_tracking["iteration_budget"] = _adaptive_budget
 
-        # ── Approaching budget: hand off to coding_agent (enhanced with Doc 038 handoff context) ──
-        _budget_threshold = int(_adaptive_budget * 0.8)
-        if (_iteration >= _budget_threshold
+        # ── Approaching budget: hand off or wrap up ──
+        # Coding tasks: use adaptive budget with 80% threshold → coding_agent handoff
+        # Non-coding tasks: warn at iteration 15, full budget (max_iterations), no coding_agent
+        _NON_CODING_WARN_THRESHOLD = 15
+        if _is_coding_task:
+            _effective_threshold = int(_adaptive_budget * 0.8)
+            _effective_budget = _adaptive_budget
+        else:
+            _effective_threshold = _NON_CODING_WARN_THRESHOLD
+            _effective_budget = max_iterations
+
+        if (_iteration >= _effective_threshold
             and _iteration > 2
             and not any(tc.function.name == "coding_agent" for tc in (llm_message.tool_calls or []))):
-            _remaining = _adaptive_budget - _iteration - 1
-            # Build structured handoff context from what the agent has done so far
-            try:
-                from backend.app.agent.pre_gather import build_handoff_context
-                _handoff_ctx = build_handoff_context(messages)
-                _handoff_msg = (
-                    f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}. "
-                    f"You have {_remaining} iterations left. Hand off your remaining work "
-                    f"to the coding_agent tool NOW.\n\n"
-                    f"**Files you've read:**\n{_handoff_ctx['files_read']}\n\n"
-                    f"**Changes you've made:**\n{_handoff_ctx['edits_made']}\n\n"
-                    f"Write a coding_agent task prompt that covers the remaining work. "
-                    f"Include the file paths you've already identified. "
-                    f"The coding agent has access to the same repo — reference files by path, "
-                    f"don't paste their contents.\n\n"
-                    f"Spawn coding_agent in your next response. Do not read more files."
-                )
-            except Exception:
-                _handoff_msg = (
-                    f"SYSTEM: You are at iteration {_iteration + 1}/{_adaptive_budget}. "
-                    f"You have {_remaining} iterations left. Hand off your remaining work "
-                    f"to the coding_agent tool now. Summarize what's done and what's left."
-                )
-            messages.append({"role": "user", "content": _handoff_msg})
-            logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, _adaptive_budget)
+            _remaining = _effective_budget - _iteration - 1
+            _overbudget_by = _iteration - _effective_threshold
 
-            # After 4 ignored handoff hints, restrict tools to coding_agent + respond only
-            _overbudget_by = _iteration - _budget_threshold
-            if _overbudget_by >= 4:
-                from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-                _forced_tools = []
-                for _tname in ("coding_agent", "respond"):
-                    if _tname in _FULL_TOOL_MAP:
-                        _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
-                if _forced_tools:
-                    tool_defs = _forced_tools
-                    logger.warning(
-                        "Budget hard restriction: iteration %d, forced tool set to coding_agent+respond",
-                        _iteration + 1,
+            if _is_coding_task:
+                # Coding task: hand off to coding_agent
+                try:
+                    from backend.app.agent.pre_gather import build_handoff_context
+                    _handoff_ctx = build_handoff_context(messages)
+                    _handoff_msg = (
+                        f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget}. "
+                        f"You have {_remaining} iterations left. Hand off your remaining work "
+                        f"to the coding_agent tool NOW.\n\n"
+                        f"**Files you've read:**\n{_handoff_ctx['files_read']}\n\n"
+                        f"**Changes you've made:**\n{_handoff_ctx['edits_made']}\n\n"
+                        f"Write a coding_agent task prompt that covers the remaining work. "
+                        f"Include the file paths you've already identified. "
+                        f"The coding agent has access to the same repo — reference files by path, "
+                        f"don't paste their contents.\n\n"
+                        f"Spawn coding_agent in your next response. Do not read more files."
                     )
+                except Exception:
+                    _handoff_msg = (
+                        f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget}. "
+                        f"You have {_remaining} iterations left. Hand off your remaining work "
+                        f"to the coding_agent tool now. Summarize what's done and what's left."
+                    )
+                messages.append({"role": "user", "content": _handoff_msg})
+                logger.info("Budget escalation: iteration %d/%d, injecting coding_agent handoff", _iteration + 1, _effective_budget)
 
-            # After 8 ignored handoff hints, hard-stop the loop
+                # After 4 ignored handoff hints, restrict tools to coding_agent + respond only
+                if _overbudget_by >= 4:
+                    from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
+                    _forced_tools = []
+                    for _tname in ("coding_agent", "respond", "say"):
+                        if _tname in _FULL_TOOL_MAP:
+                            _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
+                    if _forced_tools:
+                        tool_defs = _forced_tools
+                        logger.warning(
+                            "Budget hard restriction: iteration %d, forced tool set to coding_agent+respond+say",
+                            _iteration + 1,
+                        )
+            else:
+                # Non-coding task: tell the agent how many iterations remain
+                _wrapup_msg = (
+                    f"SYSTEM: You are at iteration {_iteration + 1}/{_effective_budget} "
+                    f"with {_remaining} iteration{'s' if _remaining != 1 else ''} remaining. "
+                    f"Finish up your current approach and respond to the user."
+                )
+                messages.append({"role": "user", "content": _wrapup_msg})
+                logger.info("Budget wrap-up: iteration %d/%d, %d remaining (non-coding task)",
+                            _iteration + 1, _effective_budget, _remaining)
+
+                # After 4 ignored wrap-up hints, restrict tools to respond only
+                if _overbudget_by >= 4:
+                    from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
+                    _forced_tools = []
+                    for _tname in ("respond", "say"):
+                        if _tname in _FULL_TOOL_MAP:
+                            _forced_tools.append(compact_tool_schema(_FULL_TOOL_MAP[_tname]))
+                    if _forced_tools:
+                        tool_defs = _forced_tools
+                        logger.warning(
+                            "Budget hard restriction: iteration %d, forced tool set to respond+say (non-coding)",
+                            _iteration + 1,
+                        )
+
+            # After 8 ignored hints, hard-stop the loop regardless of task type
             if _overbudget_by >= 8:
                 logger.warning(
-                    "Budget hard cap: stopping loop at iteration %d (adaptive budget was %d)",
-                    _iteration + 1, _adaptive_budget,
+                    "Budget hard cap: stopping loop at iteration %d (effective budget was %d)",
+                    _iteration + 1, _effective_budget,
                 )
                 break
 
@@ -1931,6 +2072,10 @@ async def _run_agent_loop(
             # ── Phase 2B: Track consequential calls ──
             if any(t in CONSEQUENTIAL_TOOLS for t in _iter_tool_names):
                 _has_made_consequential_call = True
+
+            # ── Track whether this looks like a coding task ──
+            if any(t in _CODING_TOOLS for t in _iter_tool_names):
+                _is_coding_task = True
 
             # ── Phase 1B: Batching nudge for single info-gathering calls ──
             _is_single_info = (
@@ -2515,10 +2660,26 @@ async def _run_agent_loop(
                     _lifecycle_injected = False
 
         else:
-            await _skill_tracker.flush()
-            await _record_outcome()
-            _emit_cost_summary()
-            return llm_message.content or "", tool_calls_made
+            _final_content = llm_message.content or ""
+            if _final_content.strip():
+                await _skill_tracker.flush()
+                await _record_outcome()
+                _emit_cost_summary()
+                return _final_content, tool_calls_made
+
+            # Model ended with no content and no tool calls — force a response
+            logger.warning("Model returned empty content with no tool calls at iteration %d; forcing response", _iteration)
+            messages.append(llm_message.model_dump())
+            messages.append({
+                "role": "user",
+                "content": (
+                    "SYSTEM: You ended your turn without sending a response to the user. "
+                    "You MUST respond. Use the respond tool now to tell the user the outcome "
+                    "of what you were working on."
+                ),
+            })
+            # Continue the loop — next iteration will produce a response
+            continue
 
     # Hit max iterations — save work plan checkpoint if active
     if _has_active_plan and _state.agent_db:

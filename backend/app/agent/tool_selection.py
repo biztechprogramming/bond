@@ -14,7 +14,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Always included regardless of heuristics
-ALWAYS_INCLUDE = {"respond"}
+ALWAYS_INCLUDE = {"respond", "say"}
 
 # Filesystem toolkit — always included as a group in coding/file contexts.
 # ~2,000 tokens total. Cheaper than one wasted iteration.
@@ -284,7 +284,7 @@ def select_tools(
             "restricting to coding_agent + respond",
             iteration, DELEGATION_THRESHOLD,
         )
-        gate_tools = {"coding_agent", "respond"} & set(enabled_tools)
+        gate_tools = {"coding_agent", "respond", "say"} & set(enabled_tools)
         return list(gate_tools)
 
     selected: set[str] = set(ALWAYS_INCLUDE & set(enabled_tools))
