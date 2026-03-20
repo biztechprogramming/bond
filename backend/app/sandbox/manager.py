@@ -491,9 +491,29 @@ class SandboxManager:
 
         # REMOVED: SpacetimeDB token injection (2026-03-12)
         # Agents must NOT have direct SpacetimeDB access.
-        # The token was injected to debug an error but never actually used
-        # by containers (no spacetime CLI installed). Removing it closes
-        # a credential exposure risk — see design docs 035 §3.2, 039 §20.
+
+        # Issue a broker token for MCP proxy access (Design Doc 054)
+        try:
+            from backend.app.config import get_settings
+            settings = get_settings()
+            gateway_url = os.environ.get(
+                "BOND_GATEWAY_URL",
+                f"{settings.gateway_scheme}://{settings.gateway_host}:{settings.gateway_port}",
+            )
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(
+                    f"{gateway_url}/api/v1/broker/token/issue",
+                    json={"agent_id": agent_id, "ttl": 86400},
+                )
+                if resp.status_code == 200:
+                    agent_token = resp.json().get("token", "")
+                    if agent_token:
+                        cmd.extend(["-e", f"BOND_AGENT_TOKEN={agent_token}"])
+                        logger.info("Injected broker token for agent %s", agent_id)
+                else:
+                    logger.warning("Failed to get broker token: %d %s", resp.status_code, resp.text)
+        except Exception as e:
+            logger.warning("Could not issue broker token for agent %s: %s", agent_id, e)
 
         # --- Mounts (Task 2) ---
 

@@ -50,16 +50,8 @@ class ToolRegistry:
 
     def get_definitions_for(self, tool_names: list[str]) -> list[dict]:
         """Return LiteLLM-compatible tool definitions filtered by tool names."""
-        defs = [TOOL_MAP[name] for name in tool_names if name in TOOL_MAP]
-        
-        # Check for MCP tools
-        try:
-            from backend.app.mcp import mcp_manager
-            defs.extend(mcp_manager.get_definitions(tool_names))
-        except ImportError:
-            pass
-        
-        return defs
+        # MCP tool definitions are injected separately via proxy or manager
+        return [TOOL_MAP[name] for name in tool_names if name in TOOL_MAP]
 
     @property
     def registered_names(self) -> list[str]:

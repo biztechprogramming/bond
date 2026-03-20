@@ -10,8 +10,9 @@ from pathlib import Path
 
 def _find_integrations_file() -> Path:
     """Locate the integrations.json file relative to the project root."""
-    # Try common locations
+    # Try common locations — /data/shared is the container mount from project_root/data/shared/
     candidates = [
+        Path("/data/shared/integrations.json"),
         Path("/bond/gateway/data/integrations.json"),
         Path("/workspace/bond/gateway/data/integrations.json"),
         Path.home() / "bond" / "gateway" / "data" / "integrations.json",
