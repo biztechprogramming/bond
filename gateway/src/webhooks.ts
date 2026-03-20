@@ -7,7 +7,7 @@ import type { GatewayEvent } from "./events/index.js";
 export interface WebhookRouterOptions {
   onMainMerge?: () => void;
   eventBus?: EventBus;
-  onPush?: (repo: string, branch: string, actor?: string) => void | Promise<void>;
+  onPush?: (repo: string, branch: string, actor?: string) => void;
 }
 
 /**
