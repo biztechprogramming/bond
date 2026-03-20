@@ -182,17 +182,110 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   const webhookRouter = createWebhookRouter({
     eventBus,
     onMainMerge: async () => {
-      // Notify all known workers to reload
-      console.log("[webhook] TODO: notify connected workers to /reload");
+      // Reload worker when main is pushed
+      console.log("[webhook] main branch updated — notifying worker to reload");
+      try {
+        const res = await fetch(`${config.backendUrl}/reload`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ branch: "main" }),
+        });
+        const data = await res.json();
+        console.log("[webhook] Worker reload response:", data);
+        // Broadcast branch_changed so frontend updates
+        webchat.broadcast({
+          type: "branch_changed" as any,
+          content: JSON.stringify({ branch: "main", deferred: data.deferred || false, container_id: data.container_id || "default" }),
+        });
+      } catch (err) {
+        console.error("[webhook] Failed to notify worker:", err);
+      }
     },
-    onPush: (repo, branch, actor) => {
+    onPush: async (repo, branch, actor) => {
       webchat.broadcast({
         type: "webhook_push" as any,
         content: JSON.stringify({ repo, branch, actor }),
       });
+      // If the worker is currently on this branch, trigger a reload
+      try {
+        const branchRes = await fetch(`${config.backendUrl}/branch`);
+        const branchData = await branchRes.json();
+        if (branchData.branch === branch) {
+          console.log(`[webhook] Worker is on ${branch} — triggering reload`);
+          const reloadRes = await fetch(`${config.backendUrl}/reload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ branch }),
+          });
+          const reloadData = await reloadRes.json();
+          webchat.broadcast({
+            type: "branch_changed" as any,
+            content: JSON.stringify({ branch, deferred: reloadData.deferred || false, container_id: branchData.container_id || "default" }),
+          });
+        }
+      } catch (err) {
+        console.error("[webhook] Branch check/reload failed:", err);
+      }
     },
   });
   app.use("/webhooks", webhookRouter);
+
+  // Container branch proxy endpoints
+  app.get("/api/v1/container/branch", async (_req: any, res: any) => {
+    try {
+      const upstream = await fetch(`${config.backendUrl}/branch`);
+      const data = await upstream.json();
+      res.json(data);
+    } catch (err) {
+      res.status(502).json({ error: "Failed to reach worker" });
+    }
+  });
+
+  app.post("/api/v1/container/branch", async (req: any, res: any) => {
+    try {
+      const upstream = await fetch(`${config.backendUrl}/branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req.body),
+      });
+      const data = await upstream.json();
+      // Broadcast branch_changed to all clients
+      if (data.ok) {
+        webchat.broadcast({
+          type: "branch_changed" as any,
+          content: JSON.stringify({ branch: data.branch || req.body.branch, deferred: data.deferred || false, container_id: data.container_id || "default" }),
+        });
+      }
+      res.json(data);
+    } catch (err) {
+      res.status(502).json({ error: "Failed to reach worker" });
+    }
+  });
+
+  app.get("/api/v1/container/branches", async (_req: any, res: any) => {
+    try {
+      const upstream = await fetch(`${config.backendUrl}/branches`);
+      const data = await upstream.json();
+      res.json(data);
+    } catch (err) {
+      res.status(502).json({ error: "Failed to reach worker" });
+    }
+  });
+
+  app.get("/api/v1/container/status", async (_req: any, res: any) => {
+    try {
+      const upstream = await fetch(`${config.backendUrl}/branch`);
+      const data = await upstream.json();
+      res.json({
+        container_id: data.container_id || process.env.BOND_CONTAINER_ID || "default",
+        branch: data.branch,
+        active_turns: data.active_turns || 0,
+        pending_reload: data.pending_reload || false,
+      });
+    } catch (err) {
+      res.status(502).json({ error: "Failed to reach worker" });
+    }
+  });
 
   // Event subscription API
   app.use("/api/v1/events", createEventsRouter(eventBus));
