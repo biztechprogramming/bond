@@ -11,7 +11,7 @@ import { getAgentName } from "@/lib/spacetimedb-client";
 import { useMessages } from "@/hooks/useMessages";
 import RestoreDialog from "@/components/RestoreDialog";
 import SkillFeedbackStack, { type SkillActivation } from "@/components/shared/SkillFeedbackToast";
-import BranchSelector from "@/components/BranchSelector";
+import ConversationInfoPanel from "@/components/ConversationInfoPanel";
 
 function _toolSummary(name: string, data: Record<string, unknown>): string {
   if (name === "file_write" || name === "file_read") {
@@ -636,7 +636,15 @@ export default function Home() {
               {sidebarOpen ? "\u2190" : "\u2261"}
             </button>
             <h1 style={styles.title}>{selectedAgentName}</h1>
-            <BranchSelector branchChangedSignal={branchChangedSignal} turnCompleted={turnCompletedSignal} agentId={selectedAgentId} />
+            <ConversationInfoPanel
+              branchChangedSignal={branchChangedSignal}
+              turnCompleted={turnCompletedSignal}
+              agentId={selectedAgentId}
+              agentName={selectedAgentName}
+              connectionState={connectionState}
+              agentStatus={agentStatus}
+              conversationId={conversationId}
+            />
             {activePlan && planConversationId === conversationId && (
               <a
                 href={`/board?plan=${activePlan.id}`}
