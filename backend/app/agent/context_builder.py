@@ -46,6 +46,7 @@ async def build_agent_context(
     sse_event_fn: Any = None,
     utility_kwargs: dict | None = None,
     discover_workspace_fn: Any = None,
+    mcp_proxy: Any = None,
 ) -> ContextBundle:
     """Build the full context for the agent loop.
 
@@ -233,8 +234,7 @@ async def build_agent_context(
     # MCP integrations summary (Design Doc 054: proxy-aware)
     try:
         # Check for proxy client first (worker context), then host-side manager
-        import backend.app.worker as _w
-        _mcp_proxy = getattr(getattr(_w, '_state', None), 'mcp_proxy', None)
+        _mcp_proxy = mcp_proxy
         if _mcp_proxy and _mcp_proxy._tool_cache:
             _mcp_server_names = sorted(set(t.get("server", "") for t in _mcp_proxy._tool_cache))
             _mcp_summary = (

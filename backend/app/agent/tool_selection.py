@@ -286,6 +286,12 @@ def select_tools(
     if has_active_plan and "parallel_orchestrate" in enabled_tools:
         selected.add("parallel_orchestrate")
 
+    # Always include MCP tools — they're already curated by the host-side
+    # MCPManager and filtered by broker policy. No keyword gating needed.
+    mcp_tools = {t for t in enabled_tools if t.startswith("mcp_")}
+    if mcp_tools:
+        selected.update(mcp_tools)
+
     # Text to match against
     match_text = user_message
     if last_assistant_content:

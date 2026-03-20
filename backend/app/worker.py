@@ -794,6 +794,7 @@ async def _run_agent_loop(
         sse_event_fn=_sse_event,
         utility_kwargs=utility_kwargs,
         discover_workspace_fn=_discover_workspace,
+        mcp_proxy=getattr(_state, 'mcp_proxy', None),
     )
     full_system_prompt = ctx.full_system_prompt
     compressed_history = ctx.compressed_history
