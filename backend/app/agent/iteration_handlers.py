@@ -128,7 +128,12 @@ def handle_budget_escalation(
     remaining = effective_budget - iteration - 1
     overbudget_by = iteration - effective_threshold
 
-    if loop_state.is_coding_task:
+    # If the agent hasn't made any consequential calls (no edits, no writes,
+    # no meaningful actions), it's been spinning on info-gathering. Don't
+    # escalate to coding_agent — force it to report back to the user.
+    _no_progress = not loop_state.has_made_consequential_call
+
+    if loop_state.is_coding_task and not _no_progress:
         try:
             from backend.app.agent.pre_gather import build_handoff_context
             handoff_ctx = build_handoff_context(messages)
@@ -167,16 +172,31 @@ def handle_budget_escalation(
                     iteration + 1,
                 )
     else:
-        wrapup_msg = (
-            f"SYSTEM: You are at iteration {iteration + 1}/{effective_budget} "
-            f"with {remaining} iteration{'s' if remaining != 1 else ''} remaining. "
-            f"Finish up your current approach and respond to the user."
-        )
+        # Non-coding task OR coding task with no progress — force report-back
+        if _no_progress:
+            wrapup_msg = (
+                f"SYSTEM: You are at iteration {iteration + 1}/{effective_budget} "
+                f"with {remaining} iteration{'s' if remaining != 1 else ''} remaining. "
+                f"You have NOT made any meaningful progress — your tool calls returned "
+                f"empty results or errors. Do NOT spawn a coding agent. Do NOT retry. "
+                f"RESPOND to the user NOW: tell them what you tried, what failed, and "
+                f"what they need to configure or fix. Use the respond tool immediately."
+            )
+            logger.info(
+                "Budget wrap-up (no progress): iteration %d/%d, forcing report-back",
+                iteration + 1, effective_budget,
+            )
+        else:
+            wrapup_msg = (
+                f"SYSTEM: You are at iteration {iteration + 1}/{effective_budget} "
+                f"with {remaining} iteration{'s' if remaining != 1 else ''} remaining. "
+                f"Finish up your current approach and respond to the user."
+            )
+            logger.info("Budget wrap-up: iteration %d/%d, %d remaining (non-coding task)",
+                        iteration + 1, effective_budget, remaining)
         messages.append({"role": "user", "content": wrapup_msg})
-        logger.info("Budget wrap-up: iteration %d/%d, %d remaining (non-coding task)",
-                    iteration + 1, effective_budget, remaining)
 
-        if overbudget_by >= 4:
+        if overbudget_by >= 2 or _no_progress:
             from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
             forced_tools = []
             for tname in ("respond", "say"):
@@ -186,8 +206,9 @@ def handle_budget_escalation(
                 tool_defs.clear()
                 tool_defs.extend(forced_tools)
                 logger.warning(
-                    "Budget hard restriction: iteration %d, forced tool set to respond+say (non-coding)",
+                    "Budget hard restriction: iteration %d, forced tool set to respond+say%s",
                     iteration + 1,
+                    " (no progress detected)" if _no_progress else "",
                 )
 
     if overbudget_by >= 8:
