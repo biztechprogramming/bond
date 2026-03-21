@@ -157,7 +157,7 @@ async def get_current_embedding(db: AsyncSession = Depends(get_db)):
         try:
             pkeys = await stdb.query(
                 "SELECT provider_id, key_type FROM provider_api_keys "
-                "WHERE provider_id IN ('voyage', 'gemini')"
+                "WHERE provider_id = 'voyage' OR provider_id = 'gemini'"
             )
             for pk in pkeys:
                 if pk["provider_id"] == "voyage":
