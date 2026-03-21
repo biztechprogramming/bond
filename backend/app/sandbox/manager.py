@@ -639,7 +639,6 @@ class SandboxManager:
             # Phase 3: Execute all clone plans in parallel
             exec_coros = []
             exec_indices = []
-            failed_indices: set[int] = set()
             for idx, plan in plans.items():
                 if not plan.direct_mount:
                     exec_coros.append(execute_clone_plan(plan))
@@ -649,16 +648,16 @@ class SandboxManager:
                 for idx, result in zip(exec_indices, exec_results):
                     if isinstance(result, Exception):
                         hp = mount_configs[idx][0]
-                        logger.warning(
-                            "Agent %s: workspace clone failed for %s, falling back to direct mount: %s",
-                            agent_id, hp, result,
+                        raise RuntimeError(
+                            f"Workspace clone failed for {hp} — refusing to start container "
+                            f"with wrong mount. Fix the clone source or remove the workspace mount. "
+                            f"Original error: {result}"
                         )
-                        failed_indices.add(idx)
 
             # Phase 4: Build mount commands with resolved paths
             for i, (host_path, mount_name, container_path, readonly) in enumerate(mount_configs):
                 effective_host_path = host_path
-                if i in plans and not plans[i].direct_mount and i not in failed_indices:
+                if i in plans and not plans[i].direct_mount:
                     plan = plans[i]
                     if plan.clone_base:
                         effective_host_path = plan.clone_base
