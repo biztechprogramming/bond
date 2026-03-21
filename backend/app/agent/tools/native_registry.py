@@ -52,6 +52,7 @@ def build_native_registry() -> ToolRegistry:
         handle_shell_wc,
     )
     from .coding_agent import handle_coding_agent
+    from .db_discover import handle_db_discover
     from .web import handle_web_read, handle_web_search
     from .work_plan import handle_work_plan
 
@@ -77,6 +78,7 @@ def build_native_registry() -> ToolRegistry:
     registry.register("load_context", handle_load_context)
     registry.register("coding_agent", handle_coding_agent)
     registry.register("host_exec", handle_host_exec)
+    registry.register("db_discover", handle_db_discover)
 
     # Shell utility tools (info-gathering, routed to utility model)
     registry.register("shell_find", handle_shell_find)
