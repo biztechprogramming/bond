@@ -78,6 +78,7 @@ def _build_engine(api_key: str, model: str, dimension: int) -> EmbeddingEngine:
         "embedding.api_key.voyage": api_key,
         "embedding.model": model,
         "embedding.output_dimension": str(dimension),
+        "embedding.execution_mode": "api",
     }
     # db_engine is not used by VoyageAPIProvider, pass None
     return EmbeddingEngine(settings=settings, db_engine=None)  # type: ignore[arg-type]

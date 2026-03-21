@@ -15,24 +15,30 @@ _router = None
 def _get_router():
     """Get or create the SkillRouter singleton.
 
-    On first call, tries to build an EmbeddingEngine using settings from the DB
-    (populated by init_router). Falls back to local embeddings or LIKE matching.
+    Requires init_router() to have been called first to load settings from
+    the Embedding tab. Raises if settings are missing — no silent fallbacks.
     """
     global _router
     if _router is None:
         from backend.app.agent.skills_router import SkillRouter
-        try:
-            from backend.app.foundations.embeddings.engine import EmbeddingEngine
-            engine = EmbeddingEngine(
-                settings=_router_settings or {"embedding.execution_mode": "local", "embedding.model": "voyage-4-nano"},
-                db_engine=None,
+
+        if _router_settings is None:
+            raise RuntimeError(
+                "Embedding settings not loaded. init_router() must be called before "
+                "_get_router(). Check that the Embedding tab in Settings is configured."
             )
-            _router = SkillRouter(embedding_engine=engine)
-            provider_name = _router_settings.get("embedding.execution_mode", _router_settings.get("embedding.provider", "auto")) if _router_settings else "local"
-            logger.info("Skills router initialized (provider=%s)", provider_name)
-        except Exception:
-            logger.warning("Failed to init embedding engine — skills router will use LIKE fallback", exc_info=True)
-            _router = SkillRouter()
+
+        from backend.app.foundations.embeddings.engine import EmbeddingEngine
+        engine = EmbeddingEngine(
+            settings=_router_settings,
+            db_engine=None,
+        )
+        _router = SkillRouter(embedding_engine=engine)
+        logger.info(
+            "Skills router initialized (execution_mode=%s, model=%s)",
+            _router_settings.get("embedding.execution_mode"),
+            _router_settings.get("embedding.model"),
+        )
     return _router
 
 
@@ -61,41 +67,48 @@ async def init_router(persistence=None) -> None:
         except Exception:
             pass
 
-    if _persistence:
-        # Read embedding settings from DB
-        for key in ("embedding.model", "embedding.output_dimension", "embedding.execution_mode"):
-            try:
-                val = await _persistence.get_setting(key)
-                if val:
-                    settings[key] = val
-            except Exception:
-                logger.debug("Failed to read %s from DB", key, exc_info=True)
+    if not _persistence:
+        raise RuntimeError(
+            "Cannot load embedding settings: no persistence client available. "
+            "Ensure the worker is connected to the gateway."
+        )
 
-        # Read API keys
-        for provider_id, settings_key in (("voyage", "embedding.api_key.voyage"), ("gemini", "embedding.api_key.gemini")):
-            try:
-                encrypted = await _persistence.get_provider_api_key(provider_id)
-                if encrypted:
-                    from backend.app.core.crypto import decrypt_value, is_encrypted
-                    if is_encrypted(encrypted):
-                        settings[settings_key] = decrypt_value(encrypted)
-                    else:
-                        settings[settings_key] = encrypted
-                    logger.info("%s API key loaded via persistence client", provider_id.capitalize())
-            except Exception:
-                logger.debug("Failed to read %s key via persistence client", provider_id, exc_info=True)
+    # Read embedding settings from DB — these MUST exist (configured via Settings → Embedding)
+    required_keys = ("embedding.model", "embedding.output_dimension", "embedding.execution_mode")
+    for key in required_keys:
+        try:
+            val = await _persistence.get_setting(key)
+            if val:
+                settings[key] = val
+        except Exception:
+            logger.error("Failed to read %s from DB", key, exc_info=True)
 
-    # Defaults (only if DB didn't provide values)
-    if "embedding.model" not in settings:
-        settings["embedding.model"] = "voyage-4-large"
-    if "embedding.execution_mode" not in settings:
-        settings["embedding.execution_mode"] = "auto"
+    missing = [k for k in required_keys if k not in settings]
+    if missing:
+        raise RuntimeError(
+            f"Embedding settings not configured: {', '.join(missing)}. "
+            "Configure them in Settings → Embedding tab."
+        )
+
+    # Read API keys (optional — only required for api/gemini execution modes)
+    for provider_id, settings_key in (("voyage", "embedding.api_key.voyage"), ("gemini", "embedding.api_key.gemini")):
+        try:
+            encrypted = await _persistence.get_provider_api_key(provider_id)
+            if encrypted:
+                from backend.app.core.crypto import decrypt_value, is_encrypted
+                if is_encrypted(encrypted):
+                    settings[settings_key] = decrypt_value(encrypted)
+                else:
+                    settings[settings_key] = encrypted
+                logger.info("%s API key loaded via persistence client", provider_id.capitalize())
+        except Exception:
+            logger.debug("Failed to read %s key via persistence client", provider_id, exc_info=True)
 
     _router_settings = settings
     logger.info("Embedding settings loaded: execution_mode=%s model=%s dimension=%s has_voyage_key=%s has_gemini_key=%s",
-                settings.get("embedding.execution_mode", "auto"),
-                settings.get("embedding.model", "?"),
-                settings.get("embedding.output_dimension", "default"),
+                settings.get("embedding.execution_mode"),
+                settings.get("embedding.model"),
+                settings.get("embedding.output_dimension"),
                 bool(settings.get("embedding.api_key.voyage")),
                 bool(settings.get("embedding.api_key.gemini")))
 

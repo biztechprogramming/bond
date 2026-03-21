@@ -1849,8 +1849,13 @@ async def _startup(config_path: str, data_dir: str) -> None:
                 from backend.app.agent.tools.skills import _router_settings
                 from backend.app.foundations.embeddings.engine import EmbeddingEngine
                 from backend.app.agent.skills_embedder import embed_all_skills
+                if not _router_settings:
+                    raise RuntimeError(
+                        "Embedding settings not loaded — init_router() must succeed before embedding. "
+                        "Configure embedding in Settings → Embedding tab."
+                    )
                 engine = EmbeddingEngine(
-                    settings=_router_settings or {"embedding.execution_mode": "local"},
+                    settings=_router_settings,
                     db_engine=None,
                 )
                 count = await embed_all_skills(engine)
