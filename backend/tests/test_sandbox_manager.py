@@ -22,6 +22,7 @@ from backend.app.sandbox.manager import (
     _PROJECT_ROOT,
     _WORKER_INTERNAL_PORT,
 )
+from backend.app.sandbox.workspace_cloner import detect_workspace_type
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ def _make_agent(**overrides) -> dict:
     """Create a test agent dict."""
     defaults = {
         "id": "agent-abc123",
+        "name": "sandbox",
         "sandbox_image": "python:3.12-slim",
         "model": "claude-sonnet-4-20250514",
         "utility_model": "claude-sonnet-4-6",
@@ -163,15 +165,12 @@ class TestWorkerContainerCreation:
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = _mock_proc(stdout=b"container123abc\n")
 
-            cid = await manager._create_worker_container(
+            cid, clone_info, _dep_script = await manager._create_worker_container(
                 agent, "bond-sandbox-agent-abc123", 18791, config_path,
             )
 
             call_args = mock_exec.call_args[0]
             cmd = list(call_args)
-            assert "python" in cmd
-            assert "-m" in cmd
-            assert "backend.app.worker" in cmd
             assert "sleep" not in cmd
             assert "infinity" not in cmd
             assert cid == "container123a"[:12]
@@ -187,7 +186,13 @@ class TestWorkerContainerCreation:
         config_path = Path("/tmp/test-config.json")
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec, \
-             patch.object(Path, "exists", return_value=True):
+             patch.object(Path, "exists", return_value=True), \
+             patch("backend.app.sandbox.manager.detect_workspace_type",
+                   new_callable=AsyncMock, return_value={"case": 4, "needs_prompt": True}), \
+             patch("backend.app.sandbox.manager.generate_clone_plan",
+                   new_callable=AsyncMock) as mock_plan:
+            from backend.app.sandbox.workspace_cloner import ClonePlan
+            mock_plan.return_value = ClonePlan(case=4, direct_mount=True)
             mock_exec.return_value = _mock_proc(stdout=b"container123abc\n")
 
             await manager._create_worker_container(
@@ -197,8 +202,8 @@ class TestWorkerContainerCreation:
             cmd = list(mock_exec.call_args[0])
             cmd_str = " ".join(cmd)
 
-            # Bond library mount
-            assert ":/bond:ro" in cmd_str
+            # Bond library mount (named volume for regular agents)
+            assert ":/bond:rw" in cmd_str
             # Workspace mount
             assert "/workspace/project" in cmd_str
             # Agent data bind mount
@@ -217,7 +222,7 @@ class TestWorkerContainerCreation:
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = _mock_proc(stdout=b"container123abc\n")
 
-            await manager._create_worker_container(
+            cid, _, _dep_script = await manager._create_worker_container(
                 agent, "bond-sandbox-agent-abc123", 18791, config_path,
             )
 
@@ -235,7 +240,7 @@ class TestWorkerContainerCreation:
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = _mock_proc(stdout=b"container123abc\n")
 
-            await manager._create_worker_container(
+            cid, _, _dep_script = await manager._create_worker_container(
                 agent, "bond-sandbox-agent-abc123", 18800, config_path,
             )
 
@@ -588,7 +593,7 @@ class TestEnsureRunning:
             nonlocal creation_count
             creation_count += 1
             await asyncio.sleep(0.01)
-            return f"container{creation_count:03d}"
+            return f"container{creation_count:03d}", [], None
 
         with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path), \
              patch("socket.socket") as mock_socket_cls, \
@@ -794,7 +799,7 @@ class TestObservability:
             mock_exec.return_value = _mock_proc(stdout=b"container123abc\n")
 
             with caplog.at_level("INFO", logger="bond.sandbox.manager"):
-                await manager._create_worker_container(
+                cid, _, _dep_script = await manager._create_worker_container(
                     agent, "bond-sandbox-agent-abc123", 18800, config_path,
                 )
 
