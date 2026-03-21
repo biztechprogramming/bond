@@ -16,10 +16,37 @@ import logging
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger("bond.sandbox.workspace_cloner")
+
+# How many seconds before a clone is considered stale and needs refresh.
+# Within this window, execute_clone_plan() skips git fetch entirely.
+CLONE_FRESHNESS_SECONDS = int(os.environ.get("BOND_CLONE_FRESHNESS", "300"))  # 5 min default
+
+_FRESHNESS_FILE = ".bond_last_refreshed"
+
+
+def _is_clone_fresh(target_path: str) -> bool:
+    """Check if a clone was refreshed recently enough to skip fetch."""
+    marker = Path(target_path) / _FRESHNESS_FILE
+    try:
+        mtime = marker.stat().st_mtime
+        age = time.time() - mtime
+        return age < CLONE_FRESHNESS_SECONDS
+    except (OSError, ValueError):
+        return False
+
+
+def _mark_clone_fresh(target_path: str) -> None:
+    """Write a timestamp marker so future calls know the clone is fresh."""
+    marker = Path(target_path) / _FRESHNESS_FILE
+    try:
+        marker.touch()
+    except OSError:
+        pass
 
 
 def _get_clone_root() -> Path:
@@ -324,7 +351,24 @@ async def _refresh_clone(repo: RepoCloneSpec) -> bool:
     if not (target / ".git").exists():
         return False
 
+    # Skip fetch entirely if clone was refreshed recently
+    if _is_clone_fresh(repo.target_path):
+        logger.info(
+            "Clone %s is fresh (<%ds old), skipping fetch",
+            repo.target_path, CLONE_FRESHNESS_SECONDS,
+        )
+        return True
+
     try:
+        # Update origin URL to network remote if available (avoids slow file:// fetches)
+        network_remote = await _get_github_remote(repo.repo_root)
+        if network_remote:
+            await asyncio.create_subprocess_exec(
+                "git", "-C", str(target), "remote", "set-url", "origin", network_remote,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
         fetch_proc = await asyncio.create_subprocess_exec(
             "git", "-C", str(target), "fetch", "--depth", "1", "origin", repo.branch,
             stdout=asyncio.subprocess.PIPE,
@@ -345,11 +389,32 @@ async def _refresh_clone(repo: RepoCloneSpec) -> bool:
             logger.warning("Refresh reset failed for %s: %s", repo.target_path, stderr.decode())
             return False
 
+        _mark_clone_fresh(repo.target_path)
         logger.info("Refreshed clone %s (branch=%s)", repo.target_path, repo.branch)
         return True
     except Exception as e:
         logger.warning("Refresh failed for %s: %s", repo.target_path, e)
         return False
+
+
+async def _get_github_remote(repo_root: str) -> str | None:
+    """Return the origin remote URL if it points to a network host, else None."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", repo_root, "remote", "get-url", "origin",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return None
+        url = stdout.decode().strip()
+        # Only use network remotes (https://, git@, ssh://)
+        if url.startswith(("https://", "git@", "ssh://")):
+            return url
+        return None
+    except Exception:
+        return None
 
 
 async def _clone_repo(repo: RepoCloneSpec) -> None:
@@ -365,18 +430,47 @@ async def _clone_repo(repo: RepoCloneSpec) -> None:
     if target.exists():
         shutil.rmtree(str(target))
 
+    # Prefer network remote over file:// (much faster across WSL/mnt boundaries)
+    clone_source = repo.remote
+    network_remote = await _get_github_remote(repo.repo_root)
+    if network_remote:
+        logger.info(
+            "Using network remote %s instead of file:// for %s",
+            network_remote, repo.repo_root,
+        )
+        clone_source = network_remote
+
     proc = await asyncio.create_subprocess_exec(
         "git", "clone", "--depth", "1",
         "--branch", repo.branch,
-        repo.remote, str(target),
+        clone_source, str(target),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     stdout, stderr = await proc.communicate()
+
+    # If network clone failed, fall back to file:// local clone
+    if proc.returncode != 0 and clone_source != repo.remote:
+        logger.warning(
+            "Network clone failed for %s (%s), falling back to file://",
+            repo.repo_root, stderr.decode().strip(),
+        )
+        if target.exists():
+            shutil.rmtree(str(target))
+        proc = await asyncio.create_subprocess_exec(
+            "git", "clone", "--depth", "1",
+            "--branch", repo.branch,
+            repo.remote, str(target),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
     if proc.returncode != 0:
         raise RuntimeError(
             f"git clone failed for {repo.remote}: {stderr.decode()}"
         )
+    _mark_clone_fresh(repo.target_path)
     logger.info(
         "Cloned %s (branch=%s) -> %s",
         repo.repo_root, repo.branch, repo.target_path,

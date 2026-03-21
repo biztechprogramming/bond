@@ -285,9 +285,12 @@ class SandboxManager:
         lock = self._get_agent_lock(key)
 
         async with lock:
-            # Normalize current mounts for comparison
+            # Normalize current mounts for comparison.
+            # Coerce None → '' in mount dicts so None/empty-string differences
+            # from the database don't cause spurious "mounts changed" rebuilds.
             current_mounts = sorted(
-                [repr(m) for m in agent.get("workspace_mounts", [])],
+                [repr({k: (v if v is not None else '') for k, v in m.items()})
+                 for m in agent.get("workspace_mounts", [])],
             )
 
             # Config fingerprint: detect model/utility_model/api_key changes so we
@@ -775,9 +778,10 @@ class SandboxManager:
         agent_name: str,
         key: str,
     ) -> str:
-        # Normalize current mounts for comparison
+        # Normalize current mounts for comparison (coerce None → '')
         current_mounts = sorted(
-            [repr(m) for m in (workspace_mounts or [])],
+            [repr({k: (v if v is not None else '') for k, v in m.items()})
+             for m in (workspace_mounts or [])],
         )
 
         # Check if already tracked and running

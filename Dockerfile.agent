@@ -86,6 +86,14 @@ RUN useradd -m -s /bin/bash bond-agent && \
 RUN mkdir -p /home/bond-agent/.claude && \
     chown -R bond-agent:bond-agent /home/bond-agent
 
+# Bake in GitHub SSH host key so entrypoint skips ssh-keyscan network call
+RUN mkdir -p /etc/ssh/ssh_known_hosts.d && \
+    ssh-keyscan -H github.com > /etc/ssh/ssh_known_hosts.d/github.conf 2>/dev/null && \
+    mkdir -p /root/.ssh /home/bond-agent/.ssh && \
+    cp /etc/ssh/ssh_known_hosts.d/github.conf /root/.ssh/known_hosts && \
+    cp /etc/ssh/ssh_known_hosts.d/github.conf /home/bond-agent/.ssh/known_hosts && \
+    chown -R bond-agent:bond-agent /home/bond-agent/.ssh
+
 # Copy entrypoint script
 COPY scripts/agent-entrypoint.sh /agent-entrypoint.sh
 RUN chmod +x /agent-entrypoint.sh

@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import subprocess
+import time
 from collections import defaultdict
 from typing import Set
 
@@ -161,6 +162,8 @@ async def generate_repo_map(
         A compact text representation of the repo's structure including
         file paths, class/function signatures, and key relationships.
     """
+    t0 = time.monotonic()
+
     # Get file list via git ls-files
     try:
         result = await asyncio.to_thread(
@@ -197,10 +200,14 @@ async def generate_repo_map(
     if not files:
         return ""
 
+    t_files = time.monotonic()
+    logger.info("repo-map: file scan done in %.1fs (%d files)", t_files - t0, len(files))
+
     # Check cache
     if not refresh:
         cached = _cache.get(repo_root, files, token_budget)
         if cached is not None:
+            logger.info("repo-map: cache hit in %.1fs", time.monotonic() - t0)
             return cached
 
     # Extract tags from all files (in a thread to avoid blocking)
@@ -222,6 +229,9 @@ async def generate_repo_map(
             if isinstance(result, list):
                 all_tags.extend(result)
 
+    t_tags = time.monotonic()
+    logger.info("repo-map: tag extraction done in %.1fs (%d tags)", t_tags - t_files, len(all_tags))
+
     # Rank files by importance
     scores = rank_files(all_tags, focus_files=focus_files)
 
@@ -230,10 +240,19 @@ async def generate_repo_map(
         if f not in scores:
             scores[f] = 0.0
 
+    t_rank = time.monotonic()
+    logger.info("repo-map: ranking done in %.1fs", t_rank - t_tags)
+
     # Render within token budget
     rendered = _render_map(all_tags, scores, token_budget)
 
+    t_render = time.monotonic()
+    logger.info("repo-map: render done in %.1fs", t_render - t_rank)
+
     # Cache the result
     _cache.set(repo_root, files, token_budget, rendered)
+
+    logger.info("repo-map: total generation %.1fs (files=%d, tags=%d, tokens≈%d)",
+                time.monotonic() - t0, len(files), len(all_tags), _estimate_tokens(rendered))
 
     return rendered
