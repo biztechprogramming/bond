@@ -152,17 +152,19 @@ For Case 3 and Case 4 (non-repo files being copied), a `.cloneignore` file at th
 
 ## Storage
 
-Clones are stored on the host under the existing per-agent data directory:
+Clones are stored **outside the project tree** to avoid triggering dev-server file watchers (e.g., uvicorn's `--reload`). The default location is:
 
 ```
-data/agents/<agent-id>/workspaces/<mount-name>/
+~/.bond/workspaces/<agent-id>/<mount-name>/
 ```
 
-This follows the established pattern (`data/agents/<id>/` is already used for per-agent persistent data at `/data` inside the container).
+This separates ephemeral clone data from the project source and from persistent agent data in `data/agents/<id>/`. Clones are throwaway — they exist only for the lifetime of the container.
+
+The path is configurable via the `BOND_WORKSPACE_CLONE_DIR` environment variable (defaults to `~/.bond/workspaces`).
 
 The cloned workspace is bind-mounted into the container at `/workspace/<mount-name>`, replacing the direct host mount. The container sees no difference.
 
-On container destruction, the clone directory is cleaned up with the rest of the agent data.
+On container destruction, the clone directory at `~/.bond/workspaces/<agent-id>/` is deleted.
 
 ## Clone Lifecycle
 
@@ -184,7 +186,7 @@ Container Create
 
 Container Destroy
   │
-  └─ Delete data/agents/<agent-id>/workspaces/
+  └─ Delete ~/.bond/workspaces/<agent-id>/
 ```
 
 ## Minimal UI Changes

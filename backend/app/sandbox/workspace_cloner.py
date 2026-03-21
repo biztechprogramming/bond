@@ -2,6 +2,10 @@
 
 Detects git layout of workspace directories and clones them into per-agent
 copies so multiple containers can operate on independent working trees.
+
+Clones are stored outside the project tree (default: ~/.bond/workspaces/)
+to avoid triggering dev-server file watchers. Configurable via
+BOND_WORKSPACE_CLONE_DIR environment variable.
 """
 
 from __future__ import annotations
@@ -16,6 +20,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger("bond.sandbox.workspace_cloner")
+
+
+def _get_clone_root() -> Path:
+    """Return the root directory for workspace clones.
+
+    Defaults to ~/.bond/workspaces. Override with BOND_WORKSPACE_CLONE_DIR.
+    """
+    env_override = os.environ.get("BOND_WORKSPACE_CLONE_DIR")
+    if env_override:
+        return Path(env_override).expanduser().resolve()
+    return Path.home() / ".bond" / "workspaces"
 
 # Build artifacts to skip during copy operations
 _SKIP_PATTERNS: list[str] = [
@@ -239,8 +254,7 @@ async def generate_clone_plan(
         detection = await detect_workspace_type(host_path)
 
     case = detection["case"]
-    from backend.app.sandbox.manager import _PROJECT_ROOT
-    clone_base = _PROJECT_ROOT / "data" / "agents" / agent_id / "workspaces" / mount_name
+    clone_base = _get_clone_root() / agent_id / mount_name
 
     if case == 1:
         repo_root = detection["repo_root"]
@@ -556,8 +570,7 @@ def generate_dep_install_script(clone_path: str) -> str | None:
 
 async def cleanup_workspace_clones(agent_id: str) -> None:
     """Delete cloned workspaces for an agent."""
-    from backend.app.sandbox.manager import _PROJECT_ROOT
-    workspaces_dir = _PROJECT_ROOT / "data" / "agents" / agent_id / "workspaces"
+    workspaces_dir = _get_clone_root() / agent_id
     if workspaces_dir.exists():
         shutil.rmtree(str(workspaces_dir))
         logger.info("Cleaned up workspace clones for agent %s", agent_id)
