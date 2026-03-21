@@ -660,8 +660,8 @@ class SandboxManager:
                 effective_host_path = host_path
                 if i in plans and not plans[i].direct_mount and i not in failed_indices:
                     plan = plans[i]
-                    if plan.repos:
-                        effective_host_path = plan.repos[0].target_path
+                    if plan.clone_base:
+                        effective_host_path = plan.clone_base
                     clone_info.append({
                         "mount_name": mount_name,
                         "original_path": host_path,

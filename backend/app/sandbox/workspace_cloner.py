@@ -67,6 +67,7 @@ class ClonePlan:
     repos: list[RepoCloneSpec] = field(default_factory=list)
     copies: list[CopySpec] = field(default_factory=list)
     direct_mount: bool = False  # true if user declined — no clone, no concurrency
+    clone_base: str = ""  # root of the cloned workspace on host
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +253,7 @@ async def generate_clone_plan(
                 branch=branch,
                 target_path=str(clone_base),
             )],
+            clone_base=str(clone_base),
         )
 
     if case == 3:
@@ -279,7 +281,7 @@ async def generate_clone_plan(
         repo_root_set = {Path(r) for r in sub_repos}
         _collect_non_repo_copies(p, clone_base, repo_root_set, copies)
 
-        return ClonePlan(case=3, repos=repos, copies=copies)
+        return ClonePlan(case=3, repos=repos, copies=copies, clone_base=str(clone_base))
 
     # Cases 2 and 4: needs user prompt — direct mount for now
     return ClonePlan(case=case, direct_mount=True)
