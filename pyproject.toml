@@ -29,6 +29,8 @@ dependencies = [
     "langfuse>=2.0.0,<3.0.0",
     "semantic-router>=0.1.12",
     "fastembed",
+    "tree-sitter>=0.24.0",
+    "tree-sitter-language-pack>=0.24.0",
 ]
 
 [project.optional-dependencies]
