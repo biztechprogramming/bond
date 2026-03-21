@@ -1,7 +1,7 @@
 # Design Doc 056: Aider RepoMap Integration
 
 ## Status
-Proposed
+Implemented (Option C)
 
 ## Problem
 
