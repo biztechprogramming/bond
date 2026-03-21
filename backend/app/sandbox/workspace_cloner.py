@@ -170,6 +170,59 @@ def _scan_recursive(
 # ---------------------------------------------------------------------------
 
 
+def _is_ancestor_of_any(directory: Path, repo_roots: set[Path]) -> bool:
+    """Check if *directory* is a proper ancestor of any repo root."""
+    for repo in repo_roots:
+        try:
+            repo.relative_to(directory)
+            if repo != directory:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _collect_non_repo_copies(
+    source_dir: Path,
+    target_dir: Path,
+    repo_roots: set[Path],
+    copies: list[CopySpec],
+) -> None:
+    """Recursively collect CopySpecs for non-repo content.
+
+    - Entries that ARE repo roots are skipped (handled by git clone).
+    - Entries that are ancestors of repo roots are recursed into —
+      their non-repo children get copied, but the directory itself isn't
+      copied wholesale.
+    - Everything else (files, unrelated dirs) is copied as-is.
+    """
+    try:
+        entries = sorted(source_dir.iterdir())
+    except PermissionError:
+        return
+
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+
+        if entry in repo_roots:
+            # This is a git repo — will be cloned, skip it
+            continue
+
+        if entry.is_dir() and _is_ancestor_of_any(entry, repo_roots):
+            # This directory contains repo(s) deeper down — recurse
+            # but don't copy it wholesale
+            _collect_non_repo_copies(
+                entry, target_dir / entry.name, repo_roots, copies,
+            )
+        else:
+            # Regular file or directory with no repos inside — copy it
+            copies.append(CopySpec(
+                source=str(entry),
+                target=str(target_dir / entry.name),
+            ))
+
+
 async def generate_clone_plan(
     host_path: str,
     agent_id: str,
@@ -218,17 +271,13 @@ async def generate_clone_plan(
                 target_path=str(target),
             ))
 
-        # Find non-repo files/dirs to copy
-        repo_roots = {Path(r) for r in sub_repos}
-        for entry in sorted(p.iterdir()):
-            if entry in repo_roots:
-                continue
-            if entry.name.startswith("."):
-                continue
-            copies.append(CopySpec(
-                source=str(entry),
-                target=str(clone_base / entry.name),
-            ))
+        # Find non-repo files/dirs to copy.
+        # We need to handle intermediate directories that *contain* repos
+        # deeper down — we can't copy them wholesale (that would duplicate
+        # the repo contents). Instead, walk into them and only copy the
+        # non-repo entries at each level.
+        repo_root_set = {Path(r) for r in sub_repos}
+        _collect_non_repo_copies(p, clone_base, repo_root_set, copies)
 
         return ClonePlan(case=3, repos=repos, copies=copies)
 

@@ -14,7 +14,9 @@ from backend.app.sandbox.workspace_cloner import (
     CopySpec,
     RepoCloneSpec,
     _apply_instance_overrides,
+    _collect_non_repo_copies,
     _copytree_filtered,
+    _is_ancestor_of_any,
     _refresh_clone,
     _should_skip,
     cleanup_workspace_clones,
@@ -133,6 +135,107 @@ class TestGenerateClonePlan:
         assert len(plan.repos) == 2
         assert len(plan.copies) == 1  # README.md
         assert not plan.direct_mount
+
+
+# ---------------------------------------------------------------------------
+# Nested repo handling (Case 3 with intermediate directories)
+# ---------------------------------------------------------------------------
+
+
+class TestNestedRepoHandling:
+    """Test that Case 3 correctly handles repos nested inside subdirectories."""
+
+    @pytest.mark.asyncio
+    async def test_case3_nested_repos_in_subdirs(self, tmp_path):
+        """Repos inside group dirs should be cloned, non-repo files copied."""
+        # ~/projects/
+        # ├── group-a/
+        # │   ├── api/        (.git)
+        # │   ├── web/        (.git)
+        # │   └── config.txt
+        # ├── shared/         (.git)
+        # └── README.md
+        (tmp_path / "group-a" / "api" / ".git").mkdir(parents=True)
+        (tmp_path / "group-a" / "web" / ".git").mkdir(parents=True)
+        (tmp_path / "group-a" / "config.txt").write_text("cfg")
+        (tmp_path / "shared" / ".git").mkdir(parents=True)
+        (tmp_path / "README.md").write_text("readme")
+
+        with patch("backend.app.sandbox.workspace_cloner._get_current_branch",
+                    new_callable=AsyncMock, return_value="main"), \
+             patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path):
+            plan = await generate_clone_plan(
+                str(tmp_path), "agent-123", "projects",
+            )
+
+        assert plan.case == 3
+        # 3 repos: group-a/api, group-a/web, shared
+        assert len(plan.repos) == 3
+        repo_targets = {r.target_path for r in plan.repos}
+        clone_base = tmp_path / "data" / "agents" / "agent-123" / "workspaces" / "projects"
+        assert str(clone_base / "group-a" / "api") in repo_targets
+        assert str(clone_base / "group-a" / "web") in repo_targets
+        assert str(clone_base / "shared") in repo_targets
+
+        # Copies: group-a/config.txt and README.md (NOT group-a/ wholesale)
+        copy_sources = {c.source for c in plan.copies}
+        assert str(tmp_path / "group-a" / "config.txt") in copy_sources
+        assert str(tmp_path / "README.md") in copy_sources
+        # group-a/ itself should NOT be a copy (it's an ancestor of repos)
+        assert str(tmp_path / "group-a") not in copy_sources
+
+    @pytest.mark.asyncio
+    async def test_case3_nested_one_level_deep(self, tmp_path):
+        """Repos inside a group dir with sibling non-repo content."""
+        # ~/mount/
+        # ├── org/
+        # │   ├── svc/        (.git)  — depth 2, within scan limit
+        # │   └── README.md
+        # └── toplevel.txt
+        (tmp_path / "org" / "svc" / ".git").mkdir(parents=True)
+        (tmp_path / "org" / "README.md").write_text("org readme")
+        (tmp_path / "toplevel.txt").write_text("top")
+
+        with patch("backend.app.sandbox.workspace_cloner._get_current_branch",
+                    new_callable=AsyncMock, return_value="main"), \
+             patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path):
+            plan = await generate_clone_plan(
+                str(tmp_path), "agent-1", "mount",
+            )
+
+        assert plan.case == 3
+        assert len(plan.repos) == 1
+
+        copy_sources = {c.source for c in plan.copies}
+        copy_targets = {c.target for c in plan.copies}
+        clone_base = tmp_path / "data" / "agents" / "agent-1" / "workspaces" / "mount"
+
+        # org/README.md should be copied
+        assert str(tmp_path / "org" / "README.md") in copy_sources
+        # toplevel.txt should be copied
+        assert str(tmp_path / "toplevel.txt") in copy_sources
+        # Intermediate dir should NOT appear as a copy
+        assert str(tmp_path / "org") not in copy_sources
+
+        # Target paths should preserve directory structure
+        assert str(clone_base / "org" / "README.md") in copy_targets
+
+    def test_is_ancestor_of_any(self, tmp_path):
+        repos = {tmp_path / "a" / "b" / "repo"}
+        assert _is_ancestor_of_any(tmp_path / "a", repos) is True
+        assert _is_ancestor_of_any(tmp_path / "a" / "b", repos) is True
+        assert _is_ancestor_of_any(tmp_path / "a" / "b" / "repo", repos) is False
+        assert _is_ancestor_of_any(tmp_path / "c", repos) is False
+
+    def test_collect_non_repo_copies_skips_dotfiles(self, tmp_path):
+        (tmp_path / ".hidden").mkdir()
+        (tmp_path / "visible.txt").write_text("hi")
+        repos: set[Path] = set()
+        copies: list[CopySpec] = []
+        _collect_non_repo_copies(tmp_path, tmp_path / "out", repos, copies)
+        sources = {c.source for c in copies}
+        assert str(tmp_path / ".hidden") not in sources
+        assert str(tmp_path / "visible.txt") in sources
 
 
 # ---------------------------------------------------------------------------
