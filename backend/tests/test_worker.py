@@ -12,7 +12,8 @@ import aiosqlite
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from backend.app.worker import _AGENT_DB_SCHEMA, _state, app
+from backend.app.db.agent_schema import AGENT_DB_SCHEMA
+from backend.app.worker import _state, app
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +27,7 @@ async def agent_db(tmp_path):
     db_path = tmp_path / "agent.db"
     db = await aiosqlite.connect(str(db_path))
     await db.execute("PRAGMA journal_mode=WAL")
-    await db.executescript(_AGENT_DB_SCHEMA)
+    await db.executescript(AGENT_DB_SCHEMA)
     await db.commit()
     yield db
     await db.close()
