@@ -44,6 +44,8 @@ install:
 # Run tests
 test:
 	uv run pytest
+	cd gateway && pnpm test
+	cd frontend && pnpm test
 
 # Lint
 lint:
