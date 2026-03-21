@@ -149,7 +149,7 @@ class OutcomeRecorder:
             from backend.app.agent.tools.skills import _router_settings
             from backend.app.foundations.embeddings.engine import EmbeddingEngine
             engine = EmbeddingEngine(
-                settings=_router_settings or {"embedding.provider": "local"},
+                settings=_router_settings or {"embedding.execution_mode": "local"},
                 db_engine=None,
             )
             await run_analysis(self.agent_db, engine)

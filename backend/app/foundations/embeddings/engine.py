@@ -30,35 +30,62 @@ class EmbeddingEngine:
         model_name = settings.get("embedding.model", "voyage-4-large")
         dimension = int(settings.get("embedding.output_dimension", "1024"))
         voyage_key = settings.get("embedding.api_key.voyage")
-        provider_name = settings.get("embedding.provider", "auto")
+        gemini_key = settings.get("embedding.api_key.gemini", "")
+        # Support both new key (execution_mode) and legacy key (provider)
+        execution_mode = settings.get(
+            "embedding.execution_mode",
+            settings.get("embedding.provider", "auto"),
+        )
 
-        if provider_name == "local":
+        if execution_mode == "local":
             logger.info("Using local embedding provider (model=%s)", model_name)
             self._provider = LocalEmbeddingProvider(
                 model_name=model_name,
                 dimension=dimension,
             )
-        elif provider_name == "gemini":
-            gemini_key = settings.get("embedding.api_key.gemini", "")
+        elif execution_mode == "gemini":
             logger.info("Using Gemini API embedding provider (model=%s)", model_name)
             self._provider = GeminiAPIProvider(
                 model_name=model_name,
                 dimension=dimension,
                 api_key=gemini_key or None,
             )
-        elif voyage_key:
-            logger.info("Using Voyage API embedding provider (model=%s)", model_name)
-            self._provider = VoyageAPIProvider(
-                model_name=model_name,
-                dimension=dimension,
-                api_key=voyage_key,
-            )
+        elif execution_mode == "api":
+            if voyage_key:
+                logger.info("Using Voyage API embedding provider (model=%s)", model_name)
+                self._provider = VoyageAPIProvider(
+                    model_name=model_name,
+                    dimension=dimension,
+                    api_key=voyage_key,
+                )
+            else:
+                logger.warning("execution_mode='api' but no Voyage key; falling back to local")
+                self._provider = LocalEmbeddingProvider(
+                    model_name=model_name,
+                    dimension=dimension,
+                )
         else:
-            logger.info("Using local embedding provider (model=%s)", model_name)
-            self._provider = LocalEmbeddingProvider(
-                model_name=model_name,
-                dimension=dimension,
-            )
+            # auto: try Voyage → Gemini → local
+            if voyage_key:
+                logger.info("Auto: using Voyage API embedding provider (model=%s)", model_name)
+                self._provider = VoyageAPIProvider(
+                    model_name=model_name,
+                    dimension=dimension,
+                    api_key=voyage_key,
+                )
+            elif gemini_key:
+                logger.info("Auto: using Gemini API embedding provider (model=%s)", model_name)
+                self._provider = GeminiAPIProvider(
+                    model_name=model_name,
+                    dimension=dimension,
+                    api_key=gemini_key or None,
+                )
+            else:
+                logger.info("Auto: using local embedding provider (model=%s)", model_name)
+                self._provider = LocalEmbeddingProvider(
+                    model_name=model_name,
+                    dimension=dimension,
+                )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of texts using the active provider."""

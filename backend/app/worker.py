@@ -1850,7 +1850,7 @@ async def _startup(config_path: str, data_dir: str) -> None:
                 from backend.app.foundations.embeddings.engine import EmbeddingEngine
                 from backend.app.agent.skills_embedder import embed_all_skills
                 engine = EmbeddingEngine(
-                    settings=_router_settings or {"embedding.provider": "local"},
+                    settings=_router_settings or {"embedding.execution_mode": "local"},
                     db_engine=None,
                 )
                 count = await embed_all_skills(engine)
