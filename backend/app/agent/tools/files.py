@@ -48,8 +48,8 @@ async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
     if not sandbox_image:
         return None
 
-    from backend.app.sandbox.manager import get_sandbox_manager
-    manager = get_sandbox_manager()
+    from backend.app.sandbox import get_executor
+    manager = get_executor()
     try:
         container_id = await manager.get_or_create_container(
             context.get("agent_id", "default"),

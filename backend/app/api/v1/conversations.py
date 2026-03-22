@@ -21,7 +21,7 @@ from ulid import ULID
 from backend.app.agent.interrupts import set_interrupt, is_turn_active, get_worker_url
 from backend.app.api.v1.turn_stdb import _stream_container_turn_stdb
 from backend.app.core.spacetimedb import get_stdb
-from backend.app.sandbox.manager import get_sandbox_manager
+from backend.app.sandbox import get_executor
 from backend.app.core.crypto import decrypt_value, is_encrypted
 
 logger = logging.getLogger("bond.api.conversations")
@@ -718,7 +718,7 @@ async def conversation_turn(
 
         logger.info(f"[CONVERSATIONS] Ensuring container is running for agent {agent_id}")
         try:
-            info = await get_sandbox_manager().ensure_running(agent_dict)
+            info = await get_executor().ensure_running(agent_dict)
             logger.info(f"[CONVERSATIONS] Container running at worker_url: {info['worker_url']}")
         except RuntimeError as e:
             logger.error(f"[CONVERSATIONS] Failed to start container: {e}")

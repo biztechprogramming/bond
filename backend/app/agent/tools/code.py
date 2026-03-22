@@ -22,9 +22,9 @@ async def handle_code_execute(
 
     if sandbox_image:
         # Use Docker sandbox
-        from backend.app.sandbox.manager import get_sandbox_manager
+        from backend.app.sandbox import get_executor
 
-        manager = get_sandbox_manager()
+        manager = get_executor()
         try:
             workspace_mounts = context.get("workspace_mounts", [])
             container_id = await manager.get_or_create_container(

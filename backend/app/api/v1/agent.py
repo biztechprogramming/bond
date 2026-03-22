@@ -23,7 +23,7 @@ from backend.app.agent.interrupts import (
 )
 from backend.app.core.spacetimedb import get_stdb
 from backend.app.core.crypto import decrypt_value, is_encrypted
-from backend.app.sandbox.manager import get_sandbox_manager
+from backend.app.sandbox import get_executor
 
 logger = logging.getLogger("bond.agent.api")
 
@@ -368,7 +368,7 @@ async def resolve_agent(
     if sandbox_image:
         # Containerized agent — ensure worker is running
         try:
-            sandbox_manager = get_sandbox_manager()
+            sandbox_executor = get_executor()
 
             # Inject decrypted API keys from provider_api_keys table
             api_keys: dict[str, str] = {}
@@ -406,7 +406,7 @@ async def resolve_agent(
                 "provider_aliases": provider_aliases,
                 "litellm_prefixes": litellm_prefixes,
             }
-            info = await sandbox_manager.ensure_running(agent_dict)
+            info = await sandbox_executor.ensure_running(agent_dict)
             return {
                 "mode": "container",
                 "worker_url": info["worker_url"],
@@ -439,8 +439,8 @@ async def destroy_agent_container(req: DestroyContainerRequest):
     is removed.  The next message will trigger ensure_running() which
     creates a fresh container on the correct branch.
     """
-    sandbox_manager = get_sandbox_manager()
-    destroyed = await sandbox_manager.destroy_agent_container(req.agent_id)
+    executor = get_executor()
+    destroyed = await executor.destroy_agent_container(req.agent_id)
     return {"ok": True, "destroyed": destroyed}
 
 
