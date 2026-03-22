@@ -337,6 +337,9 @@ export default function SettingsPage() {
             {warning && <div style={s.warning}>{warning}</div>}
             <div style={s.field}>
               <label style={s.label}>Model</label>
+              <p style={s.helpText}>
+                The embedding model converts text into numerical vectors for semantic search. Models in the same family share an embedding space and are interchangeable. Larger models are more accurate but slower and use more memory.
+              </p>
               <select style={s.select} value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
                 {models.map((m) => <option key={m.model_name} value={m.model_name}>{m.model_name} ({m.family})</option>)}
               </select>
@@ -352,12 +355,18 @@ export default function SettingsPage() {
             )}
             <div style={s.field}>
               <label style={s.label}>Dimension</label>
+              <p style={s.helpText}>
+                The number of dimensions in each embedding vector. Higher dimensions capture more nuance but use more storage and compute. 1024 is a good default for most use cases.
+              </p>
               <select style={s.select} value={selectedDimension} onChange={(e) => setSelectedDimension(Number(e.target.value))}>
                 {activeModel?.supported_dimensions.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
             <div style={s.field}>
               <label style={s.label}>Execution Mode</label>
+              <p style={s.helpText}>
+                How embeddings are generated. &quot;local&quot; runs the model on this machine (free, private, but slower). &quot;api&quot; calls the Voyage AI API (fast, requires API key). &quot;auto&quot; tries API providers first, falls back to local.
+              </p>
               <div style={s.radioGroup}>
                 {availableModes().map((mode) => (
                   <label key={mode} style={s.radioLabel}>
@@ -367,6 +376,12 @@ export default function SettingsPage() {
                 ))}
               </div>
             </div>
+            {current && (
+              <div style={{ ...s.modelDetails, marginBottom: "16px" }}>
+                <span>Voyage API key: {current.has_voyage_key ? "configured" : "not set"}</span>
+                <span>Gemini API key: {current.has_gemini_key ? "configured" : "not set"}</span>
+              </div>
+            )}
             <button style={{ ...s.button, opacity: saving ? 0.5 : 1 }} onClick={saveEmbedding} disabled={saving}>
               {saving ? "Saving..." : "Save Embedding Settings"}
             </button>
@@ -454,6 +469,7 @@ const s: Record<string, React.CSSProperties> = {
   deleteBtn: { backgroundColor: "#3a1a1e", color: "#ff6c8a", border: "1px solid #5a2a2e", borderRadius: "8px", padding: "10px 16px", cursor: "pointer", fontWeight: 500, fontSize: "0.9rem", whiteSpace: "nowrap" },
   masked: { color: "#6c8aff", fontSize: "0.8rem", marginLeft: "8px" },
   warning: { backgroundColor: "#2a2a1a", border: "1px solid #aa8800", borderRadius: "8px", padding: "12px 16px", color: "#ffcc44", fontSize: "0.85rem", marginBottom: "16px" },
+  helpText: { color: "#5a5a6e", fontSize: "0.8rem", margin: "0 0 8px 0", lineHeight: "1.4" },
   msg: { marginTop: "12px", fontSize: "0.85rem" },
   readOnly: { color: "#8888a0", fontSize: "0.95rem", padding: "10px 12px", backgroundColor: "#1e1e2e", borderRadius: "8px" },
 };

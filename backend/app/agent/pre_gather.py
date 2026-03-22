@@ -34,7 +34,8 @@ _MIN_PLAN_MESSAGE_LENGTH = 20
 PLAN_SYSTEM_PROMPT = """\
 You are about to handle a task. Before taking any action, analyze what you need.
 
-Here is the complete repository file tree:
+Here is a structural map of the repository showing file paths, class/function \
+signatures, and key relationships:
 {repo_map}
 
 Output a JSON plan (and ONLY the JSON, no other text):
@@ -55,8 +56,9 @@ Output a JSON plan (and ONLY the JSON, no other text):
 Rules:
 - For simple questions (greetings, factual answers), set complexity to "simple" \
 and files_to_read to []. You'll answer directly.
-- For code tasks, list ALL files you expect to need. Pick from the tree above. \
-Over-estimate — it's cheap to read extra files.
+- For code tasks, list ALL files you expect to need. The map above shows function \
+and class signatures — use them to target the exact files containing the symbols \
+you need. Over-estimate — it's cheap to read extra files.
 - If this should be delegated to a coding agent, say so upfront. Don't spend \
 iterations gathering context only to delegate at the end.
 - Keep files_to_read under 15 files. Prefer smaller files when both contain what you need.

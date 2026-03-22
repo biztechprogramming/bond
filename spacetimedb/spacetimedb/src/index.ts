@@ -159,7 +159,7 @@ const spacetimedb = schema({
     {
       id: t.string().primaryKey(),
       provider: t.string(),
-      modelId: t.string(),
+      modelId: t.string(),  // Dedup enforced in addModel/importModel reducers (unique constraint requires data wipe to add)
       displayName: t.string(),
       contextWindow: t.u32(),
       isEnabled: t.bool(),
@@ -591,7 +591,33 @@ export const addModel = spacetimedb.reducer(
     isEnabled: t.bool(),
   },
   (ctx, model) => {
+    // Upsert by modelId — if a model with this slug already exists, replace it
+    for (const row of ctx.db.llm_models.iter()) {
+      if (row.modelId === model.modelId) {
+        ctx.db.llm_models.id.delete(row.id);
+        break;
+      }
+    }
     ctx.db.llm_models.insert(model);
+  }
+);
+
+export const deduplicateModels = spacetimedb.reducer(
+  {},
+  (ctx) => {
+    // Keep the first row per modelId, delete all duplicates
+    const seen = new Set<string>();
+    const toDelete: string[] = [];
+    for (const row of ctx.db.llm_models.iter()) {
+      if (seen.has(row.modelId)) {
+        toDelete.push(row.id);
+      } else {
+        seen.add(row.modelId);
+      }
+    }
+    for (const id of toDelete) {
+      ctx.db.llm_models.id.delete(id);
+    }
   }
 );
 
@@ -1318,8 +1344,16 @@ export const importModel = spacetimedb.reducer(
     isEnabled: t.bool(),
   },
   (ctx, model) => {
-    const existing = ctx.db.llm_models.id.find(model.id);
-    if (existing) ctx.db.llm_models.id.delete(model.id);
+    // Remove by id if exists
+    const existingById = ctx.db.llm_models.id.find(model.id);
+    if (existingById) ctx.db.llm_models.id.delete(model.id);
+    // Also remove by modelId to prevent duplicates
+    for (const row of ctx.db.llm_models.iter()) {
+      if (row.modelId === model.modelId && row.id !== model.id) {
+        ctx.db.llm_models.id.delete(row.id);
+        break;
+      }
+    }
     ctx.db.llm_models.insert(model);
   }
 );

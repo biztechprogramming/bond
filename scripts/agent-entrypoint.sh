@@ -13,7 +13,11 @@ if [ -d "/tmp/.ssh" ]; then
     cp /tmp/.ssh/* ~/.ssh/ 2>/dev/null || true
     chmod 700 ~/.ssh
     chmod 600 ~/.ssh/id_* 2>/dev/null || true
-    ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+    # Only run ssh-keyscan if known_hosts doesn't already have github.com
+    # (baked into image at build time to save ~1-2s network roundtrip)
+    if ! grep -q "github.com" ~/.ssh/known_hosts 2>/dev/null; then
+        ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+    fi
 fi
 
 # Use the bond repo at /bond.
@@ -137,8 +141,16 @@ cp /root/.gitconfig /home/bond-agent/.gitconfig 2>/dev/null || true
 chown bond-agent:bond-agent /home/bond-agent/.gitconfig 2>/dev/null || true
 
 # Mark /bond and /workspace as safe for git under the bond-agent user too
-su -c "git config --global --add safe.directory /bond" bond-agent
-su -c "git config --global --add safe.directory /workspace" bond-agent
+# Write directly instead of spawning su + git subprocesses (~0.5s saved)
+BOND_AGENT_GITCONFIG="/home/bond-agent/.gitconfig"
+if ! grep -q "safe" "$BOND_AGENT_GITCONFIG" 2>/dev/null; then
+    cat >> "$BOND_AGENT_GITCONFIG" <<'EOF'
+[safe]
+	directory = /bond
+	directory = /workspace
+EOF
+    chown bond-agent:bond-agent "$BOND_AGENT_GITCONFIG" 2>/dev/null || true
+fi
 
 # Drop privileges and exec worker as bond-agent
 exec gosu bond-agent python -m backend.app.worker "$@"

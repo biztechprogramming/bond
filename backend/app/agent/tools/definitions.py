@@ -1474,6 +1474,32 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "db_discover",
+            "description": "Discover the complete schema of a database — tables, columns, types, constraints, foreign keys, indexes, and relationships. Returns a structured map the agent can reference for writing queries, understanding data models, or debugging schema issues. Results are cached; subsequent calls for the same database return instantly.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "connection_string": {
+                        "type": "string",
+                        "description": "Database connection URI. Examples: 'postgres://user:pass@host:5432/dbname', 'mysql://user:pass@host:3306/dbname', 'sqlite:///path/to/db.sqlite3', 'bq://project/dataset', 'mongodb://host:27017/dbname'",
+                    },
+                    "table": {
+                        "type": "string",
+                        "description": "Optional. If provided, return detailed schema for only this table (including column details, indexes, constraints, and relationships). Omit to get the full database overview.",
+                    },
+                    "refresh": {
+                        "type": "boolean",
+                        "description": "Force re-discovery, bypassing the cache. Use when the schema has changed.",
+                        "default": False,
+                    },
+                },
+                "required": ["connection_string"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)

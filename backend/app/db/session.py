@@ -77,6 +77,22 @@ async def init_db() -> None:
         await conn.exec_driver_sql("PRAGMA busy_timeout=5000")
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
+    # Ensure default embedding settings exist (engine requires them)
+    try:
+        async with engine.begin() as conn:
+            for key, value in [
+                ("embedding.model", "voyage-4-nano"),
+                ("embedding.output_dimension", "1024"),
+                ("embedding.execution_mode", "auto"),
+            ]:
+                await conn.exec_driver_sql(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO NOTHING",
+                    (key, value),
+                )
+    except Exception:
+        logger.debug("Could not seed embedding defaults (settings table may not exist yet)")
+
     # Read embedding dimension from settings (default 1024)
     dimension = 1024
     try:

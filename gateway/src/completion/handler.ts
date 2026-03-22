@@ -23,8 +23,12 @@ export type BroadcastToConversationFn = (conversationId: string, message: Record
 const MAX_AUTO_TURNS_PER_MINUTE = 3;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
+/** Max consecutive coding_agent failures before blocking retries. */
+const MAX_CONSECUTIVE_FAILURES = 2;
+
 export class CompletionHandler {
   private rateLimits = new Map<string, { count: number; resetAt: number }>();
+  private consecutiveFailures = new Map<string, number>();
   private processing = new Set<string>(); // Prevent concurrent handling of same event
 
   constructor(
@@ -52,12 +56,24 @@ export class CompletionHandler {
         return;
       }
 
+      // Track consecutive coding agent failures per conversation
+      if (event.eventType === "coding_agent_failed") {
+        const prev = this.consecutiveFailures.get(event.conversationId) ?? 0;
+        this.consecutiveFailures.set(event.conversationId, prev + 1);
+      } else if (event.eventType === "coding_agent_done") {
+        this.consecutiveFailures.delete(event.conversationId);
+      }
+
       console.log(
-        `[completion] Handling ${event.eventType} for conversation ${event.conversationId}`,
+        `[completion] Handling ${event.eventType} for conversation ${event.conversationId}` +
+          (event.eventType === "coding_agent_failed"
+            ? ` (consecutive failures: ${this.consecutiveFailures.get(event.conversationId)})`
+            : ""),
       );
 
       // Build the completion message for the agent
-      const systemMessage = this.buildCompletionMessage(event);
+      const failureCount = this.consecutiveFailures.get(event.conversationId) ?? 0;
+      const systemMessage = this.buildCompletionMessage(event, failureCount);
 
       // Notify frontend that a completion-triggered turn is starting
       this.broadcastToConversation(event.conversationId, {
@@ -145,7 +161,7 @@ export class CompletionHandler {
    * Build the system message that will be injected as the "user" message
    * for the completion turn. Instructs the LLM to summarize and suggest next steps.
    */
-  buildCompletionMessage(event: SystemEventRow): string {
+  buildCompletionMessage(event: SystemEventRow, consecutiveFailures = 0): string {
     let metadata: Record<string, unknown> = {};
     try {
       metadata = JSON.parse(event.metadata);
@@ -181,11 +197,19 @@ export class CompletionHandler {
       if (metadata.error) {
         parts.push(`Error: ${metadata.error}`);
       }
-      parts.push(
-        "",
-        "Explain what went wrong to the user and suggest how to fix it or retry.",
-        "You may spawn another coding agent to retry if appropriate.",
-      );
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        parts.push(
+          "",
+          `This coding agent has failed ${consecutiveFailures} times in a row.`,
+          "Do NOT spawn another coding agent to retry. Report the failure to the user and let them decide how to proceed.",
+        );
+      } else {
+        parts.push(
+          "",
+          "Explain what went wrong to the user and suggest how to fix it or retry.",
+          "You may spawn another coding agent to retry if the error looks transient, but do not retry more than once.",
+        );
+      }
       return parts.filter((p) => p !== undefined).join("\n");
     }
 

@@ -144,6 +144,25 @@ async def get_current_embedding(db: AsyncSession = Depends(get_db)):
     )
     raw_map = {row[0]: row[1] for row in result.fetchall()}
 
+    # Seed defaults if any core embedding settings are missing
+    _EMBEDDING_DEFAULTS = {
+        "embedding.model": "voyage-4-nano",
+        "embedding.output_dimension": "1024",
+        "embedding.execution_mode": "auto",
+    }
+    missing = {k: v for k, v in _EMBEDDING_DEFAULTS.items() if k not in raw_map}
+    if missing:
+        for key, value in missing.items():
+            await db.execute(
+                text(
+                    "INSERT INTO settings (key, value) VALUES (:key, :value) "
+                    "ON CONFLICT(key) DO NOTHING"
+                ),
+                {"key": key, "value": value},
+            )
+            raw_map[key] = value
+        await db.commit()
+
     # Decrypt API keys to check presence (but don't return values)
     # Check both settings table and provider_api_keys table (frontend saves to the latter)
     voyage_raw = raw_map.get("embedding.api_key.voyage", "")
@@ -157,7 +176,7 @@ async def get_current_embedding(db: AsyncSession = Depends(get_db)):
         try:
             pkeys = await stdb.query(
                 "SELECT provider_id, key_type FROM provider_api_keys "
-                "WHERE provider_id IN ('voyage', 'gemini')"
+                "WHERE provider_id = 'voyage' OR provider_id = 'gemini'"
             )
             for pk in pkeys:
                 if pk["provider_id"] == "voyage":

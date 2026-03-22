@@ -377,7 +377,7 @@ export class WebChatChannel {
     } catch (err) {
       session.agentBusy = false;
       this.streamBuffers.delete(conversationId);
-      const errMsg = err instanceof Error ? err.message : "Agent error";
+      const errMsg = this.humanizeNetworkError(err instanceof Error ? err.message : "Agent error");
       this.sendToConversation(conversationId, { type: "status", sessionId, agentStatus: "idle", conversationId });
       this.sendToConversation(conversationId, { type: "error", sessionId, error: errMsg });
       this.persistError(conversationId, errMsg).catch(() => {});
@@ -636,7 +636,7 @@ export class WebChatChannel {
     } catch (err) {
       session.agentBusy = false;
       this.streamBuffers.delete(conversationId);
-      const errMsg = err instanceof Error ? err.message : "Agent error";
+      const errMsg = this.humanizeNetworkError(err instanceof Error ? err.message : "Agent error");
       this.sendToConversation(conversationId, { type: "status", sessionId, agentStatus: "idle", conversationId });
       this.sendToConversation(conversationId, { type: "error", sessionId, error: errMsg });
       this.persistError(conversationId, errMsg).catch(() => {});
@@ -696,18 +696,29 @@ export class WebChatChannel {
     }
   }
 
-  private async handleListConversations(socket: WebSocket): Promise<void> {
-    try {
-      const conversations = await this.backendClient.listConversations();
-      this.send(socket, {
-        type: "conversations_list",
-        conversations,
-      });
-    } catch (err) {
-      this.send(socket, {
-        type: "error",
-        error: err instanceof Error ? err.message : "Failed to list conversations",
-      });
+  private async handleListConversations(socket: WebSocket, retries = 2): Promise<void> {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const conversations = await this.backendClient.listConversations();
+        this.send(socket, {
+          type: "conversations_list",
+          conversations,
+        });
+        return;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt < retries) {
+          const delay = (attempt + 1) * 2000;
+          console.warn(`[webchat] Failed to list conversations (attempt ${attempt + 1}/${retries + 1}), retrying in ${delay}ms: ${msg}`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          console.warn(`[webchat] Failed to list conversations after ${retries + 1} attempts: ${msg}`);
+          this.send(socket, {
+            type: "conversations_list",
+            conversations: [],
+          });
+        }
+      }
     }
   }
 
@@ -770,6 +781,13 @@ export class WebChatChannel {
         socket.send(payload);
       }
     }
+  }
+
+  private humanizeNetworkError(msg: string): string {
+    if (/fetch failed|ECONNREFUSED|ENOTFOUND|network/i.test(msg)) {
+      return "Backend is not running or unreachable. Please check that the Bond backend is started.";
+    }
+    return msg;
   }
 
   private send(socket: WebSocket, msg: OutgoingMessage): void {

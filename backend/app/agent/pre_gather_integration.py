@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,12 +60,24 @@ async def run_pre_gather(
     if event_queue is not None:
         await event_queue.put(_sse_event("status", {"state": "mapping_repo"}))
 
-    from backend.app.agent.repo_map import build_repo_map
-
     repo_map = ""
     if os.path.isdir(os.path.join(repo_root, ".git")):
         try:
-            repo_map = await build_repo_map(repo_root)
+            from backend.app.agent.repomap import generate_repo_map
+
+            repo_map = await generate_repo_map(
+                repo_root=repo_root,
+                token_budget=10_000,
+                focus_files=_extract_focus_files(user_message),
+            )
+        except ImportError:
+            logger.info("Pre-gather: tree-sitter not available, falling back to file tree")
+            try:
+                from backend.app.agent.repo_map import build_repo_map
+
+                repo_map = await build_repo_map(repo_root)
+            except Exception as e:
+                logger.warning("Pre-gather: fallback repo map failed: %s", e)
         except Exception as e:
             logger.warning("Pre-gather: repo map failed: %s", e)
 
@@ -163,6 +176,27 @@ async def run_pre_gather(
     )
 
     return result
+
+
+def _extract_focus_files(user_message: str) -> list[str] | None:
+    """Extract file paths mentioned in the user message.
+
+    Looks for patterns like backend/app/foo.py, src/index.ts, etc.
+    Returns None if no paths found.
+    """
+    # Match paths with at least one directory separator and a file extension
+    pattern = r'(?:^|\s|[`"\'])([a-zA-Z0-9_./-]+/[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)'
+    matches = re.findall(pattern, user_message)
+    if not matches:
+        return None
+    # Deduplicate while preserving order
+    seen = set()
+    result = []
+    for m in matches:
+        if m not in seen:
+            seen.add(m)
+            result.append(m)
+    return result or None
 
 
 def _sse_event(event_type: str, data: dict) -> str:

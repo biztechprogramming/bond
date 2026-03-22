@@ -165,20 +165,27 @@ export class BranchManager {
     this.prefs[containerId] = branch;
     this.savePrefs();
 
-    const targetUrl = workerUrl || this.workerUrl;
+    // If we don't have a worker URL, we can't notify the worker.
+    // Just destroy any lingering container and save preference for next startup.
+    if (!workerUrl) {
+      if (backendUrl && agentId) {
+        await this.destroyContainer(backendUrl, agentId);
+      }
+      return { deferred: false, activeTurns: null };
+    }
 
     // Try to notify the worker
     try {
       const status = await this.getWorkerStatus(workerUrl);
       if (!status.online) {
-        // Worker offline — just destroy any lingering container
+        // Worker offline — destroy any lingering container
         if (backendUrl && agentId) {
           await this.destroyContainer(backendUrl, agentId);
         }
         return { deferred: false, activeTurns: null };
       }
 
-      const resp = await fetch(`${targetUrl}/reload`, {
+      const resp = await fetch(`${workerUrl}/reload`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ branch }),
@@ -200,7 +207,11 @@ export class BranchManager {
         };
       }
     } catch {
-      // Worker unreachable — preference saved for next startup
+      // Worker unreachable — preference saved for next startup.
+      // Try to destroy the container anyway.
+      if (backendUrl && agentId) {
+        await this.destroyContainer(backendUrl, agentId);
+      }
     }
 
     return { deferred: false, activeTurns: null };

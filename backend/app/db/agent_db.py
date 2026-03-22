@@ -1,45 +1,69 @@
-"""Async sqlite connection to the agent's local database.
+"""FastAPI dependency for the agent's local SQLite database.
 
-The agent DB lives at $BOND_WORKER_DATA_DIR/agent.db (default /data/agent.db).
-Used by the optimization dashboard API to read observation/experiment data.
+Thin wrapper around ``agent_schema.init_agent_db`` — provides the
+``Depends(get_agent_db)`` injection point and connection lifecycle.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
+from fastapi import HTTPException
+
+from backend.app.db.agent_schema import init_agent_db
 
 logger = logging.getLogger("bond.db.agent_db")
 
 _connection: aiosqlite.Connection | None = None
 
 
-def _db_path() -> Path:
-    data_dir = os.environ.get("BOND_WORKER_DATA_DIR", "/data")
-    return Path(data_dir) / "agent.db"
+def _data_dir() -> Path:
+    """Resolve the agent data directory.
+
+    Priority:
+      1. BOND_WORKER_DATA_DIR env var (set by the worker on startup)
+      2. <repo>/data/agents/01JBOND0000000000000DEFAULT  (local dev)
+    """
+    explicit = os.environ.get("BOND_WORKER_DATA_DIR")
+    if explicit:
+        return Path(explicit)
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    return repo_root / "data" / "agents" / "01JBOND0000000000000DEFAULT"
 
 
 async def get_agent_db() -> aiosqlite.Connection:
     """Return a shared aiosqlite connection to the agent DB.
 
-    Enables WAL mode and foreign keys on first connect.
+    Creates the DB (with schema + migrations) if it doesn't exist yet.
     FastAPI dependency: ``db = Depends(get_agent_db)``.
     """
     global _connection
     if _connection is None:
-        db_path = _db_path()
-        if not db_path.exists():
-            raise FileNotFoundError(f"Agent DB not found at {db_path}")
-        _connection = await aiosqlite.connect(str(db_path))
-        _connection.row_factory = aiosqlite.Row
-        await _connection.execute("PRAGMA journal_mode=WAL")
-        await _connection.execute("PRAGMA foreign_keys=ON")
-        logger.info("Connected to agent DB at %s", db_path)
+        data_dir = _data_dir()
+        try:
+            _connection = await init_agent_db(data_dir)
+        except Exception as e:
+            _connection = None
+            logger.error("Failed to open agent DB at %s/agent.db: %s", data_dir, e)
+            raise HTTPException(
+                status_code=503,
+                detail=f"Agent database unavailable: {e}",
+            )
     return _connection
+
+
+def set_agent_db(conn: aiosqlite.Connection) -> None:
+    """Allow the worker to register its already-initialised connection.
+
+    When the worker calls ``init_agent_db`` itself (e.g. with vec extension
+    loaded), it can push that connection here so the FastAPI dependency
+    reuses it instead of opening a second one.
+    """
+    global _connection
+    _connection = conn
 
 
 async def close_agent_db() -> None:
