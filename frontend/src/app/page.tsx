@@ -653,6 +653,12 @@ export default function Home() {
           }}>
             📋 Board
           </a>
+          <a href="/deploy" style={{
+            flex: 1, textAlign: "center" as const, color: "#8888a0", textDecoration: "none",
+            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", border: "1px solid #2a2a3e",
+          }}>
+            🚀 Deploy
+          </a>
           <a href="/settings" style={{
             flex: 1, textAlign: "center" as const, color: "#6c8aff", textDecoration: "none",
             fontSize: "0.8rem", padding: "8px", borderRadius: "8px", border: "1px solid #2a2a3e",
