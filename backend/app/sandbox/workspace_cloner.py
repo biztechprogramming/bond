@@ -457,6 +457,8 @@ async def _clone_repo(repo: RepoCloneSpec) -> None:
         )
         if target.exists():
             shutil.rmtree(str(target))
+        # Re-ensure parent dirs exist (parallel clones may race on shared parents)
+        target.parent.mkdir(parents=True, exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
             "git", "clone", "--depth", "1",
             "--branch", repo.branch,

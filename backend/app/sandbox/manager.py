@@ -242,13 +242,15 @@ class SandboxManager:
             )
             return None
 
-        # Restore tracking
+        # Restore tracking (include mounts/config so next ensure_running()
+        # doesn't falsely detect "mounts changed" and destroy the container)
         self._port_map[key] = host_port
         self._containers[key] = {
             "container_id": container_id,
             "worker_url": worker_url,
             "worker_port": host_port,
             "last_used": time.time(),
+            # Populated by caller after recovery — see ensure_running()
         }
         logger.info(
             "Recovered running container %s for agent %s (port=%d)",
@@ -313,15 +315,16 @@ class SandboxManager:
                 tracked_config = info.get("config_fingerprint", "")
 
                 # If mounts or model config changed, destroy and recreate
+                # Keep clones — they'll be refreshed (not re-cloned) by the new container
                 if tracked_mounts != current_mounts:
                     logger.info("Agent %s mounts changed, recreating worker container %s", agent_id, key)
-                    await self.destroy_agent_container(agent_id)
+                    await self.destroy_agent_container(agent_id, keep_clones=True)
                 elif tracked_config and tracked_config != current_config_fingerprint:
                     logger.info(
                         "Agent %s config changed (was: %s, now: %s), recreating worker container %s",
                         agent_id, tracked_config, current_config_fingerprint, key,
                     )
-                    await self.destroy_agent_container(agent_id)
+                    await self.destroy_agent_container(agent_id, keep_clones=True)
                 elif await self._is_running(cid):
                     try:
                         await self._wait_for_health(worker_url, agent_id, cid, timeout=5.0)
@@ -332,20 +335,22 @@ class SandboxManager:
                             "Worker unhealthy in running container %s for agent %s, destroying",
                             cid, agent_id,
                         )
-                        await self.destroy_agent_container(agent_id)
+                        await self.destroy_agent_container(agent_id, keep_clones=True)
                 else:
                     logger.warning(
                         "Container %s for agent %s died, recreating",
                         cid, agent_id,
                     )
-                    await self.destroy_agent_container(agent_id)
+                    await self.destroy_agent_container(agent_id, keep_clones=True)
                 # Fall through to create new container
             else:
                 # Not in memory — check Docker directly (e.g., after backend restart)
                 existing = await self._recover_existing_container(key, agent_id)
                 if existing:
-                    # Store config fingerprint so future model changes are detected
+                    # Store mounts + config fingerprint so future ensure_running()
+                    # calls don't falsely detect changes and destroy the container
                     if key in self._containers:
+                        self._containers[key]["mounts"] = current_mounts
                         self._containers[key]["config_fingerprint"] = current_config_fingerprint
                     return existing
 
@@ -895,11 +900,15 @@ class SandboxManager:
     # Cleanup lifecycle (Task 9)
     # ------------------------------------------------------------------
 
-    async def destroy_agent_container(self, agent_id: str) -> bool:
+    async def destroy_agent_container(
+        self, agent_id: str, *, keep_clones: bool = False,
+    ) -> bool:
         """Destroy the sandbox container for an agent.
 
         Releases port, deletes config file, removes tracking.
         Docker volume persists by design (agent data survives restarts).
+        If *keep_clones* is True, workspace clones are preserved (useful
+        when the container will be immediately recreated with the same mounts).
         Returns True if a container was destroyed.
         """
         # Find the container key — could be any name, but ends with agent_id
@@ -940,11 +949,12 @@ class SandboxManager:
         # Remove per-agent lock
         self._agent_locks.pop(key, None)
 
-        # Clean up workspace clones
-        try:
-            await cleanup_workspace_clones(agent_id)
-        except Exception as e:
-            logger.warning("Failed to clean up workspace clones for agent %s: %s", agent_id, e)
+        # Clean up workspace clones (skip if container will be immediately recreated)
+        if not keep_clones:
+            try:
+                await cleanup_workspace_clones(agent_id)
+            except Exception as e:
+                logger.warning("Failed to clean up workspace clones for agent %s: %s", agent_id, e)
 
         # Find and destroy the Docker container
         proc = await asyncio.create_subprocess_exec(
