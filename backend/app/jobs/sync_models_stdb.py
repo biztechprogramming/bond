@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from backend.app.core.oauth import resolve_provider_key_via_gateway
+from backend.app.core.oauth import get_provider_api_key
 from backend.app.core.spacetimedb import get_stdb
 
 logger = logging.getLogger(__name__)
@@ -181,16 +181,10 @@ _FETCH_METHODS = {
 async def _get_api_key(provider_id: str) -> tuple[str, str] | None:
     """Read the active API key for a provider via the Gateway.
 
-    The Gateway handles OAuth token refresh (via pi-ai) transparently.
-    All key resolution goes through the Gateway — no direct DB reads.
+    Delegates to the common get_provider_api_key which handles
+    OAuth refresh (via pi-ai) and decryption of non-OAuth keys.
     """
-    result = await resolve_provider_key_via_gateway(provider_id)
-    if result:
-        api_key, key_type = result
-        if api_key:
-            logger.info("sync_models: resolved key for %s via Gateway (key_type=%s)", provider_id, key_type)
-            return (api_key, key_type)
-    return None
+    return await get_provider_api_key(provider_id)
 
 
 # ---------------------------------------------------------------------------
