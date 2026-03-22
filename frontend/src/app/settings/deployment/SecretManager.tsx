@@ -150,7 +150,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
       {components.length > 0 && (
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <span style={{ fontSize: "0.8rem", color: "#8888a0" }}>Group by:</span>
-          <select style={{ backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: "6px", padding: "6px 10px", fontSize: "0.8rem" }} value={filterComponent} onChange={e => setFilterComponent(e.target.value)}>
+          <select style={{ backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: "6px", padding: "6px 10px", fontSize: "0.8rem" }} value={filterComponent} onChange={e => setFilterComponent(e.target.value)}>
             <option value="">All Secrets</option>
             {components.map(c => <option key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.display_name || c.name}</option>)}
             <option value="ungrouped">Ungrouped</option>
@@ -189,8 +189,8 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
             {!group.component && groups.length > 1 && (
               <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "#8888a0", padding: "8px 0 4px" }}>Ungrouped</div>
             )}
-            <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", overflow: "hidden", marginBottom: 8 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottom: "1px solid #3a3a4e" }}>
+            <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", overflow: "hidden", marginBottom: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#3a3a4e" }}>
                 <span style={styles.header}>Key</span>
                 <span style={styles.header}>Value</span>
                 <span style={styles.header}>Source</span>
@@ -200,7 +200,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
                 <div style={{ color: "#8888a0", fontSize: "0.85rem", padding: "16px", textAlign: "center" }}>No secrets configured.</div>
               )}
               {group.secrets.map((s) => (
-                <div key={s.key} style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottom: "1px solid #2a2a3e", alignItems: "center" }}>
+                <div key={s.key} style={{ display: "grid", gridTemplateColumns: "200px 1fr 100px 160px", padding: "8px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#2a2a3e", alignItems: "center" }}>
                   <span style={{ color: "#e0e0e8", fontSize: "0.85rem", fontFamily: "monospace" }}>{s.key}</span>
                   <span style={{ color: "#8888a0", fontSize: "0.85rem", fontFamily: "monospace" }}>
                     {editingKey === s.key ? (
@@ -228,7 +228,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
 
       {/* Add secret inline */}
       {addMode && (
-        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #6c8aff", padding: "12px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
+        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff", padding: "12px", display: "flex", gap: "8px", alignItems: "flex-end" }}>
           <label style={styles.label}>Key<input style={styles.input} value={newKey} onChange={(e) => setNewKey(e.target.value)} /></label>
           <label style={styles.label}>Value<input style={styles.input} value={newValue} onChange={(e) => setNewValue(e.target.value)} /></label>
           <button style={styles.primaryBtn} onClick={addSecret}>Add</button>
@@ -238,7 +238,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
 
       {/* Discovered but not managed */}
       {discovered.length > 0 && (
-        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #ffcc6c33", padding: "12px" }}>
+        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#ffcc6c33", padding: "12px" }}>
           <div style={{ color: "#ffcc6c", fontSize: "0.85rem", fontWeight: 600, marginBottom: "8px" }}>
             Discovered but not managed ({discovered.length})
           </div>
@@ -261,10 +261,10 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  primaryBtn: { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
-  secondaryBtn: { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
-  tinyBtn: { backgroundColor: "transparent", color: "#8888a0", border: "1px solid #3a3a4e", borderRadius: "4px", padding: "2px 8px", fontSize: "0.75rem", cursor: "pointer" },
+  primaryBtn: { backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
+  secondaryBtn: { backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
+  tinyBtn: { backgroundColor: "transparent", color: "#8888a0", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: "4px", padding: "2px 8px", fontSize: "0.75rem", cursor: "pointer" },
   header: { color: "#8888a0", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" as const },
-  input: { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: "6px", padding: "6px 10px", fontSize: "0.85rem" },
+  input: { backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: "6px", padding: "6px 10px", fontSize: "0.85rem" },
   label: { display: "flex", flexDirection: "column" as const, gap: "4px", color: "#8888a0", fontSize: "0.8rem" },
 };

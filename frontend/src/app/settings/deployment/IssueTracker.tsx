@@ -125,7 +125,7 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", gap: 12 },
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 12,
     display: "flex",
@@ -135,7 +135,7 @@ const styles: Record<string, React.CSSProperties> = {
   filterButton: {
     backgroundColor: "#12121a",
     color: "#8888a0",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 6,
     padding: "4px 10px",
     fontSize: "0.75rem",
@@ -144,7 +144,7 @@ const styles: Record<string, React.CSSProperties> = {
   activeFilter: {
     backgroundColor: "#2a2a4a",
     color: "#e0e0e8",
-    border: "1px solid #6c8aff",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff",
     borderRadius: 6,
     padding: "4px 10px",
     fontSize: "0.75rem",
@@ -156,7 +156,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 8,
     padding: "6px 4px",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
     fontSize: "0.7rem",
     fontWeight: 600,
     color: "#8888a0",
@@ -167,6 +167,6 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 8,
     padding: "8px 4px",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
   },
 };

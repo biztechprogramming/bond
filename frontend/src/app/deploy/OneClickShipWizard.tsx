@@ -365,7 +365,7 @@ const ws: Record<string, React.CSSProperties> = {
   progressDot: {
     width: "32px", height: "32px", borderRadius: "50%", backgroundColor: "#1e1e2e", color: "#5a5a70",
     display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.85rem", fontWeight: 600,
-    border: "2px solid #2a2a3e",
+    borderWidth: "2px", borderStyle: "solid", borderColor: "#2a2a3e",
   },
   progressDotActive: { backgroundColor: "#6c8aff", color: "#fff", borderColor: "#6c8aff" },
   progressLabel: { fontSize: "0.75rem", color: "#8888a0" },
@@ -377,7 +377,7 @@ const ws: Record<string, React.CSSProperties> = {
 
   cardRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "20px" },
   optionCard: {
-    backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", border: "1px solid #1e1e2e",
+    backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     cursor: "pointer", textAlign: "center", transition: "border-color 0.2s",
   },
   optionIcon: { fontSize: "2rem", marginBottom: "8px" },
@@ -386,24 +386,24 @@ const ws: Record<string, React.CSSProperties> = {
 
   existingList: { display: "flex", gap: "8px", flexWrap: "wrap" },
   existingItem: {
-    backgroundColor: "#1e1e2e", color: "#e0e0e8", border: "1px solid #2a2a3e", borderRadius: "8px",
+    backgroundColor: "#1e1e2e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
     padding: "8px 14px", fontSize: "0.85rem", cursor: "pointer",
   },
 
   field: { marginBottom: "16px" },
   label: { display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500 },
   input: {
-    width: "100%", backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px",
+    width: "100%", backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
     padding: "10px 12px", color: "#e0e0e8", fontSize: "0.95rem", outline: "none", boxSizing: "border-box",
   },
 
   actions: { display: "flex", justifyContent: "space-between", marginTop: "24px", gap: "12px" },
   primaryBtn: {
-    backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px",
+    backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px",
     padding: "10px 24px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer",
   },
   cancelBtn: {
-    background: "none", border: "1px solid #2a2a3e", color: "#8888a0", borderRadius: "8px",
+    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", color: "#8888a0", borderRadius: "8px",
     padding: "10px 20px", fontSize: "0.9rem", cursor: "pointer",
   },
 
@@ -416,28 +416,28 @@ const ws: Record<string, React.CSSProperties> = {
   scanSubtext: { fontSize: "0.85rem", color: "#8888a0", margin: 0 },
 
   warning: {
-    backgroundColor: "#2a2a1a", border: "1px solid #aa8800", borderRadius: "8px",
+    backgroundColor: "#2a2a1a", borderWidth: "1px", borderStyle: "solid", borderColor: "#aa8800", borderRadius: "8px",
     padding: "10px 14px", color: "#ffcc44", fontSize: "0.85rem", marginBottom: "16px",
   },
 
   planCard: {
-    backgroundColor: "#12121a", borderRadius: "12px", padding: "20px", border: "1px solid #1e1e2e",
+    backgroundColor: "#12121a", borderRadius: "12px", padding: "20px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     marginBottom: "16px",
   },
-  planRow: { display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #1e1e2e", fontSize: "0.9rem", color: "#e0e0e8" },
+  planRow: { display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", fontSize: "0.9rem", color: "#e0e0e8" },
   planLabel: { color: "#8888a0", fontWeight: 500 },
   code: { fontFamily: "monospace", backgroundColor: "#1e1e2e", padding: "2px 6px", borderRadius: "4px", fontSize: "0.85rem" },
 
   advancedToggle: {
-    background: "none", border: "none", color: "#6c8aff", cursor: "pointer",
+    background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent", color: "#6c8aff", cursor: "pointer",
     fontSize: "0.85rem", padding: "4px 0", textDecoration: "underline",
   },
-  advancedSection: { marginTop: "16px", padding: "16px", backgroundColor: "#12121a", borderRadius: "8px", border: "1px solid #1e1e2e" },
+  advancedSection: { marginTop: "16px", padding: "16px", backgroundColor: "#12121a", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
 
   shipContainer: { textAlign: "center", padding: "20px" },
   planSummary: { color: "#8888a0", fontSize: "0.9rem", marginBottom: "24px" },
   shipBtn: {
-    backgroundColor: "#6cffa0", color: "#0a0a0f", border: "none", borderRadius: "12px",
+    backgroundColor: "#6cffa0", color: "#0a0a0f", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "12px",
     padding: "16px 48px", fontSize: "1.1rem", fontWeight: 700, cursor: "pointer",
     transition: "transform 0.15s, box-shadow 0.15s",
   },

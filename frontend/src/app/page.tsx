@@ -642,26 +642,26 @@ export default function Home() {
         {/* Sidebar footer with nav links */}
         <div style={{
           padding: "12px 16px",
-          borderTop: "1px solid #1e1e2e",
+          borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e",
           display: "flex",
           gap: "12px",
           flexShrink: 0,
         }}>
           <a href="/board" style={{
             flex: 1, textAlign: "center" as const, color: "#8888a0", textDecoration: "none",
-            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", border: "1px solid #2a2a3e",
+            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
           }}>
             📋 Board
           </a>
           <a href="/deploy" style={{
             flex: 1, textAlign: "center" as const, color: "#8888a0", textDecoration: "none",
-            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", border: "1px solid #2a2a3e",
+            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
           }}>
             🚀 Deploy
           </a>
           <a href="/settings" style={{
             flex: 1, textAlign: "center" as const, color: "#6c8aff", textDecoration: "none",
-            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", border: "1px solid #2a2a3e",
+            fontSize: "0.8rem", padding: "8px", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
           }}>
             ⚙ Settings
           </a>
@@ -713,7 +713,7 @@ export default function Home() {
                 <button
                   onClick={() => setAgentDropdownOpen(!agentDropdownOpen)}
                   style={{
-                    backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px",
+                    backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
                     padding: "6px 12px", color: "#e0e0e8", fontSize: "0.85rem", cursor: "pointer",
                     display: "flex", alignItems: "center", gap: "6px",
                   }}
@@ -724,7 +724,7 @@ export default function Home() {
                 {agentDropdownOpen && (
                   <div style={{
                     position: "absolute", top: "calc(100% + 4px)", right: 0, minWidth: "180px",
-                    backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "10px",
+                    backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "10px",
                     overflow: "hidden", zIndex: 100, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
                   }}>
                     {agents.map((a) => (
@@ -750,7 +750,7 @@ export default function Home() {
             )}
             <a href="/board" className="bond-header-extras" style={{
               color: "#8888a0", textDecoration: "none", fontSize: "0.85rem",
-              padding: "6px 12px", borderRadius: "8px", border: "1px solid #2a2a3e",
+              padding: "6px 12px", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
             }}>
               &#x1F4CB; Board
             </a>
@@ -780,7 +780,7 @@ export default function Home() {
               title="Dismiss plan card"
               style={{
                 position: "absolute", top: "16px", right: "calc(7.5% + 28px)",
-                background: "rgba(90,90,110,0.3)", border: "none", borderRadius: "50%",
+                background: "rgba(90,90,110,0.3)", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "50%",
                 width: "22px", height: "22px", color: "#8888a0", fontSize: "0.75rem",
                 cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                 lineHeight: 1, padding: 0,
@@ -838,7 +838,7 @@ export default function Home() {
               key={toast.id}
               style={{
                 background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
-                border: "1px solid #6c8aff44",
+                borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff44",
                 borderRadius: "12px",
                 padding: "12px 16px",
                 color: "#e0e0e8",
@@ -891,7 +891,7 @@ const styles: Record<string, React.CSSProperties> = {
   sidebar: {
     width: "280px",
     backgroundColor: "#0a0a0f",
-    borderRight: "1px solid #1e1e2e",
+    borderRightWidth: "1px", borderRightStyle: "solid", borderRightColor: "#1e1e2e",
     display: "flex",
     flexDirection: "column",
     flexShrink: 0,
@@ -900,18 +900,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sidebarCollapsed: {
     width: "0px",
-    borderRight: "none",
+    borderRightWidth: 0, borderRightStyle: "none", borderRightColor: "transparent",
   },
   /* Applied via className below for mobile overlay behavior */
   sidebarHeader: {
     padding: "16px",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
   },
   newConvButton: {
     width: "100%",
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "10px 16px",
     fontSize: "0.9rem",
@@ -932,7 +932,7 @@ const styles: Record<string, React.CSSProperties> = {
     position: "relative" as const,
   },
   convItemActive: {
-    borderLeft: "3px solid #6c8aff",
+    borderLeftWidth: "3px", borderLeftStyle: "solid", borderLeftColor: "#6c8aff",
     backgroundColor: "#1a1a2e",
   },
   convTitle: {
@@ -953,7 +953,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: "8px",
     right: "8px",
     background: "none",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     color: "#666",
     cursor: "pointer",
     fontSize: "0.8rem",
@@ -965,7 +965,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: "8px",
     right: "8px",
     background: "rgba(100,100,100,0.1)",
-    border: "1px solid rgba(100,100,100,0.3)",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(100,100,100,0.3)",
     borderRadius: "50%",
     width: "22px",
     height: "22px",
@@ -983,7 +983,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: "8px",
     right: "8px",
     background: "rgba(255,60,80,0.15)",
-    border: "1px solid rgba(255,60,80,0.4)",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(255,60,80,0.4)",
     borderRadius: "50%",
     width: "22px",
     height: "22px",
@@ -1004,7 +1004,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sidebarToggle: {
     background: "none",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     color: "#e0e0e8",
     cursor: "pointer",
     fontSize: "1.2rem",
@@ -1023,7 +1023,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "12px 16px",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
     flexShrink: 0,
     gap: "8px",
     zIndex: 50,

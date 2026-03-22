@@ -211,7 +211,7 @@ export default function AppDetail({ appId, onBack }: Props) {
 
 const s: Record<string, React.CSSProperties> = {
   header: { display: "flex", alignItems: "center", gap: "16px", marginBottom: "16px" },
-  backBtn: { background: "none", border: "none", color: "#6c8aff", cursor: "pointer", fontSize: "0.9rem", padding: "4px 8px" },
+  backBtn: { background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent", color: "#6c8aff", cursor: "pointer", fontSize: "0.9rem", padding: "4px 8px" },
   appName: { fontSize: "1.3rem", fontWeight: 700, color: "#e0e0e8", margin: 0 },
   typeBadge: {
     fontSize: "0.7rem", fontWeight: 600, color: "#fff", padding: "2px 8px",
@@ -220,37 +220,37 @@ const s: Record<string, React.CSSProperties> = {
   envBadges: { display: "flex", gap: "8px", marginLeft: "auto" },
   envBadge: {
     display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "0.75rem", color: "#8888a0",
-    padding: "4px 10px", borderRadius: "12px", border: "1px solid #5a5a70",
+    padding: "4px 10px", borderRadius: "12px", borderWidth: "1px", borderStyle: "solid", borderColor: "#5a5a70",
   },
   dot: { width: "6px", height: "6px", borderRadius: "50%", display: "inline-block" },
-  tabBar: { display: "flex", borderBottom: "1px solid #1e1e2e", marginBottom: "16px" },
+  tabBar: { display: "flex", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", marginBottom: "16px" },
   tab: {
     background: "none", borderWidth: "0 0 2px 0", borderStyle: "solid", borderColor: "transparent",
     color: "#8888a0", padding: "10px 16px", fontSize: "0.85rem", fontWeight: 500, cursor: "pointer",
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
   content: { minHeight: "300px" },
-  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", border: "1px solid #1e1e2e" },
+  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
   sectionTitle: { fontSize: "1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 16px 0" },
   details: { display: "flex", flexDirection: "column", gap: "8px" },
-  detailRow: { display: "flex", justifyContent: "space-between", fontSize: "0.9rem", color: "#e0e0e8", padding: "6px 0", borderBottom: "1px solid #1e1e2e" },
+  detailRow: { display: "flex", justifyContent: "space-between", fontSize: "0.9rem", color: "#e0e0e8", padding: "6px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   detailLabel: { color: "#8888a0", fontWeight: 500 },
-  envBinding: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #1e1e2e", fontSize: "0.9rem" },
+  envBinding: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", fontSize: "0.9rem" },
   operatorBtn: {
     backgroundColor: "#1e1e2e", color: "#8888a0", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
     padding: "6px 12px", fontSize: "0.85rem", cursor: "pointer",
   },
   operatorBtnActive: { borderColor: "#6c8aff", color: "#6c8aff", backgroundColor: "rgba(108,138,255,0.1)" },
   actionBtn: {
-    backgroundColor: "#2a2a3e", color: "#6c8aff", border: "none", borderRadius: "6px",
+    backgroundColor: "#2a2a3e", color: "#6c8aff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "6px",
     padding: "8px 14px", fontSize: "0.85rem", cursor: "pointer", fontWeight: 500,
   },
   advancedToggle: { marginLeft: "auto", color: "#8888a0" },
   advancedDrawer: {
     marginTop: "24px", backgroundColor: "#12121a", borderRadius: "12px", padding: "24px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
   },
   advancedGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" },
-  advancedCard: { backgroundColor: "#0a0a0f", borderRadius: "8px", padding: "16px", border: "1px solid #1e1e2e" },
+  advancedCard: { backgroundColor: "#0a0a0f", borderRadius: "8px", padding: "16px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
   advancedCardTitle: { fontSize: "0.9rem", fontWeight: 600, color: "#e0e0e8", margin: "0 0 12px 0" },
 };

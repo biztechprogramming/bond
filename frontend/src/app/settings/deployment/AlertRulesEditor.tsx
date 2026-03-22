@@ -147,7 +147,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
         {rules.map((rule) => (
           <div key={rule.id} style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
-            backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e",
+            backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
             padding: "10px 14px", opacity: rule.enabled ? 1 : 0.5,
           }}>
             <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -181,7 +181,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
       {/* Inline editor */}
       {editing && (
         <div style={{
-          backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #6c8aff",
+          backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff",
           padding: "16px", display: "flex", flexDirection: "column", gap: "10px",
         }}>
           <div style={{ fontWeight: 600, color: "#6c8aff", fontSize: "0.9rem" }}>
@@ -283,7 +283,7 @@ const styles: Record<string, React.CSSProperties> = {
   primaryBtn: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",
@@ -292,7 +292,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryBtn: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",
@@ -301,7 +301,7 @@ const styles: Record<string, React.CSSProperties> = {
   smallBtn: {
     backgroundColor: "transparent",
     color: "#8888a0",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "6px",
     padding: "4px 10px",
     fontSize: "0.75rem",
@@ -317,7 +317,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "6px",
     padding: "6px 10px",
     fontSize: "0.85rem",

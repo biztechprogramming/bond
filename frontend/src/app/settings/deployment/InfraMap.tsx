@@ -181,7 +181,7 @@ export default function InfraMap({ onAddServer }: InfraMapProps) {
           const isProbing = probingIds.has(srv.id);
 
           return (
-            <div key={srv.id} style={{ ...s.gridRow, gridTemplateColumns: gridCols, borderBottom: "1px solid #1e1e2e" }}>
+            <div key={srv.id} style={{ ...s.gridRow, gridTemplateColumns: gridCols, borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" }}>
               {/* Server info */}
               <div style={s.serverCell}>
                 <div style={s.serverTopRow}>
@@ -274,7 +274,7 @@ const s: Record<string, React.CSSProperties> = {
   emptyRoot: {
     backgroundColor: "#1a1a2e",
     borderRadius: 8,
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     padding: 32,
     textAlign: "center",
   },
@@ -283,7 +283,7 @@ const s: Record<string, React.CSSProperties> = {
   addBtn: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 8,
     padding: "8px 16px",
     fontSize: "0.85rem",

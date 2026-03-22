@@ -66,7 +66,7 @@ export default function PlanSelector({ plans, selectedPlanId, selectedPlan, onSe
                   fontSize: "0.85rem",
                   color: p.id === selectedPlanId ? "#6c8aff" : "#e0e0e8",
                   backgroundColor: p.id === selectedPlanId ? "#12121a" : "transparent",
-                  borderBottom: "1px solid #1a1a2a",
+                  borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1a1a2a",
                 }}
                 onMouseEnter={e => { if (p.id !== selectedPlanId) (e.currentTarget as HTMLElement).style.backgroundColor = "#2a2a3e"; }}
                 onMouseLeave={e => { if (p.id !== selectedPlanId) (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
@@ -99,7 +99,7 @@ const styles: Record<string, React.CSSProperties> = {
   planSelectorBtn: {
     width: "100%",
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "8px 14px",
     color: "#e0e0e8",
@@ -119,7 +119,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: "300px",
     overflowY: "auto" as const,
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "10px",
     zIndex: 100,
     boxShadow: "0 8px 24px rgba(0,0,0,0.4)",

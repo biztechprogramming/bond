@@ -51,7 +51,7 @@ export default function OptimizationTab() {
           value={activeSubTab}
           onChange={(e) => switchSubTab(e.target.value as SubTabId)}
           style={{
-            backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px",
+            backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
             padding: "10px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none",
           }}
           aria-label="Optimization sub-tab"

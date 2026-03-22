@@ -254,7 +254,7 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", gap: "16px" },
   backLink: {
     background: "none",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     color: "#6c8aff",
     fontSize: "0.9rem",
     cursor: "pointer",
@@ -269,7 +269,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#12121a",
     borderRadius: "12px",
     padding: "20px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
   },
   sectionTitle: { fontSize: "0.95rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 12px 0" },
   fieldRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" },
@@ -278,7 +278,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     width: "100%",
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "10px 12px",
     color: "#e0e0e8",
@@ -289,7 +289,7 @@ const styles: Record<string, React.CSSProperties> = {
   select: {
     width: "100%",
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "10px 12px",
     color: "#e0e0e8",
@@ -309,7 +309,7 @@ const styles: Record<string, React.CSSProperties> = {
   button: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "10px 20px",
     fontSize: "0.9rem",
@@ -319,7 +319,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryButton: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "10px 20px",
     fontSize: "0.9rem",

@@ -72,7 +72,7 @@ export default function AppCard({ app, onClick }: Props) {
 
 const s: Record<string, React.CSSProperties> = {
   card: {
-    backgroundColor: "#12121a", borderRadius: "12px", padding: "20px", border: "1px solid #1e1e2e",
+    backgroundColor: "#12121a", borderRadius: "12px", padding: "20px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     cursor: "pointer", transition: "border-color 0.2s, transform 0.15s", display: "flex", flexDirection: "column", gap: "8px",
   },
   topRow: { display: "flex", justifyContent: "space-between", alignItems: "center" },

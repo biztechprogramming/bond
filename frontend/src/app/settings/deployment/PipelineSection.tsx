@@ -153,13 +153,13 @@ export default function PipelineSection({ environmentNames }: Props) {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  section: { borderTop: "1px solid #1e1e2e", marginTop: "24px", paddingTop: "20px" },
+  section: { borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e", marginTop: "24px", paddingTop: "20px" },
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" },
   title: { fontSize: "0.95rem", fontWeight: 600, color: "#8888a0", margin: 0 },
   yamlToggle: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "6px 12px",
     fontSize: "0.8rem",
@@ -167,7 +167,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pipelineCard: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "12px",
     padding: "16px",
     display: "flex",
@@ -190,5 +190,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: "monospace",
     color: "#6c8aff",
   },
-  yamlSection: { marginTop: "16px", borderTop: "1px solid #1e1e2e", paddingTop: "16px" },
+  yamlSection: { marginTop: "16px", borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e", paddingTop: "16px" },
 };

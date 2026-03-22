@@ -45,7 +45,7 @@ export default function ResourceCard({ resource, onClick }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 14,
     cursor: "pointer",

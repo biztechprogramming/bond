@@ -155,7 +155,7 @@ export default function RestoreDialog({ onDismiss }: RestoreDialogProps) {
         </p>
 
         {error && (
-          <div style={{ color: "#ff6c8a", fontSize: "0.85rem", marginBottom: "12px", padding: "8px 12px", backgroundColor: "#1a0a0f", borderRadius: "8px", border: "1px solid #ff6c8a33" }}>
+          <div style={{ color: "#ff6c8a", fontSize: "0.85rem", marginBottom: "12px", padding: "8px 12px", backgroundColor: "#1a0a0f", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#ff6c8a33" }}>
             {error}
           </div>
         )}
@@ -217,7 +217,7 @@ export default function RestoreDialog({ onDismiss }: RestoreDialogProps) {
                 </div>
                 {/* Table breakdown */}
                 {Object.keys(preview.tables).length > 0 && (
-                  <div style={{ marginTop: "10px", padding: "8px 12px", backgroundColor: "#0a0a0f", borderRadius: "8px", border: "1px solid #1e1e2e" }}>
+                  <div style={{ marginTop: "10px", padding: "8px 12px", backgroundColor: "#0a0a0f", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" }}>
                     {Object.entries(preview.tables).map(([table, count]) => (
                       <div key={table} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: "0.78rem" }}>
                         <span style={{ color: "#8888a0" }}>{table}</span>
@@ -230,7 +230,7 @@ export default function RestoreDialog({ onDismiss }: RestoreDialogProps) {
                 {preview.sample_conversations.length > 0 && (
                   <div style={{ marginTop: "12px", maxHeight: "150px", overflowY: "auto" }}>
                     {preview.sample_conversations.map((c) => (
-                      <div key={c.id} style={{ padding: "6px 0", borderBottom: "1px solid #1e1e2e", fontSize: "0.82rem" }}>
+                      <div key={c.id} style={{ padding: "6px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", fontSize: "0.82rem" }}>
                         <div style={{ color: "#e0e0e8" }}>{c.title || "Untitled"}</div>
                         <div style={{ color: "#5a5a6e", fontSize: "0.75rem" }}>{c.message_count} msgs{c.updated_at ? ` · ${formatDate(c.updated_at)}` : ""}</div>
                       </div>
@@ -269,7 +269,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   modal: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "16px",
     padding: "28px",
     maxWidth: "480px",
@@ -286,7 +286,7 @@ const styles: Record<string, React.CSSProperties> = {
   backupItem: {
     padding: "12px",
     borderRadius: "8px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     backgroundColor: "#0a0a0f",
     marginBottom: "6px",
     cursor: "pointer",
@@ -298,13 +298,13 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: "uppercase" as const,
     padding: "2px 6px",
     borderRadius: "4px",
-    border: "1px solid",
+    borderWidth: "1px", borderStyle: "solid",
   },
   previewStats: {
     padding: "12px",
     backgroundColor: "#0a0a0f",
     borderRadius: "8px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     display: "flex",
     flexDirection: "column" as const,
     gap: "4px",
@@ -314,7 +314,7 @@ const styles: Record<string, React.CSSProperties> = {
   primaryBtn: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "10px 20px",
     fontSize: "0.9rem",
@@ -324,7 +324,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryBtn: {
     backgroundColor: "transparent",
     color: "#8888a0",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "10px 20px",
     fontSize: "0.9rem",

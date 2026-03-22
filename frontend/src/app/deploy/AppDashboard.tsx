@@ -96,7 +96,7 @@ const s: Record<string, React.CSSProperties> = {
   toolbar: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" },
   heading: { fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e8", margin: 0 },
   deployBtn: {
-    backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px",
+    backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px",
     padding: "10px 20px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer",
   },
   grid: {
