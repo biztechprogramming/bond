@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import get_settings
 from backend.app.core.crypto import decrypt_value, encrypt_value, is_encrypted
+from backend.app.core.oauth import detect_key_type
 from backend.app.db.session import get_db
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -48,21 +49,8 @@ def _write_value(key: str, value: str) -> str:
     return value
 
 
-# Key-type prefixes for auto-detection
-def _detect_key_type(key: str, value: str) -> str:
-    """Detect whether a key value is an API key or OAuth token.
-
-    Anthropic:
-      - API keys: sk-ant-api03-...
-      - OAuth tokens: sk-ant-oat01-... (or similar sk-ant-oat* patterns)
-    """
-    if key == "llm.api_key.anthropic":
-        if value.startswith("sk-ant-oat"):
-            return "oauth_token"
-        if value.startswith("sk-ant-"):
-            return "api_key"
-        return "oauth_token"  # Unknown format, assume OAuth to avoid failed calls
-    return "api_key"
+# Key-type detection delegated to backend.app.core.oauth.detect_key_type
+_detect_key_type = detect_key_type
 
 
 async def _get_decrypted(db: AsyncSession, key: str) -> str | None:

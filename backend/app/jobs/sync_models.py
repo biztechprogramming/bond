@@ -15,7 +15,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from backend.app.core.crypto import decrypt_value, is_encrypted
+from backend.app.core.oauth import get_provider_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -181,26 +181,12 @@ _FETCH_METHODS = {
 
 
 async def _get_api_key(db: AsyncSession, provider_id: str) -> tuple[str, str] | None:
-    """Read the active API key for a provider. Returns (decrypted_value, key_type) or None."""
-    result = await db.execute(
-        text("SELECT encrypted_value, key_type FROM provider_api_keys WHERE provider_id = :pid"),
-        {"pid": provider_id},
-    )
-    row = result.fetchone()
-    if not row or not row[0]:
-        return None
+    """Read the active API key for a provider via the Gateway.
 
-    raw = row[0]
-    key_type = row[1] or "api_key"
-    try:
-        decrypted = decrypt_value(raw)
-        if decrypted:
-            return (decrypted, key_type)
-    except Exception:
-        if not is_encrypted(raw):
-            return (raw, key_type)
-
-    return None
+    Delegates to the common get_provider_api_key which handles
+    OAuth refresh (via pi-ai) and decryption of non-OAuth keys.
+    """
+    return await get_provider_api_key(provider_id)
 
 
 # ---------------------------------------------------------------------------
