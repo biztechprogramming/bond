@@ -132,6 +132,10 @@ async def chat_completion(
         if oauth_headers:
             extra_kwargs["extra_headers"] = oauth_headers
 
+    # Inject OAuth system prompt prefix if needed (centralized)
+    from backend.app.core.oauth import ensure_oauth_system_prefix
+    ensure_oauth_system_prefix(messages, extra_kwargs=extra_kwargs)
+
     if stream:
         response = await litellm.acompletion(
             model=model_string,

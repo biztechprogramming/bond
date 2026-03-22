@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bond — New Deployment Flow Mockup</title>
+<style>
+  :root {
+    --bg-dark: #0a0a0f;
+    --bg-card: #12121a;
+    --bg-input: #1e1e2e;
+    --border: #1e1e2e;
+    --text-main: #e0e0e8;
+    --text-dim: #8888a0;
+    --accent: #6c8aff;
+    --accent-glow: rgba(108, 138, 255, 0.15);
+    --success: #6cffa0;
+    --warning: #ffd66c;
+    --error: #ff6c8a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-main);
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Layout ── */
+  .app-shell {
+    display: flex;
+    height: 100vh;
+    position: relative;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    width: 220px;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border);
+    padding: 24px 0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    font-size: 22px;
+    font-weight: 700;
+    padding: 0 24px 28px;
+    letter-spacing: 1px;
+    color: var(--accent);
+  }
+
+  .sidebar-nav { list-style: none; flex: 1; }
+
+  .sidebar-nav li {
+    padding: 12px 24px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transition: all 0.15s;
+    border-left: 3px solid transparent;
+  }
+
+  .sidebar-nav li:hover { color: var(--text-main); background: var(--accent-glow); }
+
+  .sidebar-nav li.active {
+    color: var(--accent);
+    background: var(--accent-glow);
+    border-left-color: var(--accent);
+    font-weight: 600;
+  }
+
+  .sidebar-nav li .icon { width: 18px; text-align: center; }
+
+  /* ── Main content ── */
+  .main-content {
+    flex: 1;
+    padding: 32px 40px;
+    overflow-y: auto;
+    position: relative;
+  }
+
+  .main-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 28px;
+  }
+
+  .main-header h1 { font-size: 26px; font-weight: 700; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 20px var(--accent-glow);
+  }
+  .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); }
+
+  .btn-secondary {
+    background: var(--bg-input);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--accent); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { color: var(--text-main); border-color: var(--text-dim); }
+
+  .btn-success {
+    background: var(--success);
+    color: #0a0a0f;
+  }
+
+  .btn-lg { padding: 14px 28px; font-size: 15px; border-radius: 10px; }
+
+  /* ── App Cards ── */
+  .app-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 18px;
+  }
+
+  .app-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    transition: all 0.2s;
+  }
+  .app-card:hover { border-color: #2a2a3e; transform: translateY(-2px); }
+
+  .app-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 14px;
+  }
+
+  .app-card-name { font-size: 16px; font-weight: 600; }
+  .app-card-stack { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+
+  .env-pills { display: flex; gap: 8px; margin-bottom: 14px; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    background: var(--bg-input);
+  }
+
+  .pill .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .dot-green { background: var(--success); }
+  .dot-yellow { background: var(--warning); }
+  .dot-red { background: var(--error); }
+
+  .app-card-footer {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* ── Annotations ── */
+  .annotation {
+    margin-top: 24px;
+    padding: 10px 16px;
+    border-left: 3px solid var(--success);
+    background: rgba(108, 255, 160, 0.05);
+    font-size: 13px;
+    color: var(--success);
+    border-radius: 0 8px 8px 0;
+  }
+
+  .annotations-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .annotations-row .annotation { flex: 1; min-width: 260px; }
+
+  /* ── Modal Overlay ── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s;
+  }
+  .modal-overlay.visible { opacity: 1; pointer-events: all; }
+
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: 680px;
+    max-height: 88vh;
+    overflow-y: auto;
+    transform: translateY(20px) scale(0.97);
+    transition: transform 0.3s;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+  }
+  .modal-overlay.visible .modal { transform: translateY(0) scale(1); }
+
+  .modal-header {
+    padding: 24px 28px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .modal-header h2 { font-size: 20px; font-weight: 700; }
+
+  .modal-body { padding: 20px 28px 28px; }
+
+  /* ── Step indicator ── */
+  .step-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 28px;
+    padding: 0 28px;
+  }
+
+  .step-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dim);
+    transition: color 0.3s;
+  }
+
+  .step-item.active { color: var(--accent); }
+  .step-item.done { color: var(--success); }
+
+  .step-num {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    border: 2px solid var(--border);
+    transition: all 0.3s;
+  }
+
+  .step-item.active .step-num {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+    color: var(--accent);
+  }
+
+  .step-item.done .step-num {
+    border-color: var(--success);
+    background: rgba(108, 255, 160, 0.1);
+    color: var(--success);
+  }
+
+  .step-line {
+    width: 40px;
+    height: 2px;
+    background: var(--border);
+    margin: 0 12px;
+    transition: background 0.3s;
+  }
+
+  .step-line.done { background: var(--success); }
+
+  /* ── Connect cards ── */
+  .connect-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .connect-card {
+    background: var(--bg-dark);
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .connect-card.selected { border-color: var(--accent); background: var(--accent-glow); }
+
+  .connect-card-icon { font-size: 28px; margin-bottom: 10px; }
+  .connect-card-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
+
+  .input-field {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input-field:focus { border-color: var(--accent); }
+  .input-field::placeholder { color: var(--text-dim); }
+
+  .select-field {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    appearance: none;
+  }
+
+  .or-divider {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-bottom: 20px;
+    cursor: pointer;
+  }
+  .or-divider:hover { color: var(--accent); text-decoration: underline; }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 8px;
+  }
+
+  /* ── Discovery list ── */
+  .discovery-list {
+    list-style: none;
+    margin-bottom: 22px;
+  }
+
+  .discovery-list li {
+    padding: 8px 0;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .check-icon { color: var(--success); font-weight: 700; }
+  .pending-icon { color: var(--text-dim); }
+
+  .plan-card {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+  }
+
+  .plan-card h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .advanced-toggle {
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .advanced-toggle:hover { color: var(--accent); }
+
+  /* ── Progress ── */
+  .progress-container { margin-bottom: 24px; }
+
+  .progress-bar-track {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-input);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), #8fa8ff);
+    border-radius: 4px;
+    transition: width 0.6s ease;
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+
+  .progress-pct {
+    text-align: right;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .ship-steps { list-style: none; margin-bottom: 22px; }
+
+  .ship-steps li {
+    padding: 9px 0;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-dim);
+    transition: color 0.3s;
+  }
+
+  .ship-steps li.done { color: var(--success); }
+  .ship-steps li.active { color: var(--accent); }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--accent-glow);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  .live-logs {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.8;
+    max-height: 110px;
+    overflow-y: auto;
+  }
+
+  .live-logs .prompt { color: var(--accent); }
+
+  /* ── Success state ── */
+  .success-header {
+    text-align: center;
+    padding: 28px 0 8px;
+  }
+
+  .success-header h2 {
+    font-size: 22px;
+    color: var(--success);
+    font-weight: 700;
+  }
+
+  @keyframes popIn {
+    0% { transform: scale(0); opacity: 0; }
+    60% { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .success-checkmark {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: rgba(108, 255, 160, 0.1);
+    border: 3px solid var(--success);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    margin: 0 auto 16px;
+    animation: popIn 0.5s ease;
+  }
+
+  .summary-card {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .summary-row:last-child { border-bottom: none; }
+  .summary-label { color: var(--text-dim); }
+
+  .summary-value { font-weight: 600; }
+  .summary-value a { color: var(--accent); text-decoration: none; }
+  .summary-value a:hover { text-decoration: underline; }
+
+  .health-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  .success-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    padding-top: 8px;
+  }
+
+  /* ── Confetti ── */
+  .confetti-container {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 200;
+    overflow: hidden;
+  }
+
+  .confetti-piece {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    top: -10px;
+    border-radius: 2px;
+    animation: confettiFall 2.5s ease-in forwards;
+  }
+
+  @keyframes confettiFall {
+    0% { opacity: 1; transform: translateY(0) rotate(0deg); }
+    100% { opacity: 0; transform: translateY(100vh) rotate(720deg); }
+  }
+
+  /* ── Screen transitions ── */
+  .screen { display: none; }
+  .screen.active { display: block; animation: fadeIn 0.3s ease; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .modal-screen { display: none; }
+  .modal-screen.active { display: block; animation: fadeIn 0.25s ease; }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">bond</div>
+    <ul class="sidebar-nav">
+      <li><span class="icon">◈</span> Agents</li>
+      <li><span class="icon">⊞</span> Channels</li>
+      <li class="active"><span class="icon">▲</span> Deploy</li>
+      <li><span class="icon">⚙</span> Settings</li>
+    </ul>
+  </nav>
+
+  <!-- Main content area -->
+  <div class="main-content">
+    <!-- Screen 1: Dashboard -->
+    <div id="screen-dashboard" class="screen active">
+      <div class="main-header">
+        <h1>Deploy</h1>
+        <button class="btn btn-primary btn-lg" onclick="showModal(2)">+ Deploy New App</button>
+      </div>
+
+      <div class="app-grid">
+        <!-- Card 1 -->
+        <div class="app-card">
+          <div class="app-card-header">
+            <div>
+              <div class="app-card-name">ecoinspector-portal</div>
+              <div class="app-card-stack">Next.js &middot; prod-web-01</div>
+            </div>
+          </div>
+          <div class="env-pills">
+            <span class="pill"><span class="dot dot-green"></span> Dev</span>
+            <span class="pill"><span class="dot dot-green"></span> Staging</span>
+            <span class="pill"><span class="dot dot-green"></span> Prod</span>
+          </div>
+          <div class="app-card-footer">Last deploy: 2h ago &middot; Healthy</div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="app-card">
+          <div class="app-card-header">
+            <div>
+              <div class="app-card-name">bond-gateway</div>
+              <div class="app-card-stack">Go &middot; api-server-01</div>
+            </div>
+          </div>
+          <div class="env-pills">
+            <span class="pill"><span class="dot dot-green"></span> Dev</span>
+            <span class="pill"><span class="dot dot-yellow"></span> Staging</span>
+            <span class="pill"><span class="dot dot-green"></span> Prod</span>
+          </div>
+          <div class="app-card-footer">Last deploy: 1d ago &middot; Warning in staging</div>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="app-card">
+          <div class="app-card-header">
+            <div>
+              <div class="app-card-name">analytics-worker</div>
+              <div class="app-card-stack">Python &middot; worker-01</div>
+            </div>
+          </div>
+          <div class="env-pills">
+            <span class="pill"><span class="dot dot-green"></span> Dev</span>
+            <span class="pill"><span class="dot dot-green"></span> Staging</span>
+            <span class="pill"><span class="dot dot-red"></span> Prod</span>
+          </div>
+          <div class="app-card-footer">Last deploy: 3d ago &middot; Error in prod</div>
+        </div>
+      </div>
+
+      <div class="annotations-row" style="margin-top: 28px;">
+        <div class="annotation">&#x2705; Top-level navigation &mdash; Deploy is a first-class citizen</div>
+        <div class="annotation">&#x2705; App-centric &mdash; see all your apps at a glance</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal overlay -->
+<div id="modal-overlay" class="modal-overlay">
+  <div class="modal">
+    <!-- ─── Screen 2: Step 1 — Connect ─── -->
+    <div id="modal-step1" class="modal-screen">
+      <div class="modal-header">
+        <h2>Deploy New App</h2>
+      </div>
+
+      <div class="step-indicator">
+        <div class="step-item active" id="si-1">
+          <span class="step-num">1</span> Connect
+        </div>
+        <div class="step-line" id="sl-1"></div>
+        <div class="step-item" id="si-2">
+          <span class="step-num">2</span> Review
+        </div>
+        <div class="step-line" id="sl-2"></div>
+        <div class="step-item" id="si-3">
+          <span class="step-num">3</span> Ship
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="connect-options">
+          <div class="connect-card selected">
+            <div class="connect-card-icon">&#x1F4E6;</div>
+            <div class="connect-card-title">Connect Repository</div>
+            <input type="text" class="input-field" placeholder="https://github.com/user/repo" value="https://github.com/ecoinspector/portal-v2">
+          </div>
+          <div class="connect-card">
+            <div class="connect-card-icon">&#x1F5A5;</div>
+            <div class="connect-card-title">Connect Server</div>
+            <input type="text" class="input-field" placeholder="10.0.1.50" style="margin-bottom: 10px;">
+            <select class="select-field">
+              <option>Select SSH key...</option>
+              <option>prod-deploy-key</option>
+              <option>staging-key</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="or-divider">&mdash; or pick from existing resources &mdash;</div>
+
+        <div class="annotation">&#x2705; One entry point &mdash; two clear paths</div>
+
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="hideModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="goStep(2)">Next &rarr;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Screen 3: Step 2 — Discovery & Plan ─── -->
+    <div id="modal-step2" class="modal-screen">
+      <div class="modal-header">
+        <h2>Deploy New App</h2>
+      </div>
+
+      <div class="step-indicator">
+        <div class="step-item done">
+          <span class="step-num">&#x2713;</span> Connect
+        </div>
+        <div class="step-line done"></div>
+        <div class="step-item active">
+          <span class="step-num">2</span> Review
+        </div>
+        <div class="step-line"></div>
+        <div class="step-item">
+          <span class="step-num">3</span> Ship
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <ul class="discovery-list">
+          <li><span class="check-icon">&#x2713;</span> Cloned repository</li>
+          <li><span class="check-icon">&#x2713;</span> Detected <strong>Next.js 14</strong> application</li>
+          <li><span class="check-icon">&#x2713;</span> Found <strong>Dockerfile</strong> (multi-stage build)</li>
+          <li><span class="check-icon">&#x2713;</span> Found <strong>.env.example</strong> (3 variables)</li>
+          <li><span class="check-icon">&#x2713;</span> Located target server: <strong>prod-web-01</strong></li>
+        </ul>
+
+        <div class="plan-card">
+          <h4>Deployment Plan</h4>
+          <ul class="discovery-list">
+            <li><span class="check-icon">&#x2713;</span> Create production deployment agent</li>
+            <li><span class="check-icon">&#x2713;</span> Build Docker image from Dockerfile</li>
+            <li><span class="check-icon">&#x2713;</span> Deploy to prod-web-01 on port 3000</li>
+            <li><span class="check-icon">&#x2713;</span> Configure health check endpoint</li>
+            <li><span class="check-icon">&#x2713;</span> Enable zero-config monitoring</li>
+          </ul>
+        </div>
+
+        <div class="advanced-toggle">&#x25B8; Advanced Options</div>
+
+        <div class="annotation" style="margin-top: 16px;">&#x2705; Auto-discovery &mdash; Bond figures it out for you</div>
+
+        <div class="modal-footer">
+          <button class="btn btn-ghost" onclick="goStep(1)">&#8592; Back</button>
+          <button class="btn btn-primary" onclick="goStep(3)">Ship It! &rarr;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Screen 4: Step 3 — Ship (Progress) ─── -->
+    <div id="modal-step3" class="modal-screen">
+      <div class="modal-header">
+        <h2>&#x1F680; Shipping your app...</h2>
+      </div>
+
+      <div class="step-indicator">
+        <div class="step-item done">
+          <span class="step-num">&#x2713;</span> Connect
+        </div>
+        <div class="step-line done"></div>
+        <div class="step-item done">
+          <span class="step-num">&#x2713;</span> Review
+        </div>
+        <div class="step-line done"></div>
+        <div class="step-item active">
+          <span class="step-num">3</span> Ship
+        </div>
+      </div>
+
+      <div class="modal-body">
+        <div class="progress-container">
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-pct" id="progress-pct">0%</div>
+        </div>
+
+        <ul class="ship-steps" id="ship-steps">
+          <li id="ship-s1"><span class="pending-icon">&#x25CB;</span> Creating deployment agent...</li>
+          <li id="ship-s2"><span class="pending-icon">&#x25CB;</span> Building Docker image...</li>
+          <li id="ship-s3"><span class="pending-icon">&#x25CB;</span> Deploying to prod-web-01...</li>
+          <li id="ship-s4"><span class="pending-icon">&#x25CB;</span> Verifying health...</li>
+          <li id="ship-s5"><span class="pending-icon">&#x25CB;</span> Enabling monitoring...</li>
+        </ul>
+
+        <div class="live-logs" id="live-logs">
+          <div><span class="prompt">&gt;</span> Initializing deployment pipeline...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Screen 5: Done ─── -->
+    <div id="modal-step4" class="modal-screen">
+      <div class="success-header">
+        <div class="success-checkmark">&#x2713;</div>
+        <h2>&#x2705; Deployment Complete!</h2>
+      </div>
+
+      <div class="modal-body">
+        <div class="summary-card">
+          <div class="summary-row">
+            <span class="summary-label">Application</span>
+            <span class="summary-value">ecoinspector-v2</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">URL</span>
+            <span class="summary-value"><a href="#">https://ecoinspector-v2.prod.bond.dev</a></span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Server</span>
+            <span class="summary-value">prod-web-01</span>
+          </div>
+          <div class="summary-row">
+            <span class="summary-label">Health</span>
+            <span class="summary-value">Healthy <span class="health-dot"></span></span>
+          </div>
+        </div>
+
+        <div class="success-actions">
+          <button class="btn btn-secondary" onclick="hideModal()">View App Details</button>
+          <button class="btn btn-primary" onclick="resetAndRestart()">Deploy Another</button>
+          <button class="btn btn-ghost" onclick="hideModal()">Back to Dashboard</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confetti container -->
+<div class="confetti-container" id="confetti-container"></div>
+
+<script>
+  // ── State ──
+  let currentModalStep = 0;
+  let progressInterval = null;
+
+  // ── Modal control ──
+  function showModal(step) {
+    document.getElementById('modal-overlay').classList.add('visible');
+    goStep(step || 1);
+  }
+
+  function hideModal() {
+    document.getElementById('modal-overlay').classList.remove('visible');
+    currentModalStep = 0;
+    clearInterval(progressInterval);
+  }
+
+  // ── Step navigation ──
+  function goStep(step) {
+    currentModalStep = step;
+    // Hide all modal screens
+    document.querySelectorAll('.modal-screen').forEach(el => el.classList.remove('active'));
+
+    if (step === 1) {
+      document.getElementById('modal-step1').classList.add('active');
+    } else if (step === 2) {
+      document.getElementById('modal-step2').classList.add('active');
+    } else if (step === 3) {
+      document.getElementById('modal-step3').classList.add('active');
+      startShipProgress();
+    } else if (step === 4) {
+      document.getElementById('modal-step4').classList.add('active');
+      launchConfetti();
+    }
+  }
+
+  // ── Ship progress simulation ──
+  function startShipProgress() {
+    const fill = document.getElementById('progress-fill');
+    const pct = document.getElementById('progress-pct');
+    const logs = document.getElementById('live-logs');
+    const steps = [
+      { id: 'ship-s1', pct: 15, time: 800, log: '> docker build -t ecoinspector-v2:latest .' },
+      { id: 'ship-s2', pct: 40, time: 1800, log: '> Build complete in 42s — image size 184MB' },
+      { id: 'ship-s3', pct: 65, time: 2800, log: '> Pushing to prod-web-01...' },
+      { id: 'ship-s3b', pct: 78, time: 3500, log: '> Container started on port 3000' },
+      { id: 'ship-s4', pct: 90, time: 4200, log: '> Health check passed — 200 OK' },
+      { id: 'ship-s5', pct: 100, time: 5000, log: '> Monitoring enabled — dashboard ready' },
+    ];
+
+    // Reset
+    fill.style.width = '0%';
+    pct.textContent = '0%';
+    logs.innerHTML = '<div><span class="prompt">&gt;</span> Initializing deployment pipeline...</div>';
+    document.querySelectorAll('.ship-steps li').forEach(li => {
+      li.className = '';
+      li.querySelector('span').innerHTML = '&#x25CB;';
+      li.querySelector('span').className = 'pending-icon';
+    });
+
+    // Mark step 1 as active immediately
+    setTimeout(() => {
+      const s1 = document.getElementById('ship-s1');
+      s1.className = 'active';
+      s1.querySelector('span').innerHTML = '<span class="spinner"></span>';
+      s1.querySelector('span').className = '';
+    }, 200);
+
+    const stepMap = {
+      'ship-s1': { next: 'ship-s2', label: 'Created deployment agent' },
+      'ship-s2': { next: 'ship-s3', label: 'Built Docker image (42s)' },
+      'ship-s3': { next: null, label: 'Deploying to prod-web-01...' },
+      'ship-s3b': { next: 'ship-s4', markDone: 'ship-s3', label: 'Deployed to prod-web-01' },
+      'ship-s4': { next: 'ship-s5', label: 'Verified health' },
+      'ship-s5': { next: null, label: 'Enabled monitoring' },
+    };
+
+    steps.forEach((s, i) => {
+      setTimeout(() => {
+        // Update progress bar
+        fill.style.width = s.pct + '%';
+        pct.textContent = s.pct + '%';
+
+        // Add log line
+        const div = document.createElement('div');
+        div.innerHTML = '<span class="prompt">&gt;</span> ' + s.log.substring(2);
+        logs.appendChild(div);
+        logs.scrollTop = logs.scrollHeight;
+
+        const info = stepMap[s.id];
+        if (!info) return;
+
+        // Mark previous step done
+        if (info.markDone) {
+          const prev = document.getElementById(info.markDone);
+          prev.className = 'done';
+          prev.innerHTML = '<span class="check-icon">&#x2713;</span> ' + (stepMap[info.markDone]?.label || '');
+        }
+
+        if (s.id !== 'ship-s3b') {
+          // Mark current step done (for completed steps)
+          if (i > 0) {
+            const prevStep = steps[i-1];
+            if (prevStep && prevStep.id !== 'ship-s3b') {
+              const prevEl = document.getElementById(prevStep.id);
+              if (prevEl && !prevEl.classList.contains('done')) {
+                const prevInfo = stepMap[prevStep.id];
+                prevEl.className = 'done';
+                prevEl.innerHTML = '<span class="check-icon">&#x2713;</span> ' + (prevInfo?.label || '');
+              }
+            }
+          }
+
+          // Mark current active
+          const el = document.getElementById(s.id);
+          if (el && s.pct < 100) {
+            el.className = 'active';
+            el.innerHTML = '<span class="spinner"></span> ' + info.label;
+          } else if (el && s.pct === 100) {
+            el.className = 'done';
+            el.innerHTML = '<span class="check-icon">&#x2713;</span> ' + info.label;
+          }
+        }
+
+        // Auto-advance to success
+        if (s.pct === 100) {
+          setTimeout(() => goStep(4), 800);
+        }
+      }, s.time);
+    });
+  }
+
+  // ── Confetti ──
+  function launchConfetti() {
+    const container = document.getElementById('confetti-container');
+    container.innerHTML = '';
+    const colors = ['#6c8aff', '#6cffa0', '#ffd66c', '#ff6c8a', '#e0e0e8', '#8fa8ff'];
+    for (let i = 0; i < 80; i++) {
+      const piece = document.createElement('div');
+      piece.className = 'confetti-piece';
+      piece.style.left = Math.random() * 100 + '%';
+      piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+      piece.style.animationDelay = Math.random() * 1.2 + 's';
+      piece.style.animationDuration = (2 + Math.random() * 1.5) + 's';
+      piece.style.width = (6 + Math.random() * 6) + 'px';
+      piece.style.height = (6 + Math.random() * 6) + 'px';
+      piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+      container.appendChild(piece);
+    }
+    setTimeout(() => { container.innerHTML = ''; }, 4000);
+  }
+
+  // ── Reset ──
+  function resetAndRestart() {
+    goStep(1);
+  }
+
+  // ── Connect card selection ──
+  document.querySelectorAll('.connect-card').forEach(card => {
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.connect-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -109,9 +109,12 @@ Return ONLY the filtered JSON result, nothing else."""
 
     try:
         _filter_meta = langfuse_metadata or {}
+        from backend.app.core.oauth import ensure_oauth_system_prefix
+        _filter_msgs = [{"role": "user", "content": prompt}]
+        ensure_oauth_system_prefix(_filter_msgs, extra_kwargs=utility_kwargs)
         response = await litellm.acompletion(
             model=utility_model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=_filter_msgs,
             temperature=0.0,
             max_tokens=1024,
             metadata=_filter_meta if _filter_meta else None,

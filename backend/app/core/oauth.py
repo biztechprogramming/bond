@@ -84,6 +84,77 @@ def get_oauth_extra_headers(api_key: str) -> dict[str, str]:
     return {}
 
 
+def ensure_oauth_system_prefix(
+    messages: list[dict],
+    api_key: str | None = None,
+    *,
+    extra_kwargs: dict | None = None,
+) -> list[dict]:
+    """Ensure the OAuth system prompt prefix is present when using an OAuth token.
+
+    Claude Max OAuth tokens require a "You are Claude Code..." identity prefix
+    in the system prompt.  Without it the Anthropic API returns 400.
+
+    This function is idempotent — calling it multiple times is safe.
+
+    Detection: either pass *api_key* directly, or pass the *extra_kwargs* dict
+    that was built by the API-key resolver (checks for ``extra_headers`` +
+    ``api_key`` inside that dict).
+
+    Returns the (possibly modified) messages list.
+    """
+    # Detect whether we're in an OAuth context
+    _is_oauth = False
+    if api_key and is_oauth_token(api_key):
+        _is_oauth = True
+    elif extra_kwargs:
+        _has_headers = "extra_headers" in extra_kwargs
+        _key = extra_kwargs.get("api_key", "")
+        if _has_headers and _key and is_oauth_token(_key):
+            _is_oauth = True
+
+    if not _is_oauth:
+        return messages
+
+    # Check if the prefix is already present
+    if messages and messages[0].get("role") == "system":
+        content = messages[0].get("content", "")
+        # Handle both string and list-of-blocks formats
+        if isinstance(content, str):
+            if OAUTH_SYSTEM_PROMPT_PREFIX in content:
+                return messages
+            # Prepend as string
+            messages[0] = {
+                **messages[0],
+                "content": OAUTH_SYSTEM_PROMPT_PREFIX + "\n\n" + content,
+            }
+        elif isinstance(content, list):
+            # Check if prefix block already exists
+            for block in content:
+                if isinstance(block, dict) and OAUTH_SYSTEM_PROMPT_PREFIX in block.get("text", ""):
+                    return messages
+            # Prepend as a new block
+            messages[0] = {
+                **messages[0],
+                "content": [
+                    {
+                        "type": "text",
+                        "text": OAUTH_SYSTEM_PROMPT_PREFIX,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    *content,
+                ],
+            }
+    else:
+        # No system message at all — insert one at position 0
+        messages.insert(0, {
+            "role": "system",
+            "content": OAUTH_SYSTEM_PROMPT_PREFIX,
+        })
+
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # Gateway-based token refresh
 # ---------------------------------------------------------------------------

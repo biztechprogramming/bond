@@ -269,6 +269,10 @@ async def agent_turn(
             extra_kwargs["extra_headers"] = oauth_headers
             logger.info("Detected OAuth token — injecting extra headers")
 
+    # Inject OAuth system prompt prefix if needed (centralized)
+    from backend.app.core.oauth import ensure_oauth_system_prefix
+    ensure_oauth_system_prefix(messages, extra_kwargs=extra_kwargs)
+
     logger.info(
         "Agent turn (tool-use): agent=%s model=%s tools=%d messages=%d",
         agent["name"], model_string, len(all_enabled_tools), len(messages),
