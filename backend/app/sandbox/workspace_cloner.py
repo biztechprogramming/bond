@@ -345,6 +345,75 @@ async def _get_current_branch(repo_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+async def _fix_clone_ownership(target_path: str) -> None:
+    """Reclaim ownership of a clone directory if Docker left root-owned files.
+
+    Containers may create root-owned files in bind-mounted workspace clones
+    (e.g., via sudo in entrypoint or coding agents). This prevents the host-side
+    cloner from refreshing the clone. We fix ownership before git operations.
+
+    Strategy: try plain chown first (works if we own the parent), then
+    fall back to sudo chown (works if passwordless sudo is configured),
+    and finally try removing and recreating the directory.
+    """
+    target = Path(target_path)
+    if not target.exists():
+        return
+
+    uid = os.getuid()
+    gid = os.getgid()
+
+    # Quick check: if the top-level dir is already ours, skip the expensive walk
+    try:
+        st = target.stat()
+        if st.st_uid == uid:
+            return
+    except OSError:
+        return
+
+    logger.info("Fixing ownership of %s (owned by uid=%d, expected=%d)", target_path, st.st_uid, uid)
+
+    # Strategy 1: sudo chown (passwordless sudo)
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", "-n", "chown", "-R", f"{uid}:{gid}", str(target),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode == 0:
+        logger.info("Fixed ownership of %s via sudo", target_path)
+        return
+
+    # Strategy 2: nuke and recreate (loses the stale clone, forces fresh clone)
+    logger.warning(
+        "Cannot fix ownership of %s (sudo unavailable: %s). "
+        "Removing stale clone so a fresh one can be created.",
+        target_path, stderr.decode().strip(),
+    )
+    try:
+        # Try sudo rm as well
+        proc = await asyncio.create_subprocess_exec(
+            "sudo", "-n", "rm", "-rf", str(target),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        if proc.returncode == 0:
+            logger.info("Removed stale clone %s via sudo", target_path)
+            return
+
+        # Last resort: try shutil (will fail on root-owned files but worth trying)
+        shutil.rmtree(str(target), ignore_errors=True)
+        if not target.exists():
+            logger.info("Removed stale clone %s", target_path)
+    except Exception as e:
+        logger.error(
+            "Cannot fix or remove %s — manual intervention needed: "
+            "run 'sudo chown -R %d:%d %s'",
+            target_path, uid, gid, target_path,
+        )
+
+
 async def _refresh_clone(repo: RepoCloneSpec) -> bool:
     """Try to refresh an existing clone via fetch+reset. Returns True if successful."""
     target = Path(repo.target_path)
@@ -421,6 +490,13 @@ async def _clone_repo(repo: RepoCloneSpec) -> None:
     """Clone a single repo, using refresh if a valid clone exists."""
     target = Path(repo.target_path)
     target.parent.mkdir(parents=True, exist_ok=True)
+
+    # Fix ownership if Docker left root-owned files (Design Doc 057 §concurrency)
+    # Check both the clone target and its parent (Docker may create intermediate dirs as root)
+    await _fix_clone_ownership(repo.target_path)
+    parent = target.parent
+    if parent.exists():
+        await _fix_clone_ownership(str(parent))
 
     # Try refreshing existing clone first
     if await _refresh_clone(repo):
