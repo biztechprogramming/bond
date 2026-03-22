@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UX Audit: Current Deployment Tab</title>
+  <style>
+    :root {
+      --bg-dark: #0a0a0f;
+      --bg-card: #12121a;
+      --bg-input: #1e1e2e;
+      --border: #1e1e2e;
+      --text-main: #e0e0e8;
+      --text-dim: #8888a0;
+      --accent: #6c8aff;
+      --accent-glow: rgba(108, 138, 255, 0.15);
+      --success: #6cffa0;
+      --warning: #ffd66c;
+      --error: #ff6c8a;
+      --error-bg: rgba(255, 108, 138, 0.12);
+      --error-border: rgba(255, 108, 138, 0.5);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ---- Title Banner ---- */
+    .audit-title {
+      background: linear-gradient(135deg, #12121a 0%, #1a1a2e 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 24px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .audit-title h1 {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--text-main);
+      letter-spacing: -0.3px;
+    }
+
+    .audit-title h1 span {
+      color: var(--error);
+    }
+
+    .audit-badge {
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      color: var(--error);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    /* ---- Breadcrumb ---- */
+    .breadcrumb-bar {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 40px;
+      font-size: 13px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .breadcrumb-bar .sep {
+      color: #444;
+    }
+
+    .breadcrumb-bar .current {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    /* ---- Layout ---- */
+    .app-layout {
+      display: grid;
+      grid-template-columns: 220px 1fr 260px;
+      min-height: calc(100vh - 140px);
+      position: relative;
+    }
+
+    /* ---- Sidebar ---- */
+    .sidebar {
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      padding: 20px 0;
+      position: relative;
+    }
+
+    .sidebar-section {
+      margin-bottom: 8px;
+    }
+
+    .sidebar-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      font-size: 13px;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.15s;
+      border-left: 3px solid transparent;
+    }
+
+    .sidebar-item:hover {
+      background: var(--accent-glow);
+      color: var(--text-main);
+    }
+
+    .sidebar-item.active {
+      background: var(--accent-glow);
+      color: var(--accent);
+      border-left-color: var(--accent);
+      font-weight: 500;
+    }
+
+    .sidebar-item .icon {
+      width: 18px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    .sidebar-sub {
+      padding-left: 48px;
+      font-size: 12px;
+      padding-top: 7px;
+      padding-bottom: 7px;
+      color: var(--text-dim);
+      cursor: pointer;
+    }
+
+    .sidebar-sub.active {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .sidebar-sub:hover {
+      color: var(--text-main);
+    }
+
+    .sidebar-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #555;
+      padding: 16px 20px 8px;
+      font-weight: 600;
+    }
+
+    /* ---- Main Content ---- */
+    .main-content {
+      background: var(--bg-dark);
+      padding: 24px 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Env tabs */
+    .env-tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 20px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .env-tab {
+      flex: 1;
+      padding: 10px 16px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim);
+      background: var(--bg-card);
+      cursor: pointer;
+      border-right: 1px solid var(--border);
+      transition: all 0.15s;
+    }
+
+    .env-tab:last-child {
+      border-right: none;
+    }
+
+    .env-tab.active {
+      background: var(--accent-glow);
+      color: var(--accent);
+    }
+
+    .env-tab:hover:not(.active) {
+      background: var(--bg-input);
+      color: var(--text-main);
+    }
+
+    .env-tab .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .env-tab .dot.green { background: var(--success); }
+    .env-tab .dot.yellow { background: var(--warning); }
+    .env-tab .dot.blue { background: var(--accent); }
+
+    /* Action bar */
+    .action-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      position: relative;
+    }
+
+    .action-btn {
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .action-btn:hover {
+      border-color: var(--accent);
+      color: var(--text-main);
+    }
+
+    .action-btn.primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    /* Sub-tabs */
+    .sub-tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sub-tab {
+      padding: 10px 20px;
+      font-size: 13px;
+      color: var(--text-dim);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+
+    .sub-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* Agent cards grid */
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      position: relative;
+    }
+
+    .agent-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      transition: all 0.2s;
+    }
+
+    .agent-card:hover {
+      border-color: #2a2a3e;
+    }
+
+    .agent-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .agent-card-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .agent-card-status {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 10px;
+      font-weight: 500;
+    }
+
+    .agent-card-status.running {
+      background: rgba(108, 255, 160, 0.12);
+      color: var(--success);
+    }
+
+    .agent-card-status.stopped {
+      background: rgba(136, 136, 160, 0.12);
+      color: var(--text-dim);
+    }
+
+    .agent-card-status.error {
+      background: var(--error-bg);
+      color: var(--error);
+    }
+
+    .agent-card-detail {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .agent-card-bar {
+      height: 3px;
+      background: var(--bg-input);
+      border-radius: 2px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+
+    .agent-card-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+    }
+
+    .fill-green { background: var(--success); }
+    .fill-yellow { background: var(--warning); }
+    .fill-red { background: var(--error); }
+    .fill-blue { background: var(--accent); }
+
+    /* ---- Right Panel: ViewMode List ---- */
+    .viewmode-panel {
+      background: var(--bg-card);
+      border-left: 1px solid var(--border);
+      padding: 20px 16px;
+      overflow-y: auto;
+    }
+
+    .viewmode-panel h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--error);
+      margin-bottom: 4px;
+    }
+
+    .viewmode-panel .subtitle {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 16px;
+    }
+
+    .viewmode-list {
+      list-style: none;
+    }
+
+    .viewmode-list li {
+      font-size: 11px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      color: var(--text-dim);
+      padding: 5px 10px;
+      border-radius: 4px;
+      margin-bottom: 2px;
+      border-left: 2px solid transparent;
+      transition: all 0.15s;
+    }
+
+    .viewmode-list li:hover {
+      background: var(--bg-input);
+      color: var(--text-main);
+    }
+
+    .viewmode-list li .num {
+      display: inline-block;
+      width: 22px;
+      color: #444;
+      font-size: 10px;
+    }
+
+    .viewmode-list li.highlight {
+      border-left-color: var(--error);
+      background: var(--error-bg);
+      color: var(--error);
+    }
+
+    /* ---- Annotation Callouts ---- */
+    .callout {
+      position: absolute;
+      background: rgba(255, 108, 138, 0.08);
+      border: 1.5px solid var(--error-border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #fff;
+      z-index: 100;
+      pointer-events: none;
+      backdrop-filter: blur(8px);
+      animation: callout-pulse 3s ease-in-out infinite;
+      max-width: 280px;
+      line-height: 1.5;
+    }
+
+    .callout::before {
+      content: '';
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      background: var(--error);
+      border-radius: 50%;
+      top: -6px;
+      left: -6px;
+      animation: dot-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes callout-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 108, 138, 0.2); }
+      50% { box-shadow: 0 0 20px 4px rgba(255, 108, 138, 0.15); }
+    }
+
+    @keyframes dot-pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.4); opacity: 0.7; }
+    }
+
+    .callout-floating {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 108, 138, 0.1);
+      border: 1.5px solid var(--error-border);
+      border-radius: 10px;
+      padding: 14px 24px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      z-index: 200;
+      backdrop-filter: blur(12px);
+      animation: callout-pulse 3s ease-in-out infinite;
+      text-align: center;
+    }
+
+    .callout-floating::before {
+      content: '';
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      background: var(--error);
+      border-radius: 50%;
+      top: -6px;
+      left: 50%;
+      margin-left: -6px;
+      animation: dot-pulse 2s ease-in-out infinite;
+    }
+
+    /* Specific callout positions */
+    .callout-sidebar {
+      top: 140px;
+      left: 230px;
+    }
+
+    .callout-actions {
+      top: 80px;
+      left: 340px;
+    }
+
+    .callout-envtabs {
+      top: 30px;
+      right: 290px;
+    }
+
+    .callout-agents {
+      bottom: 60px;
+      left: 380px;
+    }
+
+    /* ---- Summary Bar ---- */
+    .summary-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(135deg, #12121a 0%, #1a1028 100%);
+      border-top: 1px solid var(--error-border);
+      padding: 14px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 32px;
+      z-index: 300;
+    }
+
+    .summary-bar .label {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 500;
+    }
+
+    .summary-bar .label strong {
+      color: var(--error);
+      font-weight: 700;
+    }
+
+    .summary-stat {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .summary-stat .val {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--error);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .summary-stat .desc {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.3;
+    }
+
+    .summary-divider {
+      width: 1px;
+      height: 28px;
+      background: #2a2a3e;
+    }
+
+    /* ---- Connection lines ---- */
+    .connector {
+      position: absolute;
+      border: 1px dashed var(--error-border);
+      z-index: 99;
+      pointer-events: none;
+    }
+
+    /* ---- Scrollbar ---- */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-dark);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2a2a3e;
+      border-radius: 3px;
+    }
+
+    /* ---- Fade-in animation ---- */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(8px);
+      animation: fadeIn 0.5s ease forwards;
+    }
+
+    @keyframes fadeIn {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .delay-1 { animation-delay: 0.1s; }
+    .delay-2 { animation-delay: 0.3s; }
+    .delay-3 { animation-delay: 0.5s; }
+    .delay-4 { animation-delay: 0.7s; }
+    .delay-5 { animation-delay: 0.9s; }
+    .delay-6 { animation-delay: 1.1s; }
+  </style>
+</head>
+<body>
+
+  <!-- Title Banner -->
+  <div class="audit-title">
+    <h1>UX Audit: <span>Current Deployment Tab</span></h1>
+    <span class="audit-badge">Critical Issues Found</span>
+  </div>
+
+  <!-- Breadcrumb -->
+  <div class="breadcrumb-bar">
+    <span>Home</span>
+    <span class="sep">/</span>
+    <span>Organization</span>
+    <span class="sep">/</span>
+    <span>Settings</span>
+    <span class="sep">/</span>
+    <span class="current">Deployment</span>
+    <span style="margin-left: 12px; color: var(--error); font-size: 11px;">
+      (3 levels deep)
+    </span>
+  </div>
+
+  <!-- App Layout -->
+  <div class="app-layout">
+
+    <!-- Left Sidebar -->
+    <nav class="sidebar">
+      <div class="sidebar-label">Main Navigation</div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-item">
+          <span class="icon">&#x1F916;</span> Agents
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">&#x1F4AC;</span> Channels
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">&#x1F4CA;</span> Analytics
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">&#x1F465;</span> Users
+        </div>
+      </div>
+
+      <div class="sidebar-label">Configuration</div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-item active">
+          <span class="icon">&#x2699;</span> Settings
+        </div>
+        <div class="sidebar-sub">General</div>
+        <div class="sidebar-sub">Organization</div>
+        <div class="sidebar-sub">Integrations</div>
+        <div class="sidebar-sub">Security</div>
+        <div class="sidebar-sub active">Deployment</div>
+        <div class="sidebar-sub">Billing</div>
+      </div>
+
+      <!-- Callout: Sidebar -->
+      <div class="callout callout-sidebar fade-in delay-2">
+        &#x274C; Buried under Settings &mdash; not a top-level feature despite being a core workflow
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+
+      <!-- Environment Tabs -->
+      <div class="env-tabs" style="position: relative;">
+        <div class="env-tab">
+          <span class="dot green"></span> Dev
+        </div>
+        <div class="env-tab">
+          <span class="dot yellow"></span> QA
+        </div>
+        <div class="env-tab active">
+          <span class="dot blue"></span> Staging
+        </div>
+        <div class="env-tab">
+          <span class="dot green"></span> UAT
+        </div>
+        <div class="env-tab">
+          <span class="dot green"></span> Prod
+        </div>
+
+        <!-- Callout: Env Tabs -->
+        <div class="callout callout-envtabs fade-in delay-3"
+             style="position: absolute; top: -60px; right: 0;">
+          &#x274C; Environment-centric, not app-centric &mdash;
+          users think "deploy my app" not "switch to Staging tab"
+        </div>
+      </div>
+
+      <!-- Action Bar -->
+      <div class="action-bar" style="position: relative;">
+        <button class="action-btn primary">+ Server</button>
+        <button class="action-btn">Discover</button>
+        <button class="action-btn">Register Script</button>
+        <button class="action-btn">Quick Deploy</button>
+        <button class="action-btn">Agent Settings</button>
+        <button class="action-btn">+ Component</button>
+
+        <!-- Callout: Actions -->
+        <div class="callout fade-in delay-4"
+             style="position: absolute; top: -58px; left: 80px;">
+          &#x274C; 6 different entry points &mdash; where do I start?
+        </div>
+      </div>
+
+      <!-- Sub-tabs -->
+      <div class="sub-tabs">
+        <div class="sub-tab active">Grid View</div>
+        <div class="sub-tab">Map</div>
+        <div class="sub-tab">Timeline</div>
+        <div class="sub-tab">Logs</div>
+      </div>
+
+      <!-- Agent Cards Grid -->
+      <div class="agent-grid" style="position: relative;">
+
+        <div class="agent-card fade-in delay-1">
+          <div class="agent-card-header">
+            <span class="agent-card-name">deploy-prod-api</span>
+            <span class="agent-card-status running">Running</span>
+          </div>
+          <div class="agent-card-detail">Host: prod-api-01.bond.internal</div>
+          <div class="agent-card-detail">Last deploy: 2h ago</div>
+          <div class="agent-card-bar"><div class="agent-card-bar-fill fill-green" style="width: 85%"></div></div>
+        </div>
+
+        <div class="agent-card fade-in delay-1">
+          <div class="agent-card-header">
+            <span class="agent-card-name">deploy-prod-web</span>
+            <span class="agent-card-status running">Running</span>
+          </div>
+          <div class="agent-card-detail">Host: prod-web-01.bond.internal</div>
+          <div class="agent-card-detail">Last deploy: 4h ago</div>
+          <div class="agent-card-bar"><div class="agent-card-bar-fill fill-green" style="width: 72%"></div></div>
+        </div>
+
+        <div class="agent-card fade-in delay-2">
+          <div class="agent-card-header">
+            <span class="agent-card-name">deploy-staging-api</span>
+            <span class="agent-card-status error">Error</span>
+          </div>
+          <div class="agent-card-detail">Host: stg-api-01.bond.internal</div>
+          <div class="agent-card-detail">Last deploy: 18m ago (failed)</div>
+          <div class="agent-card-bar"><div class="agent-card-bar-fill fill-red" style="width: 45%"></div></div>
+        </div>
+
+        <div class="agent-card fade-in delay-2">
+          <div class="agent-card-header">
+            <span class="agent-card-name">deploy-qa-worker</span>
+            <span class="agent-card-status stopped">Stopped</span>
+          </div>
+          <div class="agent-card-detail">Host: qa-wrk-01.bond.internal</div>
+          <div class="agent-card-detail">Last deploy: 3d ago</div>
+          <div class="agent-card-bar"><div class="agent-card-bar-fill fill-yellow" style="width: 30%"></div></div>
+        </div>
+
+        <div class="agent-card fade-in delay-3">
+          <div class="agent-card-header">
+            <span class="agent-card-name">deploy-dev-all</span>
+            <span class="agent-card-status running">Running</span>
+          </div>
+          <div class="agent-card-detail">Host: dev-01.bond.internal</div>
+          <div class="agent-card-detail">Last deploy: 12m ago</div>
+          <div class="agent-card-bar"><div class="agent-card-bar-fill fill-blue" style="width: 60%"></div></div>
+        </div>
+
+        <div class="agent-card fade-in delay-3">
+          <div class="agent-card-header">
+            <span class="agent-card-name">deploy-uat-web</span>
+            <span class="agent-card-status running">Running</span>
+          </div>
+          <div class="agent-card-detail">Host: uat-web-01.bond.internal</div>
+          <div class="agent-card-detail">Last deploy: 1d ago</div>
+          <div class="agent-card-bar"><div class="agent-card-bar-fill fill-green" style="width: 90%"></div></div>
+        </div>
+
+        <!-- Callout: Agent cards -->
+        <div class="callout fade-in delay-5"
+             style="position: absolute; bottom: -65px; left: 40px; max-width: 320px;">
+          &#x274C; Agent mental model &mdash; users think "my app" not "deploy-prod agent"
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Right Panel: ViewMode Chaos -->
+    <aside class="viewmode-panel">
+      <h3>ViewMode Chaos</h3>
+      <div class="subtitle">22 modes in one giant switch statement</div>
+
+      <ol class="viewmode-list">
+        <li class="highlight"><span class="num">1.</span> GRID</li>
+        <li><span class="num">2.</span> MAP</li>
+        <li><span class="num">3.</span> TIMELINE</li>
+        <li class="highlight"><span class="num">4.</span> SERVER_ADD</li>
+        <li><span class="num">5.</span> SERVER_EDIT</li>
+        <li><span class="num">6.</span> SERVER_DETAIL</li>
+        <li class="highlight"><span class="num">7.</span> DISCOVER</li>
+        <li><span class="num">8.</span> DISCOVER_RESULTS</li>
+        <li><span class="num">9.</span> REGISTER_SCRIPT</li>
+        <li class="highlight"><span class="num">10.</span> QUICK_DEPLOY</li>
+        <li><span class="num">11.</span> QUICK_DEPLOY_REVIEW</li>
+        <li><span class="num">12.</span> AGENT_SETTINGS</li>
+        <li><span class="num">13.</span> AGENT_DETAIL</li>
+        <li><span class="num">14.</span> AGENT_LOGS</li>
+        <li class="highlight"><span class="num">15.</span> COMPONENT_ADD</li>
+        <li><span class="num">16.</span> COMPONENT_EDIT</li>
+        <li><span class="num">17.</span> COMPONENT_LIST</li>
+        <li><span class="num">18.</span> ENV_CONFIG</li>
+        <li><span class="num">19.</span> ENV_VARIABLES</li>
+        <li><span class="num">20.</span> DEPLOY_HISTORY</li>
+        <li><span class="num">21.</span> ROLLBACK</li>
+        <li class="highlight"><span class="num">22.</span> ROLLBACK_CONFIRM</li>
+      </ol>
+
+      <div style="margin-top: 16px; padding: 10px; background: var(--error-bg);
+                  border-radius: 6px; border: 1px solid var(--error-border);
+                  font-size: 11px; color: var(--error); line-height: 1.5;">
+        All 22 modes managed by a single component with one massive switch statement.
+        No route-based navigation. No lazy loading. No URL state.
+      </div>
+    </aside>
+  </div>
+
+  <!-- Floating Callout -->
+  <div class="callout-floating fade-in delay-6">
+    &#x274C; 22 ViewModes managed by one giant switch statement &mdash; unmaintainable and untestable
+  </div>
+
+  <!-- Summary Bar -->
+  <div class="summary-bar">
+    <div class="summary-bar label" style="font-size: 13px; font-weight: 600; color: var(--text-dim);">
+      Current State:
+    </div>
+
+    <div class="summary-stat">
+      <span class="val">44</span>
+      <span class="desc">components</span>
+    </div>
+    <div class="summary-divider"></div>
+
+    <div class="summary-stat">
+      <span class="val">22</span>
+      <span class="desc">ViewModes</span>
+    </div>
+    <div class="summary-divider"></div>
+
+    <div class="summary-stat">
+      <span class="val">5+</span>
+      <span class="desc">entry points</span>
+    </div>
+    <div class="summary-divider"></div>
+
+    <div class="summary-stat">
+      <span class="val">~15 min</span>
+      <span class="desc">to first deploy</span>
+    </div>
+  </div>
+
+  <!-- Interactivity -->
+  <script>
+    // Environment tab switching
+    document.querySelectorAll('.env-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.env-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+      });
+    });
+
+    // Sub-tab switching
+    document.querySelectorAll('.sub-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+      });
+    });
+
+    // Action button hover effect
+    document.querySelectorAll('.action-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        btn.style.transform = 'scale(0.96)';
+        setTimeout(() => { btn.style.transform = ''; }, 150);
+      });
+    });
+
+    // Sidebar item click
+    document.querySelectorAll('.sidebar-item, .sidebar-sub').forEach(item => {
+      item.addEventListener('click', () => {
+        // Visual feedback only - no navigation
+        item.style.background = 'var(--accent-glow)';
+        setTimeout(() => { item.style.background = ''; }, 300);
+      });
+    });
+
+    // ViewMode list hover counter
+    const viewmodeItems = document.querySelectorAll('.viewmode-list li');
+    viewmodeItems.forEach(item => {
+      item.addEventListener('mouseenter', () => {
+        item.style.transform = 'translateX(4px)';
+        item.style.transition = 'transform 0.15s ease';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.transform = '';
+      });
+    });
+  </script>
+
+</body>
+</html>

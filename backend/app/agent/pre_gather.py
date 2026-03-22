@@ -211,6 +211,10 @@ async def plan_phase(
         if k not in call_kwargs:
             call_kwargs[k] = v
 
+    # Inject OAuth system prompt prefix if needed
+    from backend.app.core.oauth import ensure_oauth_system_prefix
+    ensure_oauth_system_prefix(call_kwargs["messages"], extra_kwargs=call_kwargs)
+
     try:
         if interrupt_event:
             # Use cancellable pattern
@@ -372,20 +376,23 @@ async def compress_gathered_context(
         return context_bundle
 
     try:
+        from backend.app.core.oauth import ensure_oauth_system_prefix
+        _compress_msgs = [
+            {
+                "role": "system",
+                "content": (
+                    "Compress the following code/content to only the parts relevant "
+                    f"to this task: {approach}. Keep function signatures, key logic, "
+                    "and structure. Remove boilerplate, imports, and unrelated code. "
+                    "Preserve file path headers (### path/to/file)."
+                ),
+            },
+            {"role": "user", "content": context_bundle},
+        ]
+        ensure_oauth_system_prefix(_compress_msgs, extra_kwargs=utility_kwargs)
         response = await litellm.acompletion(
             model=utility_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "Compress the following code/content to only the parts relevant "
-                        f"to this task: {approach}. Keep function signatures, key logic, "
-                        "and structure. Remove boilerplate, imports, and unrelated code. "
-                        "Preserve file path headers (### path/to/file)."
-                    ),
-                },
-                {"role": "user", "content": context_bundle},
-            ],
+            messages=_compress_msgs,
             temperature=0.2,
             max_tokens=16000,
             **utility_kwargs,

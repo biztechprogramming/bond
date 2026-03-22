@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Component Architecture: Before → After</title>
+<style>
+  :root {
+    --bg-dark: #0a0a0f;
+    --bg-card: #12121a;
+    --bg-input: #1e1e2e;
+    --border: #1e1e2e;
+    --text-main: #e0e0e8;
+    --text-dim: #8888a0;
+    --accent: #6c8aff;
+    --accent-glow: rgba(108, 138, 255, 0.15);
+    --success: #6cffa0;
+    --warning: #ffd66c;
+    --error: #ff6c8a;
+    --purple: #b06cff;
+    --teal: #6cffa0;
+    --pink: #ff6cb0;
+    --cyan: #6ce0ff;
+    --yellow: #ffe06c;
+    --gray: #8888a0;
+    --dim: #666;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-dark);
+    color: var(--text-main);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .container {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+
+  header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--accent), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 12px;
+  }
+
+  .controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .toggle-btn {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 8px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.3s ease;
+    user-select: none;
+  }
+
+  .toggle-btn:hover { border-color: var(--accent); color: var(--text-main); }
+  .toggle-btn.active {
+    background: var(--accent-glow);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0;
+    align-items: start;
+  }
+
+  .column {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    min-height: 600px;
+  }
+
+  .column-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .column-title .count {
+    font-size: 12px;
+    color: var(--text-dim);
+    background: var(--bg-input);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  /* Center divider */
+  .divider {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 24px;
+    gap: 16px;
+  }
+
+  .divider .arrow {
+    font-size: 48px;
+    color: var(--accent);
+    text-shadow: 0 0 20px var(--accent-glow);
+    animation: pulse-arrow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-arrow {
+    0%, 100% { opacity: 0.7; transform: translateX(0); }
+    50% { opacity: 1; transform: translateX(4px); }
+  }
+
+  .divider .label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .divider .stats {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-align: center;
+  }
+
+  .divider .stat {
+    font-size: 12px;
+    color: var(--text-dim);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 12px;
+    white-space: nowrap;
+  }
+
+  .divider .stat strong { color: var(--success); }
+
+  /* Before side: component clusters */
+  .cluster {
+    margin-bottom: 14px;
+  }
+
+  .cluster-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cluster-label .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .cluster-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .comp-box {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    cursor: default;
+    transition: all 0.3s ease;
+    position: relative;
+    border: 1px solid transparent;
+  }
+
+  .comp-box .cdot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .comp-box:hover {
+    transform: translateY(-1px);
+    z-index: 10;
+  }
+
+  .comp-box.deleted.faded {
+    opacity: 0.12;
+    transform: scale(0.95);
+  }
+
+  .comp-box.kept.highlight-kept {
+    border-color: var(--success);
+    box-shadow: 0 0 8px rgba(108, 255, 160, 0.2);
+  }
+
+  /* Tooltip */
+  .tooltip {
+    position: fixed;
+    background: #1a1a2e;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 1000;
+    max-width: 260px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    display: none;
+  }
+
+  .tooltip .tt-name { font-weight: 600; margin-bottom: 4px; }
+  .tooltip .tt-action { font-size: 11px; }
+  .tooltip .tt-action.delete { color: var(--error); }
+  .tooltip .tt-action.keep { color: var(--success); }
+  .tooltip .tt-action.merge { color: var(--warning); }
+  .tooltip .tt-action.replace { color: var(--purple); }
+
+  /* After side: tree */
+  .tree { font-size: 12px; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+
+  .tree-node {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    cursor: default;
+    transition: all 0.3s ease;
+  }
+
+  .tree-node:hover { background: rgba(255,255,255,0.02); }
+
+  .tree-indent { color: var(--text-dim); opacity: 0.3; white-space: pre; user-select: none; }
+
+  .tree-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tree-name { color: var(--text-main); }
+  .tree-name.kept { color: var(--text-dim); }
+
+  .tree-badge {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .tree-badge.new {
+    background: rgba(108, 255, 160, 0.15);
+    color: var(--success);
+    box-shadow: 0 0 8px rgba(108, 255, 160, 0.1);
+  }
+
+  .tree-badge.kept-badge {
+    background: rgba(136, 136, 160, 0.1);
+    color: var(--text-dim);
+    font-size: 8px;
+  }
+
+  .tree-section {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .tree-section-label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+
+  .highlight-new {
+    animation: glow-new 2s ease-in-out infinite;
+  }
+
+  @keyframes glow-new {
+    0%, 100% { text-shadow: none; }
+    50% { text-shadow: 0 0 8px rgba(108, 255, 160, 0.4); }
+  }
+
+  /* Dependency lines canvas */
+  #dep-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .before-wrapper { position: relative; }
+
+  /* Migration arrows SVG */
+  #migration-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 50;
+    display: none;
+  }
+
+  .migration-line {
+    stroke: var(--success);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-dasharray: 8 4;
+    animation: dash-flow 1s linear infinite;
+    opacity: 0.5;
+  }
+
+  @keyframes dash-flow {
+    to { stroke-dashoffset: -12; }
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: center;
+    margin-top: 24px;
+    padding: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  /* Responsive */
+  @media (max-width: 1100px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .divider { flex-direction: row; padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Component Architecture: Before → After</h1>
+    <div class="controls">
+      <button class="toggle-btn" id="toggleDeleted" onclick="toggleDeleted()">Show Deleted</button>
+      <button class="toggle-btn" id="toggleLines" onclick="toggleLines()">Show Dependencies</button>
+    </div>
+  </header>
+
+  <div class="main-grid" id="mainGrid">
+    <!-- BEFORE column -->
+    <div class="column before-wrapper" id="beforeCol">
+      <div class="column-title">
+        Before <span class="count">44 Components</span>
+      </div>
+      <canvas id="dep-canvas"></canvas>
+      <div id="beforeContent"></div>
+    </div>
+
+    <!-- Divider -->
+    <div class="divider">
+      <div class="label">Simplification</div>
+      <div class="arrow">→</div>
+      <div class="stats">
+        <div class="stat"><strong>44 → 31</strong> components</div>
+        <div class="stat"><strong>22 → 6</strong> views</div>
+        <div class="stat"><strong>-233KB</strong> bundle size</div>
+      </div>
+    </div>
+
+    <!-- AFTER column -->
+    <div class="column" id="afterCol">
+      <div class="column-title">
+        After <span class="count">~31 Components</span>
+      </div>
+      <div id="afterContent"></div>
+    </div>
+  </div>
+
+  <div class="legend" id="legend"></div>
+</div>
+
+<div class="tooltip" id="tooltip">
+  <div class="tt-name"></div>
+  <div class="tt-action"></div>
+</div>
+
+<svg id="migration-svg"></svg>
+
+<script>
+const CATEGORIES = [
+  { name: 'Wizards & Setup', color: '#ff6c8a', key: 'wizard' },
+  { name: 'Dashboards', color: '#6c8aff', key: 'dashboard' },
+  { name: 'Monitoring', color: '#ffd66c', key: 'monitoring' },
+  { name: 'Pipelines', color: '#b06cff', key: 'pipeline' },
+  { name: 'Infrastructure', color: '#6cffa0', key: 'infra' },
+  { name: 'Execution', color: '#ff6cb0', key: 'execution' },
+  { name: 'Resources', color: '#6ce0ff', key: 'resource' },
+  { name: 'Discovery', color: '#ffe06c', key: 'discovery' },
+  { name: 'Config', color: '#8888a0', key: 'config' },
+  { name: 'Other', color: '#666', key: 'other' },
+];
+
+const BEFORE_COMPONENTS = [
+  { name: 'OnboardServerWizard', cat: 'wizard', fate: 'delete', note: 'Merged into OneClickShipWizard' },
+  { name: 'DiscoverStackWizard', cat: 'wizard', fate: 'delete', note: 'Merged into OneClickShipWizard' },
+  { name: 'SetupWizard', cat: 'wizard', fate: 'delete', note: 'Merged into OneClickShipWizard' },
+  { name: 'QuickDeployForm', cat: 'wizard', fate: 'delete', note: 'Replaced by OneClickShipWizard' },
+  { name: 'AddServerModal', cat: 'wizard', fate: 'keep', note: 'Kept under OneClickShipWizard' },
+  { name: 'AddComponentForm', cat: 'wizard', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'DeploymentTab', cat: 'dashboard', fate: 'replace', note: 'Replaced by DeployPage' },
+  { name: 'EnvironmentDashboard', cat: 'dashboard', fate: 'replace', note: 'Replaced by AppDashboard' },
+  { name: 'AgentCard', cat: 'dashboard', fate: 'replace', note: 'Replaced by AppCard' },
+  { name: 'AgentCardGrid', cat: 'dashboard', fate: 'replace', note: 'Merged into AppDashboard' },
+  { name: 'StatusIndicator', cat: 'dashboard', fate: 'keep', note: 'Kept under AppDashboard' },
+  { name: 'MonitoringSetupWizard', cat: 'monitoring', fate: 'delete', note: 'Merged into MonitoringSection' },
+  { name: 'MonitoringConfig', cat: 'monitoring', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'MonitoringSection', cat: 'monitoring', fate: 'keep', note: 'Kept under AppDetail' },
+  { name: 'AlertRulesEditor', cat: 'monitoring', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'PipelineSection', cat: 'pipeline', fate: 'keep', note: 'Kept under AppDetail' },
+  { name: 'PipelineRow', cat: 'pipeline', fate: 'keep', note: 'Kept under PipelineSection' },
+  { name: 'PipelineRunHistory', cat: 'pipeline', fate: 'keep', note: 'Kept under PipelineSection' },
+  { name: 'PipelineStepView', cat: 'pipeline', fate: 'keep', note: 'Kept under PipelineSection' },
+  { name: 'PipelineYamlEditor', cat: 'pipeline', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'InfraMap', cat: 'infra', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'TopologyGraph', cat: 'infra', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'LiveLogViewer', cat: 'execution', fate: 'keep', note: 'Kept under AppDetail' },
+  { name: 'DeploymentTimeline', cat: 'execution', fate: 'keep', note: 'Kept under AppDetail' },
+  { name: 'ProposalViewer', cat: 'execution', fate: 'delete', note: 'Merged into ShipProgress' },
+  { name: 'ReceiptViewer', cat: 'execution', fate: 'delete', note: 'Merged into ShipProgress' },
+  { name: 'ResourceCard', cat: 'resource', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'ResourceDetail', cat: 'resource', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'ResourceForm', cat: 'resource', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'DiscoveryView', cat: 'discovery', fate: 'delete', note: 'Merged into OneClickShipWizard' },
+  { name: 'DiscoveryMonitoringPanel', cat: 'discovery', fate: 'delete', note: 'Removed' },
+  { name: 'BuildStrategyDetector', cat: 'discovery', fate: 'keep', note: 'Kept under OneClickShipWizard' },
+  { name: 'SecretManager', cat: 'config', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'ScriptRegistration', cat: 'config', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'ScriptFromDiscoveryWiz', cat: 'config', fate: 'delete', note: 'Merged into ScriptRegistration' },
+  { name: 'CompareEnvironments', cat: 'config', fate: 'keep', note: 'Kept under AppDashboard' },
+  { name: 'SingleAgentEditor', cat: 'config', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'SharedSettingsForm', cat: 'config', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'ComponentDetail', cat: 'config', fate: 'delete', note: 'Replaced by AppDetail' },
+  { name: 'IssueTracker', cat: 'other', fate: 'keep', note: 'Kept under AppDetail' },
+  { name: 'FolderBrowser', cat: 'other', fate: 'keep', note: 'Kept under OneClickShipWizard' },
+  { name: 'TriggerConfig', cat: 'other', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'ApprovalStatus', cat: 'other', fate: 'keep', note: 'Kept under Advanced' },
+  { name: 'EnvironmentHistory', cat: 'other', fate: 'delete', note: 'Merged into AppDashboard' },
+];
+
+// DeploymentTab viewmode targets (22 of the 44)
+const DEP_TAB_TARGETS = [
+  'EnvironmentDashboard','AgentCard','AgentCardGrid','StatusIndicator',
+  'MonitoringSetupWizard','MonitoringConfig','MonitoringSection','AlertRulesEditor',
+  'PipelineSection','PipelineRow','PipelineRunHistory','PipelineStepView',
+  'PipelineYamlEditor','LiveLogViewer','DeploymentTimeline','ProposalViewer',
+  'ReceiptViewer','ResourceCard','ResourceDetail','InfraMap','TopologyGraph','IssueTracker'
+];
+
+const AFTER_TREE = [
+  { name: 'DeployPage.tsx', color: '#6c8aff', depth: 0, isNew: true, replaces: 'DeploymentTab' },
+  { name: 'AppDashboard.tsx', color: '#6c8aff', depth: 1, isNew: true, replaces: 'EnvironmentDashboard + AgentCardGrid' },
+  { name: 'AppCard.tsx', color: '#6c8aff', depth: 2, isNew: true, replaces: 'AgentCard' },
+  { name: 'CompareEnvironments.tsx', color: '#8888a0', depth: 2, kept: true },
+  { name: 'StatusIndicator.tsx', color: '#6c8aff', depth: 2, kept: true },
+  { name: 'AppDetail.tsx', color: '#6c8aff', depth: 1, isNew: true, replaces: 'ComponentDetail + 22 ViewModes' },
+  { name: 'PipelineSection.tsx', color: '#b06cff', depth: 2, kept: true },
+  { name: 'PipelineRow.tsx', color: '#b06cff', depth: 3, kept: true },
+  { name: 'PipelineRunHistory.tsx', color: '#b06cff', depth: 3, kept: true },
+  { name: 'PipelineStepView.tsx', color: '#b06cff', depth: 3, kept: true },
+  { name: 'MonitoringSection.tsx', color: '#ffd66c', depth: 2, kept: true },
+  { name: 'DeploymentTimeline.tsx', color: '#ff6cb0', depth: 2, kept: true },
+  { name: 'LiveLogViewer.tsx', color: '#ff6cb0', depth: 2, kept: true },
+  { name: 'IssueTracker.tsx', color: '#666', depth: 2, kept: true },
+  { name: 'OneClickShipWizard.tsx', color: '#6cffa0', depth: 1, isNew: true, highlight: true, replaces: 'OnboardServerWizard + DiscoverStackWizard + SetupWizard + QuickDeployForm' },
+  { name: 'AddServerModal.tsx', color: '#ff6c8a', depth: 2, kept: true },
+  { name: 'BuildStrategyDetector.tsx', color: '#ffe06c', depth: 2, kept: true },
+  { name: 'FolderBrowser.tsx', color: '#666', depth: 2, kept: true },
+  { name: 'ShipProgress.tsx', color: '#6cffa0', depth: 1, isNew: true, replaces: 'ProposalViewer + ReceiptViewer' },
+  { name: '[Advanced]', color: '#8888a0', depth: 1, isSection: true },
+  { name: 'InfraMap + TopologyGraph.tsx', color: '#6cffa0', depth: 2, kept: true },
+  { name: 'SecretManager.tsx', color: '#8888a0', depth: 2, kept: true },
+  { name: 'AlertRulesEditor.tsx', color: '#ffd66c', depth: 2, kept: true },
+  { name: 'PipelineYamlEditor.tsx', color: '#b06cff', depth: 2, kept: true },
+  { name: 'ScriptRegistration.tsx', color: '#8888a0', depth: 2, kept: true },
+  { name: 'ResourceCard/Detail/Form.tsx', color: '#6ce0ff', depth: 2, kept: true },
+  { name: 'MonitoringConfig.tsx', color: '#ffd66c', depth: 2, kept: true },
+  { name: 'SharedSettingsForm.tsx', color: '#8888a0', depth: 2, kept: true },
+  { name: 'SingleAgentEditor.tsx', color: '#8888a0', depth: 2, kept: true },
+  { name: 'TriggerConfig.tsx', color: '#666', depth: 2, kept: true },
+  { name: 'AddComponentForm.tsx', color: '#ff6c8a', depth: 2, kept: true },
+  { name: 'ApprovalStatus.tsx', color: '#666', depth: 2, kept: true },
+];
+
+let showDeleted = false;
+let showLines = false;
+
+function catColor(key) {
+  const c = CATEGORIES.find(c => c.key === key);
+  return c ? c.color : '#666';
+}
+
+function fateClass(fate) {
+  if (fate === 'delete') return 'delete';
+  if (fate === 'keep') return 'keep';
+  if (fate === 'merge') return 'merge';
+  if (fate === 'replace') return 'replace';
+  return '';
+}
+
+function renderBefore() {
+  const el = document.getElementById('beforeContent');
+  let html = '';
+  const grouped = {};
+  CATEGORIES.forEach(c => grouped[c.key] = []);
+  BEFORE_COMPONENTS.forEach(comp => {
+    if (grouped[comp.cat]) grouped[comp.cat].push(comp);
+  });
+
+  CATEGORIES.forEach(cat => {
+    const items = grouped[cat.key];
+    if (!items || items.length === 0) return;
+    html += `<div class="cluster">`;
+    html += `<div class="cluster-label"><span class="dot" style="background:${cat.color}"></span><span style="color:${cat.color}">${cat.name}</span></div>`;
+    html += `<div class="cluster-items">`;
+    items.forEach(comp => {
+      const bg = cat.color + '18';
+      const cls = comp.fate === 'delete' ? 'deleted' : (comp.fate === 'keep' ? 'kept' : 'deleted');
+      html += `<div class="comp-box ${cls}" data-name="${comp.name}" data-fate="${comp.fate}" data-note="${comp.note}"
+        style="background:${bg};"
+        onmouseenter="showTooltip(event,'before','${comp.name}','${comp.fate}','${comp.note}')"
+        onmouseleave="hideTooltip()">
+        <span class="cdot" style="background:${cat.color}"></span>
+        <span>${comp.name}</span>
+      </div>`;
+    });
+    html += `</div></div>`;
+  });
+  el.innerHTML = html;
+}
+
+function renderAfter() {
+  const el = document.getElementById('afterContent');
+  let html = '<div class="tree">';
+
+  AFTER_TREE.forEach((node, i) => {
+    const indent = buildIndent(node.depth, i);
+    const nameClass = node.kept ? 'kept' : '';
+    const hlClass = node.highlight ? 'highlight-new' : '';
+    let badge = '';
+    if (node.isNew) badge = `<span class="tree-badge new">NEW</span>`;
+    else if (node.kept) badge = `<span class="tree-badge kept-badge">kept</span>`;
+    if (node.isSection) badge = '';
+
+    const replaceAttr = node.replaces ? `data-replaces="${node.replaces}"` : '';
+    html += `<div class="tree-node" data-after-name="${node.name}" ${replaceAttr}
+      onmouseenter="showTooltip(event,'after','${node.name}','${node.isNew?'new':'kept'}','${node.replaces||''}')"
+      onmouseleave="hideTooltip()">
+      <span class="tree-indent">${indent}</span>
+      <span class="tree-dot" style="background:${node.color}"></span>
+      <span class="tree-name ${nameClass} ${hlClass}">${node.name}</span>
+      ${badge}
+    </div>`;
+  });
+
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function buildIndent(depth, idx) {
+  if (depth === 0) return '';
+  let s = '';
+  for (let i = 0; i < depth - 1; i++) s += '   ';
+  s += '├─ ';
+  return s;
+}
+
+function renderLegend() {
+  const el = document.getElementById('legend');
+  let html = '';
+  CATEGORIES.forEach(cat => {
+    html += `<div class="legend-item"><span class="legend-dot" style="background:${cat.color}"></span>${cat.name}</div>`;
+  });
+  html += `<div class="legend-item"><span class="legend-dot" style="background:var(--success);box-shadow:0 0 6px rgba(108,255,160,0.4)"></span>NEW Component</div>`;
+  html += `<div class="legend-item"><span class="legend-dot" style="background:var(--error)"></span>Deleted</div>`;
+  el.innerHTML = html;
+}
+
+function showTooltip(e, side, name, fate, note) {
+  const tt = document.getElementById('tooltip');
+  const ttName = tt.querySelector('.tt-name');
+  const ttAction = tt.querySelector('.tt-action');
+
+  ttName.textContent = name;
+  if (side === 'before') {
+    const labels = { delete: 'DELETE', keep: 'KEEP', merge: 'MERGE', replace: 'REPLACE' };
+    ttAction.className = 'tt-action ' + fateClass(fate);
+    ttAction.textContent = `${labels[fate] || fate}: ${note}`;
+  } else {
+    ttAction.className = 'tt-action ' + (fate === 'new' ? 'merge' : 'keep');
+    ttAction.textContent = note ? `Replaces: ${note}` : 'Kept from previous architecture';
+  }
+
+  tt.style.display = 'block';
+  const x = Math.min(e.clientX + 12, window.innerWidth - 280);
+  const y = Math.min(e.clientY + 12, window.innerHeight - 60);
+  tt.style.left = x + 'px';
+  tt.style.top = y + 'px';
+}
+
+function hideTooltip() {
+  document.getElementById('tooltip').style.display = 'none';
+}
+
+function toggleDeleted() {
+  showDeleted = !showDeleted;
+  const btn = document.getElementById('toggleDeleted');
+  btn.classList.toggle('active', showDeleted);
+  btn.textContent = showDeleted ? 'Hide Deleted' : 'Show Deleted';
+
+  document.querySelectorAll('.comp-box.deleted').forEach(el => {
+    el.classList.toggle('faded', showDeleted);
+  });
+  document.querySelectorAll('.comp-box.kept').forEach(el => {
+    el.classList.toggle('highlight-kept', showDeleted);
+  });
+
+  document.getElementById('migration-svg').style.display = showDeleted ? 'block' : 'none';
+  if (showDeleted) drawMigrationArrows();
+}
+
+function toggleLines() {
+  showLines = !showLines;
+  const btn = document.getElementById('toggleLines');
+  btn.classList.toggle('active', showLines);
+  btn.textContent = showLines ? 'Hide Dependencies' : 'Show Dependencies';
+  drawDependencyLines();
+}
+
+function drawDependencyLines() {
+  const canvas = document.getElementById('dep-canvas');
+  const col = document.getElementById('beforeCol');
+  canvas.width = col.offsetWidth;
+  canvas.height = col.offsetHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!showLines) return;
+
+  const source = col.querySelector('[data-name="DeploymentTab"]');
+  if (!source) return;
+  const sr = source.getBoundingClientRect();
+  const cr = col.getBoundingClientRect();
+  const sx = sr.left + sr.width / 2 - cr.left;
+  const sy = sr.top + sr.height / 2 - cr.top;
+
+  DEP_TAB_TARGETS.forEach(tName => {
+    const target = col.querySelector(`[data-name="${tName}"]`);
+    if (!target) return;
+    const tr = target.getBoundingClientRect();
+    const tx = tr.left + tr.width / 2 - cr.left;
+    const ty = tr.top + tr.height / 2 - cr.top;
+
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    const cpx = (sx + tx) / 2 + (Math.random() - 0.5) * 40;
+    const cpy = (sy + ty) / 2 + (Math.random() - 0.5) * 20;
+    ctx.quadraticCurveTo(cpx, cpy, tx, ty);
+    ctx.strokeStyle = 'rgba(108, 138, 255, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+}
+
+function drawMigrationArrows() {
+  const svg = document.getElementById('migration-svg');
+  const gridRect = document.getElementById('mainGrid').getBoundingClientRect();
+  svg.style.position = 'fixed';
+  svg.style.top = '0';
+  svg.style.left = '0';
+  svg.style.width = '100vw';
+  svg.style.height = '100vh';
+  svg.innerHTML = '';
+
+  const kept = BEFORE_COMPONENTS.filter(c => c.fate === 'keep');
+  kept.forEach(comp => {
+    const srcEl = document.querySelector(`#beforeCol [data-name="${comp.name}"]`);
+    const tgtEl = findAfterNode(comp.name);
+    if (!srcEl || !tgtEl) return;
+
+    const sr = srcEl.getBoundingClientRect();
+    const tr = tgtEl.getBoundingClientRect();
+    const sx = sr.right;
+    const sy = sr.top + sr.height / 2;
+    const tx = tr.left;
+    const ty = tr.top + tr.height / 2;
+    const cpx1 = sx + 60;
+    const cpx2 = tx - 60;
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M${sx},${sy} C${cpx1},${sy} ${cpx2},${ty} ${tx},${ty}`);
+    path.setAttribute('class', 'migration-line');
+    svg.appendChild(path);
+  });
+}
+
+function findAfterNode(name) {
+  const nodes = document.querySelectorAll('#afterCol .tree-node');
+  for (const n of nodes) {
+    const aName = n.getAttribute('data-after-name') || '';
+    if (aName.startsWith(name) || aName.includes(name)) return n;
+  }
+  return null;
+}
+
+// Init
+renderBefore();
+renderAfter();
+renderLegend();
+
+window.addEventListener('resize', () => {
+  if (showLines) drawDependencyLines();
+  if (showDeleted) drawMigrationArrows();
+});
+</script>
+
+</body>
+</html>
