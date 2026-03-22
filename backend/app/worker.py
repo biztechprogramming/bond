@@ -99,6 +99,56 @@ class WorkerState:
 
 _state = WorkerState()
 
+
+# ---------------------------------------------------------------------------
+# Unique tool definitions list (prevents Anthropic duplicate-name errors)
+# ---------------------------------------------------------------------------
+
+
+class UniqueToolDefs(list):
+    """List subclass that enforces unique tool names and logs duplicates.
+
+    Behaves exactly like a list (so json.dumps, litellm, and iteration_handlers
+    all work unchanged), but append/extend skip entries whose function.name is
+    already present, and clear() resets the tracking set.
+    """
+
+    def __init__(self, defs: list[dict] | None = None):
+        super().__init__()
+        self._names: set[str] = set()
+        if defs:
+            for d in defs:
+                self.append(d)
+
+    @staticmethod
+    def _extract_name(tool_def: dict) -> str:
+        return tool_def.get("function", {}).get("name", "")
+
+    def append(self, tool_def: dict) -> None:  # type: ignore[override]
+        name = self._extract_name(tool_def)
+        if name and name in self._names:
+            logger.warning(
+                "Duplicate tool definition skipped: %s (already in tool_defs)",
+                name,
+            )
+            return
+        if name:
+            self._names.add(name)
+        super().append(tool_def)
+
+    def extend(self, tool_defs) -> None:  # type: ignore[override]
+        for d in tool_defs:
+            self.append(d)
+
+    def clear(self) -> None:
+        super().clear()
+        self._names.clear()
+
+    def has_tool(self, name: str) -> bool:
+        """Check if a tool name is already present (O(1))."""
+        return name in self._names
+
+
 # ---------------------------------------------------------------------------
 # Cancellable LLM call (Design doc 037 §5.2.1)
 # ---------------------------------------------------------------------------
@@ -695,8 +745,11 @@ async def _run_agent_loop(
         agent_name=agent_name,
     )
 
-    # Use compact schemas to further reduce token usage
-    tool_defs = [compact_tool_schema(TOOL_MAP[name]) for name in selected_tool_names if name in TOOL_MAP]
+    # Use compact schemas to further reduce token usage.
+    # UniqueToolDefs enforces unique tool names — duplicates are logged and skipped.
+    tool_defs = UniqueToolDefs(
+        [compact_tool_schema(TOOL_MAP[name]) for name in selected_tool_names if name in TOOL_MAP]
+    )
 
     # Append MCP proxy tool definitions (Design Doc 054)
     mcp_proxy = getattr(_state, 'mcp_proxy', None)

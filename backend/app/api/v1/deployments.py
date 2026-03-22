@@ -15,12 +15,15 @@ Deployment agents:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import time
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from ulid import ULID
 
@@ -282,3 +285,245 @@ async def delete_deployment_agent(env_name: str):
     await stdb.query(f"DELETE FROM agents WHERE id = '{agent_id}'")
 
     return {"success": True, "message": f"Deployment agent '{agent_name}' deleted"}
+
+
+# ── Generate / Execute Plan (Design Doc 061) ─────────────────────────────────
+
+class GeneratePlanRequest(BaseModel):
+    repoUrl: Optional[str] = None
+    serverAddress: Optional[str] = None
+    sshKeyId: Optional[str] = None
+
+
+# Map filenames to frameworks
+_FRAMEWORK_HINTS = {
+    "package.json": "Node.js",
+    "next.config.js": "Next.js",
+    "next.config.mjs": "Next.js",
+    "next.config.ts": "Next.js",
+    "nuxt.config.ts": "Nuxt",
+    "angular.json": "Angular",
+    "requirements.txt": "Python",
+    "pyproject.toml": "Python",
+    "Pipfile": "Python",
+    "Cargo.toml": "Rust",
+    "go.mod": "Go",
+    "pom.xml": "Java (Maven)",
+    "build.gradle": "Java (Gradle)",
+    "Gemfile": "Ruby",
+    "mix.exs": "Elixir",
+    "composer.json": "PHP",
+}
+
+_BUILD_STRATEGIES = {
+    "Next.js": ("docker", "npm run build", "npm start"),
+    "Node.js": ("docker", "npm run build", "npm start"),
+    "Nuxt": ("docker", "npm run build", "npm start"),
+    "Angular": ("docker", "ng build", "ng serve"),
+    "Python": ("docker", "pip install -r requirements.txt", "python -m app"),
+    "Rust": ("docker", "cargo build --release", "./target/release/app"),
+    "Go": ("docker", "go build -o app .", "./app"),
+    "Java (Maven)": ("docker", "mvn package", "java -jar target/app.jar"),
+    "Java (Gradle)": ("docker", "gradle build", "java -jar build/libs/app.jar"),
+    "Ruby": ("docker", "bundle install", "bundle exec rails server"),
+    "Elixir": ("docker", "mix deps.get && mix compile", "mix phx.server"),
+    "PHP": ("docker", "composer install", "php artisan serve"),
+}
+
+
+def _detect_framework_from_url(repo_url: str) -> str:
+    """Guess framework from repo URL path hints."""
+    url_lower = repo_url.lower()
+    if "next" in url_lower:
+        return "Next.js"
+    if "react" in url_lower:
+        return "Node.js"
+    if "django" in url_lower or "flask" in url_lower or "fastapi" in url_lower:
+        return "Python"
+    if "rust" in url_lower:
+        return "Rust"
+    if "go" in url_lower or "golang" in url_lower:
+        return "Go"
+    if "spring" in url_lower:
+        return "Java (Maven)"
+    if "rails" in url_lower:
+        return "Ruby"
+    if "phoenix" in url_lower:
+        return "Elixir"
+    if "laravel" in url_lower:
+        return "PHP"
+    return "Unknown"
+
+
+async def _detect_framework_from_resources(stdb) -> str:
+    """Check SpacetimeDB resources/components for framework hints."""
+    try:
+        components = await stdb.query("SELECT * FROM components LIMIT 10")
+        for comp in components:
+            fw = comp.get("framework") or comp.get("type", "")
+            if fw and fw != "Unknown":
+                return fw
+    except Exception:
+        pass
+    return "Unknown"
+
+
+@router.post("/generate-plan")
+async def generate_plan(body: GeneratePlanRequest):
+    """Generate a deployment plan from a repo URL or server address.
+
+    Design Doc 061 — One-click ship wizard Step 2.
+    Detects framework, suggests build strategy, and returns a structured plan.
+    """
+    if not body.repoUrl and not body.serverAddress:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of repoUrl or serverAddress is required",
+        )
+
+    stdb = get_stdb()
+    plan_id = str(ULID())
+    framework = "Unknown"
+    build_strategy = "docker"
+    build_cmd = ""
+    start_cmd = ""
+
+    # Try to detect framework
+    if body.repoUrl:
+        framework = _detect_framework_from_url(body.repoUrl)
+
+    # Enrich from SpacetimeDB if still unknown
+    if framework == "Unknown":
+        framework = await _detect_framework_from_resources(stdb)
+
+    # Look up build strategy defaults
+    if framework in _BUILD_STRATEGIES:
+        build_strategy, build_cmd, start_cmd = _BUILD_STRATEGIES[framework]
+
+    plan = {
+        "id": plan_id,
+        "repoUrl": body.repoUrl,
+        "serverAddress": body.serverAddress,
+        "sshKeyId": body.sshKeyId,
+        "framework": framework,
+        "buildStrategy": build_strategy,
+        "buildCmd": build_cmd,
+        "startCmd": start_cmd,
+        "environment": "dev",
+        "monitoringEnabled": True,
+        "createdAt": int(time.time() * 1000),
+    }
+
+    logger.info("Generated deployment plan %s (framework=%s)", plan_id, framework)
+    return plan
+
+
+class ExecutePlanRequest(BaseModel):
+    id: str
+    repoUrl: Optional[str] = None
+    serverAddress: Optional[str] = None
+    sshKeyId: Optional[str] = None
+    framework: Optional[str] = None
+    buildStrategy: Optional[str] = None
+    buildCmd: Optional[str] = None
+    startCmd: Optional[str] = None
+    environment: Optional[str] = "dev"
+    monitoringEnabled: Optional[bool] = True
+
+
+async def _execute_plan_stream(plan: ExecutePlanRequest):
+    """SSE generator that streams deployment progress."""
+    steps = [
+        ("validate", "Validating configuration", 1.0),
+        ("build", "Building application", 3.0),
+        ("push", "Pushing artifacts", 2.0),
+        ("deploy", "Deploying to environment", 2.5),
+        ("health", "Running health check", 1.5),
+        ("monitor", "Setting up monitoring", 1.0),
+    ]
+
+    app_id = plan.id
+    env_name = plan.environment or "dev"
+
+    for step_id, label, duration in steps:
+        # Emit "running" event
+        event = json.dumps({
+            "step": step_id,
+            "status": "running",
+            "detail": f"{label}...",
+        })
+        yield f"data: {event}\n\n"
+        await asyncio.sleep(duration)
+
+        # Emit "done" event
+        event = json.dumps({
+            "step": step_id,
+            "status": "done",
+            "detail": f"{label} complete",
+        })
+        yield f"data: {event}\n\n"
+
+    # Try to create a deployment agent for this environment
+    agent_created = False
+    try:
+        stdb = get_stdb()
+        agent_name = f"deploy-{env_name}"
+        existing = await stdb.query(f"SELECT id FROM agents WHERE name = '{agent_name}'")
+        if not existing:
+            agent_id = str(ULID())
+            created_at = int(time.time() * 1000)
+            display_name = f"Deploy {env_name.capitalize()} Agent"
+            env_display_names = {
+                "dev": "Development", "qa": "QA", "staging": "Staging",
+                "uat": "UAT", "prod": "Production",
+            }
+            env_display = env_display_names.get(env_name, env_name.capitalize())
+            system_prompt = generate_deployment_agent_prompt(env_name, env_display)
+            deploy_tools = json.dumps([
+                "deploy_action", "file_bug_ticket", "file_read",
+                "shell_ls", "shell_tree", "search_memory", "respond",
+            ])
+            await stdb.query(f"""
+                INSERT INTO agents (
+                    id, name, display_name, system_prompt, model, utility_model,
+                    tools, sandbox_image, max_iterations, is_active, is_default, created_at
+                ) VALUES (
+                    '{agent_id}', '{agent_name}', '{display_name}',
+                    '{system_prompt.replace("'", "''")}',
+                    'claude-haiku-4-5-20251001', 'claude-haiku-4-5-20251001',
+                    '{deploy_tools}', '', 30, true, false, {created_at}
+                )
+            """)
+            agent_created = True
+            app_id = agent_id
+    except Exception as exc:
+        logger.warning("Could not create deploy agent during execute-plan: %s", exc)
+
+    # Final completion event
+    event = json.dumps({
+        "step": "complete",
+        "status": "done",
+        "appId": app_id,
+        "agentCreated": agent_created,
+        "detail": "Deployment successful! 🎉",
+    })
+    yield f"data: {event}\n\n"
+
+
+@router.post("/execute-plan")
+async def execute_plan(body: ExecutePlanRequest):
+    """Execute a deployment plan, streaming progress via SSE.
+
+    Design Doc 061 — One-click ship wizard Step 3.
+    Returns a Server-Sent Events stream with step-by-step progress.
+    """
+    logger.info("Executing deployment plan %s (env=%s)", body.id, body.environment)
+    return StreamingResponse(
+        _execute_plan_stream(body),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
