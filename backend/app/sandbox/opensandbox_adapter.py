@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, AsyncIterator
 
@@ -87,6 +88,40 @@ class OpenSandboxAdapter:
         return self._agent_locks[agent_key]
 
     # ------------------------------------------------------------------
+    # Image introspection
+    # ------------------------------------------------------------------
+
+    async def _resolve_image_entrypoint(self, image: str) -> list[str]:
+        """Inspect a Docker image to get its ENTRYPOINT + CMD.
+
+        Falls back to ["/bin/bash"] if inspection fails.
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "inspect", "--format",
+                "{{json .Config.Entrypoint}}|{{json .Config.Cmd}}",
+                image,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode != 0:
+                logger.warning("Could not inspect image %s, using /bin/bash", image)
+                return ["/bin/bash"]
+
+            parts = stdout.decode().strip().split("|", 1)
+            ep = json.loads(parts[0]) if parts[0] != "null" else []
+            cmd = json.loads(parts[1]) if len(parts) > 1 and parts[1] != "null" else []
+
+            combined = (ep or []) + (cmd or [])
+            if not combined:
+                return ["/bin/bash"]
+            return combined
+        except Exception as e:
+            logger.warning("Failed to inspect image %s: %s", image, e)
+            return ["/bin/bash"]
+
+    # ------------------------------------------------------------------
     # Sandbox lifecycle (matches SandboxManager.ensure_running interface)
     # ------------------------------------------------------------------
 
@@ -137,17 +172,35 @@ class OpenSandboxAdapter:
 
         # Build volume specs
         volumes = []
-        for mount in workspace_mounts:
+        for i, mount in enumerate(workspace_mounts):
             host_path = os.path.expanduser(mount.get("host_path", ""))
-            mount_name = mount.get("mount_name", "workspace")
-            container_path = mount.get("container_path") or f"/workspace/{mount_name}"
+            mount_name = mount.get("mount_name") or ""
+            container_path = mount.get("container_path") or f"/workspace/{mount_name or 'workspace'}"
             readonly = mount.get("readonly", False)
+
+            # Sanitize mount_name to match opensandbox pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+            # Strip leading dots/dashes, replace invalid chars with dashes
+            sanitized = mount_name.lower().lstrip(".-")
+            sanitized = re.sub(r"[^a-z0-9-]", "-", sanitized)
+            sanitized = sanitized.strip("-")
+            if not sanitized:
+                # Derive from host_path basename or use index-based fallback
+                sanitized = re.sub(r"[^a-z0-9-]", "-", os.path.basename(host_path).lower().lstrip(".-")).strip("-")
+            if not sanitized:
+                sanitized = f"vol-{i}"
+
             volumes.append({
-                "name": mount_name,
+                "name": sanitized,
                 "host": {"path": host_path},
                 "mountPath": container_path,
                 "readOnly": readonly,
             })
+
+        # Resolve entrypoint: use agent-supplied override, or inspect the
+        # image to discover its ENTRYPOINT + CMD so we don't clobber it.
+        entrypoint = agent.get("entrypoint")
+        if not entrypoint:
+            entrypoint = await self._resolve_image_entrypoint(sandbox_image)
 
         create_body: dict[str, Any] = {
             "image": {"uri": sandbox_image},
@@ -156,7 +209,7 @@ class OpenSandboxAdapter:
                 "cpu": agent.get("resource_limits", {}).get("cpu", "1000m"),
                 "memory": agent.get("resource_limits", {}).get("memory", "512Mi"),
             },
-            "entrypoint": ["/bin/bash"],
+            "entrypoint": entrypoint,
             "metadata": {
                 "name": key,
                 "agent_id": agent_id,
