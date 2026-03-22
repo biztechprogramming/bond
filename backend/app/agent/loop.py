@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.agent.llm import chat_completion, _resolve_api_key, get_instructor_client
 from backend.app.agent.tools import build_registry
 from backend.app.agent.tools.definitions import get_pydantic_definitions
+from backend.app.core.oauth import get_oauth_extra_headers
 
 logger = logging.getLogger("bond.agent.loop")
 
@@ -263,13 +264,9 @@ async def agent_turn(
     if api_key:
         extra_kwargs["api_key"] = api_key
         # OAuth tokens (sk-ant-oat) need extra headers for the Anthropic API
-        if api_key.startswith("sk-ant-oat"):
-            extra_kwargs["extra_headers"] = {
-                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-                "user-agent": "claude-cli/2.1.81",
-                "x-app": "cli",
-                "anthropic-dangerous-direct-browser-access": "true",
-            }
+        oauth_headers = get_oauth_extra_headers(api_key)
+        if oauth_headers:
+            extra_kwargs["extra_headers"] = oauth_headers
             logger.info("Detected OAuth token — injecting extra headers")
 
     logger.info(
