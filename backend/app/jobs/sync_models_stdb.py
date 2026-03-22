@@ -58,17 +58,35 @@ async def _fetch_anthropic_api(
     api_key: str,
     key_type: str,
 ) -> list[dict]:
-    """Fetch via Anthropic /v1/models (api_key only) or scrape docs (oauth_token)."""
-    if key_type == "oauth_token":
-        return await _fetch_anthropic_scrape(client, provider, api_key, key_type)
+    """Fetch via Anthropic /v1/models. Works with both API keys and OAuth tokens.
 
+    OAuth tokens use Bearer auth + extra headers; regular API keys use x-api-key.
+    Falls back to docs scraping only if the API call fails.
+    """
     config = json.loads(provider["config"] or "{}")
     url = provider["api_base_url"] + provider["models_endpoint"]
-    resp = await client.get(url, headers={
-        "x-api-key": api_key,
-        "anthropic-version": config.get("anthropic_version", "2023-06-01"),
-    })
-    resp.raise_for_status()
+
+    if key_type == "oauth_token":
+        from backend.app.core.oauth import OAUTH_EXTRA_HEADERS
+        headers = {
+            **OAUTH_EXTRA_HEADERS,
+            "authorization": f"Bearer {api_key}",
+            "anthropic-version": config.get("anthropic_version", "2023-06-01"),
+        }
+    else:
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": config.get("anthropic_version", "2023-06-01"),
+        }
+
+    try:
+        resp = await client.get(url, headers=headers)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError:
+        if key_type == "oauth_token":
+            logger.warning("sync_models: Anthropic /v1/models failed with OAuth token, falling back to scrape")
+            return await _fetch_anthropic_scrape(client, provider, api_key, key_type)
+        raise
 
     models = []
     for m in resp.json().get("data", []):
