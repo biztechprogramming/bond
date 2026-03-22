@@ -513,7 +513,10 @@ def handle_lifecycle_injection(
         # Remove previous lifecycle injection from system prompt
         sys_content = messages[0].get("content", "")
         if isinstance(sys_content, list):
-            for block in sys_content:
+            # Target the LAST text block — block 0 may be the OAuth identity
+            # prefix ("You are Claude Code...") which must remain untouched
+            # for Anthropic's OAuth validation to pass.
+            for block in reversed(sys_content):
                 if isinstance(block, dict) and block.get("type") == "text":
                     text = block["text"]
                     marker = "\n\n## Current Phase: "
@@ -532,7 +535,9 @@ def handle_lifecycle_injection(
             lc_injection = format_lc_injection(new_phase, lc_frags)
             if lc_injection:
                 if isinstance(messages[0].get("content"), list):
-                    for block in messages[0]["content"]:
+                    # Target the LAST text block — avoid mutating the OAuth
+                    # identity prefix in block 0.
+                    for block in reversed(messages[0]["content"]):
                         if isinstance(block, dict) and block.get("type") == "text":
                             block["text"] += lc_injection
                             break
