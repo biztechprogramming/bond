@@ -127,6 +127,13 @@ async def chat_completion(
     extra_kwargs: dict = {}
     if api_key:
         extra_kwargs["api_key"] = api_key
+        if api_key.startswith("sk-ant-oat"):
+            extra_kwargs["extra_headers"] = {
+                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                "user-agent": "claude-cli/2.1.81",
+                "x-app": "cli",
+                "anthropic-dangerous-direct-browser-access": "true",
+            }
 
     if stream:
         response = await litellm.acompletion(

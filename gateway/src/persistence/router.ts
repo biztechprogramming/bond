@@ -145,11 +145,30 @@ export function createPersistenceRouter(config: GatewayConfig) {
         return;
       }
       const row = rows[0];
-      res.json({
-        providerId: row.provider_id,
-        encryptedValue: row.encrypted_value,
-        keyType: row.key_type,
-      });
+
+      // OAuth credential handling: if the stored value is an OAuth credential,
+      // check expiry and refresh if needed, then return the access token.
+      let authMode = "api-key";
+      let returnValue = row.encrypted_value;
+      try {
+        const parsed = JSON.parse(row.encrypted_value);
+        if (parsed?.type === "oauth" && parsed.refreshToken) {
+          authMode = "oauth";
+          const { getValidAccessToken } = await import("../oauth/provider-oauth.js");
+          const { accessToken } = await getValidAccessToken();
+          returnValue = accessToken;
+        }
+      } catch {
+        // Not JSON / not OAuth — return as-is (regular API key)
+      }
+
+      res
+        .header("x-auth-mode", authMode)
+        .json({
+          providerId: row.provider_id,
+          encryptedValue: returnValue,
+          keyType: row.key_type,
+        });
     } catch (err: any) {
       console.error(`[persistence] GET /provider-api-keys/${providerId} failed:`, err.message);
       res.status(500).json({ error: err.message });

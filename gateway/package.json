@@ -12,6 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@mariozechner/pi-ai": "^0.61.1",
     "@slack/bolt": "^3.22.0",
     "@slack/web-api": "^7.9.0",
     "@types/express": "^5.0.6",
