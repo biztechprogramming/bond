@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import DirBrowser from "@/components/shared/DirBrowser";
 import { BACKEND_API } from "@/lib/config";
 import { useAvailableModels, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
@@ -97,6 +97,9 @@ export default function AgentsTab() {
   const [isNew, setIsNew] = useState(false);
   const [msg, setMsg] = useState("");
   const [browsingMountIndex, setBrowsingMountIndex] = useState<number | null>(null);
+  const [showContainerWarning, setShowContainerWarning] = useState(false);
+  // Store the original agent snapshot when editing begins, to detect container-affecting changes
+  const originalAgentRef = useRef<Agent | null>(null);
 
   // Sandbox images still fetched via REST (no STDB table for these)
   useEffect(() => {
@@ -131,13 +134,54 @@ export default function AgentsTab() {
 
   const startEdit = (agent: Agent) => {
     setEditing({ ...agent });
+    originalAgentRef.current = { ...agent };
     setIsNew(false);
     setMsg("");
   };
 
-  const save = async () => {
+  /** Check if any fields that trigger container recreation have changed */
+  const hasContainerAffectingChanges = (): boolean => {
+    if (!editing || !originalAgentRef.current) return false;
+    const orig = originalAgentRef.current;
+    if (editing.model !== orig.model) return true;
+    if (editing.utility_model !== orig.utility_model) return true;
+    if (editing.sandbox_image !== orig.sandbox_image) return true;
+    // Compare mounts
+    const origMounts = JSON.stringify(
+      (orig.workspace_mounts || []).map(m => ({ hp: m.host_path, mn: m.mount_name, cp: m.container_path, ro: m.readonly })).sort((a, b) => a.hp.localeCompare(b.hp))
+    );
+    const editMounts = JSON.stringify(
+      (editing.workspace_mounts || []).map(m => ({ hp: m.host_path, mn: m.mount_name, cp: m.container_path, ro: m.readonly })).sort((a, b) => a.hp.localeCompare(b.hp))
+    );
+    if (origMounts !== editMounts) return true;
+    return false;
+  };
+
+  /** Pre-save check: if container is running and settings affect it, show warning */
+  const handleSave = async () => {
+    if (!editing) return;
+    // New agents never have running containers
+    if (isNew) { await doSave(); return; }
+    // Only check if container-affecting fields changed
+    if (!hasContainerAffectingChanges()) { await doSave(); return; }
+    // Check if container is running
+    try {
+      const res = await fetch(`${BACKEND_API}/agents/${editing.id}/container-status`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.running) {
+          setShowContainerWarning(true);
+          return; // Don't save yet — wait for user confirmation
+        }
+      }
+    } catch { /* Can't reach backend — save anyway */ }
+    await doSave();
+  };
+
+  const doSave = async () => {
     if (!editing) return;
     setMsg("");
+    setShowContainerWarning(false);
     try {
       const conn = getConnection();
       if (!conn) { setMsg("Not connected to database"); return; }
@@ -290,8 +334,8 @@ export default function AgentsTab() {
         <div style={{ display: "flex", gap: "8px" }}>
           {editing ? (
             <>
-              <button style={styles.button} onClick={save}>Save</button>
-              <button style={styles.secondaryButton} onClick={() => { setEditing(null); setMsg(""); }}>Cancel</button>
+              <button style={styles.button} onClick={handleSave}>Save</button>
+              <button style={styles.secondaryButton} onClick={() => { setEditing(null); setMsg(""); setShowContainerWarning(false); }}>Cancel</button>
             </>
           ) : (
             <button style={styles.button} onClick={startCreate}>+ New Agent</button>
@@ -517,6 +561,39 @@ export default function AgentsTab() {
           </div>
         )}
       </div>
+
+      {/* Container running warning modal */}
+      {showContainerWarning && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <h3 style={{ color: "#ffcc44", margin: "0 0 12px 0", fontSize: "1.05rem" }}>
+              ⚠️ Container is running
+            </h3>
+            <p style={{ color: "#c0c0d0", margin: "0 0 8px 0", fontSize: "0.9rem", lineHeight: "1.5" }}>
+              This agent has a running sandbox container. Saving these changes will cause it to be
+              <strong style={{ color: "#ff6c8a" }}> stopped and deleted</strong> when the next conversation
+              starts, so it can restart with the new settings.
+            </p>
+            <p style={{ color: "#8888a0", margin: "0 0 20px 0", fontSize: "0.85rem" }}>
+              If a conversation is in progress, it will finish first before the container is recycled.
+            </p>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <button
+                style={styles.secondaryButton}
+                onClick={() => setShowContainerWarning(false)}
+              >
+                Cancel
+              </button>
+              <button
+                style={{ ...styles.button, backgroundColor: "#cc7a00" }}
+                onClick={doSave}
+              >
+                Save Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -680,5 +757,26 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "4px 8px",
     fontSize: "0.8rem",
     cursor: "pointer",
+  },
+  modalOverlay: {
+    position: "fixed" as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+  },
+  modal: {
+    backgroundColor: "#1a1a2e",
+    border: "1px solid #3a3a4e",
+    borderRadius: "12px",
+    padding: "24px",
+    maxWidth: "480px",
+    width: "90%",
+    boxShadow: "0 8px 32px rgba(0, 0, 0, 0.4)",
   },
 };

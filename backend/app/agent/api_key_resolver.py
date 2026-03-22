@@ -15,6 +15,14 @@ logger = logging.getLogger("bond.agent.worker")
 class ApiKeyResolver:
     """Resolves API keys and normalizes model strings for litellm."""
 
+    # Headers required for OAuth tokens (sk-ant-oat) to work with Anthropic API
+    OAUTH_EXTRA_HEADERS = {
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+        "user-agent": "claude-cli/2.1.81",
+        "x-app": "cli",
+        "anthropic-dangerous-direct-browser-access": "true",
+    }
+
     def __init__(
         self,
         injected_keys: dict[str, str],
@@ -26,6 +34,7 @@ class ApiKeyResolver:
         self.provider_aliases = provider_aliases
         self.litellm_prefixes = litellm_prefixes
         self.persistence = persistence
+        self._oauth_extra_headers: dict[str, str] = {}
 
     def normalize_model_for_litellm(self, model_id: str) -> str:
         """Normalize model string so litellm recognizes the provider prefix.
@@ -54,6 +63,15 @@ class ApiKeyResolver:
                 return self.provider_aliases.get(alias, alias)
 
         return "anthropic"
+
+    @staticmethod
+    def is_oauth_token(key: str) -> bool:
+        """Detect an OAuth token by its prefix."""
+        return key.startswith("sk-ant-oat")
+
+    def get_extra_headers(self) -> dict[str, str]:
+        """Return extra headers needed for the resolved key (OAuth headers or empty)."""
+        return dict(self._oauth_extra_headers)
 
     async def resolve_api_key(self, model_id: str) -> str | None:
         """Resolve API key: injected from host DB → SpacetimeDB → Vault → env var."""
@@ -150,7 +168,9 @@ class ApiKeyResolver:
 
         # Special case: Google provider can use GEMINI_API_KEY
         if prov == "google":
-            return os.environ.get("GEMINI_API_KEY")
+            key = os.environ.get("GEMINI_API_KEY")
+            if key:
+                return key
 
         return None
 
@@ -165,11 +185,18 @@ class ApiKeyResolver:
         primary_key = await self.resolve_api_key(normalized_model)
         if primary_key:
             extra_kwargs["api_key"] = primary_key
+            if self.is_oauth_token(primary_key):
+                self._oauth_extra_headers = dict(self.OAUTH_EXTRA_HEADERS)
+                extra_kwargs["extra_headers"] = dict(self.OAUTH_EXTRA_HEADERS)
+                logger.info("Detected OAuth token for primary model — injecting extra headers")
 
         normalized_utility = self.normalize_model_for_litellm(utility_model_raw)
         utility_kwargs: dict = {}
         utility_key = await self.resolve_api_key(normalized_utility)
         if utility_key:
             utility_kwargs["api_key"] = utility_key
+            if self.is_oauth_token(utility_key):
+                utility_kwargs["extra_headers"] = dict(self.OAUTH_EXTRA_HEADERS)
+                logger.info("Detected OAuth token for utility model — injecting extra headers")
 
         return normalized_model, extra_kwargs, utility_kwargs, normalized_utility

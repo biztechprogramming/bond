@@ -472,6 +472,24 @@ async def delete_agent(agent_id: str):
     return {"success": True, "message": f"Agent {agent_id} deleted"}
 
 
+@router.get("/{agent_id}/container-status")
+async def get_container_status(agent_id: str):
+    """Check if a sandbox container is currently running for this agent."""
+    try:
+        from backend.app.sandbox.manager import get_sandbox_manager
+        manager = get_sandbox_manager()
+        # Search _containers dict for a key ending with the agent_id
+        for key, info in manager._containers.items():
+            if key.endswith(agent_id):
+                cid = info.get("container_id", "")
+                if cid and await manager._is_running(cid):
+                    return {"running": True, "container_id": cid}
+                return {"running": False}
+        return {"running": False}
+    except Exception:
+        return {"running": False}
+
+
 @router.post("/{agent_id}/default")
 async def set_default_agent(agent_id: str):
     """Set an agent as the default."""
