@@ -107,7 +107,11 @@ export default function Home() {
     if (prevConversationIdRef.current !== conversationId) {
       prevConversationIdRef.current = conversationId;
       prevStdbCountRef.current = stdbMessages.length;
-      if (stdbMessages.length > 0) {
+      // When conversationId is null (new conversation), don't populate messages.
+      // The useSpacetimeDB hook may still hold stale data from the previous
+      // conversation until its internal effect flushes, which would undo the
+      // setMessages([]) from handleNewConversation.
+      if (stdbMessages.length > 0 && conversationId !== null) {
         const historyMsgs: ChatMessage[] = stdbMessages
           .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
           .map((m) => ({

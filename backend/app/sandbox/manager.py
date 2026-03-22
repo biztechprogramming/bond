@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import socket
 import time
 from pathlib import Path
@@ -99,6 +100,13 @@ class SandboxManager:
         os.makedirs(str(config_dir), mode=0o700, exist_ok=True)
 
         config_path = config_dir / f"{agent_id}.json"
+
+        # Guard: if Docker previously bind-mounted a missing source path, it
+        # creates a *directory* instead of a file.  Remove it so we can write
+        # the real config file.  (See: IsADirectoryError on startup.)
+        if config_path.is_dir():
+            shutil.rmtree(config_path)
+
         config_data = {
             "agent_id": agent_id,
             "model": agent["model"],
@@ -122,10 +130,13 @@ class SandboxManager:
         return config_path
 
     def _delete_agent_config(self, agent_id: str) -> None:
-        """Delete the config file for an agent, if it exists."""
+        """Delete the config file (or stale directory) for an agent, if it exists."""
         config_path = _PROJECT_ROOT / "data" / "agent-configs" / f"{agent_id}.json"
         try:
-            config_path.unlink(missing_ok=True)
+            if config_path.is_dir():
+                shutil.rmtree(config_path)
+            else:
+                config_path.unlink(missing_ok=True)
         except OSError:
             pass
 

@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from backend.app.core.crypto import decrypt_value, is_encrypted
+from backend.app.core.oauth import get_provider_api_key
 from backend.app.core.spacetimedb import get_stdb
 
 logger = logging.getLogger(__name__)
@@ -178,22 +178,13 @@ _FETCH_METHODS = {
 # ---------------------------------------------------------------------------
 
 
-async def _get_api_key(stdb, provider_id: str) -> tuple[str, str] | None:
-    """Read the active API key for a provider from SpacetimeDB."""
-    rows = await stdb.query(f"SELECT encrypted_value, key_type FROM provider_api_keys WHERE provider_id = '{provider_id}'")
-    if not rows:
-        return None
-    row = rows[0]
-    raw = row["encrypted_value"]
-    key_type = row["key_type"] or "api_key"
-    try:
-        decrypted = decrypt_value(raw)
-        if decrypted:
-            return (decrypted, key_type)
-    except Exception:
-        if not is_encrypted(raw):
-            return (raw, key_type)
-    return None
+async def _get_api_key(provider_id: str) -> tuple[str, str] | None:
+    """Read the active API key for a provider via the Gateway.
+
+    Delegates to the common get_provider_api_key which handles
+    OAuth refresh (via pi-ai) and decryption of non-OAuth keys.
+    """
+    return await get_provider_api_key(provider_id)
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +230,7 @@ async def sync_models_stdb(session_factory: async_sessionmaker[AsyncSession]) ->
             provider_id = provider["id"]
             display_name = provider["display_name"]
 
-            key_result = await _get_api_key(stdb, provider_id)
+            key_result = await _get_api_key(provider_id)
             if not key_result:
                 continue
 

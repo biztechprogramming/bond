@@ -9,19 +9,20 @@ import logging
 import os
 from typing import Any
 
+from backend.app.core.oauth import (
+    OAUTH_EXTRA_HEADERS,
+    is_oauth_token,
+    get_oauth_extra_headers,
+)
+
 logger = logging.getLogger("bond.agent.worker")
 
 
 class ApiKeyResolver:
     """Resolves API keys and normalizes model strings for litellm."""
 
-    # Headers required for OAuth tokens (sk-ant-oat) to work with Anthropic API
-    OAUTH_EXTRA_HEADERS = {
-        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-        "user-agent": "claude-cli/2.1.81",
-        "x-app": "cli",
-        "anthropic-dangerous-direct-browser-access": "true",
-    }
+    # Re-export for backward compatibility
+    OAUTH_EXTRA_HEADERS = OAUTH_EXTRA_HEADERS
 
     def __init__(
         self,
@@ -67,7 +68,7 @@ class ApiKeyResolver:
     @staticmethod
     def is_oauth_token(key: str) -> bool:
         """Detect an OAuth token by its prefix."""
-        return key.startswith("sk-ant-oat")
+        return is_oauth_token(key)
 
     def get_extra_headers(self) -> dict[str, str]:
         """Return extra headers needed for the resolved key (OAuth headers or empty)."""

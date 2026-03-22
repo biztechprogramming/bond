@@ -150,16 +150,31 @@ export function createPersistenceRouter(config: GatewayConfig) {
       // check expiry and refresh if needed, then return the access token.
       let authMode = "api-key";
       let returnValue = row.encrypted_value;
+
+      // Detect OAuth tokens by: (1) JSON blob with type/refreshToken, (2) key_type, (3) sk-ant-oat prefix
+      let isOAuth = false;
       try {
         const parsed = JSON.parse(row.encrypted_value);
         if (parsed?.type === "oauth" && parsed.refreshToken) {
-          authMode = "oauth";
-          const { getValidAccessToken } = await import("../oauth/provider-oauth.js");
-          const { accessToken } = await getValidAccessToken();
-          returnValue = accessToken;
+          isOAuth = true;
         }
       } catch {
-        // Not JSON / not OAuth — return as-is (regular API key)
+        // Not JSON — check other indicators
+      }
+      if (!isOAuth && (row.key_type === "oauth_token" || (typeof returnValue === "string" && returnValue.startsWith("sk-ant-oat")))) {
+        isOAuth = true;
+      }
+
+      if (isOAuth) {
+        try {
+          const { getValidAccessToken } = await import("../oauth/provider-oauth.js");
+          const { accessToken } = await getValidAccessToken();
+          authMode = "oauth";
+          returnValue = accessToken;
+        } catch (oauthErr: any) {
+          console.error(`[persistence] OAuth refresh failed for ${providerId}:`, oauthErr.message);
+          // Fall through with the original value — caller will get a 401 from the provider
+        }
       }
 
       res

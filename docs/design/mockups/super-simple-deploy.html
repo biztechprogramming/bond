@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bond — Super Simple Deploy</title>
+    <style>
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-input: #1e1e2e;
+            --border: #1e1e2e;
+            --text-main: #e0e0e8;
+            --text-dim: #8888a0;
+            --accent: #6c8aff;
+            --accent-glow: rgba(108, 138, 255, 0.15);
+            --success: #6cffa0;
+            --warning: #ffd66c;
+            --error: #ff6c8a;
+            --font-main: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-main);
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 220px;
+            border-right: 1px solid var(--border);
+            padding: 24px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .sidebar .logo {
+            font-weight: 700;
+            font-size: 1.1rem;
+            padding: 8px 12px 20px;
+            color: var(--accent);
+        }
+
+        .nav-item {
+            padding: 10px 12px;
+            border-radius: 8px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .nav-item:hover { background: var(--bg-card); color: var(--text-main); }
+        .nav-item.active { background: var(--accent-glow); color: var(--accent); font-weight: 600; }
+
+        .nav-icon { font-size: 1rem; width: 20px; text-align: center; }
+
+        /* Main */
+        .main {
+            flex: 1;
+            padding: 40px;
+            overflow-y: auto;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .page-header h1 { font-size: 1.4rem; font-weight: 600; }
+        .page-header p { color: var(--text-dim); font-size: 0.85rem; margin-top: 4px; }
+
+        .btn {
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: transform 0.1s, opacity 0.15s;
+        }
+
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-success { background: var(--success); color: #0a0a0f; }
+        .btn-ghost { background: none; color: var(--text-dim); }
+
+        /* App Grid */
+        .app-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 16px;
+        }
+
+        .app-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .app-card:hover { border-color: var(--accent); }
+
+        .app-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .app-name { font-weight: 600; font-size: 1.05rem; }
+        .app-repo { font-size: 0.75rem; color: var(--text-dim); font-family: monospace; margin-top: 3px; }
+
+        .badge {
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-healthy { background: rgba(108,255,160,0.12); color: var(--success); }
+        .badge-degraded { background: rgba(255,214,108,0.12); color: var(--warning); }
+        .badge-deploying { background: var(--accent-glow); color: var(--accent); }
+
+        .app-meta {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+            margin-bottom: 14px;
+        }
+
+        .env-row {
+            display: flex;
+            gap: 8px;
+            padding-top: 14px;
+            border-top: 1px solid var(--border);
+        }
+
+        .env-pill {
+            flex: 1;
+            text-align: center;
+            font-size: 0.72rem;
+            font-weight: 500;
+            padding: 7px 0;
+            border-radius: 6px;
+            background: var(--bg-input);
+            color: var(--text-dim);
+        }
+
+        .env-pill.live { border: 1px solid var(--success); color: var(--success); }
+        .env-pill.warn { border: 1px solid var(--warning); color: var(--warning); }
+        .env-pill.off  { border: 1px dashed #333; }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.75);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal {
+            background: var(--bg-card);
+            width: 560px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+            overflow: hidden;
+        }
+
+        .modal-head {
+            padding: 24px 28px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-head h2 { font-size: 1.15rem; font-weight: 600; }
+        .modal-head p { font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; }
+
+        .modal-body { padding: 28px; }
+        .modal-foot {
+            padding: 16px 28px;
+            background: var(--bg-dark);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .step-dots {
+            display: flex;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #333;
+        }
+
+        .dot.active { background: var(--accent); }
+        .dot.done { background: var(--success); }
+
+        /* Form */
+        .field { margin-bottom: 20px; }
+        .field label { display: block; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 6px; }
+
+        .field input {
+            width: 100%;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            padding: 11px 14px;
+            border-radius: 8px;
+            color: var(--text-main);
+            font-size: 0.9rem;
+            outline: none;
+        }
+
+        .field input:focus { border-color: var(--accent); }
+
+        .divider {
+            text-align: center;
+            color: #444;
+            font-size: 0.75rem;
+            margin: 16px 0;
+        }
+
+        /* Discovery */
+        .scan-line {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+            opacity: 0;
+            transform: translateY(6px);
+            transition: opacity 0.3s, transform 0.3s;
+        }
+
+        .scan-line.visible { opacity: 1; transform: translateY(0); }
+        .scan-line .icon { color: var(--success); }
+
+        .plan-box {
+            background: var(--bg-input);
+            border-radius: 10px;
+            padding: 18px;
+            margin-top: 20px;
+            border-left: 3px solid var(--accent);
+        }
+
+        .plan-box h4 {
+            color: var(--accent);
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+        }
+
+        .plan-step {
+            font-size: 0.82rem;
+            margin-bottom: 6px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .plan-step .check { color: var(--success); }
+
+        /* Progress */
+        .progress-bar-track {
+            width: 100%;
+            height: 6px;
+            background: var(--bg-input);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--success));
+            border-radius: 3px;
+            transition: width 0.6s ease;
+        }
+
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+            font-size: 0.85rem;
+            opacity: 0.3;
+            transition: opacity 0.3s;
+        }
+
+        .progress-step.active { opacity: 1; }
+        .progress-step.done { opacity: 1; color: var(--success); }
+
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid var(--accent);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .log-box {
+            margin-top: 16px;
+            background: #000;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #999;
+            height: 80px;
+            overflow: hidden;
+        }
+
+        .log-box div { margin-bottom: 3px; }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar">
+    <div class="logo">Bond</div>
+    <a class="nav-item"><span class="nav-icon">&#9881;</span> Agents</a>
+    <a class="nav-item"><span class="nav-icon">&#9993;</span> Channels</a>
+    <a class="nav-item active"><span class="nav-icon">&#9650;</span> Deploy</a>
+    <a class="nav-item"><span class="nav-icon">&#9776;</span> Settings</a>
+</div>
+
+<!-- Main Content: App Dashboard -->
+<div class="main">
+    <div class="page-header">
+        <div>
+            <h1>Your Apps</h1>
+            <p>Manage deployments across all environments</p>
+        </div>
+        <button class="btn btn-primary" onclick="openWizard()">Ship New App</button>
+    </div>
+
+    <div class="app-grid">
+        <div class="app-card">
+            <div class="app-top">
+                <div>
+                    <div class="app-name">ecoinspector-portal</div>
+                    <div class="app-repo">github.com/bond-ai/ecoinspector</div>
+                </div>
+                <span class="badge badge-healthy">Healthy</span>
+            </div>
+            <div class="app-meta">Last deploy: 2h ago &middot; 42s build</div>
+            <div class="env-row">
+                <div class="env-pill live">Dev</div>
+                <div class="env-pill live">Staging</div>
+                <div class="env-pill live">Prod</div>
+            </div>
+        </div>
+
+        <div class="app-card">
+            <div class="app-top">
+                <div>
+                    <div class="app-name">bond-gateway</div>
+                    <div class="app-repo">github.com/bond-ai/gateway</div>
+                </div>
+                <span class="badge badge-degraded">Degraded</span>
+            </div>
+            <div class="app-meta">Last deploy: 1d ago &middot; Staging unhealthy</div>
+            <div class="env-row">
+                <div class="env-pill live">Dev</div>
+                <div class="env-pill warn">Staging</div>
+                <div class="env-pill live">Prod</div>
+            </div>
+        </div>
+
+        <div class="app-card">
+            <div class="app-top">
+                <div>
+                    <div class="app-name">analytics-worker</div>
+                    <div class="app-repo">github.com/bond-ai/analytics</div>
+                </div>
+                <span class="badge badge-deploying">Deploying</span>
+            </div>
+            <div class="app-meta">Deploy in progress... started 30s ago</div>
+            <div class="env-row">
+                <div class="env-pill live">Dev</div>
+                <div class="env-pill live">Staging</div>
+                <div class="env-pill off">Prod</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Wizard Modal -->
+<div id="wizard-overlay" class="modal-overlay hidden">
+    <div class="modal">
+
+        <!-- Step 1: Connect -->
+        <div id="step-connect">
+            <div class="modal-head">
+                <h2>Ship New App</h2>
+                <p>Connect your code or server. Bond handles the rest.</p>
+                <div class="step-dots">
+                    <div class="dot active"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="field">
+                    <label>Repository URL</label>
+                    <input type="text" id="repo-url" placeholder="https://github.com/user/my-app">
+                </div>
+                <div class="divider">&mdash; or &mdash;</div>
+                <div class="field">
+                    <label>Server Address</label>
+                    <input type="text" placeholder="10.0.1.50">
+                </div>
+            </div>
+            <div class="modal-foot">
+                <button class="btn btn-ghost" onclick="closeWizard()">Cancel</button>
+                <button class="btn btn-primary" onclick="startDiscovery()">Discover &rarr;</button>
+            </div>
+        </div>
+
+        <!-- Step 2: Magic Discovery -->
+        <div id="step-discover" class="hidden">
+            <div class="modal-head">
+                <h2>Magic Discovery</h2>
+                <p>Bond is scanning your project...</p>
+                <div class="step-dots">
+                    <div class="dot done"></div>
+                    <div class="dot active"></div>
+                    <div class="dot"></div>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="scan-line" id="scan-1"><span class="icon">&#10003;</span> Cloned repository</div>
+                <div class="scan-line" id="scan-2"><span class="icon">&#10003;</span> Detected <strong>Next.js 14</strong> application</div>
+                <div class="scan-line" id="scan-3"><span class="icon">&#10003;</span> Found <strong>Dockerfile</strong> (multi-stage build)</div>
+                <div class="scan-line" id="scan-4"><span class="icon">&#10003;</span> Found <strong>.env.example</strong> (3 variables)</div>
+                <div class="scan-line" id="scan-5"><span class="icon">&#10003;</span> Located target server from workspace config</div>
+
+                <div class="plan-box" id="plan-box" style="opacity:0; transition: opacity 0.4s;">
+                    <h4>Deployment Plan</h4>
+                    <div class="plan-step"><span class="check">&#10003;</span> Create Production deployment agent</div>
+                    <div class="plan-step"><span class="check">&#10003;</span> Build Docker image from Dockerfile</div>
+                    <div class="plan-step"><span class="check">&#10003;</span> Deploy to <strong>prod-web-01</strong> (10.0.1.50)</div>
+                    <div class="plan-step"><span class="check">&#10003;</span> Expose on port 3000</div>
+                    <div class="plan-step"><span class="check">&#10003;</span> Enable health monitoring (30s interval)</div>
+                </div>
+            </div>
+            <div class="modal-foot">
+                <button class="btn btn-ghost" onclick="backToConnect()">&#8592; Back</button>
+                <button class="btn btn-success" id="ship-btn" style="opacity:0.4; pointer-events:none;" onclick="startShip()">Ship It!</button>
+            </div>
+        </div>
+
+        <!-- Step 3: Ship It -->
+        <div id="step-ship" class="hidden">
+            <div class="modal-head">
+                <h2 id="ship-title">Shipping your app...</h2>
+                <p id="ship-subtitle">Bond is orchestrating the deployment</p>
+                <div class="step-dots">
+                    <div class="dot done"></div>
+                    <div class="dot done"></div>
+                    <div class="dot active"></div>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progress-fill" style="width: 0%;"></div>
+                </div>
+
+                <div class="progress-step done" id="ps-1">
+                    <span style="color:var(--success)">&#10003;</span>
+                    <span>Created deployment agent</span>
+                </div>
+                <div class="progress-step active" id="ps-2">
+                    <div class="spinner" id="ps-2-spin"></div>
+                    <span id="ps-2-text">Building Docker image...</span>
+                </div>
+                <div class="progress-step" id="ps-3">
+                    <span style="width:16px"></span>
+                    <span>Deploying to prod-web-01</span>
+                </div>
+                <div class="progress-step" id="ps-4">
+                    <span style="width:16px"></span>
+                    <span>Verifying health</span>
+                </div>
+                <div class="progress-step" id="ps-5">
+                    <span style="width:16px"></span>
+                    <span>Enabling monitoring</span>
+                </div>
+
+                <div class="log-box">
+                    <div>&gt; docker build -t my-app:latest .</div>
+                    <div>&gt; Step 1/8 : FROM node:18-alpine</div>
+                    <div>&gt; Step 2/8 : WORKDIR /app</div>
+                    <div style="color: var(--accent)">&gt; Installing dependencies...</div>
+                </div>
+            </div>
+            <div class="modal-foot">
+                <div></div>
+                <button class="btn btn-primary hidden" id="done-btn" onclick="closeWizard()">View App &rarr;</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function openWizard() {
+        document.getElementById('wizard-overlay').classList.remove('hidden');
+        resetWizard();
+    }
+
+    function closeWizard() {
+        document.getElementById('wizard-overlay').classList.add('hidden');
+    }
+
+    function resetWizard() {
+        document.getElementById('step-connect').classList.remove('hidden');
+        document.getElementById('step-discover').classList.add('hidden');
+        document.getElementById('step-ship').classList.add('hidden');
+    }
+
+    function backToConnect() {
+        document.getElementById('step-discover').classList.add('hidden');
+        document.getElementById('step-connect').classList.remove('hidden');
+    }
+
+    function startDiscovery() {
+        document.getElementById('step-connect').classList.add('hidden');
+        document.getElementById('step-discover').classList.remove('hidden');
+
+        // Reset
+        for (let i = 1; i <= 5; i++) {
+            document.getElementById('scan-' + i).classList.remove('visible');
+        }
+        document.getElementById('plan-box').style.opacity = '0';
+        const shipBtn = document.getElementById('ship-btn');
+        shipBtn.style.opacity = '0.4';
+        shipBtn.style.pointerEvents = 'none';
+
+        // Animate scan lines
+        const delays = [300, 800, 1300, 1700, 2100];
+        delays.forEach((d, i) => {
+            setTimeout(() => {
+                document.getElementById('scan-' + (i + 1)).classList.add('visible');
+            }, d);
+        });
+
+        // Show plan
+        setTimeout(() => {
+            document.getElementById('plan-box').style.opacity = '1';
+            shipBtn.style.opacity = '1';
+            shipBtn.style.pointerEvents = 'auto';
+        }, 2700);
+    }
+
+    function startShip() {
+        document.getElementById('step-discover').classList.add('hidden');
+        document.getElementById('step-ship').classList.remove('hidden');
+
+        const fill = document.getElementById('progress-fill');
+        fill.style.width = '20%';
+
+        // Step 2: build complete
+        setTimeout(() => {
+            fill.style.width = '45%';
+            completeStep('ps-2');
+            activateStep('ps-3');
+        }, 2000);
+
+        // Step 3: deploy complete
+        setTimeout(() => {
+            fill.style.width = '70%';
+            completeStep('ps-3');
+            activateStep('ps-4');
+        }, 3500);
+
+        // Step 4: health
+        setTimeout(() => {
+            fill.style.width = '85%';
+            completeStep('ps-4');
+            activateStep('ps-5');
+        }, 4500);
+
+        // Step 5: monitoring + done
+        setTimeout(() => {
+            fill.style.width = '100%';
+            completeStep('ps-5');
+            document.getElementById('ship-title').textContent = 'App Shipped!';
+            document.getElementById('ship-subtitle').textContent = 'Your app is live and monitored';
+            document.getElementById('done-btn').classList.remove('hidden');
+        }, 5500);
+    }
+
+    function completeStep(id) {
+        const el = document.getElementById(id);
+        el.classList.remove('active');
+        el.classList.add('done');
+        const spinner = el.querySelector('.spinner');
+        if (spinner) spinner.outerHTML = '<span style="color:var(--success)">&#10003;</span>';
+    }
+
+    function activateStep(id) {
+        const el = document.getElementById(id);
+        el.classList.add('active');
+        el.children[0].outerHTML = '<div class="spinner"></div>';
+    }
+</script>
+</body>
+</html>
