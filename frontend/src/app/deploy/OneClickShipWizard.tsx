@@ -177,7 +177,7 @@ function DiscoveryStep({
     (async () => {
       try {
         setScanning(true);
-        const res = await fetch(`${GATEWAY_API}/deployments/generate-plan`, {
+        const res = await fetch(`${GATEWAY_API}/api/deploy/generate-plan`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(connectData),
@@ -409,7 +409,7 @@ const ws: Record<string, React.CSSProperties> = {
 
   scanning: { textAlign: "center", padding: "48px 20px" },
   spinner: {
-    width: "40px", height: "40px", border: "3px solid #2a2a3e", borderTopColor: "#6c8aff",
+    width: "40px", height: "40px", borderWidth: "3px", borderStyle: "solid", borderColor: "#2a2a3e", borderTopColor: "#6c8aff",
     borderRadius: "50%", margin: "0 auto 16px", animation: "spin 1s linear infinite",
   },
   scanText: { fontSize: "1rem", color: "#e0e0e8", margin: "0 0 4px 0" },

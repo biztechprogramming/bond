@@ -225,7 +225,7 @@ const s: Record<string, React.CSSProperties> = {
   dot: { width: "6px", height: "6px", borderRadius: "50%", display: "inline-block" },
   tabBar: { display: "flex", borderBottom: "1px solid #1e1e2e", marginBottom: "16px" },
   tab: {
-    background: "none", border: "none", borderBottom: "2px solid transparent",
+    background: "none", borderWidth: "0 0 2px 0", borderStyle: "solid", borderColor: "transparent",
     color: "#8888a0", padding: "10px 16px", fontSize: "0.85rem", fontWeight: 500, cursor: "pointer",
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
@@ -237,7 +237,7 @@ const s: Record<string, React.CSSProperties> = {
   detailLabel: { color: "#8888a0", fontWeight: 500 },
   envBinding: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #1e1e2e", fontSize: "0.9rem" },
   operatorBtn: {
-    backgroundColor: "#1e1e2e", color: "#8888a0", border: "1px solid #2a2a3e", borderRadius: "8px",
+    backgroundColor: "#1e1e2e", color: "#8888a0", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
     padding: "6px 12px", fontSize: "0.85rem", cursor: "pointer",
   },
   operatorBtnActive: { borderColor: "#6c8aff", color: "#6c8aff", backgroundColor: "rgba(108,138,255,0.1)" },
