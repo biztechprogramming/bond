@@ -244,8 +244,8 @@ async def handle_file_edit(
         content = stdout.decode("utf-8", errors="replace")
 
         for i, edit in enumerate(edits):
-            old_text = edit.get("old_text", "")
-            new_text = edit.get("new_text", "")
+            old_text = edit.get("old_text", "") or edit.get("oldText", "")
+            new_text = edit.get("new_text", "") or edit.get("newText", "")
             if not old_text:
                 return {"error": f"Edit {i}: old_text is required and must be non-empty"}
             count = content.count(old_text)
@@ -293,8 +293,8 @@ async def handle_file_edit(
         content = resolved.read_text(encoding="utf-8", errors="replace")
 
         for i, edit in enumerate(edits):
-            old_text = edit.get("old_text", "")
-            new_text = edit.get("new_text", "")
+            old_text = edit.get("old_text", "") or edit.get("oldText", "")
+            new_text = edit.get("new_text", "") or edit.get("newText", "")
             if not old_text:
                 return {"error": f"Edit {i}: old_text is required and must be non-empty"}
             count = content.count(old_text)
