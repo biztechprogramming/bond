@@ -617,17 +617,35 @@ async def _run_agent_loop(
 
     # Determine if the primary model supports Anthropic prompt caching
     _is_anthropic_model = resolver.resolve_provider(model) == "anthropic"
+    _is_oauth = "extra_headers" in extra_kwargs and resolver.is_oauth_token(
+        extra_kwargs.get("api_key", "")
+    )
 
     # Build messages with distilled context
     # Breakpoint 1: system prompt — cached across turns and tool loops
     if _is_anthropic_model:
+        system_content: list[dict] = []
+
+        # Claude Max OAuth tokens require the Claude Code identity prefix
+        # for Sonnet/Opus models.  Without it the API returns 400.
+        # Ref: pi-ai buildParams() in @mariozechner/pi-ai providers/anthropic.js
+        if _is_oauth:
+            from backend.app.core.oauth import OAUTH_SYSTEM_PROMPT_PREFIX
+            system_content.append({
+                "type": "text",
+                "text": OAUTH_SYSTEM_PROMPT_PREFIX,
+                "cache_control": {"type": "ephemeral"},
+            })
+
+        system_content.append({
+            "type": "text",
+            "text": full_system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        })
+
         messages: list[dict] = [{
             "role": "system",
-            "content": [{
-                "type": "text",
-                "text": full_system_prompt,
-                "cache_control": {"type": "ephemeral"},
-            }],
+            "content": system_content,
         }]
     else:
         messages: list[dict] = [{"role": "system", "content": full_system_prompt}]

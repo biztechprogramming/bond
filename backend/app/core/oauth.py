@@ -37,6 +37,14 @@ OAUTH_EXTRA_HEADERS: dict[str, str] = {
     "anthropic-dangerous-direct-browser-access": "true",
 }
 
+# System prompt identity prefix required by the Anthropic API for Claude Max
+# OAuth tokens when calling Sonnet/Opus models.  Without this prefix the API
+# returns 400 invalid_request_error.  Must stay in sync with pi-ai's
+# buildParams() in @mariozechner/pi-ai/dist/providers/anthropic.js.
+OAUTH_SYSTEM_PROMPT_PREFIX = (
+    "You are Claude Code, Anthropic's official CLI for Claude."
+)
+
 
 # ---------------------------------------------------------------------------
 # Detection helpers
