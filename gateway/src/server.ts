@@ -244,7 +244,8 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   app.get("/api/v1/container/branch", async (req: any, res: any) => {
     try {
       const agentId = req.query?.agent_id as string | undefined;
-      const { workerUrl, containerId } = await resolveWorkerUrl(agentId);
+      const { workerUrl, containerId: resolvedId } = await resolveWorkerUrl(agentId);
+      const containerId = agentId || resolvedId;
       const branch = branchManager.getPreference(containerId);
       const status = await branchManager.getWorkerStatus(workerUrl || undefined);
       res.json({
@@ -266,7 +267,10 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
       if (!branch || typeof branch !== "string") {
         return res.status(400).json({ error: "branch is required" });
       }
-      const { workerUrl, containerId } = await resolveWorkerUrl(agentId);
+      const { workerUrl, containerId: resolvedId } = await resolveWorkerUrl(agentId);
+      // Use agent_id as the preference key even if resolve failed —
+      // falling back to "default" would save the preference under the wrong key.
+      const containerId = agentId || resolvedId;
       const result = await branchManager.setPreference(
         containerId,
         branch,

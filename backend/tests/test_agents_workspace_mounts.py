@@ -151,7 +151,7 @@ class FakeStdb:
                 "id", "agent_id", "host_path", "mount_name", "container_path", "readonly",
             },
             "agent_channels": {
-                "agent_id", "channel", "enabled", "sandbox_override",
+                "id", "agent_id", "channel", "enabled", "sandbox_override", "created_at",
             },
         }
         expected = schemas.get(table)

@@ -14,6 +14,14 @@ from typing import Any
 
 import httpx
 
+from backend.app.sandbox.workspace_cloner import (
+    cleanup_workspace_clones,
+    detect_workspace_type,
+    execute_clone_plan,
+    generate_clone_plan,
+    generate_dep_install_script,
+)
+
 logger = logging.getLogger("bond.sandbox.manager")
 
 # Port range for containerized worker agents (design doc §15.1)
@@ -234,13 +242,15 @@ class SandboxManager:
             )
             return None
 
-        # Restore tracking
+        # Restore tracking (include mounts/config so next ensure_running()
+        # doesn't falsely detect "mounts changed" and destroy the container)
         self._port_map[key] = host_port
         self._containers[key] = {
             "container_id": container_id,
             "worker_url": worker_url,
             "worker_port": host_port,
             "last_used": time.time(),
+            # Populated by caller after recovery — see ensure_running()
         }
         logger.info(
             "Recovered running container %s for agent %s (port=%d)",
@@ -277,9 +287,12 @@ class SandboxManager:
         lock = self._get_agent_lock(key)
 
         async with lock:
-            # Normalize current mounts for comparison
+            # Normalize current mounts for comparison.
+            # Coerce None → '' in mount dicts so None/empty-string differences
+            # from the database don't cause spurious "mounts changed" rebuilds.
             current_mounts = sorted(
-                [repr(m) for m in agent.get("workspace_mounts", [])],
+                [repr({k: (v if v is not None else '') for k, v in m.items()})
+                 for m in agent.get("workspace_mounts", [])],
             )
 
             # Config fingerprint: detect model/utility_model/api_key changes so we
@@ -302,15 +315,16 @@ class SandboxManager:
                 tracked_config = info.get("config_fingerprint", "")
 
                 # If mounts or model config changed, destroy and recreate
+                # Keep clones — they'll be refreshed (not re-cloned) by the new container
                 if tracked_mounts != current_mounts:
                     logger.info("Agent %s mounts changed, recreating worker container %s", agent_id, key)
-                    await self.destroy_agent_container(agent_id)
+                    await self.destroy_agent_container(agent_id, keep_clones=True)
                 elif tracked_config and tracked_config != current_config_fingerprint:
                     logger.info(
                         "Agent %s config changed (was: %s, now: %s), recreating worker container %s",
                         agent_id, tracked_config, current_config_fingerprint, key,
                     )
-                    await self.destroy_agent_container(agent_id)
+                    await self.destroy_agent_container(agent_id, keep_clones=True)
                 elif await self._is_running(cid):
                     try:
                         await self._wait_for_health(worker_url, agent_id, cid, timeout=5.0)
@@ -321,20 +335,22 @@ class SandboxManager:
                             "Worker unhealthy in running container %s for agent %s, destroying",
                             cid, agent_id,
                         )
-                        await self.destroy_agent_container(agent_id)
+                        await self.destroy_agent_container(agent_id, keep_clones=True)
                 else:
                     logger.warning(
                         "Container %s for agent %s died, recreating",
                         cid, agent_id,
                     )
-                    await self.destroy_agent_container(agent_id)
+                    await self.destroy_agent_container(agent_id, keep_clones=True)
                 # Fall through to create new container
             else:
                 # Not in memory — check Docker directly (e.g., after backend restart)
                 existing = await self._recover_existing_container(key, agent_id)
                 if existing:
-                    # Store config fingerprint so future model changes are detected
+                    # Store mounts + config fingerprint so future ensure_running()
+                    # calls don't falsely detect changes and destroy the container
                     if key in self._containers:
+                        self._containers[key]["mounts"] = current_mounts
                         self._containers[key]["config_fingerprint"] = current_config_fingerprint
                     return existing
 
@@ -345,7 +361,7 @@ class SandboxManager:
                 port = self._allocate_port(key)
                 config_path = self._write_agent_config(agent)
 
-                container_id = await self._create_worker_container(
+                container_id, clone_info, dep_script = await self._create_worker_container(
                     agent, key, port, config_path,
                 )
                 worker_url = f"http://localhost:{port}"
@@ -358,6 +374,9 @@ class SandboxManager:
                     "last_used": time.time(),
                     "mounts": current_mounts,
                     "config_fingerprint": current_config_fingerprint,
+                    "clone_info": clone_info,
+                    "dep_install_script": dep_script,
+                    "deps_installed": False,
                 }
 
                 # Wait for health
@@ -377,6 +396,52 @@ class SandboxManager:
                 if config_path:
                     self._delete_agent_config(agent_id)
                 raise
+
+    # ------------------------------------------------------------------
+    # Lazy dependency installation
+    # ------------------------------------------------------------------
+
+    async def ensure_deps_installed(self, agent_key_or_id: str) -> dict:
+        """Install workspace dependencies if not already done.
+
+        Looks up the container by key suffix (agent_id) or exact key.
+        Returns {"installed": bool, "output": str}.
+        """
+        # Find matching container tracking entry
+        key = None
+        for k in self._containers:
+            if k == agent_key_or_id or k.endswith(agent_key_or_id):
+                key = k
+                break
+
+        if key is None:
+            return {"installed": False, "output": "No container found"}
+
+        info = self._containers[key]
+
+        if info.get("deps_installed", False):
+            return {"installed": False, "output": "Already installed"}
+
+        script = info.get("dep_install_script")
+        if not script:
+            return {"installed": False, "output": "No dependencies detected"}
+
+        container_id = info["container_id"]
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", container_id, "sh", "-c", script,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        output = (stdout + stderr).decode(errors="replace")
+
+        if proc.returncode == 0:
+            self._containers[key]["deps_installed"] = True
+            logger.info("Installed dependencies in container %s", container_id)
+            return {"installed": True, "output": output}
+        else:
+            logger.warning("Dependency install failed in %s: %s", container_id, output)
+            return {"installed": False, "output": output}
 
     # ------------------------------------------------------------------
     # Shared retry helper for docker run
@@ -537,16 +602,93 @@ class SandboxManager:
             )
             cmd.extend(["-v", f"{bond_volume}:/bond:rw"])
 
-        # Workspace mounts
+        # Workspace mounts — clone for concurrency (Design Doc 057)
+        # Parallel cloning: detect all → plan all → execute all in parallel → mount all
         workspace_mounts = agent.get("workspace_mounts", [])
+        clone_info: list[dict] = []
+        dep_install_script: str | None = None
         logger.info("Agent %s workspace_mounts: %s", agent_id, workspace_mounts)
         if workspace_mounts:
+            # Parse mount configs
+            mount_configs = []
             for mount in workspace_mounts:
                 host_path = os.path.expanduser(mount.get("host_path", ""))
                 mount_name = mount.get("mount_name", "workspace")
                 container_path = mount.get("container_path") or f"/workspace/{mount_name}"
                 readonly = mount.get("readonly", False)
-                mount_str = f"{host_path}:{container_path}"
+                mount_configs.append((host_path, mount_name, container_path, readonly))
+
+            # Phase 1: Detect workspace types in parallel
+            rw_mounts = [(i, hp, mn) for i, (hp, mn, _cp, ro) in enumerate(mount_configs) if not ro]
+            detections: dict[int, dict] = {}
+            if rw_mounts:
+                detect_results = await asyncio.gather(
+                    *[detect_workspace_type(hp) for _, hp, _ in rw_mounts],
+                    return_exceptions=True,
+                )
+                for (idx, _hp, _mn), result in zip(rw_mounts, detect_results):
+                    if not isinstance(result, Exception):
+                        detections[idx] = result
+
+            # Phase 2: Generate clone plans
+            plans: dict[int, object] = {}
+            plan_coros = []
+            plan_indices = []
+            for idx, detection in detections.items():
+                hp, mn, _cp, _ro = mount_configs[idx]
+                plan_coros.append(generate_clone_plan(hp, agent_id, mn, detection))
+                plan_indices.append(idx)
+            if plan_coros:
+                plan_results = await asyncio.gather(*plan_coros, return_exceptions=True)
+                for idx, result in zip(plan_indices, plan_results):
+                    if not isinstance(result, Exception):
+                        plans[idx] = result
+
+            # Phase 3: Execute all clone plans in parallel
+            exec_coros = []
+            exec_indices = []
+            for idx, plan in plans.items():
+                if not plan.direct_mount:
+                    exec_coros.append(execute_clone_plan(plan))
+                    exec_indices.append(idx)
+            if exec_coros:
+                exec_results = await asyncio.gather(*exec_coros, return_exceptions=True)
+                for idx, result in zip(exec_indices, exec_results):
+                    if isinstance(result, Exception):
+                        hp = mount_configs[idx][0]
+                        raise RuntimeError(
+                            f"Workspace clone failed for {hp} — refusing to start container "
+                            f"with wrong mount. Fix the clone source or remove the workspace mount. "
+                            f"Original error: {result}"
+                        )
+
+            # Phase 4: Build mount commands with resolved paths
+            for i, (host_path, mount_name, container_path, readonly) in enumerate(mount_configs):
+                effective_host_path = host_path
+                if i in plans and not plans[i].direct_mount:
+                    plan = plans[i]
+                    if plan.clone_base:
+                        effective_host_path = plan.clone_base
+                    clone_info.append({
+                        "mount_name": mount_name,
+                        "original_path": host_path,
+                        "clone_path": effective_host_path,
+                        "case": plan.case,
+                    })
+                    logger.info(
+                        "Agent %s: cloned workspace %s (case %d) -> %s",
+                        agent_id, host_path, plan.case, effective_host_path,
+                    )
+                    # Generate dep install script from the first cloned workspace
+                    if dep_install_script is None:
+                        dep_install_script = generate_dep_install_script(effective_host_path)
+                elif i in detections and i in plans and plans[i].direct_mount:
+                    logger.info(
+                        "Agent %s: direct mount for %s (case %d, needs prompt)",
+                        agent_id, host_path, detections[i]["case"],
+                    )
+
+                mount_str = f"{effective_host_path}:{container_path}"
                 if readonly:
                     mount_str += ":ro"
                 logger.info("Agent %s mounting: %s", agent_id, mount_str)
@@ -603,7 +745,7 @@ class SandboxManager:
             container_id, agent_id, port, sandbox_image,
         )
 
-        return container_id
+        return container_id, clone_info, dep_install_script
 
     def _agent_data_dir(self, agent_id: str) -> Path:
         """Return the host-side data directory for an agent."""
@@ -641,9 +783,10 @@ class SandboxManager:
         agent_name: str,
         key: str,
     ) -> str:
-        # Normalize current mounts for comparison
+        # Normalize current mounts for comparison (coerce None → '')
         current_mounts = sorted(
-            [repr(m) for m in (workspace_mounts or [])],
+            [repr({k: (v if v is not None else '') for k, v in m.items()})
+             for m in (workspace_mounts or [])],
         )
 
         # Check if already tracked and running
@@ -757,11 +900,15 @@ class SandboxManager:
     # Cleanup lifecycle (Task 9)
     # ------------------------------------------------------------------
 
-    async def destroy_agent_container(self, agent_id: str) -> bool:
+    async def destroy_agent_container(
+        self, agent_id: str, *, keep_clones: bool = False,
+    ) -> bool:
         """Destroy the sandbox container for an agent.
 
         Releases port, deletes config file, removes tracking.
         Docker volume persists by design (agent data survives restarts).
+        If *keep_clones* is True, workspace clones are preserved (useful
+        when the container will be immediately recreated with the same mounts).
         Returns True if a container was destroyed.
         """
         # Find the container key — could be any name, but ends with agent_id
@@ -801,6 +948,13 @@ class SandboxManager:
 
         # Remove per-agent lock
         self._agent_locks.pop(key, None)
+
+        # Clean up workspace clones (skip if container will be immediately recreated)
+        if not keep_clones:
+            try:
+                await cleanup_workspace_clones(agent_id)
+            except Exception as e:
+                logger.warning("Failed to clean up workspace clones for agent %s: %s", agent_id, e)
 
         # Find and destroy the Docker container
         proc = await asyncio.create_subprocess_exec(

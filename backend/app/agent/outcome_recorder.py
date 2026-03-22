@@ -148,8 +148,14 @@ class OutcomeRecorder:
             from backend.app.agent.optimizer import run_analysis
             from backend.app.agent.tools.skills import _router_settings
             from backend.app.foundations.embeddings.engine import EmbeddingEngine
+            if not _router_settings:
+                logger.error(
+                    "Cannot run optimization analysis: embedding settings not loaded. "
+                    "Configure embedding in Settings → Embedding tab."
+                )
+                return
             engine = EmbeddingEngine(
-                settings=_router_settings or {"embedding.provider": "local"},
+                settings=_router_settings,
                 db_engine=None,
             )
             await run_analysis(self.agent_db, engine)

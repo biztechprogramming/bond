@@ -62,7 +62,7 @@ class MCPConnection:
                 logger.info(f"Stopping MCP server: {self.config.name}")
                 try:
                     await asyncio.wait_for(self._exit_stack.aclose(), timeout=2.0)
-                except (asyncio.TimeoutError, Exception) as e:
+                except BaseException as e:
                     logger.debug(f"Non-critical cleanup error for {self.config.name}: {e}")
                 self.session = None
                 self._exit_stack = AsyncExitStack()
