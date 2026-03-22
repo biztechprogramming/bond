@@ -60,7 +60,7 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
 
   useEffect(() => {
     // Start deployment execution via SSE
-    const url = `${GATEWAY_API}/api/deploy/execute-plan`;
+    const url = `${GATEWAY_API}/deployments/execute-plan`;
 
     try {
       // Use fetch + ReadableStream for POST SSE (EventSource only supports GET)

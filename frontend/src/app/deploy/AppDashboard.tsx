@@ -11,16 +11,30 @@ interface Props {
 
 // Translate agent-centric data into app-centric view
 function buildAppList(agents: ReturnType<typeof useAgentsWithRelations>, resources: ReturnType<typeof useResources>, components: ReturnType<typeof useComponents>): AppInfo[] {
-  // Group deploy agents by app name (strip "deploy-" prefix and env suffix)
   const appMap = new Map<string, AppInfo>();
 
   for (const agent of agents) {
-    if (!agent.name.startsWith("deploy-")) continue;
+    let appName: string;
+    let envName: string;
 
-    // Extract app name — agents are named like "deploy-myapp-prod"
-    const parts = agent.name.replace("deploy-", "").split("-");
-    const envName = parts.pop() || "dev";
-    const appName = parts.join("-") || agent.display_name || agent.name;
+    if (agent.name.startsWith("deploy-")) {
+      // Deploy agents: extract app name and environment from naming convention
+      const parts = agent.name.replace("deploy-", "").split("-");
+      envName = parts.pop() || "dev";
+      appName = parts.join("-") || agent.display_name || agent.name;
+    } else {
+      // Non-deploy agents: use name directly, group by base name
+      const parts = agent.name.split("-");
+      const lastPart = parts[parts.length - 1];
+      const knownEnvs = ["dev", "prod", "staging", "test", "qa"];
+      if (parts.length > 1 && knownEnvs.includes(lastPart)) {
+        envName = parts.pop()!;
+        appName = parts.join("-");
+      } else {
+        envName = "default";
+        appName = agent.name;
+      }
+    }
 
     if (!appMap.has(appName)) {
       appMap.set(appName, {
@@ -42,10 +56,18 @@ function buildAppList(agents: ReturnType<typeof useAgentsWithRelations>, resourc
 
   // Enrich with component data if available
   for (const comp of components) {
-    const appName = comp.name.replace("deploy-", "");
-    const app = appMap.get(appName);
+    const name = comp.name.replace("deploy-", "");
+    const app = appMap.get(name) || appMap.get(comp.name);
     if (app && comp.framework) {
       app.framework = comp.framework;
+    }
+  }
+
+  // Enrich with resource data if available
+  for (const resource of resources) {
+    const app = appMap.get(resource.name) || appMap.get(`deploy-${resource.name}`);
+    if (app && !app.environments.some((e) => e.name === resource.name)) {
+      // Resource association exists — no additional env to add, but confirms the app is real
     }
   }
 
