@@ -402,6 +402,256 @@ async def test_opus_succeeds_with_claude_code_identity(oauth_token: str):
 
 
 @pytest.mark.asyncio
+async def test_cancellable_llm_call_with_tool_history(oauth_token: str):
+    """Simulate _cancellable_llm_call with a realistic agent-loop payload.
+
+    Reproduces the scenario: Opus + OAuth + system prompt in Anthropic block
+    format + tool calls in history + tool results. This is what the agent loop
+    builds by the time a coding_agent tool call has been made and the next
+    LLM iteration fires.
+    """
+    import asyncio
+    import json
+    from backend.app.core.oauth import OAUTH_SYSTEM_PROMPT_PREFIX, ensure_oauth_system_prefix
+
+    print("\n  Building realistic agent-loop message payload...")
+
+    # 1. System message in Anthropic block format (as built by _run_agent_loop)
+    system_prompt = (
+        "You are a helpful AI assistant.\n\n"
+        "## Tools\nYou have access to tools for reading and writing files."
+    )
+    messages = [{
+        "role": "system",
+        "content": [
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}},
+        ],
+    }]
+
+    # 2. OAuth prefix injection (same as worker.py line 638-639)
+    extra_kwargs = {
+        "api_key": oauth_token,
+        "extra_headers": dict(OAUTH_EXTRA_HEADERS),
+    }
+    ensure_oauth_system_prefix(messages, extra_kwargs=extra_kwargs)
+    print(f"  System message has {len(messages[0]['content'])} content blocks")
+
+    # 3. Simulate conversation history with multiple turns
+    messages.append({"role": "user", "content": "Please create a coding agent to fix the bug."})
+    messages.append({
+        "role": "assistant",
+        "content": "I'll create a coding agent to fix that bug.",
+        "tool_calls": [{
+            "id": "call_001",
+            "type": "function",
+            "function": {
+                "name": "coding_agent",
+                "arguments": json.dumps({"task": "Fix the bug in auth.py", "working_directory": "/tmp"}),
+            },
+        }],
+    })
+    messages.append({
+        "role": "tool",
+        "tool_call_id": "call_001",
+        "content": json.dumps({
+            "status": "started",
+            "agent_type": "claude-code",
+            "working_directory": "/tmp",
+            "baseline_commit": "abc12345",
+            "message": "Coding agent (claude-code) started in /tmp.",
+        }),
+    })
+
+    # 4. Add a few more turns to simulate depth (52 messages in the real error)
+    for i in range(5):
+        messages.append({"role": "user", "content": f"SYSTEM: Turn {i+2}/10 budget note"})
+        messages.append({
+            "role": "assistant",
+            "content": f"Continuing analysis, iteration {i+2}.",
+            "tool_calls": [{
+                "id": f"call_{i+10:03d}",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": json.dumps({"path": f"/tmp/file{i}.py"}),
+                },
+            }],
+        })
+        messages.append({
+            "role": "tool",
+            "tool_call_id": f"call_{i+10:03d}",
+            "content": json.dumps({"content": f"# File {i} content\ndef func_{i}(): pass\n", "path": f"/tmp/file{i}.py"}),
+        })
+
+    # Final user message that triggers the failing LLM call
+    messages.append({"role": "user", "content": "What's the status of the coding agent?"})
+
+    print(f"  Total messages: {len(messages)}")
+    print(f"  Model: anthropic/claude-opus-4-6")
+
+    # 5. Tool definitions (simplified but valid)
+    tool_defs = [
+        {
+            "type": "function",
+            "function": {
+                "name": "coding_agent",
+                "description": "Spawn a background coding agent.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string"},
+                        "working_directory": {"type": "string"},
+                    },
+                    "required": ["task", "working_directory"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        },
+    ]
+
+    # 6. Call litellm.acompletion exactly as _cancellable_llm_call does
+    #    (_cancellable_llm_call is just: litellm.acompletion(**kwargs) with interrupt support)
+    try:
+        response = await litellm.acompletion(
+            model="anthropic/claude-opus-4-6",
+            messages=messages,
+            tools=tool_defs,
+            temperature=0.7,
+            max_tokens=8192,
+            **extra_kwargs,
+        )
+
+        assert response is not None, "Expected a response from litellm.acompletion"
+        content = response.choices[0].message.content
+        print(f"  Response: {(content or '')[:100]}")
+        print("  ✅ Realistic agent-loop payload succeeded")
+    except Exception as e:
+        print(f"  ❌ FAILED: {type(e).__name__}: {e}")
+        raise
+
+
+@pytest.mark.asyncio
+async def test_cancellable_with_model_dump_and_lifecycle(oauth_token: str):
+    """Simulate with model_dump() output and lifecycle injection.
+
+    model_dump() includes null fields (function_call: null, provider_specific_fields: null)
+    which might trip up litellm's Anthropic translation. Also tests lifecycle injection
+    appending to the OAuth prefix block (block 0), which is what happens in production.
+    """
+    import json
+    from backend.app.core.oauth import OAUTH_SYSTEM_PROMPT_PREFIX, ensure_oauth_system_prefix
+
+    print("\n  Building payload with model_dump() style messages + lifecycle injection...")
+
+    # 1. System prompt in Anthropic block format
+    system_prompt = "You are a helpful AI assistant with tools."
+    messages = [{
+        "role": "system",
+        "content": [
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}},
+        ],
+    }]
+
+    # 2. OAuth prefix injection
+    extra_kwargs = {
+        "api_key": oauth_token,
+        "extra_headers": dict(OAUTH_EXTRA_HEADERS),
+    }
+    ensure_oauth_system_prefix(messages, extra_kwargs=extra_kwargs)
+
+    # 3. Simulate lifecycle injection into the LAST text block (the actual system prompt)
+    #    The FIX: lifecycle must target the last text block, NOT block 0 (OAuth prefix).
+    #    Block 0 is "You are Claude Code..." which Anthropic's OAuth validation checks strictly.
+    for block in reversed(messages[0]["content"]):
+        if isinstance(block, dict) and block.get("type") == "text":
+            block["text"] += (
+                "\n\n## Current Phase: IMPLEMENTING\n"
+                "Focus on writing correct, tested code. Follow existing patterns."
+            )
+            break
+    print(f"  Block 0 (OAuth prefix) untouched: {messages[0]['content'][0]['text'][:60]!r}")
+    print(f"  Block 1 (system prompt) has lifecycle: {'IMPLEMENTING' in messages[0]['content'][1]['text']}")
+
+    # 4. Build 50+ messages using model_dump()-style dicts (with null fields)
+    messages.append({"role": "user", "content": "Fix the authentication bug in auth.py"})
+
+    for i in range(24):
+        # Assistant message in model_dump() format (includes null fields)
+        messages.append({
+            "content": f"I'll read file{i}.py to understand the code." if i % 3 != 2 else None,
+            "role": "assistant",
+            "tool_calls": [{
+                "function": {
+                    "arguments": json.dumps({"path": f"/tmp/file{i}.py"}),
+                    "name": "read_file",
+                },
+                "id": f"call_{i:03d}",
+                "type": "function",
+            }],
+            "function_call": None,  # model_dump() includes this
+            "provider_specific_fields": None,  # model_dump() includes this
+        })
+        # Tool result
+        messages.append({
+            "role": "tool",
+            "tool_call_id": f"call_{i:03d}",
+            "content": json.dumps({
+                "content": f"def func_{i}():\n    return {i}\n",
+                "path": f"/tmp/file{i}.py",
+            }),
+        })
+
+    # Final user message
+    messages.append({"role": "user", "content": "Now fix the bug."})
+
+    print(f"  Total messages: {len(messages)}")
+
+    tool_defs = [{
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        },
+    }]
+
+    try:
+        response = await litellm.acompletion(
+            model="anthropic/claude-opus-4-6",
+            messages=messages,
+            tools=tool_defs,
+            temperature=0.7,
+            max_tokens=8192,
+            **extra_kwargs,
+        )
+
+        content = response.choices[0].message.content
+        print(f"  Response: {(content or '')[:100]}")
+        print("  ✅ 50+ messages with model_dump() nulls + lifecycle injection succeeded")
+    except Exception as e:
+        print(f"  ❌ FAILED: {type(e).__name__}: {e}")
+        # Dump first few messages for debugging
+        for i, m in enumerate(messages[:5]):
+            print(f"  msg[{i}] role={m.get('role')} keys={list(m.keys())}")
+        raise
+
+
+@pytest.mark.asyncio
 async def test_haiku_works_without_claude_code_identity(oauth_token: str):
     """Haiku works with OAuth even WITHOUT the Claude Code identity.
 
