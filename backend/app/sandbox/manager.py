@@ -444,6 +444,43 @@ class SandboxManager:
             return {"installed": False, "output": output}
 
     # ------------------------------------------------------------------
+    # Shared credential mounts for Claude Code + SSH
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _append_credential_mounts(
+        cmd: list[str],
+        workspace_mounts: list[dict] | None = None,
+    ) -> None:
+        """Append Claude Code credential and SSH mounts to a docker run command.
+
+        Used by both _create_worker_container and get_or_create_container so
+        all container types get consistent access to host credentials.
+        """
+        # Claude Code config (~/.claude.json) — session/startup metadata
+        claude_json = Path.home() / ".claude.json"
+        if claude_json.exists():
+            cmd.extend(["-v", f"{claude_json}:/home/bond-agent/.claude.json:ro"])
+
+        # Claude Code credentials (~/.claude/.credentials.json) — OAuth tokens
+        # Mounted read-write: Claude Code needs to write back refreshed tokens
+        # (OAuth access tokens expire frequently and the CLI auto-refreshes them)
+        claude_credentials = Path.home() / ".claude" / ".credentials.json"
+        if claude_credentials.exists():
+            cmd.extend(["-v", f"{claude_credentials}:/home/bond-agent/.claude/.credentials.json:rw"])
+
+        # Claude Code settings (~/.claude/settings.json) — user preferences
+        claude_settings = Path.home() / ".claude" / "settings.json"
+        if claude_settings.exists():
+            cmd.extend(["-v", f"{claude_settings}:/home/bond-agent/.claude/settings.json:ro"])
+
+        # SSH keys (only if ~/.ssh exists and not already covered by a workspace mount)
+        ssh_dir = Path.home() / ".ssh"
+        workspace_targets = {m.get("container_path", "") for m in (workspace_mounts or [])}
+        if ssh_dir.exists() and "/tmp/.ssh" not in workspace_targets:
+            cmd.extend(["-v", f"{ssh_dir}:/tmp/.ssh:ro"])
+
+    # ------------------------------------------------------------------
     # Shared retry helper for docker run
     # ------------------------------------------------------------------
 
@@ -543,6 +580,15 @@ class SandboxManager:
         cmd.extend(["-e", f"AGENT_NAME=bond-agent-{agent_id}"])
         cmd.extend(["-e", f"AGENT_EMAIL=agent-{agent_id}@bond.internal"])
         cmd.extend(["-e", "BOND_REPO_URL=git@github.com:biztechprogramming/bond.git"])
+
+        # Inject API keys from agent config into container environment.
+        # Keys arrive as provider IDs (e.g. "anthropic") from the provider_api_keys table.
+        # Claude Code and other CLIs read them as env vars (e.g. ANTHROPIC_API_KEY).
+        api_keys = agent.get("api_keys", {})
+        for provider_id, key_value in api_keys.items():
+            if key_value:
+                env_var = f"{provider_id.upper()}_API_KEY"
+                cmd.extend(["-e", f"{env_var}={key_value}"])
 
         # Inject GITHUB_TOKEN from vault if available
         try:
@@ -711,11 +757,8 @@ class SandboxManager:
         if skills_db.exists():
             cmd.extend(["-v", f"{skills_db}:/data/skills.db:rw"])
 
-        # SSH keys (only if ~/.ssh exists and not already covered by a workspace mount)
-        ssh_dir = Path.home() / ".ssh"
-        workspace_targets = {m.get("container_path", "") for m in workspace_mounts}
-        if ssh_dir.exists() and "/tmp/.ssh" not in workspace_targets:
-            cmd.extend(["-v", f"{ssh_dir}:/tmp/.ssh:ro"])
+        # Claude Code credentials + SSH keys (shared helper)
+        self._append_credential_mounts(cmd, workspace_mounts)
 
         # Agent config file (read-only, mount specific file)
         cmd.extend(["-v", f"{config_path}:/config/agent.json:ro"])
@@ -846,6 +889,9 @@ class SandboxManager:
                 if readonly:
                     mount_str += ":ro"
                 cmd.extend(["-v", mount_str])
+
+        # Claude Code credentials + SSH keys (shared helper)
+        self._append_credential_mounts(cmd, workspace_mounts)
 
         cmd.extend([sandbox_image, "sleep", "infinity"])
 
