@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { useAgentsWithRelations, useResources, useComponents } from "@/hooks/useSpacetimeDB";
+import { useComponents, useEnvironments, useResources, useAlerts, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
+import { getComponentResources, type ComponentResourceRow } from "@/lib/spacetimedb-client";
 import AppCard, { type AppInfo } from "./AppCard";
 
 interface Props {
@@ -9,77 +10,60 @@ interface Props {
   onNewDeploy: () => void;
 }
 
-// Translate agent-centric data into app-centric view
-function buildAppList(agents: ReturnType<typeof useAgentsWithRelations>, resources: ReturnType<typeof useResources>, components: ReturnType<typeof useComponents>): AppInfo[] {
-  const appMap = new Map<string, AppInfo>();
-
-  for (const agent of agents) {
-    let appName: string;
-    let envName: string;
-
-    if (agent.name.startsWith("deploy-")) {
-      // Deploy agents: extract app name and environment from naming convention
-      const parts = agent.name.replace("deploy-", "").split("-");
-      envName = parts.pop() || "dev";
-      appName = parts.join("-") || agent.display_name || agent.name;
-    } else {
-      // Non-deploy agents: use name directly, group by base name
-      const parts = agent.name.split("-");
-      const lastPart = parts[parts.length - 1];
-      const knownEnvs = ["dev", "prod", "staging", "test", "qa"];
-      if (parts.length > 1 && knownEnvs.includes(lastPart)) {
-        envName = parts.pop()!;
-        appName = parts.join("-");
-      } else {
-        envName = "default";
-        appName = agent.name;
-      }
+/** Fetch all component_resources for a set of component IDs. */
+function useAllComponentResources(componentIds: string[]): Map<string, ComponentResourceRow[]> {
+  return useSpacetimeDB(() => {
+    const map = new Map<string, ComponentResourceRow[]>();
+    for (const cid of componentIds) {
+      const crs = getComponentResources(cid);
+      if (crs.length > 0) map.set(cid, crs);
     }
-
-    if (!appMap.has(appName)) {
-      appMap.set(appName, {
-        id: appName,
-        name: agent.display_name || appName,
-        framework: "Unknown",
-        environments: [],
-        lastDeployTime: null,
-        healthStatus: "unknown",
-      });
-    }
-
-    const app = appMap.get(appName)!;
-    app.environments.push({
-      name: envName,
-      status: agent.is_active ? "healthy" : "inactive",
-    });
-  }
-
-  // Enrich with component data if available
-  for (const comp of components) {
-    const name = comp.name.replace("deploy-", "");
-    const app = appMap.get(name) || appMap.get(comp.name);
-    if (app && comp.framework) {
-      app.framework = comp.framework;
-    }
-  }
-
-  // Enrich with resource data if available
-  for (const resource of resources) {
-    const app = appMap.get(resource.name) || appMap.get(`deploy-${resource.name}`);
-    if (app && !app.environments.some((e) => e.name === resource.name)) {
-      // Resource association exists — no additional env to add, but confirms the app is real
-    }
-  }
-
-  return Array.from(appMap.values());
+    return map;
+  }, [componentIds.join(",")]);
 }
 
 export default function AppDashboard({ onSelectApp, onNewDeploy }: Props) {
-  const agents = useAgentsWithRelations();
-  const resources = useResources();
   const components = useComponents();
+  const environments = useEnvironments();
+  const alerts = useAlerts();
 
-  const apps = useMemo(() => buildAppList(agents, resources, components), [agents, resources, components]);
+  const componentIds = useMemo(() => components.map((c) => c.id), [components]);
+  const crMap = useAllComponentResources(componentIds);
+
+  const apps: AppInfo[] = useMemo(() => {
+    const envLookup = new Map(environments.map((e) => [e.name, e]));
+
+    return components
+      .filter((c) => c.isActive)
+      .map((comp) => {
+        const crs = crMap.get(comp.id) || [];
+        const compAlerts = alerts.filter((a) => a.componentId === comp.id);
+        const envStatuses = crs.map((cr) => {
+          const env = envLookup.get(cr.environment);
+          return {
+            name: env?.displayName || cr.environment,
+            status: (cr.healthCheck ? "healthy" : "inactive") as "healthy" | "inactive",
+          };
+        });
+
+        const hasError = compAlerts.some((a) => a.severity === "critical" || a.severity === "error");
+        const hasWarning = compAlerts.some((a) => a.severity === "warning");
+        const healthStatus: AppInfo["healthStatus"] = hasError ? "down" : hasWarning ? "degraded" : crs.length > 0 ? "healthy" : "unknown";
+
+        return {
+          id: comp.id,
+          name: comp.name,
+          displayName: comp.displayName,
+          componentType: comp.componentType,
+          framework: comp.framework || "Unknown",
+          runtime: comp.runtime || "",
+          repositoryUrl: comp.repositoryUrl || "",
+          environments: envStatuses,
+          healthStatus,
+          alertCount: compAlerts.length,
+        };
+      });
+  }, [components, crMap, alerts, environments]);
 
   return (
     <div>
