@@ -95,11 +95,31 @@ export default function Home() {
 
 
 
-  // SpacetimeDB message subscription — reactively picks up new messages
-  // (e.g., from the completion handler's agent turn) that weren't streamed via WebSocket.
+  // SpacetimeDB message subscription — primary source of truth for conversation history.
+  // On conversation switch, loads all messages reactively from SpacetimeDB.
+  // During active turns, picks up new messages (e.g., from completion handler) that
+  // weren't streamed via WebSocket.
   const stdbMessages = useMessages(conversationId);
   const prevStdbCountRef = useRef(0);
+  const prevConversationIdRef = useRef<string | null>(conversationId);
   useEffect(() => {
+    // Conversation switched — load full history from SpacetimeDB
+    if (prevConversationIdRef.current !== conversationId) {
+      prevConversationIdRef.current = conversationId;
+      prevStdbCountRef.current = stdbMessages.length;
+      if (stdbMessages.length > 0) {
+        const historyMsgs: ChatMessage[] = stdbMessages
+          .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
+          .map((m) => ({
+            id: m.id,
+            role: m.role as "user" | "assistant" | "system",
+            content: m.content,
+          }));
+        setMessages(historyMsgs);
+      }
+      return;
+    }
+
     if (!stdbMessages.length || stdbMessages.length <= prevStdbCountRef.current) {
       prevStdbCountRef.current = stdbMessages.length;
       return;
@@ -125,7 +145,7 @@ export default function Home() {
       }
       return toAdd.length > 0 ? [...prev, ...toAdd] : prev;
     });
-  }, [stdbMessages]);
+  }, [stdbMessages, conversationId]);
 
   // Show restore dialog when SpacetimeDB is connected but conversations are empty
   useEffect(() => {
@@ -499,6 +519,11 @@ export default function Home() {
     setCodingAgentSummary(null);
     const conv = conversations.find(c => c.id === id);
     if (conv?.agent_id) setSelectedAgentId(conv.agent_id);
+    // Set conversationId directly — SpacetimeDB subscription (useMessages)
+    // reactively loads the conversation history without a REST round-trip.
+    setConversationId(id);
+    // Still notify the gateway for session tracking (which conversation
+    // this WS session is watching), but don't depend on the history response.
     wsRef.current?.switchConversation(id);
     // Auto-close sidebar on narrow screens
     if (window.innerWidth < 768) setSidebarOpen(false);

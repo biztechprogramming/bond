@@ -72,16 +72,29 @@ describe("CompletionHandler", () => {
       expect(msg).toContain("you may spawn additional coding agents");
     });
 
-    it("builds a failure message", () => {
+    it("builds a failure message allowing retry on first failure", () => {
       const event = makeEvent({
         eventType: "coding_agent_failed",
         summary: "Coding agent (claude) failed in 10.0s",
         metadata: JSON.stringify({ exit_code: 1, error: "Process crashed" }),
       });
-      const msg = handler.buildCompletionMessage(event);
+      const msg = handler.buildCompletionMessage(event, 1);
       expect(msg).toContain("[System: Background coding agent failed]");
       expect(msg).toContain("Exit code: 1");
       expect(msg).toContain("Process crashed");
+      expect(msg).toContain("do not retry more than once");
+      expect(msg).not.toContain("Do NOT spawn another coding agent");
+    });
+
+    it("blocks retry after consecutive failures", () => {
+      const event = makeEvent({
+        eventType: "coding_agent_failed",
+        summary: "Coding agent (claude) failed in 10.0s",
+        metadata: JSON.stringify({ exit_code: 1, error: "Process crashed" }),
+      });
+      const msg = handler.buildCompletionMessage(event, 2);
+      expect(msg).toContain("failed 2 times in a row");
+      expect(msg).toContain("Do NOT spawn another coding agent");
     });
 
     it("handles generic event types", () => {
@@ -150,6 +163,51 @@ describe("CompletionHandler", () => {
       const doneCall = calls.find(([, msg]: any) => msg.type === "done");
       expect(doneCall).toBeDefined();
       expect(doneCall![1].response).toBe("The coding agent finished.");
+    });
+  });
+
+  describe("consecutive failure tracking", () => {
+    it("blocks retry after 2 consecutive coding_agent_failed events", async () => {
+      const failEvent = (id: string) =>
+        makeEvent({
+          id,
+          eventType: "coding_agent_failed",
+          summary: "Coding agent failed",
+          metadata: JSON.stringify({ exit_code: 1, error: "spawn failed" }),
+        });
+
+      // First failure — should allow retry
+      await handler.handleEvent(failEvent("evt-fail-1"));
+      const firstCall = backendClient.conversationTurnStream.mock.calls[0];
+      expect(firstCall[1]).toContain("do not retry more than once");
+
+      // Second failure — should block retry
+      await handler.handleEvent(failEvent("evt-fail-2"));
+      const secondCall = backendClient.conversationTurnStream.mock.calls[1];
+      expect(secondCall[1]).toContain("Do NOT spawn another coding agent");
+      expect(secondCall[1]).toContain("failed 2 times in a row");
+    });
+
+    it("resets failure counter on success", async () => {
+      const failEvent = (id: string) =>
+        makeEvent({
+          id,
+          eventType: "coding_agent_failed",
+          summary: "Coding agent failed",
+          metadata: JSON.stringify({ exit_code: 1 }),
+        });
+
+      // One failure
+      await handler.handleEvent(failEvent("evt-fail-1"));
+
+      // Then a success resets the counter
+      await handler.handleEvent(makeEvent({ id: "evt-success" }));
+
+      // Next failure should be treated as first again
+      await handler.handleEvent(failEvent("evt-fail-2"));
+      const lastCall = backendClient.conversationTurnStream.mock.calls[2];
+      expect(lastCall[1]).toContain("do not retry more than once");
+      expect(lastCall[1]).not.toContain("Do NOT spawn another coding agent");
     });
   });
 
