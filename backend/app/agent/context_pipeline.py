@@ -269,9 +269,12 @@ Do NOT include:
 
 Write a concise summary in {SUMMARY_MAX_WORDS}-{SUMMARY_MAX_WORDS * 2} words. Use bullet points for clarity. Start directly with the content, no preamble."""
 
+        from backend.app.core.oauth import ensure_oauth_system_prefix
+        _summary_msgs = [{"role": "user", "content": summary_prompt}]
+        ensure_oauth_system_prefix(_summary_msgs, extra_kwargs=extra_kwargs)
         response = await litellm.acompletion(
             model=utility_model,
-            messages=[{"role": "user", "content": summary_prompt}],
+            messages=_summary_msgs,
             temperature=0.0,
             max_tokens=1024,
             **extra_kwargs,
@@ -455,14 +458,17 @@ async def _apply_sliding_window(
         summary_input = "\n".join(summary_lines)
 
         try:
+            from backend.app.core.oauth import ensure_oauth_system_prefix
+            _hist_msgs = [{"role": "user", "content": (
+                f"Summarize this conversation history in {SUMMARY_MAX_WORDS}-{SUMMARY_MAX_WORDS * 2} words. "
+                "Preserve key decisions, file paths, technical details, what was attempted and results. "
+                "Use bullet points. Start directly with content.\n\n"
+                f"{summary_input}"
+            )}]
+            ensure_oauth_system_prefix(_hist_msgs, extra_kwargs=extra_kwargs)
             response = await litellm.acompletion(
                 model=utility_model,
-                messages=[{"role": "user", "content": (
-                    f"Summarize this conversation history in {SUMMARY_MAX_WORDS}-{SUMMARY_MAX_WORDS * 2} words. "
-                    "Preserve key decisions, file paths, technical details, what was attempted and results. "
-                    "Use bullet points. Start directly with content.\n\n"
-                    f"{summary_input}"
-                )}],
+                messages=_hist_msgs,
                 temperature=0.0,
                 max_tokens=1024,
                 **extra_kwargs,

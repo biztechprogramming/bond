@@ -15,8 +15,10 @@ import pytest
 
 from backend.app.core.oauth import (
     OAUTH_EXTRA_HEADERS,
+    OAUTH_SYSTEM_PROMPT_PREFIX,
     OAUTH_TOKEN_PREFIX,
     detect_key_type,
+    ensure_oauth_system_prefix,
     get_oauth_extra_headers,
     is_oauth_token,
     resolve_provider_key_via_gateway,
@@ -420,3 +422,76 @@ class TestResolveProviderKeyViaGateway:
                 "anthropic", gateway_url="http://test", retries=3,
             )
             assert result is None
+
+
+# ── ensure_oauth_system_prefix ────────────────────────────────────────────
+
+
+class TestEnsureOauthSystemPrefix:
+    """Tests for the centralized OAuth system prompt prefix injection."""
+
+    def test_no_op_for_non_oauth(self):
+        msgs = [{"role": "system", "content": "Hello"}, {"role": "user", "content": "Hi"}]
+        result = ensure_oauth_system_prefix(msgs, api_key="sk-ant-api-regular")
+        assert result[0]["content"] == "Hello"
+
+    def test_no_op_without_api_key(self):
+        msgs = [{"role": "user", "content": "Hi"}]
+        original_len = len(msgs)
+        ensure_oauth_system_prefix(msgs)
+        assert len(msgs) == original_len
+
+    def test_injects_prefix_string_system(self):
+        msgs = [{"role": "system", "content": "My system prompt"}, {"role": "user", "content": "Hi"}]
+        ensure_oauth_system_prefix(msgs, api_key=FAKE_OAUTH_TOKEN)
+        assert OAUTH_SYSTEM_PROMPT_PREFIX in msgs[0]["content"]
+        assert "My system prompt" in msgs[0]["content"]
+
+    def test_injects_prefix_list_system(self):
+        msgs = [{
+            "role": "system",
+            "content": [{"type": "text", "text": "My prompt", "cache_control": {"type": "ephemeral"}}],
+        }]
+        ensure_oauth_system_prefix(msgs, api_key=FAKE_OAUTH_TOKEN)
+        content = msgs[0]["content"]
+        assert isinstance(content, list)
+        assert len(content) == 2
+        assert content[0]["text"] == OAUTH_SYSTEM_PROMPT_PREFIX
+        assert content[1]["text"] == "My prompt"
+
+    def test_inserts_system_message_when_missing(self):
+        msgs = [{"role": "user", "content": "Hi"}]
+        ensure_oauth_system_prefix(msgs, api_key=FAKE_OAUTH_TOKEN)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
+        assert msgs[0]["content"] == OAUTH_SYSTEM_PROMPT_PREFIX
+
+    def test_idempotent(self):
+        msgs = [{"role": "system", "content": "My prompt"}]
+        ensure_oauth_system_prefix(msgs, api_key=FAKE_OAUTH_TOKEN)
+        content_after_first = msgs[0]["content"]
+        ensure_oauth_system_prefix(msgs, api_key=FAKE_OAUTH_TOKEN)
+        assert msgs[0]["content"] == content_after_first
+
+    def test_idempotent_list_format(self):
+        msgs = [{
+            "role": "system",
+            "content": [{"type": "text", "text": "My prompt"}],
+        }]
+        ensure_oauth_system_prefix(msgs, api_key=FAKE_OAUTH_TOKEN)
+        length_after_first = len(msgs[0]["content"])
+        ensure_oauth_system_prefix(msgs, api_key=FAKE_OAUTH_TOKEN)
+        assert len(msgs[0]["content"]) == length_after_first
+
+    def test_detects_oauth_from_extra_kwargs(self):
+        msgs = [{"role": "user", "content": "Hi"}]
+        extra = {"api_key": FAKE_OAUTH_TOKEN, "extra_headers": OAUTH_EXTRA_HEADERS}
+        ensure_oauth_system_prefix(msgs, extra_kwargs=extra)
+        assert len(msgs) == 2
+        assert msgs[0]["role"] == "system"
+
+    def test_no_inject_when_extra_kwargs_has_regular_key(self):
+        msgs = [{"role": "user", "content": "Hi"}]
+        extra = {"api_key": "sk-ant-api-regular"}
+        ensure_oauth_system_prefix(msgs, extra_kwargs=extra)
+        assert len(msgs) == 1

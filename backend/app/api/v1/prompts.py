@@ -354,13 +354,20 @@ async def _call_llm(prompt: str) -> str:
     vault = Vault()
     api_key = vault.get_api_key("anthropic")
 
+    from backend.app.core.oauth import get_oauth_extra_headers, ensure_oauth_system_prefix
+
     extra = {}
     if api_key:
         extra["api_key"] = api_key
+        oauth_headers = get_oauth_extra_headers(api_key)
+        if oauth_headers:
+            extra["extra_headers"] = oauth_headers
 
+    _prompt_msgs = [{"role": "user", "content": prompt}]
+    ensure_oauth_system_prefix(_prompt_msgs, extra_kwargs=extra)
     response = await litellm.acompletion(
         model="anthropic/claude-sonnet-4-20250514",
-        messages=[{"role": "user", "content": prompt}],
+        messages=_prompt_msgs,
         temperature=0.7,
         max_tokens=4096,
         **extra,
