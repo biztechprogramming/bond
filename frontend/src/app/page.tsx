@@ -372,10 +372,19 @@ export default function Home() {
           }
         }
       } else if (msg.type === "error") {
-        setMessages((prev) => [
-          ...prev,
-          { role: "system", content: `Error: ${msg.error || "Unknown error"}` },
-        ]);
+        setMessages((prev) => {
+          // Suppress noisy connection errors on empty conversations (e.g. "peer closed connection
+          // without sending complete message body") — there's nothing to show yet.
+          const isConnectionNoise =
+            prev.length === 0 &&
+            typeof msg.error === "string" &&
+            /incomplete chunked|peer closed connection/i.test(msg.error);
+          if (isConnectionNoise) return prev;
+          return [
+            ...prev,
+            { role: "system", content: `Error: ${msg.error || "Unknown error"}` },
+          ];
+        });
         setLoading(false);
         setAgentStatus("idle");
       } else if (msg.type === "user_message" && msg.content) {

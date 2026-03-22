@@ -262,6 +262,15 @@ async def agent_turn(
     extra_kwargs: dict = {}
     if api_key:
         extra_kwargs["api_key"] = api_key
+        # OAuth tokens (sk-ant-oat) need extra headers for the Anthropic API
+        if api_key.startswith("sk-ant-oat"):
+            extra_kwargs["extra_headers"] = {
+                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                "user-agent": "claude-cli/2.1.81",
+                "x-app": "cli",
+                "anthropic-dangerous-direct-browser-access": "true",
+            }
+            logger.info("Detected OAuth token — injecting extra headers")
 
     logger.info(
         "Agent turn (tool-use): agent=%s model=%s tools=%d messages=%d",
