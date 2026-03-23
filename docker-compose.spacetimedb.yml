@@ -58,7 +58,7 @@ services:
     environment:
       - SANDBOX_CONFIG_PATH=/etc/opensandbox/config.toml
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
