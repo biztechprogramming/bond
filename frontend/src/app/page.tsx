@@ -65,7 +65,7 @@ export default function Home() {
   const initialAgentSetRef = useRef(false);
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
   const [deleteMode, setDeleteMode] = useState(false);
-  const currentAgentNameRef = useRef<string>("Agent");
+  const currentAgentNameRef = useRef<string>("");
   const conversationIdRef = useRef<string | null>(conversationId);
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
   const [codingAgentActive, setCodingAgentActive] = useState(false);
@@ -326,7 +326,7 @@ export default function Home() {
               if (last?.role === "assistant" && last.content === finalContent) {
                 return msgs;
               }
-              return [...msgs, { id: msg.messageId, role: "assistant", content: finalContent, agentName: msg.agentName || currentAgentNameRef.current }];
+              return [...msgs, { id: msg.messageId, role: "assistant", content: finalContent, agentName: msg.agentName || currentAgentNameRef.current || undefined }];
             });
           }
           return "";
