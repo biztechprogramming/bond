@@ -131,7 +131,7 @@ const styles: Record<string, React.CSSProperties> = {
   tab: {
     backgroundColor: "#12121a",
     color: "#8888a0",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 6,
     padding: "6px 14px",
     fontSize: "0.8rem",
@@ -140,7 +140,7 @@ const styles: Record<string, React.CSSProperties> = {
   activeTab: {
     backgroundColor: "#2a2a4a",
     color: "#e0e0e8",
-    border: "1px solid #6c8aff",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff",
     borderRadius: 6,
     padding: "6px 14px",
     fontSize: "0.8rem",
@@ -149,7 +149,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 16,
     display: "flex",
@@ -162,12 +162,12 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 12,
     padding: "8px 0",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
   },
   smallButton: {
     backgroundColor: "#2a4a2a",
     color: "#6cffa0",
-    border: "1px solid #3a5a3a",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a5a3a",
     borderRadius: 6,
     padding: "4px 10px",
     fontSize: "0.75rem",
@@ -176,7 +176,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryButton: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 8,
     padding: "8px 16px",
     fontSize: "0.85rem",

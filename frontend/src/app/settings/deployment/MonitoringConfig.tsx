@@ -144,7 +144,7 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", gap: 12 },
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 16,
     display: "flex",
@@ -156,7 +156,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     backgroundColor: "#16162a",
     color: "#e0e0e8",
-    border: "1px solid #3a3a5a",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a5a",
     borderRadius: 6,
     padding: "8px 12px",
     fontSize: "0.85rem",
@@ -167,7 +167,7 @@ const styles: Record<string, React.CSSProperties> = {
   button: {
     backgroundColor: "#6cffa0",
     color: "#0a0a1a",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: 6,
     padding: "8px 16px",
     cursor: "pointer",

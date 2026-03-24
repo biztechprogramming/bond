@@ -163,7 +163,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#12121a",
     borderRadius: "12px",
     padding: "16px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     display: "flex",
     flexDirection: "column",
     gap: "12px",
@@ -181,7 +181,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: "0.8rem", color: "#8888a0" },
   input: {
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "8px 10px",
     color: "#e0e0e8",
@@ -192,7 +192,7 @@ const styles: Record<string, React.CSSProperties> = {
   hint: { fontSize: "0.72rem", color: "#5a5a6e" },
   triggerList: {
     marginTop: "8px",
-    borderTop: "1px solid #1e1e2e",
+    borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e",
     paddingTop: "12px",
     display: "flex",
     flexDirection: "column",
@@ -222,7 +222,7 @@ const styles: Record<string, React.CSSProperties> = {
   triggerActions: { display: "flex", gap: "6px", flexShrink: 0 },
   triggerBtn: {
     background: "none",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "6px",
     color: "#8888a0",
     fontSize: "0.72rem",

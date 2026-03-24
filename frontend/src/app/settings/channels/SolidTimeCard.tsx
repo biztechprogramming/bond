@@ -133,16 +133,16 @@ export default function SolidTimeCard() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  card: { backgroundColor: "#12121a", borderRadius: "12px", padding: "20px", border: "1px solid #1e1e2e" },
+  card: { backgroundColor: "#12121a", borderRadius: "12px", padding: "20px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
   cardHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" },
   channelName: { fontSize: "1rem", fontWeight: 600, color: "#e0e0e8" },
   badge: { fontSize: "0.75rem", padding: "4px 10px", borderRadius: "12px", fontWeight: 500 },
   desc: { color: "#8888a0", fontSize: "0.85rem", margin: "0 0 12px 0" },
-  setupBtn: { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" },
-  dangerBtn: { backgroundColor: "#3a1a1a", color: "#ff6c8a", border: "1px solid #5a2a2a", borderRadius: "8px", padding: "6px 14px", fontSize: "0.8rem", fontWeight: 500, cursor: "pointer" },
+  setupBtn: { backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" },
+  dangerBtn: { backgroundColor: "#3a1a1a", color: "#ff6c8a", borderWidth: "1px", borderStyle: "solid", borderColor: "#5a2a2a", borderRadius: "8px", padding: "6px 14px", fontSize: "0.8rem", fontWeight: 500, cursor: "pointer" },
   wizard: { marginTop: "12px", padding: "16px", backgroundColor: "#1e1e2e", borderRadius: "8px" },
   steps: { color: "#e0e0e8", fontSize: "0.85rem", margin: "0 0 12px 0", paddingLeft: "20px" },
-  input: { width: "100%", backgroundColor: "#12121a", border: "1px solid #2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none", marginBottom: "12px", boxSizing: "border-box" as const },
+  input: { width: "100%", backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none", marginBottom: "12px", boxSizing: "border-box" as const },
   error: { color: "#ff6c8a", fontSize: "0.85rem", marginBottom: "8px" },
   linkedInfo: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px", backgroundColor: "#1e1e2e", borderRadius: "8px", color: "#e0e0e8", fontSize: "0.85rem" },
 };

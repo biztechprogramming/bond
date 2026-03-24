@@ -75,7 +75,7 @@ const styles: Record<string, React.CSSProperties> = {
   editAllBtn: {
     backgroundColor: "#2a2a3e",
     color: "#6c8aff",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",

@@ -78,7 +78,7 @@ const styles: Record<string, React.CSSProperties> = {
   approveBtn: {
     backgroundColor: "#2a4a2a",
     color: "#6cffa0",
-    border: "1px solid #3a5a3a",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a5a3a",
     borderRadius: 4,
     padding: "2px 8px",
     fontSize: "0.7rem",

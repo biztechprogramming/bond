@@ -164,7 +164,7 @@ export default function ParametersPanel() {
 
             {/* Experiment recommendation */}
             {promoted && (
-              <div style={{ marginTop: "8px", padding: "8px 12px", backgroundColor: "#1a2a1e", border: "1px solid #2a4a2e", borderRadius: "8px", fontSize: "0.8rem", color: "#6cffa0" }}>
+              <div style={{ marginTop: "8px", padding: "8px 12px", backgroundColor: "#1a2a1e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a4a2e", borderRadius: "8px", fontSize: "0.8rem", color: "#6cffa0" }}>
                 Experiment suggests {exp.proposed_value} (p={exp.p_value.toFixed(2)}, +{scoreDiff}% score, n={exp.control_obs_count}/{exp.experiment_obs_count})
               </div>
             )}
@@ -181,7 +181,7 @@ export default function ParametersPanel() {
             {historyKey === p.key && (
               <div style={{ marginTop: "10px", padding: "10px", backgroundColor: "#0a0a14", borderRadius: "8px" }}>
                 {history.length === 0 ? <span style={{ color: "#5a5a6e", fontSize: "0.8rem" }}>No history</span> : history.map((h, i) => (
-                  <div key={i} style={{ display: "flex", gap: "12px", padding: "4px 0", borderBottom: "1px solid #1e1e2e", fontSize: "0.8rem" }}>
+                  <div key={i} style={{ display: "flex", gap: "12px", padding: "4px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", fontSize: "0.8rem" }}>
                     <span style={{ color: "#6c8aff" }}>{h.value}</span>
                     <span style={{ color: "#8888a0", flex: 1 }}>{h.changed_by}</span>
                     <span style={{ color: "#5a5a6e" }}>{new Date(h.changed_at).toLocaleDateString()}</span>
@@ -221,7 +221,7 @@ export default function ParametersPanel() {
   );
 }
 
-const cardStyle: React.CSSProperties = { backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: "12px", padding: "16px" };
-const btnStyle: React.CSSProperties = { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" };
-const btnSecondaryStyle: React.CSSProperties = { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" };
-const btnSmallStyle: React.CSSProperties = { background: "none", border: "1px solid #2a2a3e", borderRadius: "6px", padding: "4px 10px", color: "#8888a0", fontSize: "0.8rem", cursor: "pointer" };
+const cardStyle: React.CSSProperties = { backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: "12px", padding: "16px" };
+const btnStyle: React.CSSProperties = { backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" };
+const btnSecondaryStyle: React.CSSProperties = { backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" };
+const btnSmallStyle: React.CSSProperties = { background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "6px", padding: "4px 10px", color: "#8888a0", fontSize: "0.8rem", cursor: "pointer" };

@@ -192,7 +192,7 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: "0.9rem",
     padding: "6px 12px",
     borderRadius: "8px",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
   },
   title: {
     fontSize: "1.3rem",
@@ -210,7 +210,7 @@ const s: Record<string, React.CSSProperties> = {
     flex: 1,
     minWidth: "200px",
     backgroundColor: "#12121a",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "10px 14px",
     color: "#e0e0e8",
@@ -220,7 +220,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   statusSelect: {
     backgroundColor: "#12121a",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "10px 14px",
     color: "#e0e0e8",
@@ -241,7 +241,7 @@ const s: Record<string, React.CSSProperties> = {
     gap: "2px",
     borderRadius: "10px",
     overflow: "hidden",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
   },
   planRow: {
     display: "flex",
@@ -251,7 +251,7 @@ const s: Record<string, React.CSSProperties> = {
     textDecoration: "none",
     color: "inherit",
     cursor: "pointer",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
     transition: "background-color 0.15s",
   },
   planMain: {
@@ -304,7 +304,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   pageBtn: {
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "8px 16px",
     color: "#e0e0e8",
@@ -318,7 +318,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   deleteBtn: {
     background: "none",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     color: "#5a5a6e",
     fontSize: "1rem",
     cursor: "pointer",
@@ -329,7 +329,7 @@ const s: Record<string, React.CSSProperties> = {
   },
   deleteBtnDanger: {
     background: "none",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     color: "#ff4444",
     fontSize: "1rem",
     cursor: "pointer",

@@ -276,7 +276,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Coding Agent Output Settings */}
-            <div style={{ borderTop: "1px solid #1e1e2e", marginTop: "24px", paddingTop: "20px" }}>
+            <div style={{ borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e", marginTop: "24px", paddingTop: "20px" }}>
               <h3 style={{ color: "#e0e0e8", fontSize: "0.95rem", marginBottom: "12px" }}>Coding Agent Output</h3>
               <p style={{ color: "#5a5a6e", fontSize: "0.8rem", margin: "0 0 16px 0" }}>
                 Control how coding agent (Claude Code, Codex, etc.) output is captured while running in the background.
@@ -443,32 +443,32 @@ export default function SettingsPage() {
 
 const s: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%" },
-  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottom: "1px solid #1e1e2e" },
+  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
-  tabBar: { display: "flex", borderBottom: "1px solid #1e1e2e", padding: "0 24px" },
+  tabBar: { display: "flex", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", padding: "0 24px" },
   tab: {
-    background: "none", border: "none", borderBottomWidth: "2px", borderBottomStyle: "solid" as const, borderBottomColor: "transparent",
+    background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderBottomWidth: "2px", borderBottomStyle: "solid" as const, borderBottomColor: "transparent",
     color: "#8888a0", padding: "12px 20px", fontSize: "0.9rem", fontWeight: 500,
     cursor: "pointer", transition: "color 0.2s, border-color 0.2s",
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
   content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0 },
-  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", border: "1px solid #1e1e2e" },
+  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
   sectionTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 20px 0" },
   field: { marginBottom: "16px" },
   label: { display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500 },
-  select: { width: "100%", backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.95rem", outline: "none" },
-  input: { flex: 1, backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.95rem", outline: "none" },
+  select: { width: "100%", backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.95rem", outline: "none" },
+  input: { flex: 1, backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.95rem", outline: "none" },
   modelDetails: { display: "flex", gap: "16px", flexWrap: "wrap" as const, fontSize: "0.8rem", color: "#8888a0", marginBottom: "16px", padding: "8px 12px", backgroundColor: "#1e1e2e", borderRadius: "8px" },
   radioGroup: { display: "flex", gap: "20px" },
   radioLabel: { display: "flex", alignItems: "center", gap: "6px", color: "#e0e0e8", fontSize: "0.95rem", cursor: "pointer" },
   radio: { accentColor: "#6c8aff" },
-  button: { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "10px 20px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer" },
+  button: { backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px", padding: "10px 20px", fontSize: "0.9rem", fontWeight: 600, cursor: "pointer" },
   keyRow: { display: "flex", gap: "8px" },
-  deleteBtn: { backgroundColor: "#3a1a1e", color: "#ff6c8a", border: "1px solid #5a2a2e", borderRadius: "8px", padding: "10px 16px", cursor: "pointer", fontWeight: 500, fontSize: "0.9rem", whiteSpace: "nowrap" },
+  deleteBtn: { backgroundColor: "#3a1a1e", color: "#ff6c8a", borderWidth: "1px", borderStyle: "solid", borderColor: "#5a2a2e", borderRadius: "8px", padding: "10px 16px", cursor: "pointer", fontWeight: 500, fontSize: "0.9rem", whiteSpace: "nowrap" },
   masked: { color: "#6c8aff", fontSize: "0.8rem", marginLeft: "8px" },
-  warning: { backgroundColor: "#2a2a1a", border: "1px solid #aa8800", borderRadius: "8px", padding: "12px 16px", color: "#ffcc44", fontSize: "0.85rem", marginBottom: "16px" },
+  warning: { backgroundColor: "#2a2a1a", borderWidth: "1px", borderStyle: "solid", borderColor: "#aa8800", borderRadius: "8px", padding: "12px 16px", color: "#ffcc44", fontSize: "0.85rem", marginBottom: "16px" },
   helpText: { color: "#5a5a6e", fontSize: "0.8rem", margin: "0 0 8px 0", lineHeight: "1.4" },
   msg: { marginTop: "12px", fontSize: "0.85rem" },
   readOnly: { color: "#8888a0", fontSize: "0.95rem", padding: "10px 12px", backgroundColor: "#1e1e2e", borderRadius: "8px" },

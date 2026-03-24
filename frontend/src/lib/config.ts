@@ -30,4 +30,5 @@ export const BACKEND_API = `http://${HOST}:${BACKEND_PORT}/api/v1`;
  * Token is fetched separately via /api/stdb-ws-token (same-origin).
  */
 const STDB_PORT = process.env.NEXT_PUBLIC_STDB_PORT || "18787";
-export const STDB_WS = `ws://${HOST}:${STDB_PORT}`;
+const STDB_HOST = process.env.NEXT_PUBLIC_STDB_HOST || HOST;
+export const STDB_WS = `ws://${STDB_HOST}:${STDB_PORT}`;

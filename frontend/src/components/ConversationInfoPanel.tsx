@@ -179,7 +179,7 @@ export default function ConversationInfoPanel({
             left: 0,
             minWidth: "300px",
             backgroundColor: "#12121a",
-            border: "1px solid #2a2a3e",
+            borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
             borderRadius: "12px",
             overflow: "visible",
             zIndex: 150,
@@ -224,7 +224,7 @@ export default function ConversationInfoPanel({
                 onClick={() => setBranchDropdownOpen(!branchDropdownOpen)}
                 style={{
                   backgroundColor: "#1e1e2e",
-                  border: "1px solid #2a2a3e",
+                  borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
                   borderRadius: "6px",
                   padding: "4px 10px",
                   color: "#e0e0e8",
@@ -267,7 +267,7 @@ export default function ConversationInfoPanel({
                     right: 0,
                     minWidth: "200px",
                     backgroundColor: "#1e1e2e",
-                    border: "1px solid #2a2a3e",
+                    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
                     borderRadius: "8px",
                     overflow: "hidden",
                     zIndex: 160,
@@ -313,7 +313,7 @@ export default function ConversationInfoPanel({
                   {workerOffline && (
                     <div style={{
                       padding: "6px 14px",
-                      borderTop: "1px solid #2a2a3e",
+                      borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#2a2a3e",
                       color: "#8888a0",
                       fontSize: "0.7rem",
                     }}>
@@ -360,7 +360,7 @@ export default function ConversationInfoPanel({
 
           {/* Section: Conversation */}
           {conversationId && (
-            <div style={{ ...sectionStyle, borderBottom: "none", paddingBottom: 0 }}>
+            <div style={{ ...sectionStyle, borderBottomWidth: 0, borderBottomStyle: "none", borderBottomColor: "transparent", paddingBottom: 0 }}>
               <div style={labelStyle}>Conversation</div>
               <span style={{ ...valueStyle, fontFamily: "monospace", fontSize: "0.68rem", color: "#5a5a6e" }}>
                 {conversationId.length > 16 ? conversationId.slice(0, 8) + "…" + conversationId.slice(-8) : conversationId}
@@ -376,7 +376,7 @@ export default function ConversationInfoPanel({
 const sectionStyle: React.CSSProperties = {
   paddingBottom: "10px",
   marginBottom: "10px",
-  borderBottom: "1px solid #1e1e2e",
+  borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
 };
 
 const labelStyle: React.CSSProperties = {

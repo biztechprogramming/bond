@@ -192,7 +192,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   modal: {
     backgroundColor: "#1a1a2e",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 16,
     padding: 24,
     width: "100%",
@@ -210,7 +210,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   closeBtn: {
     background: "none",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     color: "#8888a0",
     fontSize: "1.4rem",
     cursor: "pointer",
@@ -219,7 +219,7 @@ const styles: Record<string, React.CSSProperties> = {
   title: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 },
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 16,
     display: "flex",
@@ -232,7 +232,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: "0.75rem", color: "#8888a0" },
   input: {
     backgroundColor: "#0a0a12",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: 6,
     padding: "8px 10px",
     color: "#e0e0e8",
@@ -241,7 +241,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   select: {
     backgroundColor: "#0a0a12",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: 6,
     padding: "8px 10px",
     color: "#e0e0e8",
@@ -250,7 +250,7 @@ const styles: Record<string, React.CSSProperties> = {
   primaryButton: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: 8,
     padding: "10px 20px",
     fontSize: "0.9rem",

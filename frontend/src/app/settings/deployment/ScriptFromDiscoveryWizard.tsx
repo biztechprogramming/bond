@@ -185,7 +185,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
         <span style={styles.cardTitle}>Discovered Components</span>
         {components.length === 0 && <span style={{ fontSize: "0.85rem", color: "#8888a0" }}>No components found in manifest.</span>}
         {components.map((c) => (
-          <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0", borderBottom: "1px solid #1e1e2e" }}>
+          <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" }}>
             <label style={styles.checkLabel}>
               <input type="checkbox" checked={options[c.id]?.enabled ?? false} onChange={(e) => setOpt(c.id, "enabled", e.target.checked)} style={{ accentColor: "#6cffa0" }} />
               <span style={{ fontWeight: 600, color: "#e0e0e8", fontSize: "0.85rem" }}>{c.name}</span>
@@ -255,17 +255,17 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", gap: 12 },
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   title: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 },
-  card: { backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 10 },
+  card: { backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 10 },
   cardTitle: { fontSize: "0.8rem", fontWeight: 600, color: "#8888a0", textTransform: "uppercase" as const },
   tabRow: { display: "flex", gap: 4, flexWrap: "wrap" },
-  tab: { backgroundColor: "#12121a", color: "#8888a0", border: "1px solid #1e1e2e", borderRadius: 6, padding: "6px 12px", fontSize: "0.8rem", cursor: "pointer" },
-  activeTab: { backgroundColor: "#2a2a4a", color: "#e0e0e8", border: "1px solid #6c8aff", borderRadius: 6, padding: "6px 12px", fontSize: "0.8rem", cursor: "pointer", fontWeight: 600 },
-  codeBlock: { backgroundColor: "#0a0a12", color: "#e0e0e8", padding: 12, borderRadius: 8, fontSize: "0.75rem", overflow: "auto", maxHeight: 400, margin: 0, border: "1px solid #1e1e2e", fontFamily: "monospace" },
+  tab: { backgroundColor: "#12121a", color: "#8888a0", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: 6, padding: "6px 12px", fontSize: "0.8rem", cursor: "pointer" },
+  activeTab: { backgroundColor: "#2a2a4a", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff", borderRadius: 6, padding: "6px 12px", fontSize: "0.8rem", cursor: "pointer", fontWeight: 600 },
+  codeBlock: { backgroundColor: "#0a0a12", color: "#e0e0e8", padding: 12, borderRadius: 8, fontSize: "0.75rem", overflow: "auto", maxHeight: 400, margin: 0, borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", fontFamily: "monospace" },
   checkLabel: { display: "flex", alignItems: "center", gap: 4, fontSize: "0.8rem", color: "#e0e0e8", cursor: "pointer" },
   fieldLabel: { display: "flex", flexDirection: "column", gap: 2, fontSize: "0.75rem", color: "#8888a0" },
-  input: { backgroundColor: "#16162a", color: "#e0e0e8", border: "1px solid #3a3a5a", borderRadius: 6, padding: "6px 10px", fontSize: "0.8rem" },
-  select: { backgroundColor: "#16162a", color: "#e0e0e8", border: "1px solid #3a3a5a", borderRadius: 6, padding: "6px 10px", fontSize: "0.8rem" },
-  secondaryButton: { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: 8, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
-  acceptButton: { backgroundColor: "#2a4a2a", color: "#6cffa0", border: "1px solid #3a5a3a", borderRadius: 6, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer", fontWeight: 600 },
-  promoteButton: { backgroundColor: "#2a2a6a", color: "#6c8aff", border: "1px solid #3a3a8a", borderRadius: 6, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer", fontWeight: 600 },
+  input: { backgroundColor: "#16162a", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a5a", borderRadius: 6, padding: "6px 10px", fontSize: "0.8rem" },
+  select: { backgroundColor: "#16162a", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a5a", borderRadius: 6, padding: "6px 10px", fontSize: "0.8rem" },
+  secondaryButton: { backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: 8, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
+  acceptButton: { backgroundColor: "#2a4a2a", color: "#6cffa0", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a5a3a", borderRadius: 6, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer", fontWeight: 600 },
+  promoteButton: { backgroundColor: "#2a2a6a", color: "#6c8aff", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a8a", borderRadius: 6, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer", fontWeight: 600 },
 };

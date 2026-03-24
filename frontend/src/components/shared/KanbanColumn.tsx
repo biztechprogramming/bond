@@ -87,7 +87,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#8888a0",
     textTransform: "uppercase" as const,
     letterSpacing: "0.05em",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
   },
   columnCount: {
     backgroundColor: "#1e1e2e",

@@ -472,7 +472,7 @@ const st: Record<string, React.CSSProperties> = {
   sideTitle: { fontSize: "0.78rem", fontWeight: 600, color: "#6c8aff", margin: 0, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.5px" },
   envItem: {
     display: "flex", alignItems: "center", gap: 8, padding: "6px 10px",
-    border: "none", borderRadius: 6, cursor: "pointer", fontSize: "0.82rem", color: "#e0e0e8", textAlign: "left",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: 6, cursor: "pointer", fontSize: "0.82rem", color: "#e0e0e8", textAlign: "left",
   },
   envLabel: { flex: 1 },
   scriptItem: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "4px 0", fontSize: "0.8rem" },
@@ -482,7 +482,7 @@ const st: Record<string, React.CSSProperties> = {
   resourceName: { color: "#e0e0e8", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   resourceEnv: { color: "#5a5a6e", fontSize: "0.7rem" },
   backBtn: {
-    background: "none", border: "1px solid #3a3a4e", borderRadius: 8,
+    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: 8,
     color: "#8888a0", padding: "8px 12px", fontSize: "0.82rem", cursor: "pointer", marginTop: "auto",
   },
 
@@ -498,13 +498,13 @@ const st: Record<string, React.CSSProperties> = {
   metaText: { fontSize: "0.8rem", color: "#8888a0" },
   repoLink: { fontSize: "0.8rem", color: "#6c8aff", textDecoration: "none" },
   actionBtn: {
-    backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e",
+    backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 8, padding: "8px 16px", fontSize: "0.82rem", cursor: "pointer",
   },
 
   // Sections
   section: {
-    backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: 10,
+    backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: 10,
     padding: 16, display: "flex", flexDirection: "column", gap: 12,
   },
   sectionTitle: { fontSize: "0.9rem", fontWeight: 600, color: "#6c8aff", margin: 0 },
@@ -513,15 +513,15 @@ const st: Record<string, React.CSSProperties> = {
 
   // Table
   table: { display: "flex", flexDirection: "column" },
-  tableHeader: { display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid #2a2a3e" },
+  tableHeader: { display: "flex", gap: 8, padding: "6px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#2a2a3e" },
   th: { fontSize: "0.72rem", fontWeight: 600, color: "#5a5a6e", textTransform: "uppercase", letterSpacing: "0.5px" },
-  tableRow: { display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e1e2e", alignItems: "center" },
+  tableRow: { display: "flex", gap: 8, padding: "6px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", alignItems: "center" },
   td: { fontSize: "0.82rem", color: "#e0e0e8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
 
   // Tabs & buttons
-  tabBtn: { border: "none", borderRadius: 6, padding: "4px 12px", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer" },
+  tabBtn: { borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: 6, padding: "4px 12px", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer" },
   revealBtn: {
-    background: "none", border: "1px solid #3a3a4e", borderRadius: 4,
+    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: 4,
     color: "#6c8aff", fontSize: "0.7rem", padding: "2px 8px", cursor: "pointer",
   },
 };

@@ -144,7 +144,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "10px",
     padding: "10px 12px",
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "6px",
     cursor: "pointer",
     transition: "border-color 0.2s",
@@ -164,7 +164,7 @@ const styles: Record<string, React.CSSProperties> = {
   link: { color: "#6c8aff", textDecoration: "none", fontSize: "0.75rem" },
   expandedSteps: {
     padding: "12px 12px 12px 32px",
-    borderLeft: "2px solid #1e1e2e",
+    borderLeftWidth: "2px", borderLeftStyle: "solid", borderLeftColor: "#1e1e2e",
     marginLeft: "16px",
     marginTop: "4px",
     marginBottom: "8px",

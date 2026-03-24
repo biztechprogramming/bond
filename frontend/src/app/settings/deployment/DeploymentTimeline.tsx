@@ -160,7 +160,7 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
         </div>
       </div>
 
-      <div style={{ position: "relative", backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", overflow: "hidden" }}>
+      <div style={{ position: "relative", backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", overflow: "hidden" }}>
         <svg ref={svgRef} width={width} height={height} style={{ display: "block" }}>
           {/* Environment lane backgrounds */}
           {sortedEnvs.map((env, i) => (
@@ -221,7 +221,7 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
             left: hoverPos.x,
             top: hoverPos.y,
             backgroundColor: "#2a2a3e",
-            border: "1px solid #3a3a4e",
+            borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
             borderRadius: "6px",
             padding: "10px",
             fontSize: "0.8rem",
@@ -266,13 +266,13 @@ const styles: Record<string, React.CSSProperties> = {
   select: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "6px",
     padding: "6px 10px",
     fontSize: "0.8rem",
   },
   rangeBtn: {
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "6px",
     padding: "4px 10px",
     fontSize: "0.75rem",

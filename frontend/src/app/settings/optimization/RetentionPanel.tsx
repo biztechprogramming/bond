@@ -136,8 +136,8 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-const cardStyle: React.CSSProperties = { backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: "12px", padding: "16px" };
+const cardStyle: React.CSSProperties = { backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: "12px", padding: "16px" };
 const titleStyle: React.CSSProperties = { color: "#8888a0", fontSize: "0.85rem", fontWeight: 500, margin: "0 0 12px 0" };
 const labelStyle: React.CSSProperties = { display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "4px" };
-const inputStyle: React.CSSProperties = { backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none", width: "200px" };
-const btnStyle: React.CSSProperties = { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" };
+const inputStyle: React.CSSProperties = { backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px", padding: "10px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none", width: "200px" };
+const btnStyle: React.CSSProperties = { backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" };

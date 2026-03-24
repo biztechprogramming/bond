@@ -138,7 +138,7 @@ export default function OverviewPanel() {
         <h3 style={chartTitleStyle}>Failure Signals</h3>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           {Object.entries(overview.failure_signals).map(([key, val]) => (
-            <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #1e1e2e" }}>
+            <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" }}>
               <span style={{ color: "#e0e0e8", fontSize: "0.85rem" }}>{signalLabels[key] || key}</span>
               <span style={{ color: "#8888a0", fontSize: "0.85rem" }}>{val.count} ({val.pct.toFixed(1)}%)</span>
             </div>
@@ -151,12 +151,12 @@ export default function OverviewPanel() {
 
 function StatCard({ label, value, suffix, color }: { label: string; value: string; suffix?: string; color?: string }) {
   return (
-    <div style={{ backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: "10px", padding: "16px" }}>
+    <div style={{ backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: "10px", padding: "16px" }}>
       <div style={{ color: "#5a5a6e", fontSize: "0.75rem", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
       <div style={{ color: color || "#e0e0e8", fontSize: "1.4rem", fontWeight: 700 }}>{value}{suffix}</div>
     </div>
   );
 }
 
-const cardStyle: React.CSSProperties = { backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: "12px", padding: "16px" };
+const cardStyle: React.CSSProperties = { backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: "12px", padding: "16px" };
 const chartTitleStyle: React.CSSProperties = { color: "#8888a0", fontSize: "0.85rem", fontWeight: 500, margin: "0 0 12px 0" };

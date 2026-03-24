@@ -373,7 +373,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#12121a",
     borderRadius: "12px",
     padding: "16px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     display: "flex",
     flexDirection: "column",
     gap: "10px",
@@ -385,7 +385,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: "0.8rem", color: "#8888a0" },
   input: {
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "8px 10px",
     color: "#e0e0e8",
@@ -394,7 +394,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   select: {
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "8px 10px",
     color: "#e0e0e8",
@@ -407,14 +407,14 @@ const styles: Record<string, React.CSSProperties> = {
   envRow: { display: "flex", gap: "8px", alignItems: "center" },
   iconButton: {
     backgroundColor: "transparent",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     fontSize: "1rem",
     cursor: "pointer",
     padding: "4px 6px",
   },
   addButton: {
     backgroundColor: "transparent",
-    border: "1px dashed #2a2a3e",
+    borderWidth: "1px", borderStyle: "dashed", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "8px 12px",
     color: "#6c8aff",
@@ -426,7 +426,7 @@ const styles: Record<string, React.CSSProperties> = {
   deployButton: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "12px 24px",
     fontSize: "0.95rem",
@@ -436,7 +436,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryButton: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",
@@ -445,7 +445,7 @@ const styles: Record<string, React.CSSProperties> = {
   yamlContainer: {
     backgroundColor: "#0a0a12",
     borderRadius: "12px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     overflow: "hidden",
   },
   yamlHeader: {
@@ -454,13 +454,13 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     padding: "8px 16px",
     backgroundColor: "#12121a",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
   },
   yamlTitle: { fontSize: "0.82rem", color: "#8888a0", fontFamily: "monospace" },
   copyButton: {
     backgroundColor: "#2a2a3e",
     color: "#6c8aff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "6px",
     padding: "4px 10px",
     fontSize: "0.78rem",

@@ -113,7 +113,7 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted, age
         }
         style={{
           backgroundColor: "#1e1e2e",
-          border: "1px solid #2a2a3e",
+          borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
           borderRadius: "8px",
           padding: "4px 10px",
           color: disabled ? "#5a5a6e" : "#e0e0e8",
@@ -154,7 +154,7 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted, age
             left: 0,
             minWidth: "220px",
             backgroundColor: "#1e1e2e",
-            border: "1px solid #2a2a3e",
+            borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
             borderRadius: "10px",
             overflow: "hidden",
             zIndex: 100,
@@ -201,7 +201,7 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted, age
             <div
               style={{
                 padding: "8px 14px",
-                borderTop: "1px solid #2a2a3e",
+                borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#2a2a3e",
                 color: "#8888a0",
                 fontSize: "0.72rem",
               }}
@@ -213,7 +213,7 @@ export default function BranchSelector({ branchChangedSignal, turnCompleted, age
             <div
               style={{
                 padding: "6px 14px",
-                borderTop: "1px solid #2a2a3e",
+                borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#2a2a3e",
                 color: "#5a5a6e",
                 fontSize: "0.7rem",
               }}

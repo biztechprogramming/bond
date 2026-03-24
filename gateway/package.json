@@ -19,6 +19,7 @@
     "@types/js-yaml": "^4.0.9",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "discord.js": "^14.18.0",
+    "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "grammy": "^1.41.1",
     "js-yaml": "^4.1.1",

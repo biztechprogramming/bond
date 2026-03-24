@@ -1115,6 +1115,34 @@ async def _run_agent_loop(
         # Track cost
         cost.track_primary_call(response, _iter_model, _iteration, input_tokens, output_tokens)
 
+        # Fragment cost attribution (Design Doc 064)
+        if _langfuse_meta and _langfuse_meta.get("fragments_injected") and _iteration == 0:
+            try:
+                import copy as _copy_mod
+                _costed_fragments = cost.attribute_fragment_costs(
+                    response, _iter_model,
+                    _copy_mod.deepcopy(_langfuse_meta["fragments_injected"]),
+                )
+                _trace_id = _langfuse_meta.get("trace_id") or _langfuse_meta.get("trace_name", "")
+                from backend.app.agent.langfuse_client import (
+                    emit_fragment_scores,
+                    emit_fragment_cost_scores,
+                )
+                emit_fragment_scores(
+                    trace_id=_trace_id,
+                    fragments=_costed_fragments,
+                    model=_iter_model,
+                    session_id=conversation_id,
+                )
+                emit_fragment_cost_scores(
+                    trace_id=_trace_id,
+                    fragments=_costed_fragments,
+                    model=_iter_model,
+                    session_id=conversation_id,
+                )
+            except Exception as _frag_cost_err:
+                logger.debug("Fragment cost attribution failed: %s", _frag_cost_err)
+
         # Adaptive budget
         handle_adaptive_budget(_iteration, llm_message, loop, cost)
 

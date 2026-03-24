@@ -175,7 +175,7 @@ export default function ChatPanel({
                   top: "6px",
                   right: "6px",
                   background: copiedIdx === i ? "rgba(78,201,148,0.15)" : "rgba(90,90,110,0.2)",
-                  border: "none",
+                  borderWidth: 0, borderStyle: "none", borderColor: "transparent",
                   color: copiedIdx === i ? "#4ec994" : hoveredIdx === i ? "#a0a0b8" : "#6e6e85",
                   fontSize: "0.85rem",
                   cursor: "pointer",
@@ -252,7 +252,7 @@ export default function ChatPanel({
                       <>
                         <button
                           onClick={() => setShowToolLog(!showToolLog)}
-                          style={{ background: "none", border: "none", color: "#5a5a6e", fontSize: "0.75rem", cursor: "pointer", padding: "4px 0", marginTop: "4px" }}
+                          style={{ background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent", color: "#5a5a6e", fontSize: "0.75rem", cursor: "pointer", padding: "4px 0", marginTop: "4px" }}
                         >
                           {showToolLog ? "\u25BC Hide activity" : "\u25B6 Show activity log"}
                         </button>
@@ -282,7 +282,7 @@ export default function ChatPanel({
           <div style={{ ...s.chatMsg, maxWidth: "100%", padding: 0, overflow: "hidden" }}>
             <div style={{
               display: "flex", alignItems: "center", gap: "8px",
-              padding: "8px 12px", borderBottom: "1px solid #1e1e2e",
+              padding: "8px 12px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
               fontSize: "0.8rem", color: "#6c8aff",
             }}>
               {codingAgentActive && (
@@ -302,7 +302,7 @@ export default function ChatPanel({
                       style={{
                         display: "flex", alignItems: "center", gap: "6px",
                         width: "100%", padding: "6px 12px",
-                        background: "none", border: "none", borderBottom: "1px solid #0a0a14",
+                        background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#0a0a14",
                         color: "#c0c0d0", fontSize: "0.78rem", cursor: "pointer",
                         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                         textAlign: "left",
@@ -363,8 +363,8 @@ export default function ChatPanel({
                   style={{
                     display: "flex", alignItems: "center", gap: "6px",
                     width: "100%", padding: "6px 12px",
-                    background: "none", border: "none",
-                    borderTop: "1px solid #1e1e2e",
+                    background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent",
+                    borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e",
                     color: "#8888a0", fontSize: "0.75rem", cursor: "pointer",
                     textAlign: "left",
                   }}
@@ -442,7 +442,7 @@ export default function ChatPanel({
 const compactStyles: Record<string, React.CSSProperties> = {
   chatHeader: {
     padding: "10px 16px",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
     fontSize: "0.85rem",
     fontWeight: 600,
     color: "#8888a0",
@@ -499,12 +499,12 @@ const compactStyles: Record<string, React.CSSProperties> = {
     display: "flex",
     gap: "8px",
     padding: "10px 12px",
-    borderTop: "1px solid #1e1e2e",
+    borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e",
   },
   chatTextarea: {
     flex: 1,
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "8px",
     padding: "8px 12px",
     color: "#e0e0e8",
@@ -516,7 +516,7 @@ const compactStyles: Record<string, React.CSSProperties> = {
   chatSendBtn: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",
@@ -526,7 +526,7 @@ const compactStyles: Record<string, React.CSSProperties> = {
   chatStopBtn: {
     backgroundColor: "#ff4444",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",
@@ -534,14 +534,14 @@ const compactStyles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   deleteActionBtn: {
-    background: "rgba(108,138,255,0.15)", border: "1px solid rgba(108,138,255,0.4)",
+    background: "rgba(108,138,255,0.15)", borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(108,138,255,0.4)",
     borderRadius: "50%", width: "22px", height: "22px",
     color: "#6c8aff", fontSize: "0.75rem", cursor: "pointer",
     display: "flex", alignItems: "center", justifyContent: "center",
     lineHeight: 1, padding: 0,
   },
   deleteBtn: {
-    background: "rgba(255,60,80,0.15)", border: "1px solid rgba(255,60,80,0.4)",
+    background: "rgba(255,60,80,0.15)", borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(255,60,80,0.4)",
     borderRadius: "50%", width: "22px", height: "22px",
     color: "#ff3c50", fontSize: "0.75rem", cursor: "pointer",
     display: "flex", alignItems: "center", justifyContent: "center",
@@ -584,12 +584,12 @@ const fullStyles: Record<string, React.CSSProperties> = {
     display: "flex",
     gap: "12px",
     padding: "16px 24px",
-    borderTop: "1px solid #1e1e2e",
+    borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e",
   },
   chatTextarea: {
     flex: 1,
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "12px",
     padding: "12px 16px",
     color: "#e0e0e8",
@@ -601,7 +601,7 @@ const fullStyles: Record<string, React.CSSProperties> = {
   chatSendBtn: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "12px",
     padding: "12px 24px",
     fontSize: "1rem",
@@ -611,7 +611,7 @@ const fullStyles: Record<string, React.CSSProperties> = {
   chatStopBtn: {
     backgroundColor: "#ff4444",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "12px",
     padding: "12px 16px",
     fontSize: "1rem",

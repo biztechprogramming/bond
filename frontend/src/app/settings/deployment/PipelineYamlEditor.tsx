@@ -194,7 +194,7 @@ const styles: Record<string, React.CSSProperties> = {
   editor: {
     backgroundColor: "#0a0a12",
     color: "#e0e0e8",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "8px",
     padding: "14px",
     fontFamily: "monospace",
@@ -207,7 +207,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   validationBox: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "6px",
     padding: "10px",
     display: "flex",
@@ -218,7 +218,7 @@ const styles: Record<string, React.CSSProperties> = {
   primaryBtn: {
     backgroundColor: "#6c8aff",
     color: "#12121a",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",
@@ -228,7 +228,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryBtn: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",

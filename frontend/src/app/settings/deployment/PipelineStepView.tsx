@@ -179,7 +179,7 @@ const styles: Record<string, React.CSSProperties> = {
   stepsRow: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" },
   stepCard: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "8px",
     padding: "10px 14px",
     cursor: "pointer",
@@ -195,7 +195,7 @@ const styles: Record<string, React.CSSProperties> = {
   empty: { fontSize: "0.85rem", color: "#5a5a6e" },
   expandedPanel: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "8px",
     padding: "16px",
     display: "flex",
@@ -211,7 +211,7 @@ const styles: Record<string, React.CSSProperties> = {
   detailValue: { fontSize: "0.8rem", color: "#e0e0e8" },
   codeBlock: {
     backgroundColor: "#0a0a12",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "6px",
     padding: "10px",
     fontSize: "0.75rem",
@@ -223,7 +223,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   logPreview: {
     backgroundColor: "#0a0a12",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: "6px",
     padding: "10px",
     fontSize: "0.75rem",

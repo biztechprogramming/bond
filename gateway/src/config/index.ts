@@ -77,7 +77,7 @@ export function loadConfig(): GatewayConfig {
     port,
     backendUrl: process.env.BOND_BACKEND_URL || `http://${backendHost}:${backendPort}`,
     frontendOrigin: process.env.BOND_FRONTEND_ORIGIN || `http://localhost:${frontendPort}`,
-    spacetimedbUrl: process.env.BOND_SPACETIMEDB_URL || "http://localhost:18787",
+    spacetimedbUrl: process.env.BOND_SPACETIMEDB_URL || bond.spacetimedb?.url || "",
     spacetimedbModuleName: process.env.BOND_SPACETIMEDB_MODULE || "bond-core-v2",
     spacetimedbToken: resolveSpacetimeToken(),
     webhooks,

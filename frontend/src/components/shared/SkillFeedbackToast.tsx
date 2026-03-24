@@ -43,7 +43,7 @@ function SkillFeedbackToast({ activation, onFeedback, onDismiss }: SkillFeedback
         gap: 12,
         padding: "10px 14px",
         backgroundColor: "rgba(30, 30, 45, 0.95)",
-        border: "1px solid rgba(100, 100, 140, 0.3)",
+        borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(100, 100, 140, 0.3)",
         borderRadius: 10,
         backdropFilter: "blur(12px)",
         boxShadow: "0 4px 20px rgba(0, 0, 0, 0.4)",
@@ -80,7 +80,7 @@ function SkillFeedbackToast({ activation, onFeedback, onDismiss }: SkillFeedback
             title="Skill was helpful"
             style={{
               background: "none",
-              border: "1px solid rgba(100, 200, 100, 0.3)",
+              borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(100, 200, 100, 0.3)",
               borderRadius: 6,
               padding: "4px 8px",
               cursor: "pointer",
@@ -104,7 +104,7 @@ function SkillFeedbackToast({ activation, onFeedback, onDismiss }: SkillFeedback
             title="Skill wasn't relevant"
             style={{
               background: "none",
-              border: "1px solid rgba(200, 100, 100, 0.3)",
+              borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(200, 100, 100, 0.3)",
               borderRadius: 6,
               padding: "4px 8px",
               cursor: "pointer",
@@ -129,7 +129,7 @@ function SkillFeedbackToast({ activation, onFeedback, onDismiss }: SkillFeedback
             title="Dismiss"
             style={{
               background: "none",
-              border: "none",
+              borderWidth: 0, borderStyle: "none", borderColor: "transparent",
               padding: "4px 4px",
               cursor: "pointer",
               fontSize: 12,

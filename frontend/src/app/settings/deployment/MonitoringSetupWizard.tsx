@@ -154,7 +154,7 @@ export default function MonitoringSetupWizard({ environment, onComplete, onCance
                   </span>
                 </div>
                 {cfg.expanded && (
-                  <div style={{ padding: "8px 32px", display: "flex", gap: 12, flexWrap: "wrap", borderBottom: "1px solid #1e1e2e" }}>
+                  <div style={{ padding: "8px 32px", display: "flex", gap: 12, flexWrap: "wrap", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" }}>
                     <label style={styles.fieldLabel}>
                       Health URL
                       <input style={{ ...styles.input, width: 240 }} value={cfg.healthUrl} onChange={(e) => setCfg(s.id, "healthUrl", e.target.value)} />
@@ -205,14 +205,14 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", gap: 12 },
   headerRow: { display: "flex", justifyContent: "space-between", alignItems: "center" },
   title: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 },
-  card: { backgroundColor: "#12121a", border: "1px solid #1e1e2e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 10 },
+  card: { backgroundColor: "#12121a", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", borderRadius: 12, padding: 16, display: "flex", flexDirection: "column", gap: 10 },
   cardTitle: { fontSize: "0.8rem", fontWeight: 600, color: "#8888a0", textTransform: "uppercase" as const },
-  tableHeader: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e1e2e", fontSize: "0.7rem", color: "#8888a0", textTransform: "uppercase" as const },
-  tableRow: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid #0a0a12" },
+  tableHeader: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", fontSize: "0.7rem", color: "#8888a0", textTransform: "uppercase" as const },
+  tableRow: { display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#0a0a12" },
   checkLabel: { display: "flex", alignItems: "center", gap: 4, fontSize: "0.8rem", color: "#e0e0e8", cursor: "pointer" },
   fieldLabel: { display: "flex", flexDirection: "column", gap: 2, fontSize: "0.75rem", color: "#8888a0" },
-  input: { backgroundColor: "#16162a", color: "#e0e0e8", border: "1px solid #3a3a5a", borderRadius: 6, padding: "6px 10px", fontSize: "0.8rem" },
-  selectSmall: { backgroundColor: "#16162a", color: "#e0e0e8", border: "1px solid #3a3a5a", borderRadius: 4, padding: "4px 8px", fontSize: "0.75rem" },
-  button: { backgroundColor: "#6cffa0", color: "#0a0a1a", border: "none", borderRadius: 6, padding: "8px 16px", cursor: "pointer", fontWeight: 600, fontSize: "0.85rem" },
-  secondaryButton: { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: 8, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
+  input: { backgroundColor: "#16162a", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a5a", borderRadius: 6, padding: "6px 10px", fontSize: "0.8rem" },
+  selectSmall: { backgroundColor: "#16162a", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a5a", borderRadius: 4, padding: "4px 8px", fontSize: "0.75rem" },
+  button: { backgroundColor: "#6cffa0", color: "#0a0a1a", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: 6, padding: "8px 16px", cursor: "pointer", fontWeight: 600, fontSize: "0.85rem" },
+  secondaryButton: { backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: 8, padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
 };

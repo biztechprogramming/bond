@@ -611,11 +611,11 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "16px 24px",
-    borderBottom: "1px solid #1e1e2e",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
   },
   topBar: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "12px 0", borderBottom: "1px solid #1e1e2e", marginBottom: "16px", flexShrink: 0,
+    padding: "12px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", marginBottom: "16px", flexShrink: 0,
   },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
@@ -635,7 +635,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#12121a",
     borderRadius: "12px",
     padding: "20px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     cursor: "pointer",
     transition: "border-color 0.2s",
   },
@@ -654,7 +654,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#12121a",
     borderRadius: "12px",
     padding: "24px",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     gap: "16px",
@@ -672,7 +672,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     width: "100%",
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "10px 12px",
     color: "#e0e0e8",
@@ -683,7 +683,7 @@ const styles: Record<string, React.CSSProperties> = {
   select: {
     width: "100%",
     backgroundColor: "#1e1e2e",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: "8px",
     padding: "10px 12px",
     color: "#e0e0e8",
@@ -714,7 +714,7 @@ const styles: Record<string, React.CSSProperties> = {
   button: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "8px",
     padding: "10px 20px",
     fontSize: "0.9rem",
@@ -724,7 +724,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryButton: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "10px 20px",
     fontSize: "0.9rem",
@@ -733,7 +733,7 @@ const styles: Record<string, React.CSSProperties> = {
   dangerButton: {
     backgroundColor: "#3a1a1a",
     color: "#ff6c8a",
-    border: "1px solid #5a2a2a",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#5a2a2a",
     borderRadius: "8px",
     padding: "10px 20px",
     fontSize: "0.9rem",
@@ -742,7 +742,7 @@ const styles: Record<string, React.CSSProperties> = {
   smallButton: {
     backgroundColor: "#2a2a3e",
     color: "#6c8aff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "4px",
     padding: "2px 8px",
     fontSize: "0.75rem",
@@ -752,7 +752,7 @@ const styles: Record<string, React.CSSProperties> = {
   dangerSmall: {
     backgroundColor: "#3a1a1a",
     color: "#ff6c8a",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "4px",
     padding: "4px 8px",
     fontSize: "0.8rem",
@@ -772,7 +772,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   modal: {
     backgroundColor: "#1a1a2e",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "12px",
     padding: "24px",
     maxWidth: "480px",
