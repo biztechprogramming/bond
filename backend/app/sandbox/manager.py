@@ -585,7 +585,7 @@ class SandboxManager:
         cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
 
         # SpacetimeDB URL — pass through from host environment
-        stdb_url = os.environ.get("BOND_SPACETIMEDB_URL", "http://localhost:18787")
+        stdb_url = os.environ["BOND_SPACETIMEDB_URL"]
         cmd.extend(["-e", f"BOND_SPACETIMEDB_URL={stdb_url}"])
 
         # --- Agent identity & repo env vars ---
