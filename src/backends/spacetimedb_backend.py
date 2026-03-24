@@ -38,6 +38,7 @@ class SpacetimeDBBackend(StorageBackend):
         self._token = token or os.environ.get("SPACETIMEDB_TOKEN")
         self._base_url = (
             base_url
+            or os.environ.get("BOND_SPACETIMEDB_URL")
             or os.environ.get("SPACETIMEDB_URL", DEFAULT_SPACETIMEDB_URL)
         ).rstrip("/")
 
