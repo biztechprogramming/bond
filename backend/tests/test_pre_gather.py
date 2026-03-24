@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from backend.app.agent.pre_gather import (
+    GatherMetrics,
+    GatherResult,
+    GatherTask,
     _extract_json,
     _should_skip_plan,
     _validate_plan,
     build_handoff_context,
     compute_adaptive_budget,
+    gather_phase,
+    partition_by_dependencies,
 )
 from backend.app.agent.pre_gather_integration import PreGatherResult
 
@@ -207,3 +214,167 @@ class TestPreGatherResult:
         assert r.context_bundle == ""
         assert r.adaptive_budget is None
         assert r.delegate_to_coding_agent is False
+        assert r.gather_metrics is None
+
+
+# ---------------------------------------------------------------------------
+# GatherTask
+# ---------------------------------------------------------------------------
+
+
+class TestGatherTask:
+    def test_defaults(self):
+        t = GatherTask(name="test", task_type="file_read")
+        assert t.params == {}
+        assert t.depends_on == []
+        assert t.priority == 0
+
+    def test_with_values(self):
+        t = GatherTask(
+            name="read:foo",
+            task_type="file_read",
+            params={"path": "foo.py"},
+            depends_on=["other"],
+            priority=5,
+        )
+        assert t.depends_on == ["other"]
+        assert t.priority == 5
+
+
+# ---------------------------------------------------------------------------
+# GatherMetrics
+# ---------------------------------------------------------------------------
+
+
+class TestGatherMetrics:
+    def test_dataclass(self):
+        m = GatherMetrics(
+            total_tasks=10, parallel_tasks=8, sequential_tasks=2,
+            wall_clock_ms=500, sequential_equivalent_ms=2000,
+            speedup=4.0, tasks_timed_out=1, tasks_failed=2,
+        )
+        assert m.speedup == 4.0
+        assert m.total_tasks == 10
+
+
+# ---------------------------------------------------------------------------
+# partition_by_dependencies
+# ---------------------------------------------------------------------------
+
+
+class TestPartitionByDependencies:
+    def test_all_independent(self):
+        tasks = [
+            GatherTask(name="a", task_type="file_read"),
+            GatherTask(name="b", task_type="grep"),
+        ]
+        ind, dep = partition_by_dependencies(tasks)
+        assert len(ind) == 2
+        assert len(dep) == 0
+
+    def test_all_dependent(self):
+        tasks = [
+            GatherTask(name="a", task_type="file_read", depends_on=["x"]),
+            GatherTask(name="b", task_type="grep", depends_on=["y"]),
+        ]
+        ind, dep = partition_by_dependencies(tasks)
+        assert len(ind) == 0
+        assert len(dep) == 2
+
+    def test_mixed(self):
+        tasks = [
+            GatherTask(name="a", task_type="file_read"),
+            GatherTask(name="b", task_type="grep", depends_on=["a"]),
+            GatherTask(name="c", task_type="file_read"),
+        ]
+        ind, dep = partition_by_dependencies(tasks)
+        assert [t.name for t in ind] == ["a", "c"]
+        assert [t.name for t in dep] == ["b"]
+
+    def test_empty(self):
+        ind, dep = partition_by_dependencies([])
+        assert ind == []
+        assert dep == []
+
+
+# ---------------------------------------------------------------------------
+# Parallel gather_phase
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_registry(file_contents: dict[str, str] | None = None):
+    """Create a mock tool registry that returns file contents."""
+    contents = file_contents or {}
+
+    async def _file_read(params, ctx):
+        path = params.get("path", "")
+        if path in contents:
+            return contents[path]
+        return f"[content of {path}]"
+
+    registry = MagicMock()
+    registry.get.return_value = AsyncMock(side_effect=_file_read)
+    return registry
+
+
+class TestParallelGatherPhase:
+    @pytest.mark.asyncio
+    async def test_independent_tasks_run(self):
+        plan = {
+            "files_to_read": ["a.py", "b.py"],
+            "grep_patterns": [],
+        }
+        registry = _make_tool_registry({"a.py": "aaa", "b.py": "bbb"})
+        context, metrics = await gather_phase(plan, registry, {}, "/workspace")
+        assert "aaa" in context
+        assert "bbb" in context
+        assert metrics is not None
+        assert metrics.total_tasks == 2
+        assert metrics.parallel_tasks == 2
+        assert metrics.tasks_failed == 0
+
+    @pytest.mark.asyncio
+    async def test_empty_plan(self):
+        context, metrics = await gather_phase(
+            {"files_to_read": [], "grep_patterns": []},
+            MagicMock(), {}, "/workspace",
+        )
+        assert context == ""
+        assert metrics is None
+
+    @pytest.mark.asyncio
+    async def test_cancellation(self):
+        cancel = asyncio.Event()
+        cancel.set()  # Already cancelled
+        plan = {"files_to_read": ["a.py"], "grep_patterns": []}
+        registry = _make_tool_registry()
+        context, metrics = await gather_phase(
+            plan, registry, {}, "/workspace", cancellation_event=cancel,
+        )
+        assert context == ""
+
+    @pytest.mark.asyncio
+    async def test_timeout_handling(self, monkeypatch):
+        monkeypatch.setattr("backend.app.agent.pre_gather.PARALLEL_TASK_TIMEOUT", 0.01)
+
+        async def _slow_read(params, ctx):
+            await asyncio.sleep(5)
+            return "never"
+
+        registry = MagicMock()
+        registry.get.return_value = AsyncMock(side_effect=_slow_read)
+
+        plan = {"files_to_read": ["slow.py"], "grep_patterns": []}
+        context, metrics = await gather_phase(plan, registry, {}, "/workspace")
+        assert metrics is not None
+        assert metrics.tasks_timed_out == 1
+        assert metrics.tasks_failed == 1
+
+    @pytest.mark.asyncio
+    async def test_sequential_fallback(self, monkeypatch):
+        monkeypatch.setattr("backend.app.agent.pre_gather.PARALLEL_GATHERING_ENABLED", False)
+        plan = {"files_to_read": ["a.py"], "grep_patterns": []}
+        registry = _make_tool_registry({"a.py": "content_a"})
+        context, metrics = await gather_phase(plan, registry, {}, "/workspace")
+        assert "content_a" in context
+        assert metrics is None  # No metrics in sequential mode
