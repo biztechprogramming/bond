@@ -8,6 +8,7 @@
  */
 
 import { DbConnection } from "./spacetimedb/index";
+import { STDB_WS } from "./config";
 
 // Types inferred from generated bindings
 export interface Conversation {
@@ -80,7 +81,7 @@ export function getConnection(): DbConnection | null {
 }
 
 export async function connectToSpacetimeDB(
-  uri = "ws://localhost:18787",
+  uri = STDB_WS,
   moduleName = "bond-core-v2"
 ): Promise<DbConnection> {
   if (db) return db;

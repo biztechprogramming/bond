@@ -114,12 +114,12 @@ export default function DeployPage() {
 
 const s: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%" },
-  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottom: "1px solid #1e1e2e" },
+  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
   nav: { display: "flex", gap: "4px", marginLeft: "auto" },
   navBtn: {
-    background: "none", border: "1px solid transparent", color: "#8888a0", padding: "6px 14px",
+    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "transparent", color: "#8888a0", padding: "6px 14px",
     fontSize: "0.85rem", fontWeight: 500, cursor: "pointer", borderRadius: "6px", transition: "all 0.2s",
   },
   navBtnActive: { color: "#6c8aff", borderColor: "#6c8aff", backgroundColor: "rgba(108,138,255,0.08)" },

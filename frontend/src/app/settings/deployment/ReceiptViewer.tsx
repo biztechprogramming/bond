@@ -180,7 +180,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: "min(600px, 90vw)",
     height: "100vh",
     backgroundColor: "#0e0e16",
-    borderLeft: "1px solid #1e1e2e",
+    borderLeftWidth: "1px", borderLeftStyle: "solid", borderLeftColor: "#1e1e2e",
     padding: 20,
     overflowY: "auto",
     display: "flex",
@@ -192,7 +192,7 @@ const styles: Record<string, React.CSSProperties> = {
   closeBtn: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 6,
     padding: "6px 14px",
     fontSize: "0.8rem",
@@ -208,7 +208,7 @@ const styles: Record<string, React.CSSProperties> = {
   phases: { display: "flex", flexDirection: "column", gap: 4 },
   phase: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 8,
   },
   phaseHeader: {
@@ -225,7 +225,7 @@ const styles: Record<string, React.CSSProperties> = {
   phaseBody: { padding: "0 12px 12px" },
   codeBlock: {
     backgroundColor: "#0a0a12",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: 6,
     padding: 10,
     fontSize: "0.8rem",
@@ -240,7 +240,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#8888a0",
     display: "flex",
     gap: 16,
-    borderTop: "1px solid #1e1e2e",
+    borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e",
     paddingTop: 12,
   },
   muted: { color: "#8888a0", fontSize: "0.85rem" },

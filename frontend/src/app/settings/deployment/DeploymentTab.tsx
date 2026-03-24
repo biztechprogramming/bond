@@ -269,7 +269,7 @@ export default function DeploymentTab() {
           existingMounts={existingMounts}
           onCreated={goToDashboard}
         />
-        <div style={{ borderTop: "1px solid #1e1e2e", paddingTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
+        <div style={{ borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e", paddingTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
           <span style={{ fontSize: "0.85rem", color: "#8888a0" }}>Just want to deploy quickly?</span>
           <button style={styles.secondaryButton} onClick={() => setView("quick-deploy")}>
             Quick Deploy
@@ -319,7 +319,7 @@ export default function DeploymentTab() {
     <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
       {/* Top navigation: environment tabs + special tabs */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", gap: "2px", backgroundColor: "#1a1a2e", borderRadius: "8px", padding: "2px", border: "1px solid #3a3a4e" }}>
+        <div style={{ display: "flex", gap: "2px", backgroundColor: "#1a1a2e", borderRadius: "8px", padding: "2px", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e" }}>
           {environments.map((env) => (
             <button
               key={env.name}
@@ -464,14 +464,14 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryButton: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: "8px",
     padding: "8px 16px",
     fontSize: "0.85rem",
     cursor: "pointer",
   },
   tabButton: {
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: "6px",
     padding: "6px 14px",
     fontSize: "0.8rem",

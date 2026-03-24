@@ -60,7 +60,7 @@ services:
     profiles:
       - opensandbox
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
       interval: 10s
       timeout: 5s
       retries: 3

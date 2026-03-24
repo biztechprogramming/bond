@@ -125,7 +125,7 @@ export default function PipelineRow({ scriptName, version, environments, onRefre
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  row: { padding: "12px 0", borderBottom: "1px solid #1e1e2e" },
+  row: { padding: "12px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   nameRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
   name: { fontSize: "0.9rem", color: "#e0e0e8", fontWeight: 500 },
   version: { fontSize: "0.8rem", color: "#8888a0", fontWeight: 400 },
@@ -135,7 +135,7 @@ const styles: Record<string, React.CSSProperties> = {
   promoteBtn: {
     backgroundColor: "#2a4a2a",
     color: "#6cffa0",
-    border: "1px solid #3a5a3a",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a5a3a",
     borderRadius: 6,
     padding: "2px 10px",
     fontSize: "0.7rem",
@@ -145,7 +145,7 @@ const styles: Record<string, React.CSSProperties> = {
   promoteAllBtn: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 6,
     padding: "4px 12px",
     fontSize: "0.75rem",

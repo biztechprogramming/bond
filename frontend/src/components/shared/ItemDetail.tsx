@@ -62,7 +62,7 @@ const styles: Record<string, React.CSSProperties> = {
   cardDetail: {
     marginTop: "10px",
     paddingTop: "10px",
-    borderTop: "1px solid #1e1e2e",
+    borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e",
   },
   detailSection: {
     marginBottom: "8px",
@@ -78,7 +78,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.78rem",
     color: "#aaa",
     padding: "4px 0",
-    borderBottom: "1px solid #1a1a2a",
+    borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1a1a2a",
     whiteSpace: "pre-wrap" as const,
   },
   fileItem: {

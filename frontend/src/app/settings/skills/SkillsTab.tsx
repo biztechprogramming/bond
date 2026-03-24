@@ -257,7 +257,7 @@ export default function SkillsTab() {
                 <React.Fragment key={sk.id}>
                   <tr
                     style={{
-                      borderBottom: "1px solid rgba(100, 100, 140, 0.15)",
+                      borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "rgba(100, 100, 140, 0.15)",
                       cursor: "pointer",
                       backgroundColor: expandedId === sk.id ? "rgba(100, 100, 140, 0.08)" : "transparent",
                     }}
@@ -364,11 +364,11 @@ export default function SkillsTab() {
 }
 
 const st: Record<string, React.CSSProperties> = {
-  section: { backgroundColor: "#12121a", borderRadius: 12, padding: 24, border: "1px solid #1e1e2e" },
+  section: { backgroundColor: "#12121a", borderRadius: 12, padding: 24, borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
   sectionTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 4px 0" },
-  button: { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" },
-  input: { backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: 8, padding: "10px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none" },
-  th: { textAlign: "left" as const, padding: "8px 12px", color: "#8888a0", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer", userSelect: "none" as const, borderBottom: "1px solid rgba(100, 100, 140, 0.3)", whiteSpace: "nowrap" as const },
+  button: { backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: 8, padding: "8px 16px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer" },
+  input: { backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: 8, padding: "10px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none" },
+  th: { textAlign: "left" as const, padding: "8px 12px", color: "#8888a0", fontSize: "0.78rem", fontWeight: 600, cursor: "pointer", userSelect: "none" as const, borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "rgba(100, 100, 140, 0.3)", whiteSpace: "nowrap" as const },
   td: { padding: "10px 12px", color: "#c8c8e0", whiteSpace: "nowrap" as const },
-  actionBtn: { background: "none", border: "1px solid rgba(100, 100, 140, 0.3)", borderRadius: 6, padding: "3px 6px", cursor: "pointer", fontSize: 14, lineHeight: "1" },
+  actionBtn: { background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(100, 100, 140, 0.3)", borderRadius: 6, padding: "3px 6px", cursor: "pointer", fontSize: 14, lineHeight: "1" },
 };

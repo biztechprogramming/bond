@@ -131,11 +131,11 @@ export default function CompareEnvironments({ environments, onBack }: CompareEnv
 
       {/* Components comparison */}
       {componentComparisons.length > 0 && (
-        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", overflow: "hidden" }}>
-          <div style={{ padding: "10px 14px", borderBottom: "1px solid #3a3a4e", fontWeight: 600, color: "#e0e0e8", fontSize: "0.9rem" }}>
+        <div style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", overflow: "hidden" }}>
+          <div style={{ padding: "10px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#3a3a4e", fontWeight: 600, color: "#e0e0e8", fontSize: "0.9rem" }}>
             Components
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottom: "1px solid #2a2a3e" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#2a2a3e" }}>
             <span style={styles.header}>Component</span>
             <span style={styles.header}>{envDisplay(envA)}</span>
             <span style={styles.header}>{envDisplay(envB)}</span>
@@ -146,7 +146,7 @@ export default function CompareEnvironments({ environments, onBack }: CompareEnv
             const same = bothPresent;
             const missing = !cc.envA || !cc.envB;
             return (
-              <div key={cc.name} style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottom: "1px solid #1e1e32", alignItems: "center" }}>
+              <div key={cc.name} style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e32", alignItems: "center" }}>
                 <span style={{ color: "#e0e0e8", fontSize: "0.85rem" }}>{cc.display_name}</span>
                 <span style={{ color: "#8888a0", fontSize: "0.85rem", fontFamily: "monospace" }}>{cc.envA ? cc.envA.resource || "present" : "—"}</span>
                 <span style={{ color: "#8888a0", fontSize: "0.85rem", fontFamily: "monospace" }}>{cc.envB ? cc.envB.resource || "present" : "—"}</span>
@@ -164,18 +164,18 @@ export default function CompareEnvironments({ environments, onBack }: CompareEnv
         const rows = data[section] || [];
         if (rows.length === 0) return null;
         return (
-          <div key={section} style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", border: "1px solid #3a3a4e", overflow: "hidden" }}>
-            <div style={{ padding: "10px 14px", borderBottom: "1px solid #3a3a4e", fontWeight: 600, color: "#e0e0e8", fontSize: "0.9rem" }}>
+          <div key={section} style={{ backgroundColor: "#1a1a2e", borderRadius: "8px", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", overflow: "hidden" }}>
+            <div style={{ padding: "10px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#3a3a4e", fontWeight: 600, color: "#e0e0e8", fontSize: "0.9rem" }}>
               {SECTION_LABELS[section]}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottom: "1px solid #2a2a3e" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#2a2a3e" }}>
               <span style={styles.header}>Item</span>
               <span style={styles.header}>{envDisplay(envA)}</span>
               <span style={styles.header}>{envDisplay(envB)}</span>
               <span style={styles.header}>Status</span>
             </div>
             {rows.map((row) => (
-              <div key={row.key} style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottom: "1px solid #1e1e32", alignItems: "center" }}>
+              <div key={row.key} style={{ display: "grid", gridTemplateColumns: "200px 1fr 1fr 60px", padding: "6px 14px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e32", alignItems: "center" }}>
                 <span style={{ color: "#e0e0e8", fontSize: "0.85rem" }}>{row.key}</span>
                 <span style={{ color: "#8888a0", fontSize: "0.85rem", fontFamily: "monospace" }}>{row.envA_value || "—"}</span>
                 <span style={{ color: "#8888a0", fontSize: "0.85rem", fontFamily: "monospace" }}>{row.envB_value || "—"}</span>
@@ -194,8 +194,8 @@ export default function CompareEnvironments({ environments, onBack }: CompareEnv
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  primaryBtn: { backgroundColor: "#6c8aff", color: "#fff", border: "none", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
-  secondaryBtn: { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
-  select: { backgroundColor: "#2a2a3e", color: "#e0e0e8", border: "1px solid #3a3a4e", borderRadius: "6px", padding: "8px 12px", fontSize: "0.85rem", minWidth: "160px" },
+  primaryBtn: { backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
+  secondaryBtn: { backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: "8px", padding: "8px 16px", fontSize: "0.85rem", cursor: "pointer" },
+  select: { backgroundColor: "#2a2a3e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e", borderRadius: "6px", padding: "8px 12px", fontSize: "0.85rem", minWidth: "160px" },
   header: { color: "#8888a0", fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase" as const },
 };

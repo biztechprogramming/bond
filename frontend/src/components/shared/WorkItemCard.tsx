@@ -62,7 +62,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: "#12121a",
     borderRadius: "8px",
     padding: "10px 12px",
-    borderLeft: "3px solid #5a5a6e",
+    borderLeftWidth: "3px", borderLeftStyle: "solid", borderLeftColor: "#5a5a6e",
     cursor: "pointer",
     transition: "background-color 0.15s",
   },

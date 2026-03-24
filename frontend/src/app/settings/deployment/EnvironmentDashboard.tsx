@@ -502,7 +502,7 @@ const s: Record<string, React.CSSProperties> = {
   compTree: { display: "flex", flexDirection: "column", gap: 8 },
   compCard: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 10,
     padding: 12,
     display: "flex",
@@ -517,7 +517,7 @@ const s: Record<string, React.CSSProperties> = {
   compMeta: { fontSize: "0.78rem", color: "#8888a0" },
 
   // Infrastructure summary
-  infraSummary: { display: "flex", gap: 16, fontSize: "0.8rem", color: "#8888a0", padding: "8px 0", borderTop: "1px solid #1e1e2e" },
+  infraSummary: { display: "flex", gap: 16, fontSize: "0.8rem", color: "#8888a0", padding: "8px 0", borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e" },
   infraItem: { fontWeight: 600 },
 
   // Fallback columns
@@ -528,7 +528,7 @@ const s: Record<string, React.CSSProperties> = {
 
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 10,
     padding: 12,
     display: "flex",
@@ -539,13 +539,13 @@ const s: Record<string, React.CSSProperties> = {
   serverName: { fontSize: "0.88rem", fontWeight: 600, color: "#e0e0e8", flex: 1 },
   serverProbe: { fontSize: "0.7rem", color: "#5a5a6e" },
 
-  receiptRow: { display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", padding: "4px 0", borderBottom: "1px solid #1e1e2e" },
+  receiptRow: { display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", padding: "4px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   receiptName: { color: "#e0e0e8", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   receiptVersion: { color: "#8888a0", fontFamily: "monospace", fontSize: "0.75rem" },
   receiptTime: { color: "#5a5a6e", fontSize: "0.75rem", whiteSpace: "nowrap" },
 
   alertSummary: { display: "flex", gap: 12, fontSize: "0.78rem", fontWeight: 600 },
-  alertRow: { display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", padding: "4px 0", borderBottom: "1px solid #1e1e2e" },
+  alertRow: { display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", padding: "4px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   alertMsg: { color: "#e0e0e8", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   alertTime: { color: "#5a5a6e", fontSize: "0.75rem", whiteSpace: "nowrap" },
 
@@ -554,7 +554,7 @@ const s: Record<string, React.CSSProperties> = {
   addBtn: {
     backgroundColor: "#1a1a2e",
     color: "#6c8aff",
-    border: "1px dashed #3a3a4e",
+    borderWidth: "1px", borderStyle: "dashed", borderColor: "#3a3a4e",
     borderRadius: 8,
     padding: "10px",
     fontSize: "0.82rem",
@@ -564,18 +564,18 @@ const s: Record<string, React.CSSProperties> = {
   },
   linkBtn: {
     background: "none",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     color: "#6c8aff",
     fontSize: "0.78rem",
     cursor: "pointer",
     padding: "4px 0",
     textAlign: "left",
   },
-  quickActions: { display: "flex", gap: 8, flexWrap: "wrap", borderTop: "1px solid #1e1e2e", paddingTop: 16 },
+  quickActions: { display: "flex", gap: 8, flexWrap: "wrap", borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e", paddingTop: 16 },
   qaBtn: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 8,
     padding: "8px 14px",
     fontSize: "0.82rem",

@@ -98,7 +98,7 @@ export default function LineChart({ data, color, fillColor, width = 600, height 
       {tooltip && (
         <div style={{
           position: "absolute", left: tooltip.x, top: tooltip.y, transform: "translateX(-50%)",
-          backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: "6px",
+          backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "6px",
           padding: "4px 8px", fontSize: "0.75rem", color: "#e0e0e8", pointerEvents: "none", whiteSpace: "nowrap", zIndex: 10,
         }}>
           {tooltip.label}: {tooltip.value.toFixed(3)}

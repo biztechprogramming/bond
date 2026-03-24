@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bond Deployment ER Diagram — Design Doc 061</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+
+  .header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-bottom: 1px solid #334155; padding: 24px 40px; }
+  .header h1 { font-size: 24px; font-weight: 700; color: #f8fafc; }
+  .header p { color: #94a3b8; margin-top: 4px; font-size: 14px; }
+
+  .callout { background: #7f1d1d; border: 1px solid #dc2626; border-radius: 8px; padding: 16px 20px; margin: 24px 40px; }
+  .callout h3 { color: #fca5a5; font-size: 14px; margin-bottom: 6px; }
+  .callout p { color: #fecaca; font-size: 13px; line-height: 1.5; }
+  .callout code { background: #991b1b; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+  .container { display: flex; gap: 24px; padding: 24px 40px; align-items: flex-start; flex-wrap: wrap; }
+
+  .er-canvas { flex: 1; min-width: 700px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 32px; position: relative; overflow: visible; }
+
+  .sidebar { width: 340px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* Entity cards on canvas */
+  .entity { position: absolute; background: #0f172a; border: 2px solid #334155; border-radius: 10px; min-width: 220px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+  .entity:hover { border-color: #60a5fa; transform: translateY(-2px); box-shadow: 0 4px 16px rgba(96,165,250,0.2); z-index: 10; }
+  .entity.highlighted { border-color: #f59e0b; box-shadow: 0 0 20px rgba(245,158,11,0.3); z-index: 10; }
+  .entity.deploy-entity { border-color: #22c55e; }
+  .entity.deploy-entity .entity-header { background: linear-gradient(135deg, #14532d, #166534); }
+  .entity.operator-entity { border-color: #8b5cf6; }
+  .entity.operator-entity .entity-header { background: linear-gradient(135deg, #3b0764, #4c1d95); }
+  .entity.binding-entity { border-color: #f59e0b; }
+  .entity.binding-entity .entity-header { background: linear-gradient(135deg, #78350f, #92400e); }
+  .entity.monitoring-entity { border-color: #ef4444; }
+  .entity.monitoring-entity .entity-header { background: linear-gradient(135deg, #7f1d1d, #991b1b); }
+
+  .entity-header { padding: 8px 12px; border-radius: 8px 8px 0 0; font-weight: 700; font-size: 13px; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
+  .entity-header .icon { font-size: 16px; }
+  .entity-fields { padding: 8px 12px 10px; }
+  .field { font-size: 11px; padding: 2px 0; color: #94a3b8; display: flex; gap: 6px; align-items: center; }
+  .field .pk { color: #fbbf24; font-weight: 700; font-size: 9px; }
+  .field .fk { color: #60a5fa; font-weight: 700; font-size: 9px; }
+  .field .name { color: #e2e8f0; }
+  .field .type { color: #64748b; font-size: 10px; }
+
+  /* Legend */
+  .legend { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+  .legend h3 { font-size: 13px; color: #f8fafc; margin-bottom: 10px; }
+  .legend-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 12px; }
+  .legend-dot { width: 14px; height: 14px; border-radius: 4px; border: 2px solid; }
+  .legend-dot.deploy { border-color: #22c55e; background: #14532d; }
+  .legend-dot.infra { border-color: #3b82f6; background: #1e3a5f; }
+  .legend-dot.binding { border-color: #f59e0b; background: #78350f; }
+  .legend-dot.monitoring { border-color: #ef4444; background: #7f1d1d; }
+  .legend-dot.operator { border-color: #8b5cf6; background: #3b0764; }
+
+  /* Detail panel */
+  .detail-panel { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+  .detail-panel h3 { font-size: 14px; color: #f8fafc; margin-bottom: 8px; }
+  .detail-panel p { font-size: 12px; color: #94a3b8; line-height: 1.6; }
+  .detail-panel .tag { display: inline-block; background: #334155; color: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin: 2px 2px; }
+  .detail-panel .tag.screen { background: #1e3a5f; color: #93c5fd; }
+
+  /* Screen mapping table */
+  .screen-map { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+  .screen-map h3 { font-size: 13px; color: #f8fafc; margin-bottom: 10px; }
+  .screen-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1e293b; font-size: 11px; }
+  .screen-row:last-child { border-bottom: none; }
+  .screen-name { color: #e2e8f0; font-weight: 600; }
+  .screen-entity { color: #22c55e; }
+
+  /* SVG lines */
+  svg.lines { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+  svg.lines line { stroke: #334155; stroke-width: 1.5; stroke-dasharray: 4 4; }
+  svg.lines line.highlighted { stroke: #f59e0b; stroke-width: 2; stroke-dasharray: none; }
+
+  /* Responsive */
+  @media (max-width: 1100px) {
+    .container { flex-direction: column; }
+    .sidebar { width: 100%; }
+    .er-canvas { min-width: auto; }
+  }
+
+  .wrong-right { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 40px; }
+  .wrong-box, .right-box { border-radius: 10px; padding: 16px; }
+  .wrong-box { background: #7f1d1d33; border: 1px solid #dc2626; }
+  .right-box { background: #14532d33; border: 1px solid #22c55e; }
+  .wrong-box h4 { color: #fca5a5; margin-bottom: 8px; font-size: 13px; }
+  .right-box h4 { color: #86efac; margin-bottom: 8px; font-size: 13px; }
+  .wrong-box pre, .right-box pre { font-size: 11px; line-height: 1.6; color: #cbd5e1; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📊 Bond Deployment Data Model — ER Diagram</h1>
+  <p>Design Doc 061 — How apps are actually represented in Bond's SpacetimeDB schema</p>
+</div>
+
+<div class="callout">
+  <h3>⚠️ The Core Problem</h3>
+  <p>Bond has <strong>no <code>apps</code> table</strong>. The Deploy tab was incorrectly showing <strong>Agents</strong> (AI assistants) as applications. The actual deployable units are <strong>Components</strong> — services, frontends, databases, and systems stored in the <code>components</code> table. Agents <em>operate on</em> deployments; they are not the things being deployed.</p>
+</div>
+
+<div class="wrong-right">
+  <div class="wrong-box">
+    <h4>❌ Current (Wrong)</h4>
+    <pre>Deploy Tab
+  └─ Lists AGENTS as "apps"
+       └─ Agent name → parsed as app name
+       └─ Agent suffix → parsed as environment
+       └─ No connection to actual components,
+          resources, or environments</pre>
+  </div>
+  <div class="right-box">
+    <h4>✅ Correct</h4>
+    <pre>Deploy Tab
+  └─ Lists COMPONENTS (deployable units)
+       ├─ Each shows ENVIRONMENTS via bindings
+       ├─ Each env shows RESOURCES + state
+       ├─ ALERTS shown per component/env
+       └─ AGENTS available as "operators"</pre>
+  </div>
+</div>
+
+<div class="container">
+  <div class="er-canvas" style="height: 680px;">
+    <svg class="lines" id="er-lines"></svg>
+
+    <!-- COMPONENTS (top-center, the star of the show) -->
+    <div class="entity deploy-entity" id="e-components" style="top: 20px; left: 240px;" onclick="showDetail('components')">
+      <div class="entity-header"><span class="icon">📦</span> COMPONENTS</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span> <span class="type">string</span></div>
+        <div class="field"><span class="name">name, displayName</span></div>
+        <div class="field"><span class="name">componentType</span> <span class="type">service|frontend|db|system</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">parentId</span> <span class="type">→ self (hierarchy)</span></div>
+        <div class="field"><span class="name">runtime</span> <span class="type">node|python|go|rust|java</span></div>
+        <div class="field"><span class="name">framework</span> <span class="type">nextjs|fastapi|express|…</span></div>
+        <div class="field"><span class="name">repositoryUrl, sourcePath</span></div>
+        <div class="field"><span class="name">isActive, discoveredFrom</span></div>
+      </div>
+    </div>
+
+    <!-- ENVIRONMENTS (top-right) -->
+    <div class="entity deploy-entity" id="e-environments" style="top: 20px; left: 540px;" onclick="showDetail('environments')">
+      <div class="entity-header"><span class="icon">🌍</span> ENVIRONMENTS</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">name</span> <span class="type">dev|staging|prod|qa</span></div>
+        <div class="field"><span class="name">displayName, order</span></div>
+        <div class="field"><span class="name">isActive</span></div>
+        <div class="field"><span class="name">maxScriptTimeout</span></div>
+        <div class="field"><span class="name">healthCheckInterval</span></div>
+        <div class="field"><span class="name">window*</span> <span class="type">maintenance windows</span></div>
+        <div class="field"><span class="name">requiredApprovals</span></div>
+      </div>
+    </div>
+
+    <!-- RESOURCES (middle-right) -->
+    <div class="entity deploy-entity" id="e-resources" style="top: 240px; left: 540px;" onclick="showDetail('resources')">
+      <div class="entity-header"><span class="icon">🖥️</span> RESOURCES</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span> <span class="type">string</span></div>
+        <div class="field"><span class="name">name, displayName</span></div>
+        <div class="field"><span class="name">resourceType</span> <span class="type">server|database|cache|cdn</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">environment</span> <span class="type">→ environments</span></div>
+        <div class="field"><span class="name">connectionJson</span> <span class="type">host, port, creds</span></div>
+        <div class="field"><span class="name">capabilitiesJson</span> <span class="type">cpu, ram, disk</span></div>
+        <div class="field"><span class="name">stateJson</span> <span class="type">current snapshot</span></div>
+        <div class="field"><span class="name">isActive, lastProbedAt</span></div>
+      </div>
+    </div>
+
+    <!-- COMPONENT_RESOURCES (center — the key binding table) -->
+    <div class="entity binding-entity" id="e-comp-res" style="top: 260px; left: 240px;" onclick="showDetail('component_resources')">
+      <div class="entity-header"><span class="icon">🔗</span> COMPONENT_RESOURCES</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span> <span class="type">string</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">componentId</span> <span class="type">→ components</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">resourceId</span> <span class="type">→ resources</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">environment</span> <span class="type">→ environments</span></div>
+        <div class="field"><span class="name">port, processName</span></div>
+        <div class="field"><span class="name">healthCheck</span> <span class="type">endpoint/command</span></div>
+      </div>
+    </div>
+
+    <!-- RESOURCE_ENVIRONMENTS (bottom-right) -->
+    <div class="entity binding-entity" id="e-res-env" style="top: 460px; left: 540px;" onclick="showDetail('resource_environments')">
+      <div class="entity-header"><span class="icon">🔗</span> RESOURCE_ENVIRONMENTS</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span> <span class="type">string</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">resourceId</span> <span class="type">→ resources</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">environmentName</span> <span class="type">→ environments</span></div>
+      </div>
+    </div>
+
+    <!-- ALERTS (bottom-left) -->
+    <div class="entity monitoring-entity" id="e-alerts" style="top: 440px; left: 10px;" onclick="showDetail('alerts')">
+      <div class="entity-header"><span class="icon">🚨</span> ALERTS</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span> <span class="type">string</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">environment</span> <span class="type">→ environments</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">componentId</span> <span class="type">→ components</span></div>
+        <div class="field"><span class="name">severity</span> <span class="type">critical|warning|info</span></div>
+        <div class="field"><span class="name">message, category</span></div>
+        <div class="field"><span class="name">detectedAt, resolvedAt</span></div>
+      </div>
+    </div>
+
+    <!-- ALERT_RULES (bottom-center) -->
+    <div class="entity monitoring-entity" id="e-alert-rules" style="top: 570px; left: 240px;" onclick="showDetail('alert_rules')">
+      <div class="entity-header"><span class="icon">📏</span> ALERT_RULES</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span> <span class="type">string</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">environment</span> <span class="type">→ environments</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">componentId</span> <span class="type">→ components</span></div>
+        <div class="field"><span class="name">metric, operator, threshold</span></div>
+        <div class="field"><span class="name">severity, enabled</span></div>
+        <div class="field"><span class="name">autoFileIssue, triggeredCount</span></div>
+      </div>
+    </div>
+
+    <!-- AGENTS (far left, separate) -->
+    <div class="entity operator-entity" id="e-agents" style="top: 20px; left: 10px;" onclick="showDetail('agents')">
+      <div class="entity-header"><span class="icon">🤖</span> AGENTS</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span> <span class="type">string</span></div>
+        <div class="field"><span class="name">name, displayName</span></div>
+        <div class="field"><span class="name">model, utilityModel</span></div>
+        <div class="field"><span class="name">systemPrompt, tools</span></div>
+        <div class="field"><span class="name">sandboxImage</span></div>
+        <div class="field"><span class="name">isActive, isDefault</span></div>
+      </div>
+    </div>
+
+    <!-- AGENT_CHANNELS (below agents) -->
+    <div class="entity operator-entity" id="e-channels" style="top: 210px; left: 10px;" onclick="showDetail('agent_channels')">
+      <div class="entity-header"><span class="icon">📡</span> AGENT_CHANNELS</div>
+      <div class="entity-fields">
+        <div class="field"><span class="pk">PK</span> <span class="name">id</span></div>
+        <div class="field"><span class="fk">FK</span> <span class="name">agentId</span> <span class="type">→ agents</span></div>
+        <div class="field"><span class="name">channel, enabled</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="legend">
+      <h3>Legend</h3>
+      <div class="legend-item"><div class="legend-dot deploy"></div> Deployment Domain (what gets deployed)</div>
+      <div class="legend-item"><div class="legend-dot binding"></div> Binding Tables (joins entities together)</div>
+      <div class="legend-item"><div class="legend-dot monitoring"></div> Monitoring Domain (runtime alerts)</div>
+      <div class="legend-item"><div class="legend-dot operator"></div> Operator Domain (AI agents — NOT apps)</div>
+    </div>
+
+    <div class="detail-panel" id="detail-panel">
+      <h3 id="detail-title">Click an entity to see details</h3>
+      <p id="detail-body">Each entity card is clickable. Click to see its role in deployment, which screens use it, and its relationships.</p>
+      <div id="detail-screens" style="margin-top: 10px;"></div>
+    </div>
+
+    <div class="screen-map">
+      <h3>Deploy Screen → Entity Mapping</h3>
+      <div class="screen-row"><span class="screen-name">App Dashboard</span> <span class="screen-entity">components → resources</span></div>
+      <div class="screen-row"><span class="screen-name">App Detail</span> <span class="screen-entity">component + comp_resources</span></div>
+      <div class="screen-row"><span class="screen-name">Monitoring</span> <span class="screen-entity">alerts + alert_rules</span></div>
+      <div class="screen-row"><span class="screen-name">Infrastructure</span> <span class="screen-entity">resources + environments</span></div>
+      <div class="screen-row"><span class="screen-name">Ship Wizard</span> <span class="screen-entity">creates component + bindings</span></div>
+      <div class="screen-row" style="border-top: 1px solid #334155; padding-top: 8px; margin-top: 4px;"><span class="screen-name" style="color: #a78bfa;">Agent Assignment</span> <span class="screen-entity" style="color: #a78bfa;">agents (as operators)</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const details = {
+  components: {
+    title: '📦 COMPONENTS — The "App"',
+    body: 'This IS the app. A component represents a deployable unit: a service, frontend, database, or system. It has a repository URL, framework, runtime, and can be hierarchical (a "system" component contains child services). The Deploy dashboard should list these, NOT agents.',
+    screens: ['App Dashboard (card grid)', 'App Detail (all tabs)', 'Ship Wizard (creates new)']
+  },
+  environments: {
+    title: '🌍 ENVIRONMENTS — Where It Deploys',
+    body: 'Defines deployment targets: dev, staging, prod, qa. Each has maintenance windows, approval requirements, and health check intervals. Components are bound to environments via component_resources.',
+    screens: ['Environment pills on App cards', 'App Detail env tabs', 'Infrastructure tab']
+  },
+  resources: {
+    title: '🖥️ RESOURCES — Infrastructure',
+    body: 'Physical/virtual infrastructure: servers, databases, caches, CDNs. Each has connection info, capability metrics (CPU/RAM/disk), and current state. Resources belong to environments and are bound to components.',
+    screens: ['App Detail → Overview (server list)', 'Infrastructure tab (resource grid)', 'App Detail → Env Vars (connection info)']
+  },
+  component_resources: {
+    title: '🔗 COMPONENT_RESOURCES — The Binding',
+    body: 'The critical join table. Binds a component to a resource in a specific environment. Defines port, process name, and health check. This is how we know "bond-api runs on prod-server-1 on port 8080". The Ship Wizard creates these.',
+    screens: ['App Detail → Overview', 'Ship Wizard → Deploy step', 'Health status indicators']
+  },
+  resource_environments: {
+    title: '🔗 RESOURCE_ENVIRONMENTS — Multi-Env Resources',
+    body: 'Maps resources to environments. A single resource (like a shared Redis) can belong to multiple environments. Used by the Infrastructure tab to filter resources by environment.',
+    screens: ['Infrastructure tab (env filter)']
+  },
+  alerts: {
+    title: '🚨 ALERTS — Runtime Events',
+    body: 'Monitoring alerts tied to a specific component and environment. Has severity (critical/warning/info), message, detection time, and optional issue tracking. Shown as badges on App cards and in the Monitoring tab.',
+    screens: ['App Dashboard (alert badges)', 'App Detail → Monitoring']
+  },
+  alert_rules: {
+    title: '📏 ALERT_RULES — Monitoring Config',
+    body: 'Configurable rules that trigger alerts. Define metric thresholds, duration, severity, and whether to auto-file issues. Tied to a component and environment.',
+    screens: ['App Detail → Monitoring (rules config)']
+  },
+  agents: {
+    title: '🤖 AGENTS — Operators, NOT Apps',
+    body: 'AI assistants that OPERATE ON deployments. They run scripts, respond to alerts, handle rollbacks. They are NOT applications. They should appear in the Deploy UI only as assignable operators — "Which agent manages this component\'s prod deployments?"',
+    screens: ['Agent assignment (future)', 'NOT the App Dashboard']
+  },
+  agent_channels: {
+    title: '📡 AGENT_CHANNELS — Agent Communication',
+    body: 'Channels an agent listens on (CLI, web, API). Not related to deployment at all — purely agent infrastructure.',
+    screens: ['Agent settings (not deploy screens)']
+  }
+};
+
+function showDetail(key) {
+  const d = details[key];
+  if (!d) return;
+  document.getElementById('detail-title').textContent = d.title;
+  document.getElementById('detail-body').textContent = d.body;
+  const screensDiv = document.getElementById('detail-screens');
+  screensDiv.innerHTML = '<strong style="font-size:11px;color:#94a3b8;">Used by screens:</strong><br>' +
+    d.screens.map(s => `<span class="tag screen">${s}</span>`).join(' ');
+
+  // Highlight
+  document.querySelectorAll('.entity').forEach(e => e.classList.remove('highlighted'));
+  const el = document.getElementById('e-' + key.replace('_', '-').replace('component_resources','comp-res').replace('resource_environments','res-env').replace('alert_rules','alert-rules').replace('agent_channels','channels'));
+  if (el) el.classList.add('highlighted');
+}
+
+// Draw relationship lines
+function drawLines() {
+  const svg = document.getElementById('er-lines');
+  const canvas = svg.parentElement;
+  const canvasRect = canvas.getBoundingClientRect();
+
+  function center(id) {
+    const el = document.getElementById(id);
+    if (!el) return {x:0,y:0};
+    const r = el.getBoundingClientRect();
+    return {
+      x: r.left + r.width/2 - canvasRect.left,
+      y: r.top + r.height/2 - canvasRect.top
+    };
+  }
+
+  const relationships = [
+    ['e-components', 'e-comp-res'],
+    ['e-resources', 'e-comp-res'],
+    ['e-environments', 'e-comp-res'],
+    ['e-environments', 'e-resources'],
+    ['e-resources', 'e-res-env'],
+    ['e-environments', 'e-res-env'],
+    ['e-components', 'e-alerts'],
+    ['e-environments', 'e-alerts'],
+    ['e-components', 'e-alert-rules'],
+    ['e-environments', 'e-alert-rules'],
+    ['e-agents', 'e-channels'],
+  ];
+
+  let html = '';
+  for (const [a, b] of relationships) {
+    const p1 = center(a);
+    const p2 = center(b);
+    html += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" />`;
+  }
+  svg.innerHTML = html;
+}
+
+window.addEventListener('load', () => setTimeout(drawLines, 100));
+window.addEventListener('resize', drawLines);
+</script>
+
+</body>
+</html>

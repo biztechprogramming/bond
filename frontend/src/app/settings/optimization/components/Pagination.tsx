@@ -10,7 +10,7 @@ interface PaginationProps {
 
 export default function Pagination({ page, totalPages, onPageChange }: PaginationProps) {
   if (totalPages <= 1) return null;
-  const btnStyle: React.CSSProperties = { background: "none", border: "1px solid #2a2a3e", borderRadius: "6px", padding: "6px 12px", color: "#8888a0", fontSize: "0.8rem", cursor: "pointer" };
+  const btnStyle: React.CSSProperties = { background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "6px", padding: "6px 12px", color: "#8888a0", fontSize: "0.8rem", cursor: "pointer" };
   const disabledStyle: React.CSSProperties = { ...btnStyle, opacity: 0.4, cursor: "default" };
 
   return (

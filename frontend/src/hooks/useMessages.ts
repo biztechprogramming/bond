@@ -28,8 +28,7 @@ export function useChatMessages(conversationId: string | null) {
       id: msg.id,
       role: msg.role as 'user' | 'assistant' | 'system',
       content: msg.content,
-      // Add agentName for assistant messages if available
-      ...(msg.role === 'assistant' ? { agentName: 'Agent' } : {})
+      // Don't hardcode agentName — let ChatPanel fall through to selectedAgentName
     }));
     
     setChatMessages(formatted);

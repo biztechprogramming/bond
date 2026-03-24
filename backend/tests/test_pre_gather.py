@@ -12,6 +12,8 @@ from backend.app.agent.pre_gather import (
     _validate_plan,
     build_handoff_context,
     compute_adaptive_budget,
+    WORKSPACE_PLAN_SYSTEM_PROMPT,
+    DEEP_MAP_FILE_SELECT_PROMPT,
 )
 from backend.app.agent.pre_gather_integration import PreGatherResult
 
@@ -81,6 +83,28 @@ class TestValidatePlan:
         files = [f"file{i}.py" for i in range(20)]
         result = _validate_plan({"files_to_read": files})
         assert len(result["files_to_read"]) == 15
+
+    def test_repos_to_map_field(self):
+        plan = {"repos_to_map": ["bond", "openclaw"]}
+        result = _validate_plan(plan)
+        assert result["repos_to_map"] == ["bond", "openclaw"]
+
+    def test_repos_to_map_defaults_empty(self):
+        result = _validate_plan({})
+        assert result["repos_to_map"] == []
+
+    def test_repos_to_map_capped_at_3(self):
+        repos = [f"repo{i}" for i in range(5)]
+        result = _validate_plan({"repos_to_map": repos})
+        assert len(result["repos_to_map"]) == 3
+
+    def test_repos_to_map_non_list(self):
+        result = _validate_plan({"repos_to_map": "not-a-list"})
+        assert result["repos_to_map"] == []
+
+    def test_repos_to_map_strips_whitespace(self):
+        result = _validate_plan({"repos_to_map": ["  bond  ", "openclaw"]})
+        assert result["repos_to_map"] == ["bond", "openclaw"]
 
     def test_non_dict_returns_none(self):
         assert _validate_plan("not a dict") is None
@@ -207,3 +231,35 @@ class TestPreGatherResult:
         assert r.context_bundle == ""
         assert r.adaptive_budget is None
         assert r.delegate_to_coding_agent is False
+
+
+# ---------------------------------------------------------------------------
+# Prompt templates (Design Doc 069)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspacePromptTemplates:
+    def test_workspace_plan_prompt_has_placeholder(self):
+        assert "{workspace_overview}" in WORKSPACE_PLAN_SYSTEM_PROMPT
+
+    def test_workspace_plan_prompt_mentions_repos_to_map(self):
+        assert "repos_to_map" in WORKSPACE_PLAN_SYSTEM_PROMPT
+
+    def test_workspace_plan_prompt_renders(self):
+        rendered = WORKSPACE_PLAN_SYSTEM_PROMPT.format(workspace_overview="=== bond/ (git) ===\n  src/")
+        assert "=== bond/" in rendered
+        assert "repos_to_map" in rendered
+
+    def test_deep_map_file_select_prompt_has_placeholders(self):
+        assert "{approach}" in DEEP_MAP_FILE_SELECT_PROMPT
+        assert "{deep_map}" in DEEP_MAP_FILE_SELECT_PROMPT
+        assert "{initial_files}" in DEEP_MAP_FILE_SELECT_PROMPT
+
+    def test_deep_map_file_select_prompt_renders(self):
+        rendered = DEEP_MAP_FILE_SELECT_PROMPT.format(
+            approach="fix the bug",
+            deep_map="backend/app/worker.py\n│ async def run_turn(...)",
+            initial_files='["bond/backend/app/worker.py"]',
+        )
+        assert "fix the bug" in rendered
+        assert "worker.py" in rendered

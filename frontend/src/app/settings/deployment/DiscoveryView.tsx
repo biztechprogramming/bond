@@ -143,7 +143,7 @@ const styles: Record<string, React.CSSProperties> = {
   title: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 },
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 16,
     display: "flex",
@@ -165,12 +165,12 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "auto",
     maxHeight: 300,
     margin: 0,
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
   },
   button: {
     backgroundColor: "#6cffa0",
     color: "#0a0a1a",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: 6,
     padding: "8px 16px",
     cursor: "pointer",
@@ -180,7 +180,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryButton: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 8,
     padding: "8px 16px",
     fontSize: "0.85rem",

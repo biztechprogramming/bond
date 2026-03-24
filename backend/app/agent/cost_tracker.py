@@ -56,6 +56,64 @@ class CostTracker:
             _out = getattr(_usage, "completion_tokens", 0) or 0
             return _in * 15.0 / 1_000_000 + _out * 75.0 / 1_000_000
 
+    def attribute_fragment_costs(
+        self,
+        response: Any,
+        model: str,
+        fragments: list[dict],
+    ) -> list[dict]:
+        """Attribute input cost proportionally to each loaded fragment.
+
+        Returns enriched fragment dicts with 'usd_cost' added.
+        Design Doc 064 — Phase 2.
+        """
+        total_cost = self.calc_call_cost(response, model)
+        usage = getattr(response, "usage", None)
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+
+        if not input_tokens or not fragments:
+            return fragments
+
+        # Estimate input share of total cost (input is typically cheaper per token)
+        # Use litellm's model cost info if available, else assume 1:3 input:output ratio
+        try:
+            from litellm import model_cost
+            info = model_cost.get(model, {})
+            input_price = info.get("input_cost_per_token", 0)
+            output_price = info.get("output_cost_per_token", 0)
+            input_total = input_tokens * input_price
+            output_total = output_tokens * output_price
+            input_share = input_total / (input_total + output_total) if (input_total + output_total) > 0 else 0.5
+        except Exception:
+            input_share = 0.5
+
+        input_cost_all = total_cost * input_share
+        fragment_token_total = sum(
+            f.get("tokens", f.get("tokenEstimate", 0)) for f in fragments
+        )
+
+        if fragment_token_total == 0:
+            return fragments
+
+        # Scale down to only the portion of input cost attributable to fragments
+        # (input also includes system prompt, user message, history, tool results, etc.)
+        # Clamp to 1.0: char/4 estimates can overshoot real token counts.
+        fragment_share = min(fragment_token_total / input_tokens, 1.0) if input_tokens > 0 else 0
+        if fragment_share > 0.95:
+            logger.warning(
+                "fragment_share=%.2f — char/4 estimates may be badly calibrated "
+                "(fragment_token_total=%d, input_tokens=%d)",
+                fragment_share, fragment_token_total, input_tokens,
+            )
+        input_cost = input_cost_all * fragment_share
+
+        for frag in fragments:
+            frag_tokens = frag.get("tokens", frag.get("tokenEstimate", 0))
+            frag["usd_cost"] = (frag_tokens / fragment_token_total) * input_cost
+
+        return fragments
+
     def track_primary_call(self, response: Any, model: str, iteration: int, input_tokens: int, output_tokens: int):
         """Track a primary LLM call."""
         cost = self.calc_call_cost(response, model)

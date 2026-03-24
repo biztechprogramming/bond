@@ -172,7 +172,7 @@ const styles: Record<string, React.CSSProperties> = {
   container: { display: "flex", flexDirection: "column", gap: 12 },
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 16,
     display: "flex",
@@ -187,5 +187,5 @@ const styles: Record<string, React.CSSProperties> = {
   statLabel: { fontSize: "0.7rem", color: "#8888a0" },
   statValue: { fontSize: "0.85rem", color: "#e0e0e8" },
   tag: { fontSize: "0.75rem", color: "#e0e0e8", backgroundColor: "#0a0a12", padding: "2px 8px", borderRadius: 4 },
-  alertRow: { display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid #1e1e2e" },
+  alertRow: { display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
 };

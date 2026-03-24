@@ -714,7 +714,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
               <p style={{ fontSize: "0.8rem", color: "#8888a0", margin: 0 }}>Toggle which discovered items to register as managed components.</p>
 
               {draftComponents.map((draft, i) => (
-                <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #1e1e2e" }}>
+                <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" }}>
                   <input type="checkbox" checked={draft.enabled} onChange={e => {
                     setDraftComponents(prev => prev.map((d, j) => j === i ? { ...d, enabled: e.target.checked } : d));
                   }} style={{ accentColor: "#6cffa0" }} />
@@ -921,7 +921,7 @@ const styles: Record<string, React.CSSProperties> = {
   subtitle: { fontSize: "0.85rem", color: "#8888a0", margin: 0 },
   card: {
     backgroundColor: "#12121a",
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     borderRadius: 12,
     padding: 16,
     display: "flex",
@@ -934,7 +934,7 @@ const styles: Record<string, React.CSSProperties> = {
   label: { fontSize: "0.75rem", color: "#8888a0" },
   input: {
     backgroundColor: "#0a0a12",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: 6,
     padding: "8px 10px",
     color: "#e0e0e8",
@@ -943,7 +943,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   select: {
     backgroundColor: "#0a0a12",
-    border: "1px solid #2a2a3e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
     borderRadius: 6,
     padding: "8px 10px",
     color: "#e0e0e8",
@@ -952,7 +952,7 @@ const styles: Record<string, React.CSSProperties> = {
   primaryButton: {
     backgroundColor: "#6c8aff",
     color: "#fff",
-    border: "none",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
     borderRadius: 8,
     padding: "10px 20px",
     fontSize: "0.9rem",
@@ -963,7 +963,7 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryButton: {
     backgroundColor: "#2a2a3e",
     color: "#e0e0e8",
-    border: "1px solid #3a3a4e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
     borderRadius: 8,
     padding: "8px 16px",
     fontSize: "0.85rem",
@@ -1000,7 +1000,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
   },
   sectionHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" },
-  reviewItem: { display: "flex", gap: 8, alignItems: "baseline", padding: "4px 0", borderBottom: "1px solid #1e1e2e" },
+  reviewItem: { display: "flex", gap: 8, alignItems: "baseline", padding: "4px 0", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   statGrid: { display: "flex", gap: 16, flexWrap: "wrap" },
   statItem: { display: "flex", flexDirection: "column", gap: 2 },
   statLabel: { fontSize: "0.7rem", color: "#8888a0" },
@@ -1014,7 +1014,7 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "auto" as const,
     maxHeight: 300,
     margin: 0,
-    border: "1px solid #1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
     fontFamily: "monospace",
   },
   navRow: { display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 },

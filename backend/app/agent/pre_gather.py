@@ -65,6 +65,71 @@ iterations gathering context only to delegate at the end.
 - grep_patterns is optional — only include if you need to search for specific patterns.
 """
 
+# ── Multi-repo workspace plan prompt (Design Doc 069) ──
+
+WORKSPACE_PLAN_SYSTEM_PROMPT = """\
+You are about to handle a task. Before taking any action, analyze what you need.
+
+This workspace contains multiple repositories. Here is a structural overview:
+{workspace_overview}
+
+Output a JSON plan (and ONLY the JSON, no other text):
+{{
+  "complexity": "simple" | "moderate" | "complex",
+  "approach": "brief description of how you'll handle this",
+  "repos_to_map": ["repo-name"],
+  "files_to_read": [
+    "repo-name/src/main.py"
+  ],
+  "grep_patterns": [
+    {{"pattern": "some_function", "directory": "repo-name/src/"}}
+  ],
+  "delegate_to_coding_agent": false,
+  "estimated_iterations": 3
+}}
+
+Rules:
+- For simple questions (greetings, factual answers), set complexity to "simple", \
+repos_to_map to [], and files_to_read to []. You'll answer directly.
+- repos_to_map: list repo subdirectory names that need a detailed structural map. \
+Max 3 repos. Usually 1 is enough — pick the one most relevant to the task.
+- files_to_read: use repo-prefixed paths (e.g., "bond/backend/app/worker.py"). \
+You can list files from the overview even without a deep map.
+- grep_patterns: use repo-prefixed directories. Optional.
+- If this should be delegated to a coding agent, say so upfront.
+- Keep files_to_read under 15 files.
+"""
+
+# ── Second plan prompt: file selection after deep map (Design Doc 069) ──
+
+DEEP_MAP_FILE_SELECT_PROMPT = """\
+You are selecting files to pre-read for a coding task.
+
+Task approach: {approach}
+
+Here is the detailed structural map for the relevant repositories:
+{deep_map}
+
+Based on the original workspace overview, you initially planned to read these files:
+{initial_files}
+
+Now that you have detailed function/class signatures, refine your file selection.
+Output ONLY a JSON object:
+{{
+  "files_to_read": [
+    "repo-name/path/to/file.py"
+  ],
+  "grep_patterns": [
+    {{"pattern": "some_function", "directory": "repo-name/src/"}}
+  ]
+}}
+
+Rules:
+- Use repo-prefixed paths (e.g., "bond/backend/app/worker.py").
+- Keep files_to_read under 15 files. Target the exact files with symbols you need.
+- grep_patterns is optional.
+"""
+
 
 def _should_skip_plan(user_message: str) -> bool:
     """Return True for messages too short/simple to warrant a plan."""
@@ -137,9 +202,18 @@ def _validate_plan(plan: dict) -> dict | None:
             })
     grep_patterns = valid_greps
 
+    # repos_to_map (optional, for multi-repo workspaces)
+    repos_to_map = plan.get("repos_to_map", [])
+    if not isinstance(repos_to_map, list):
+        repos_to_map = []
+    repos_to_map = [r.strip() for r in repos_to_map if isinstance(r, str) and r.strip()]
+    # Cap at 3 repos per design doc 069
+    repos_to_map = repos_to_map[:3]
+
     return {
         "complexity": complexity,
         "approach": str(plan.get("approach", "")),
+        "repos_to_map": repos_to_map,
         "files_to_read": files_to_read,
         "grep_patterns": grep_patterns,
         "delegate_to_coding_agent": bool(plan.get("delegate_to_coding_agent", False)),
@@ -266,6 +340,206 @@ async def plan_phase(
     )
 
     return plan
+
+
+async def workspace_plan_phase(
+    user_message: str,
+    history: list[dict],
+    workspace_overview: str,
+    model: str,
+    *,
+    api_key: str | None = None,
+    interrupt_event: asyncio.Event | None = None,
+    langfuse_meta: dict | None = None,
+    **llm_kwargs: Any,
+) -> dict | None:
+    """Phase 1 for multi-repo workspaces: plan with workspace overview.
+
+    Similar to plan_phase but uses WORKSPACE_PLAN_SYSTEM_PROMPT and includes
+    repos_to_map in the output schema. Design Doc 069.
+    """
+    if _should_skip_plan(user_message):
+        logger.info("Pre-gather: skipping workspace plan for short/simple message")
+        return None
+
+    if not workspace_overview:
+        logger.info("Pre-gather: no workspace overview available, skipping plan")
+        return None
+
+    system_content = WORKSPACE_PLAN_SYSTEM_PROMPT.format(workspace_overview=workspace_overview)
+
+    plan_messages = [
+        {"role": "system", "content": system_content},
+    ]
+
+    if history:
+        recent = []
+        for msg in history[-6:]:
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                recent.append({"role": role, "content": content[:500]})
+        plan_messages.extend(recent)
+
+    plan_messages.append({"role": "user", "content": user_message})
+
+    call_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": plan_messages,
+        "temperature": 0.3,
+        "max_tokens": 2000,
+    }
+    if api_key:
+        call_kwargs["api_key"] = api_key
+
+    if langfuse_meta:
+        plan_meta = dict(langfuse_meta)
+        plan_meta["trace_name"] = plan_meta.get("trace_name", "agent-turn") + "-workspace-plan"
+        plan_meta.setdefault("tags", []).append("phase:workspace-plan")
+        call_kwargs["metadata"] = plan_meta
+
+    for k, v in llm_kwargs.items():
+        if k not in call_kwargs:
+            call_kwargs[k] = v
+
+    from backend.app.core.oauth import ensure_oauth_system_prefix
+    ensure_oauth_system_prefix(call_kwargs["messages"], extra_kwargs=call_kwargs)
+
+    try:
+        if interrupt_event:
+            llm_task = asyncio.create_task(litellm.acompletion(**call_kwargs))
+            interrupt_task = asyncio.create_task(interrupt_event.wait())
+            done, pending = await asyncio.wait(
+                {llm_task, interrupt_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            if llm_task not in done:
+                logger.info("Workspace plan phase interrupted")
+                return None
+            response = llm_task.result()
+        else:
+            response = await litellm.acompletion(**call_kwargs)
+    except Exception as e:
+        logger.warning("Workspace plan phase LLM call failed: %s", e)
+        return None
+
+    content = response.choices[0].message.content if response.choices else None
+    if not content:
+        logger.warning("Workspace plan phase: empty LLM response")
+        return None
+
+    raw_plan = _extract_json(content)
+    if raw_plan is None:
+        logger.warning("Workspace plan phase: could not parse JSON: %s", content[:200])
+        return None
+
+    plan = _validate_plan(raw_plan)
+    if plan is None:
+        logger.warning("Workspace plan phase: plan validation failed")
+        return None
+
+    logger.info(
+        "Workspace plan phase: complexity=%s, repos_to_map=%s, files=%d, delegate=%s",
+        plan["complexity"],
+        plan.get("repos_to_map", []),
+        len(plan["files_to_read"]),
+        plan["delegate_to_coding_agent"],
+    )
+
+    return plan
+
+
+async def deep_map_file_select(
+    approach: str,
+    deep_map: str,
+    initial_files: list[str],
+    model: str,
+    *,
+    api_key: str | None = None,
+    langfuse_meta: dict | None = None,
+    **llm_kwargs: Any,
+) -> tuple[list[str], list[dict]]:
+    """Phase 1b: refine file selection using the deep repo map.
+
+    After generating detailed tree-sitter maps for selected repos,
+    this makes a lightweight LLM call to refine file and grep selections.
+
+    Returns (files_to_read, grep_patterns).
+    """
+    if not deep_map:
+        return initial_files, []
+
+    system_content = DEEP_MAP_FILE_SELECT_PROMPT.format(
+        approach=approach,
+        deep_map=deep_map,
+        initial_files=json.dumps(initial_files),
+    )
+
+    messages = [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": "Select the files to pre-read."},
+    ]
+
+    call_kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": 1500,
+    }
+    if api_key:
+        call_kwargs["api_key"] = api_key
+
+    if langfuse_meta:
+        select_meta = dict(langfuse_meta)
+        select_meta["trace_name"] = select_meta.get("trace_name", "agent-turn") + "-file-select"
+        select_meta.setdefault("tags", []).append("phase:file-select")
+        call_kwargs["metadata"] = select_meta
+
+    for k, v in llm_kwargs.items():
+        if k not in call_kwargs:
+            call_kwargs[k] = v
+
+    from backend.app.core.oauth import ensure_oauth_system_prefix
+    ensure_oauth_system_prefix(messages, extra_kwargs=call_kwargs)
+
+    try:
+        response = await litellm.acompletion(**call_kwargs)
+    except Exception as e:
+        logger.warning("Deep map file select failed: %s", e)
+        return initial_files, []
+
+    content = response.choices[0].message.content if response.choices else None
+    if not content:
+        return initial_files, []
+
+    parsed = _extract_json(content)
+    if not parsed or not isinstance(parsed, dict):
+        return initial_files, []
+
+    files = parsed.get("files_to_read", initial_files)
+    if not isinstance(files, list):
+        files = initial_files
+    files = [f.strip() for f in files if isinstance(f, str) and f.strip()][:15]
+
+    greps = parsed.get("grep_patterns", [])
+    if not isinstance(greps, list):
+        greps = []
+    valid_greps = []
+    for g in greps[:5]:
+        if isinstance(g, dict) and "pattern" in g:
+            valid_greps.append({
+                "pattern": str(g["pattern"]),
+                "directory": str(g.get("directory", ".")),
+            })
+
+    logger.info("Deep map file select: %d files, %d greps", len(files), len(valid_greps))
+    return files, valid_greps
 
 
 def _estimate_tokens(text: str) -> int:
