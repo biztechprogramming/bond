@@ -177,7 +177,7 @@ function DiscoveryStep({
     (async () => {
       try {
         setScanning(true);
-        const res = await fetch(`${GATEWAY_API}/api/deploy/generate-plan`, {
+        const res = await fetch(`${GATEWAY_API}/deployments/generate-plan`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(connectData),
