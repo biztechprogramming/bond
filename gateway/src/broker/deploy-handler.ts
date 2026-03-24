@@ -40,7 +40,7 @@ import { writeDeployLog } from "../deployments/log-stream.js";
 import { saveBaseline } from "../deployments/drift-detector.js";
 import { executeHealthCheck } from "../deployments/health-scheduler.js";
 import { getResources, getResource } from "../deployments/resources.js";
-import { runDiscovery } from "../deployments/discovery.js";
+import { runDiscovery, isAgentDiscoveryEnabled, runAgentDiscovery } from "../deployments/discovery.js";
 import { collectLogs } from "../deployments/log-collector.js";
 import { generateReplicationScripts } from "../deployments/proposal-generator.js";
 import { readManifest } from "../deployments/manifest.js";
@@ -93,6 +93,7 @@ export interface DeployResult {
   info?: any;
   reason?: string;
   queue_position?: number;
+  session_id?: string;
   next_queued?: { script_id: string; version: string };
 }
 
@@ -206,6 +207,29 @@ export async function handleDeploy(
   if (action === "discover") {
     const resourceId = (body as any).resource_id;
     if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
+
+    // Agent discovery path — returns session_id for SSE streaming
+    if ((body as any).agent && isAgentDiscoveryEnabled()) {
+      const sessionId = ulid();
+      const resource = await getResource(cfg, resourceId);
+      let conn: any = {};
+      try { conn = JSON.parse(resource?.connection_json || "{}"); } catch {}
+
+      // Start agent discovery in background — events emitted via deployment event bus
+      runAgentDiscovery({
+        source: resource?.name,
+        serverHost: conn.host,
+        serverPort: conn.port,
+        sshUser: conn.user,
+        sshKeyPath: conn.key_path,
+        env,
+      }).catch((err) => {
+        console.error("[discover] agent discovery failed:", err.message);
+      });
+
+      return { status: "ok", action, environment: env, session_id: sessionId };
+    }
+
     const result = await runDiscovery(cfg, resourceId, env, (body as any).discovery_layers);
     return { status: result.status as any, action, environment: env, info: result.info, reason: result.reason };
   }

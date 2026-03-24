@@ -38,6 +38,7 @@ import {
 import { SCRIPT_TEMPLATES } from "./script-templates.js";
 import { createPipelineRouter } from "./pipeline-router.js";
 import { listManifests, readManifest } from "./manifest.js";
+import { addDiscoveryListener } from "./events.js";
 import { getMonitoringAlerts } from "./stdb.js";
 import { createSecretsRouter } from "./secrets-router.js";
 import { createAlertRulesRouter } from "./alert-rules-router.js";
@@ -335,6 +336,70 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // Discovery agent SSE stream (§072)
+  router.get("/discovery/stream/:sessionId", (req: any, res: any) => {
+    const { sessionId } = req.params;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const eventTypes = new Set([
+      "discovery_agent_started",
+      "discovery_agent_progress",
+      "discovery_user_question",
+      "discovery_agent_completed",
+    ]);
+
+    let closed = false;
+    const cleanup = addDiscoveryListener((event: any) => {
+      if (closed) return;
+      if (eventTypes.has(event.event)) {
+        const payload: any = { event: event.event, ...event.details };
+        payload.session_id = sessionId;
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+
+        if (event.event === "discovery_agent_completed") {
+          res.end();
+          closed = true;
+          cleanup();
+        }
+      }
+    });
+
+    req.on("close", () => {
+      closed = true;
+      cleanup();
+    });
+  });
+
+  // Discovery agent answer endpoint (§072)
+  router.post("/discovery/answer/:sessionId", (req: any, res: any) => {
+    const { field, value } = req.body || {};
+    if (!field || value === undefined) {
+      return res.status(400).json({ error: "field and value are required" });
+    }
+    // Store the answer — the agent will pick it up on next iteration
+    const answersDir = path.join(DEPLOYMENTS_DIR, "discovery", "answers");
+    fs.mkdirSync(answersDir, { recursive: true });
+    const answerFile = path.join(answersDir, `${req.params.sessionId}.json`);
+    let answers: Record<string, string> = {};
+    if (fs.existsSync(answerFile)) {
+      try { answers = JSON.parse(fs.readFileSync(answerFile, "utf8")); } catch {}
+    }
+    answers[field] = value;
+    fs.writeFileSync(answerFile, JSON.stringify(answers, null, 2));
+    res.json({ success: true, field, value });
+  });
+
+  // Discovery agent cancel endpoint (§072)
+  router.post("/discovery/cancel/:sessionId", (req: any, res: any) => {
+    const { sessionId } = req.params;
+    const flagPath = path.join(DEPLOYMENTS_DIR, "locks", `discovery-${sessionId}.abort`);
+    fs.writeFileSync(flagPath, JSON.stringify({ cancelled_at: new Date().toISOString() }));
+    res.json({ success: true, message: `Discovery ${sessionId} cancelled` });
   });
 
   // Discovery manifests
