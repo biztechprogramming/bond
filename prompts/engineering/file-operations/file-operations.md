@@ -10,8 +10,13 @@
 - When you have a plan with specific function names: outline first, targeted reads, then edits. Three steps, not twenty.
 
 ### Writing Files
-- Use `file_edit` for surgical text replacements — it takes `old_text`/`new_text` pairs. Only use `file_write` for new files or complete rewrites.
-- After writing a file, verify the write by reading back the changed section.
+- **Pick the right tool based on scope:**
+  - `file_edit` — surgical text replacements (`old_text`/`new_text` pairs). Best for code changes, config tweaks, or swapping a few lines.
+  - `file_write` — new files OR full rewrites of existing files. Best for updating docs/markdown where you're rewriting most of the content.
+- **Updating an existing doc/markdown file:** `file_read` it once → `file_write` the updated version. Two tool calls total. Do NOT re-read the file, open it into a buffer, or verify with `code_execute`.
+- **Never use `file_open`, `file_view`, `file_replace`, `file_search`, or `file_smart_edit`.** These are buffer-based tools for a different agent. Bond's writing tools are `file_edit` and `file_write` only.
+- **Don't re-read before writing.** If you already read the file earlier in the conversation, write directly — you have the content.
+- **Verify with `file_read`**, not `code_execute`. Read back only the changed section, and only when the edit was complex or error-prone. For straightforward `file_write` of a doc, no verification is needed.
 - Create parent directories before writing to new paths.
 
 ### Shell Commands
