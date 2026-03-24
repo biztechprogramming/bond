@@ -1,7 +1,7 @@
 # Design Doc 065: Tool Result Caching with Content Hashing
 
-**Status:** Draft  
-**Date:** 2026-03-23  
+**Status:** Draft
+**Date:** 2026-03-23
 **Depends on:** 012 (Context Distillation Pipeline)
 
 ---
@@ -34,11 +34,17 @@ Doc 062 (Headroom) tried to address this by compressing tool outputs, but explic
 
 ### Cache Key Structure
 
+File tools are keyed by **resolved path**, not full args. This ensures that a full-file read and a partial range read of the same file share a cache entry — range reads are served from cached full-file content.
+
 ```
-cache_key = hash(tool_name, normalized_args)
+# File tools: key by resolved path (handles partial reads correctly)
+cache_key = f"{tool_name}:{resolved_path}"
+
+# Non-file tools: key by full normalized args
+cache_key = f"{tool_name}:{json.dumps(filtered_args, sort_keys=True)}"
 ```
 
-Where staleness is checked per-tool after a cache key match:
+Staleness is checked per-tool after a cache key match:
 
 | Tool | Fingerprint | Staleness Check |
 |------|-------------|-----------------|
@@ -50,25 +56,32 @@ Where staleness is checked per-tool after a cache key match:
 
 ### Cache Hit Responses
 
-When a cache hit occurs, the tool result is replaced with a compact reference:
+When a cache hit occurs, the tool result is replaced with a compact reference that includes a brief content excerpt to help the agent confirm it's thinking of the right file:
 
 ```
 📋 Cache hit: file_read("src/worker.py")
    Last read: turn 3 (47 lines ago in conversation)
    Status: UNCHANGED (mtime unchanged since last read)
    Content: 523 lines, 4,102 tokens
-   
+
+   First 5 lines:
+   | 1: import os
+   | 2: from pathlib import Path
+   | 3:
+   | 4: class Worker:
+   | 5:     def __init__(self, config):
+
    To re-read the full file, call file_read with force=true.
 ```
 
 If the file *has* changed (mtime differs), but the agent was the one who changed it (via `file_write` or `file_edit` in the same session):
 
 ```
-📋 Cache hit: file_read("src/worker.py")  
+📋 Cache hit: file_read("src/worker.py")
    Last read: turn 3
    Status: MODIFIED by you in turn 5 (file_edit)
    Changes since last read:
-   
+
    --- turn 3 version
    +++ current
    @@ -42,3 +42,5 @@
@@ -77,7 +90,7 @@ If the file *has* changed (mtime differs), but the agent was the one who changed
    +        result = self.run()
    +        self.log(result)
    +        return result
-   
+
    Full file: 525 lines, 4,118 tokens
    To re-read the full file, call file_read with force=true.
 ```
@@ -105,14 +118,32 @@ class CachedToolResult:
 
 ## 4. Implementation
 
+### Phase 0: Shadow Mode (~0.5 days)
+
+Shadow mode logs cache hits/misses **without changing agent behavior** — the full tool result is always returned. This validates hit rate and token savings projections before enabling real caching.
+
+Run shadow mode for 1-2 weeks in production, collect data on actual hit rates and token savings, then proceed to Phase 1 with confidence.
+
+**Gate to Phase 1:** Shadow mode data confirms >30% hit rate on `file_read`, AND agent behavior evals (see below) pass with no quality regression.
+
+**Agent behavior evals (gate between Phase 0 and Phase 1):** Before enabling caching for real sessions, run agent behavior evals to test whether the LLM handles cache hit messages correctly. Specifically:
+- Does the agent make correct edits after receiving a cache hit (UNCHANGED) response?
+- Does the agent over-use `force=true`, negating token savings?
+- Does the agent hallucinate file content instead of re-reading when needed?
+- Does the diff format for MODIFIED responses lead to correct subsequent edits?
+
+These evals must pass before caching is enabled in production.
+
 ### Phase 1: File Read Caching (~1.5 days)
 
 **New file:** `backend/app/agent/tool_result_cache.py`
 
 ```python
+from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+import json
 import os
 
 # Phase 1: file_read only. web_fetch added in Phase 3.
@@ -132,34 +163,73 @@ FILE_MUTATING_TOOLS = frozenset({
 MAX_DIFF_LINES = 50
 MAX_DIFF_CHARS = 2000
 
+TOOL_CACHE_MAX_ENTRIES = 100
+
 
 class ToolResultCache:
     """Per-session cache for tool results."""
-    
-    def __init__(self):
-        self._cache: dict[str, CachedToolResult] = {}
+
+    def __init__(self, shadow_mode: bool = False):
+        self._cache: OrderedDict[str, CachedToolResult] = OrderedDict()
         self._file_mutations: dict[str, int] = {}  # resolved_path → turn of last mutation
-    
+        self._shadow_mode = shadow_mode
+        self._stats = CacheStats()
+
     def check(self, tool_name: str, args: dict, turn: int) -> CachedToolResult | None:
         """Check if we have a valid cached result for this tool call."""
         if tool_name not in CACHEABLE_TOOLS:
             return None
-        
+
         if args.get("force"):
             return None
-        
+
         key = self._make_key(tool_name, args)
         cached = self._cache.get(key)
         if cached is None:
+            self._stats.misses += 1
             return None
-        
+
         # Validate freshness
         if not self._is_fresh(cached):
             del self._cache[key]
+            self._stats.misses += 1
             return None
-        
+
+        # Move to end for LRU tracking
+        self._cache.move_to_end(key)
+
+        self._stats.hits += 1
+        self._stats.tokens_saved += cached.token_count
+
+        # Shadow mode: log the hit but don't actually return cached result
+        if self._shadow_mode:
+            return None
+
+        # Handle partial file reads: if args specify a range, extract it
+        # from the cached full-file content
+        if tool_name == "file_read" and (args.get("line_start") or args.get("line_end")):
+            return self._extract_range(cached, args)
+
         return cached
-    
+
+    def _extract_range(self, cached: CachedToolResult, args: dict) -> CachedToolResult:
+        """Extract a line range from a cached full-file result."""
+        lines = cached.content.splitlines(keepends=True)
+        start = (args.get("line_start") or 1) - 1  # convert to 0-indexed
+        end = args.get("line_end") or len(lines)
+        extracted = "".join(lines[start:end])
+        # Return a shallow copy with the extracted content
+        return CachedToolResult(
+            tool_name=cached.tool_name,
+            args_hash=cached.args_hash,
+            resolved_path=cached.resolved_path,
+            content=extracted,
+            token_count=_count_tokens(extracted),
+            fingerprint=cached.fingerprint,
+            turn_number=cached.turn_number,
+            timestamp=cached.timestamp,
+        )
+
     def _is_fresh(self, cached: CachedToolResult) -> bool:
         """Check if cached result is still valid."""
         if cached.tool_name == "file_read":
@@ -170,22 +240,22 @@ class ToolResultCache:
                 # File was deleted — clean up mutation tracking too
                 self._file_mutations.pop(cached.resolved_path, None)
                 return False
-        
+
         if cached.tool_name == "web_fetch":
-            age = (datetime.utcnow() - cached.timestamp).total_seconds()
+            age = (datetime.now(timezone.utc) - cached.timestamp).total_seconds()
             return age < 300  # 5 minute TTL
-        
+
         return False
-    
+
     def store(self, tool_name: str, args: dict, result: str, turn: int):
         """Cache a tool result."""
         if tool_name not in CACHEABLE_TOOLS:
             return
-        
+
         resolved_path = self._resolve_path(tool_name, args)
         key = self._make_key(tool_name, args)
         fingerprint = self._get_fingerprint(tool_name, resolved_path)
-        
+
         self._cache[key] = CachedToolResult(
             tool_name=tool_name,
             args_hash=key,
@@ -194,19 +264,24 @@ class ToolResultCache:
             token_count=_count_tokens(result),
             fingerprint=fingerprint,
             turn_number=turn,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
-    
+
+        # Move to end (most recently used) and enforce LRU eviction
+        self._cache.move_to_end(key)
+        while len(self._cache) > TOOL_CACHE_MAX_ENTRIES:
+            self._cache.popitem(last=False)  # evict least recently used
+
     def record_mutation(self, tool_name: str, args: dict, turn: int):
         """Record that a tool mutated a file (for change-aware re-reads)."""
         if tool_name in FILE_MUTATING_TOOLS:
             resolved = self._resolve_path(tool_name, args)
             if resolved:
                 self._file_mutations[resolved] = turn
-    
+
     def revalidate_after_execute(self):
         """Re-stat all cached file paths after code_execute; drop any that changed.
-        
+
         code_execute can write files as a side effect. Rather than invalidating
         the entire cache, we re-check each cached file's mtime+size. This is
         O(n) stat calls where n <= TOOL_CACHE_MAX_ENTRIES — microseconds total.
@@ -215,21 +290,21 @@ class ToolResultCache:
             if cached.tool_name == "file_read":
                 if not self._is_fresh(cached):
                     del self._cache[key]
-    
+
     def format_cache_hit(self, cached: CachedToolResult, current_turn: int) -> str:
         """Format a cache hit response for the agent."""
         mutation_turn = self._file_mutations.get(cached.resolved_path)
-        
+
         if mutation_turn and mutation_turn > cached.turn_number:
             # File was modified by agent since last read — show diff
             return self._format_diff_response(cached, current_turn, mutation_turn)
         else:
             # File unchanged
             return self._format_unchanged_response(cached, current_turn)
-    
+
     def _format_diff_response(self, cached: CachedToolResult, current_turn: int, mutation_turn: int) -> str:
         """Generate a diff between the cached content and current file on disk.
-        
+
         If the diff is too large (>MAX_DIFF_LINES or >MAX_DIFF_CHARS),
         returns None to signal the caller should do a full re-read instead.
         """
@@ -237,7 +312,7 @@ class ToolResultCache:
             current_content = Path(cached.resolved_path).read_text()
         except OSError:
             return None  # file gone — force a real read to surface the error
-        
+
         import difflib
         diff_lines = list(difflib.unified_diff(
             cached.content.splitlines(keepends=True),
@@ -245,14 +320,14 @@ class ToolResultCache:
             fromfile=f"turn {cached.turn_number} version",
             tofile="current",
         ))
-        
+
         diff_text = "".join(diff_lines)
         if len(diff_lines) > MAX_DIFF_LINES or len(diff_text) > MAX_DIFF_CHARS:
             return None  # diff too large — caller should do full re-read
-        
+
         current_line_count = current_content.count("\n") + 1
         current_tokens = _count_tokens(current_content)
-        
+
         return (
             f"📋 Cache hit: file_read(\"{cached.resolved_path}\")\n"
             f"   Last read: turn {cached.turn_number}\n"
@@ -262,17 +337,26 @@ class ToolResultCache:
             f"   Full file: {current_line_count} lines, {current_tokens} tokens\n"
             f"   To re-read the full file, call file_read with force=true."
         )
-    
+
     def _format_unchanged_response(self, cached: CachedToolResult, current_turn: int) -> str:
-        """Format response for an unchanged file."""
+        """Format response for an unchanged file, including a brief excerpt."""
+        content_lines = cached.content.splitlines()
+        line_count = len(content_lines)
+
+        # Include first 5 lines so the agent can confirm it's the right file
+        excerpt_lines = content_lines[:5]
+        excerpt = "\n".join(f"   | {i+1}: {line}" for i, line in enumerate(excerpt_lines))
+
         return (
             f"📋 Cache hit: file_read(\"{cached.resolved_path}\")\n"
             f"   Last read: turn {cached.turn_number}\n"
             f"   Status: UNCHANGED (mtime unchanged since last read)\n"
-            f"   Content: {cached.content.count(chr(10)) + 1} lines, {cached.token_count} tokens\n\n"
+            f"   Content: {line_count} lines, {cached.token_count} tokens\n\n"
+            f"   First 5 lines:\n"
+            f"{excerpt}\n\n"
             f"   To re-read the full file, call file_read with force=true."
         )
-    
+
     def _resolve_path(self, tool_name: str, args: dict) -> str:
         """Extract and canonicalize the target path/URL from tool args."""
         if tool_name in ("file_read", "file_write", "file_edit"):
@@ -281,7 +365,7 @@ class ToolResultCache:
         if tool_name == "web_fetch":
             return args.get("url", "")
         return ""
-    
+
     def _get_fingerprint(self, tool_name: str, resolved_path: str) -> str:
         """Compute the freshness fingerprint for a cached entry."""
         if tool_name == "file_read":
@@ -293,15 +377,32 @@ class ToolResultCache:
         if tool_name == "web_fetch":
             return ""  # web_fetch uses timestamp-based TTL, no fingerprint needed
         return ""
-    
-    @staticmethod
-    def _make_key(tool_name: str, args: dict) -> str:
-        """Generate a stable cache key from tool name and normalized args."""
-        # Exclude 'force' from key so force=true hits the same slot
+
+    def _make_key(self, tool_name: str, args: dict) -> str:
+        """Generate a stable cache key from tool name and args.
+
+        File tools are keyed by resolved path only (not full args), so that
+        full-file reads and partial range reads share a cache entry. Range
+        requests are served by extracting the requested lines from the cached
+        full-file content.
+        """
+        if tool_name in ("file_read", "file_write", "file_edit"):
+            # Key by path only — partial reads are served from cached full content
+            return f"{tool_name}:{self._resolve_path(tool_name, args)}"
+        # Non-file tools: key by full normalized args
         filtered = {k: v for k, v in sorted(args.items()) if k != "force"}
-        import json
         return f"{tool_name}:{json.dumps(filtered, sort_keys=True)}"
 ```
+
+**Unit tests (required for Phase 1):** Write unit tests for `ToolResultCache` covering:
+- Cache hit and miss for file_read
+- LRU eviction when `TOOL_CACHE_MAX_ENTRIES` is exceeded
+- Staleness detection (mtime change invalidates entry)
+- Partial range reads served from full-file cache entries
+- `force=true` bypass
+- File deletion handling (OSError path)
+- `record_mutation` and diff-based cache hit responses
+- `revalidate_after_execute` correctness
 
 ### Phase 2: Hook into Tool Execution (~0.5 days)
 
@@ -345,13 +446,13 @@ No HEAD requests. If the agent needs fresh content before the TTL expires, it us
 Log cache hit/miss rates per session. Expose in the optimization dashboard:
 
 ```python
-@dataclass  
+@dataclass
 class CacheStats:
     hits: int = 0
     misses: int = 0
     tokens_saved: int = 0
     diff_too_large: int = 0  # times we fell back to full read due to diff size
-    
+
     @property
     def hit_rate(self) -> float:
         total = self.hits + self.misses
@@ -376,18 +477,23 @@ The agent can always bypass the cache by passing `force=true` to any tool call. 
 
 The system prompt should include a note: "When you re-read a file and get a cache hit showing it's unchanged, trust it. If you need the full content for a specific reason, use force=true."
 
-## 7. Risks
+## 7. Rollback Plan
+
+Set `TOOL_CACHE_ENABLED=false` to disable caching entirely. This is a runtime configuration change that takes effect immediately — no deploy required. All tool calls will bypass the cache and execute normally.
+
+## 8. Risks
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | Stale cache: file changed externally (another process, git pull) | Medium | mtime+size check catches this — mtime changes on any write. `os.stat()` is authoritative. |
-| Agent confused by cache hit format | Medium | Cache hit format is explicit and tells the agent what to do. Test with eval suite. |
+| Agent confused by cache hit format | Medium | Cache hit format is explicit and tells the agent what to do. Validated by agent behavior evals (Phase 0 gate). |
 | Memory usage from caching large files | Low | `TOOL_CACHE_MAX_CONTENT_SIZE` caps per-entry size. LRU eviction caps total entries. |
 | `code_execute` side effects not tracked | Medium | After every `code_execute`, `revalidate_after_execute()` re-stats all cached file paths and drops any that changed. O(n) stat calls where n ≤ 100 — microseconds. |
 | Diff generation for large files is expensive | Low | Use Python's `difflib` — fast for typical file sizes. Diff output capped at 50 lines / 2k chars; larger diffs fall back to full re-read. |
 | File deleted between reads | Low | `os.stat()` raises `OSError` → cache entry and mutation tracking cleaned up. Next read surfaces the real error from the tool. |
+| Partial file reads cause cache misses | Medium | File tools are keyed by resolved path, not full args. Range reads are served from cached full-file content. A full-file read satisfies subsequent partial reads. |
 
-## 8. Success Metrics
+## 9. Success Metrics
 
 | Metric | How to measure | Target |
 |--------|---------------|--------|
@@ -397,7 +503,7 @@ The system prompt should include a note: "When you re-read a file and get a cach
 | Diff fallback rate | `CacheStats.diff_too_large` | <5% of cache hits for modified files |
 | Quality | Eval suite (especially edit-test-fix scenarios) | No regression |
 
-## 9. Relationship to Prior Docs
+## 10. Relationship to Prior Docs
 
 - **Doc 012 (Context Distillation):** Caching reduces context volume *before* distillation kicks in. Complementary.
 - **Doc 062 (Headroom):** This addresses the tools that Headroom explicitly excluded (`file_read`). The two approaches cover different parts of the problem. Both can coexist — Headroom compresses cacheable-miss results (execution output, web content), caching eliminates redundant reads entirely.

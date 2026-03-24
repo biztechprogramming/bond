@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.agent.llm import chat_completion, _resolve_api_key, get_instructor_client
 from backend.app.agent.tools import build_registry
 from backend.app.agent.tools.definitions import get_pydantic_definitions
+from backend.app.agent.tool_result_cache import ToolResultCache
 from backend.app.core.oauth import get_oauth_extra_headers
 
 logger = logging.getLogger("bond.agent.loop")
@@ -278,6 +279,11 @@ async def agent_turn(
         agent["name"], model_string, len(all_enabled_tools), len(messages),
     )
 
+    # Doc 065: Tool result caching
+    _cache_enabled = os.environ.get("TOOL_CACHE_ENABLED", "true").lower() != "false"
+    _cache_shadow = os.environ.get("TOOL_CACHE_SHADOW_MODE", "true").lower() != "false"
+    session_cache = ToolResultCache(shadow_mode=_cache_shadow) if _cache_enabled else None
+
     # Adaptive max_tokens: start low, escalate on truncation
     TOKEN_TIERS = [8192, 32768, 65536]
     current_tier = 0
@@ -437,7 +443,22 @@ async def agent_turn(
             if parallel_batch:
                 async def _exec_one(tc, name, args):
                     logger.info("Tool call [%d] (parallel): %s(%s)", iteration, name, list(args.keys()))
-                    return tc, await registry.execute(name, args, tool_context)
+                    # Doc 065: check cache before executing
+                    if session_cache:
+                        cached = session_cache.check(name, args, iteration)
+                        if cached:
+                            formatted = session_cache.format_cache_hit(cached, iteration)
+                            if formatted is not None:
+                                return tc, {"output": formatted}
+                    raw_result = await registry.execute(name, args, tool_context)
+                    # Doc 065: store result and record mutations
+                    if session_cache:
+                        result_text = json.dumps(raw_result) if isinstance(raw_result, dict) else str(raw_result)
+                        session_cache.store(name, args, result_text, iteration)
+                        session_cache.record_mutation(name, args, iteration)
+                        if name == "code_execute":
+                            session_cache.revalidate_after_execute()
+                    return tc, raw_result
 
                 parallel_results = await asyncio.gather(
                     *[_exec_one(tc, name, args) for tc, name, args in parallel_batch],
@@ -452,7 +473,7 @@ async def agent_turn(
                         tc, result = item
 
                     if result.get("_terminal"):
-                        
+
                         return result.get("message", "")
 
                     messages.append({
@@ -465,15 +486,35 @@ async def agent_turn(
             for tool_call, tool_name, tool_args in sequential_batch:
                 logger.info("Tool call [%d]: %s(%s)", iteration, tool_name, list(tool_args.keys()))
 
+                # Doc 065: check cache before executing
+                if session_cache:
+                    cached = session_cache.check(tool_name, tool_args, iteration)
+                    if cached:
+                        formatted = session_cache.format_cache_hit(cached, iteration)
+                        if formatted is not None:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": formatted,
+                            })
+                            continue
 
                 if tool_name not in all_enabled_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled for this agent."}
                 else:
                     result = await registry.execute(tool_name, tool_args, tool_context)
 
+                # Doc 065: store result and record mutations
+                if session_cache:
+                    result_text = json.dumps(result) if isinstance(result, dict) else str(result)
+                    session_cache.store(tool_name, tool_args, result_text, iteration)
+                    session_cache.record_mutation(tool_name, tool_args, iteration)
+                    if tool_name == "code_execute":
+                        session_cache.revalidate_after_execute()
+
                 # Check for terminal tool (respond)
                 if result.get("_terminal"):
-                    
+
                     return result.get("message", "")
 
                 messages.append({
