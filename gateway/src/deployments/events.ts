@@ -22,7 +22,11 @@ export type DeploymentEventType =
   | "manual_intervention_needed"
   | "deployment_lock_stale"
   | "monitoring_alert"
-  | "discovery_completed";
+  | "discovery_completed"
+  | "discovery_agent_started"
+  | "discovery_agent_progress"
+  | "discovery_user_question"
+  | "discovery_agent_completed";
 
 export interface DeploymentEvent {
   id: string;

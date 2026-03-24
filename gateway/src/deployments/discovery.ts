@@ -14,6 +14,8 @@ import { writeManifest } from "./manifest.js";
 import { emitDeploymentEvent } from "./events.js";
 import type { GatewayConfig } from "../config/index.js";
 import type { DeploymentManifest } from "./manifest.js";
+import { runAgentDiscovery as runAgentDiscoveryImpl } from "./discovery-agent.js";
+import type { AgentDiscoveryParams, DiscoveryState } from "./discovery-agent.js";
 
 const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 const DISCOVERY_SCRIPTS_DIR = path.join(DEPLOYMENTS_DIR, "discovery", "scripts");
@@ -134,6 +136,24 @@ export async function runDiscovery(
     environment: env,
     info: { manifest, layers: results },
   };
+}
+
+/**
+ * Agent-driven discovery — alternative to shell script discovery.
+ * Gated behind the `agent_discovery` feature flag (default: off).
+ *
+ * Design Doc 071 §9 — Phase 1
+ */
+export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<DiscoveryState> {
+  return runAgentDiscoveryImpl(params);
+}
+
+/**
+ * Check if agent discovery is enabled via feature flag.
+ * Default: off for Phase 1.
+ */
+export function isAgentDiscoveryEnabled(): boolean {
+  return process.env.BOND_AGENT_DISCOVERY === "true";
 }
 
 function extractServerDetails(results: Record<string, any>): Partial<import("./manifest.js").ManifestServer> {
