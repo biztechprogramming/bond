@@ -23,6 +23,7 @@ class PreGatherResult:
     context_bundle: str = ""
     adaptive_budget: int | None = None
     delegate_to_coding_agent: bool = False
+    gather_metrics: Any = None  # Optional GatherMetrics
 
 
 async def run_pre_gather(
@@ -130,12 +131,15 @@ async def run_pre_gather(
     if event_queue is not None:
         await event_queue.put(_sse_event("status", {"state": "gathering"}))
 
-    context_bundle = await gather_phase(
+    gather_result = await gather_phase(
         plan=plan,
         tool_registry=tool_registry,
         tool_context=tool_context,
         repo_root=repo_root,
+        cancellation_event=interrupt_event,
     )
+    context_bundle, gather_metrics = gather_result
+    result.gather_metrics = gather_metrics
 
     if context_bundle:
         # Optional compression if over budget
@@ -155,13 +159,29 @@ async def run_pre_gather(
             trace_meta["gather_tokens"] = _estimate_tokens(context_bundle)
             langfuse_meta["trace_metadata"] = trace_meta
 
+    # Add gather metrics to langfuse
+    if langfuse_meta and gather_metrics:
+        trace_meta = langfuse_meta.get("trace_metadata", {})
+        trace_meta["gather_speedup"] = gather_metrics.speedup
+        trace_meta["gather_wall_ms"] = gather_metrics.wall_clock_ms
+        trace_meta["gather_tasks_failed"] = gather_metrics.tasks_failed
+        langfuse_meta["trace_metadata"] = trace_meta
+
+    metrics_str = ""
+    if gather_metrics:
+        metrics_str = (
+            f", gather_speedup={gather_metrics.speedup:.1f}x"
+            f", gather_wall_ms={gather_metrics.wall_clock_ms:.0f}"
+        )
+
     logger.info(
-        "Pre-gather complete: plan=%s, context=%d tokens, budget=%s, delegate=%s, multi_repo=%s",
+        "Pre-gather complete: plan=%s, context=%d tokens, budget=%s, delegate=%s, multi_repo=%s%s",
         plan.get("complexity"),
         _estimate_tokens(context_bundle) if context_bundle else 0,
         result.adaptive_budget,
         result.delegate_to_coding_agent,
         is_multi_repo,
+        metrics_str,
     )
 
     return result

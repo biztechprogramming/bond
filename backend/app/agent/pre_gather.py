@@ -3,7 +3,7 @@
 Phase 1 (Plan): Single LLM call to analyze the task and list needed files.
 Phase 2 (Gather): Direct tool execution to pre-load context.
 
-Design Doc 038.
+Design Docs 038, 068 (Parallel Pre-Gathering).
 """
 
 from __future__ import annotations
@@ -11,8 +11,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import litellm
 
@@ -21,6 +27,83 @@ logger = logging.getLogger("bond.agent.pre_gather")
 # ── Token budget for gathered context ──
 GATHER_TOKEN_BUDGET = 80_000
 _ESTIMATE_CHARS_PER_TOKEN = 4
+
+# ── Parallel gathering configuration ──
+PARALLEL_GATHERING_ENABLED = os.getenv("PARALLEL_GATHERING_ENABLED", "true").lower() == "true"
+PARALLEL_MAX_TASKS = int(os.getenv("PARALLEL_MAX_TASKS", "8"))
+PARALLEL_TASK_TIMEOUT = float(os.getenv("PARALLEL_TASK_TIMEOUT", "10.0"))
+PARALLEL_WEB_TIMEOUT = float(os.getenv("PARALLEL_WEB_TIMEOUT", "15.0"))
+
+# Lazy-initialized module-level thread pool
+_gather_pool: ThreadPoolExecutor | None = None
+
+
+def _get_gather_pool() -> ThreadPoolExecutor:
+    global _gather_pool
+    if _gather_pool is None:
+        _gather_pool = ThreadPoolExecutor(max_workers=PARALLEL_MAX_TASKS)
+    return _gather_pool
+
+
+# Per-domain concurrency limits for web fetches (limit=1 to serialize same-domain)
+_domain_semaphores: dict[str, asyncio.Semaphore] = defaultdict(lambda: asyncio.Semaphore(1))
+
+# Max response body size for web fetches
+_WEB_FETCH_MAX_BYTES = 50 * 1024  # 50KB
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html_tags(html: str) -> str:
+    """Strip HTML tags for cleaner text content."""
+    text = _HTML_TAG_RE.sub("", html)
+    # Collapse whitespace runs
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+@dataclass
+class GatherTask:
+    name: str
+    task_type: str  # "file_read", "grep", "web_fetch", etc.
+    params: dict = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)
+    priority: int = 0  # higher = more important
+
+
+@dataclass
+class GatherResult:
+    task_name: str
+    content: str
+    tokens: int
+    error: bool = False
+    elapsed_ms: float = 0.0
+
+
+@dataclass
+class GatherMetrics:
+    total_tasks: int
+    parallel_tasks: int
+    sequential_tasks: int
+    wall_clock_ms: float
+    sequential_equivalent_ms: float
+    speedup: float
+    tasks_timed_out: int
+    tasks_failed: int
+
+
+def partition_by_dependencies(
+    tasks: list[GatherTask],
+) -> tuple[list[GatherTask], list[GatherTask]]:
+    """Split tasks into (independent, dependent) based on depends_on."""
+    independent = []
+    dependent = []
+    for task in tasks:
+        if task.depends_on:
+            dependent.append(task)
+        else:
+            independent.append(task)
+    return independent, dependent
 
 # Short messages that skip planning entirely
 _GREETING_PATTERNS = re.compile(
@@ -547,92 +630,340 @@ def _estimate_tokens(text: str) -> int:
     return len(text) // _ESTIMATE_CHARS_PER_TOKEN
 
 
+async def _execute_single_task(
+    task: GatherTask,
+    tool_registry: Any,
+    tool_context: dict[str, Any],
+    repo_root: str,
+) -> GatherResult:
+    """Execute a single GatherTask and return a GatherResult."""
+    start = time.monotonic()
+    try:
+        if task.task_type == "file_read":
+            path = task.params.get("path", "")
+            handler = tool_registry.get("file_read")
+            if handler:
+                result = await handler({"path": path}, tool_context)
+                content = result if isinstance(result, str) else json.dumps(result)
+            else:
+                content = f"[Error reading file: {path}]"
+        elif task.task_type == "grep":
+            import subprocess
+            pattern = task.params.get("pattern", "")
+            directory = task.params.get("directory", ".")
+            cmd = [
+                "grep", "-rn", "--include=*.py", "--include=*.ts",
+                "--include=*.js", "--include=*.md", pattern, directory,
+            ]
+            proc = await asyncio.to_thread(
+                subprocess.run, cmd,
+                capture_output=True, text=True, cwd=repo_root, timeout=10,
+            )
+            content = proc.stdout[:10000] if proc.stdout else "(no matches)"
+        elif task.task_type == "web_fetch":
+            import httpx
+            url = task.params.get("url", "")
+            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+                resp = await client.get(url, headers={"User-Agent": "Bond-Agent/1.0"})
+                resp.raise_for_status()
+                body = resp.text[:_WEB_FETCH_MAX_BYTES]
+                content_type = resp.headers.get("content-type", "")
+                if "html" in content_type:
+                    body = _strip_html_tags(body)
+                content = body
+        else:
+            content = f"[Unsupported task type: {task.task_type}]"
+    except Exception as e:
+        elapsed = (time.monotonic() - start) * 1000
+        logger.debug("Gather: task %s failed: %s", task.name, e)
+        return GatherResult(
+            task_name=task.name, content=f"[Error: {e}]",
+            tokens=0, error=True, elapsed_ms=elapsed,
+        )
+
+    elapsed = (time.monotonic() - start) * 1000
+    tokens = _estimate_tokens(content)
+    return GatherResult(
+        task_name=task.name, content=content,
+        tokens=tokens, error=False, elapsed_ms=elapsed,
+    )
+
+
+async def _execute_with_timeout(
+    task: GatherTask,
+    tool_registry: Any,
+    tool_context: dict[str, Any],
+    repo_root: str,
+) -> GatherResult:
+    """Execute a task with a timeout. Returns GatherResult with error=True on timeout."""
+    timeout = PARALLEL_WEB_TIMEOUT if task.task_type == "web_fetch" else PARALLEL_TASK_TIMEOUT
+    try:
+        return await asyncio.wait_for(
+            _execute_single_task(task, tool_registry, tool_context, repo_root),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("Gather: task %s timed out after %.1fs", task.name, timeout)
+        return GatherResult(
+            task_name=task.name, content=f"[Timeout after {timeout}s]",
+            tokens=0, error=True, elapsed_ms=timeout * 1000,
+        )
+
+
+async def _execute_with_domain_limit(
+    task: GatherTask,
+    tool_registry: Any,
+    tool_context: dict[str, Any],
+    repo_root: str,
+) -> GatherResult:
+    """Wrap execution with per-domain concurrency limiting for web fetches."""
+    if task.task_type == "web_fetch":
+        url = task.params.get("url", "")
+        domain = urlparse(url).netloc
+        async with _domain_semaphores[domain]:
+            return await _execute_with_timeout(task, tool_registry, tool_context, repo_root)
+    return await _execute_with_timeout(task, tool_registry, tool_context, repo_root)
+
+
+async def _execute_dependent_tasks(
+    dependent_tasks: list[GatherTask],
+    result_map: dict[str, GatherResult],
+    tool_registry: Any,
+    tool_context: dict[str, Any],
+    repo_root: str,
+    cancellation_event: asyncio.Event | None = None,
+) -> list[GatherResult]:
+    """Execute dependent tasks in tiers via topological sort."""
+    remaining = list(dependent_tasks)
+    results: list[GatherResult] = []
+
+    while remaining:
+        if cancellation_event and cancellation_event.is_set():
+            logger.info("Gather: cancellation requested, skipping %d dependent tasks", len(remaining))
+            for t in remaining:
+                results.append(GatherResult(
+                    task_name=t.name, content="[Cancelled]",
+                    tokens=0, error=True, elapsed_ms=0.0,
+                ))
+            break
+
+        ready = []
+        skip = []
+        still_waiting = []
+
+        for task in remaining:
+            # Check if any dependency failed
+            failed_deps = [d for d in task.depends_on if d in result_map and result_map[d].error]
+            if failed_deps:
+                logger.warning("Gather: skipping %s — dependency %s failed", task.name, failed_deps)
+                skip.append(task)
+                continue
+
+            # Check if all dependencies are resolved
+            if all(d in result_map for d in task.depends_on):
+                ready.append(task)
+            else:
+                still_waiting.append(task)
+
+        # Skip failed-dep tasks
+        for task in skip:
+            r = GatherResult(
+                task_name=task.name, content="[Skipped: dependency failed]",
+                tokens=0, error=True, elapsed_ms=0.0,
+            )
+            results.append(r)
+            result_map[task.name] = r
+
+        if not ready:
+            if still_waiting:
+                # Circular dependency
+                logger.warning("Gather: circular dependency detected, skipping %d tasks", len(still_waiting))
+                for task in still_waiting:
+                    r = GatherResult(
+                        task_name=task.name, content="[Skipped: circular dependency]",
+                        tokens=0, error=True, elapsed_ms=0.0,
+                    )
+                    results.append(r)
+                    result_map[task.name] = r
+            break
+
+        # Execute ready tier in parallel
+        tier_results = await asyncio.gather(*[
+            _execute_with_timeout(t, tool_registry, tool_context, repo_root)
+            for t in ready
+        ])
+        for r in tier_results:
+            results.append(r)
+            result_map[r.task_name] = r
+
+        remaining = still_waiting
+
+    return results
+
+
+def _plan_to_tasks(plan: dict) -> list[GatherTask]:
+    """Convert a plan dict into a list of GatherTask objects."""
+    tasks = []
+    for i, path in enumerate(plan.get("files_to_read", [])):
+        tasks.append(GatherTask(
+            name=f"file:{path}",
+            task_type="file_read",
+            params={"path": path},
+            priority=len(plan.get("files_to_read", [])) - i,
+        ))
+    for i, grep in enumerate(plan.get("grep_patterns", [])):
+        tasks.append(GatherTask(
+            name=f"grep:{grep['pattern']}:{grep['directory']}",
+            task_type="grep",
+            params={"pattern": grep["pattern"], "directory": grep["directory"]},
+            priority=0,
+        ))
+    for i, url in enumerate(plan.get("urls_to_fetch", [])):
+        tasks.append(GatherTask(
+            name=f"web:{url}",
+            task_type="web_fetch",
+            params={"url": url},
+            priority=0,
+        ))
+    return tasks
+
+
+def _format_results(
+    gather_results: list[GatherResult],
+    original_tasks: list[GatherTask],
+) -> str:
+    """Format GatherResults into the markdown context bundle, respecting token budget."""
+    # Sort by original priority (higher first)
+    task_priority = {t.name: t.priority for t in original_tasks}
+    sorted_results = sorted(
+        gather_results,
+        key=lambda r: task_priority.get(r.task_name, 0),
+        reverse=True,
+    )
+
+    sections: list[str] = []
+    token_count = 0
+
+    for r in sorted_results:
+        if r.error:
+            continue
+        section = f"### {r.task_name}\n```\n{r.content}\n```"
+        section_tokens = _estimate_tokens(section)
+
+        if token_count + section_tokens > GATHER_TOKEN_BUDGET:
+            remaining_budget = GATHER_TOKEN_BUDGET - token_count
+            if remaining_budget > 500:
+                max_chars = remaining_budget * _ESTIMATE_CHARS_PER_TOKEN
+                truncated = r.content[:max_chars] + "\n... [truncated]"
+                section = f"### {r.task_name}\n```\n{truncated}\n```"
+                sections.append(section)
+            logger.info("Gather: token budget reached (%d tokens), stopping", token_count)
+            break
+
+        sections.append(section)
+        token_count += section_tokens
+
+    return "\n\n".join(sections)
+
+
 async def gather_phase(
     plan: dict,
     tool_registry: Any,
     tool_context: dict[str, Any],
     repo_root: str = "/workspace",
-) -> str:
+    cancellation_event: asyncio.Event | None = None,
+) -> tuple[str, GatherMetrics | None]:
     """Phase 2: Execute tool calls from the plan directly (no LLM).
 
     Reads files and runs greps in parallel, then formats results as a
     markdown context bundle.
 
-    Returns the formatted context string (may be empty if nothing to gather).
+    Returns (formatted_context_string, metrics). Context may be empty if
+    nothing to gather. Metrics is None when parallel gathering is disabled.
     """
     files_to_read = plan.get("files_to_read", [])
     grep_patterns = plan.get("grep_patterns", [])
+    urls_to_fetch = plan.get("urls_to_fetch", [])
 
-    if not files_to_read and not grep_patterns:
-        return ""
+    if not files_to_read and not grep_patterns and not urls_to_fetch:
+        return "", None
 
-    results: list[str] = []
-    token_count = 0
+    all_tasks = _plan_to_tasks(plan)
 
-    async def _read_file(path: str) -> tuple[str, str]:
-        """Read a file via the native registry."""
-        try:
-            handler = tool_registry.get("file_read")
-            if handler:
-                result = await handler({"path": path}, tool_context)
-                content = result if isinstance(result, str) else json.dumps(result)
-                return path, content
-        except Exception as e:
-            logger.debug("Gather: failed to read %s: %s", path, e)
-        return path, f"[Error reading file: {path}]"
+    if not PARALLEL_GATHERING_ENABLED:
+        # Sequential fallback — execute tasks one by one
+        gather_results: list[GatherResult] = []
+        for task in all_tasks:
+            if cancellation_event and cancellation_event.is_set():
+                break
+            r = await _execute_single_task(task, tool_registry, tool_context, repo_root)
+            gather_results.append(r)
+        context_bundle = _format_results(gather_results, all_tasks)
+        logger.info("Gather (sequential): collected %d results", len(gather_results))
+        return context_bundle, None
 
-    async def _run_grep(pattern: str, directory: str) -> tuple[str, str]:
-        """Run grep via shell."""
-        try:
-            import subprocess
-            cmd = ["grep", "-rn", "--include=*.py", "--include=*.ts", "--include=*.js",
-                   "--include=*.md", pattern, directory]
-            proc = await asyncio.to_thread(
-                subprocess.run, cmd,
-                capture_output=True, text=True, cwd=repo_root, timeout=10,
-            )
-            output = proc.stdout[:10000] if proc.stdout else "(no matches)"
-            return f"grep '{pattern}' {directory}", output
-        except Exception as e:
-            logger.debug("Gather: grep failed for '%s' in %s: %s", pattern, directory, e)
-            return f"grep '{pattern}' {directory}", f"[Error: {e}]"
+    # Parallel execution
+    wall_start = time.monotonic()
+    independent, dependent = partition_by_dependencies(all_tasks)
 
-    # Launch all reads and greps in parallel
-    tasks = []
-    for path in files_to_read:
-        tasks.append(_read_file(path))
-    for grep in grep_patterns:
-        tasks.append(_run_grep(grep["pattern"], grep["directory"]))
+    result_map: dict[str, GatherResult] = {}
 
-    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+    # Check cancellation before starting
+    if cancellation_event and cancellation_event.is_set():
+        return "", None
 
-    for item in gathered:
-        if isinstance(item, Exception):
-            logger.debug("Gather: task failed with %s", item)
-            continue
+    # Run independent tasks in parallel (with per-domain limiting for web fetches)
+    if independent:
+        ind_results = await asyncio.gather(*[
+            _execute_with_domain_limit(t, tool_registry, tool_context, repo_root)
+            for t in independent
+        ])
+        for r in ind_results:
+            result_map[r.task_name] = r
 
-        label, content = item
-        section = f"### {label}\n```\n{content}\n```"
-        section_tokens = _estimate_tokens(section)
+    # Run dependent tasks in tiers
+    dep_results: list[GatherResult] = []
+    if dependent:
+        dep_results = await _execute_dependent_tasks(
+            dependent, result_map, tool_registry, tool_context,
+            repo_root, cancellation_event,
+        )
 
-        # Token budget enforcement
-        if token_count + section_tokens > GATHER_TOKEN_BUDGET:
-            # Truncate this section to fit
-            remaining_budget = GATHER_TOKEN_BUDGET - token_count
-            if remaining_budget > 500:  # only include if meaningful
-                max_chars = remaining_budget * _ESTIMATE_CHARS_PER_TOKEN
-                truncated = content[:max_chars] + "\n... [truncated]"
-                section = f"### {label}\n```\n{truncated}\n```"
-                results.append(section)
-            logger.info("Gather: token budget reached (%d tokens), stopping", token_count)
-            break
+    wall_ms = (time.monotonic() - wall_start) * 1000
+    all_results = list(result_map.values()) + dep_results
+    # Deduplicate (dep_results are also in result_map)
+    seen_names: set[str] = set()
+    unique_results: list[GatherResult] = []
+    for r in all_results:
+        if r.task_name not in seen_names:
+            seen_names.add(r.task_name)
+            unique_results.append(r)
 
-        results.append(section)
-        token_count += section_tokens
+    sequential_equivalent = sum(r.elapsed_ms for r in unique_results)
+    timed_out = sum(1 for r in unique_results if r.error and "Timeout" in r.content)
+    failed = sum(1 for r in unique_results if r.error)
 
-    context_bundle = "\n\n".join(results)
-    logger.info("Gather: collected %d sections, ~%d tokens", len(results), token_count)
-    return context_bundle
+    metrics = GatherMetrics(
+        total_tasks=len(all_tasks),
+        parallel_tasks=len(independent),
+        sequential_tasks=len(dependent),
+        wall_clock_ms=wall_ms,
+        sequential_equivalent_ms=sequential_equivalent,
+        speedup=sequential_equivalent / wall_ms if wall_ms > 0 else 1.0,
+        tasks_timed_out=timed_out,
+        tasks_failed=failed,
+    )
+
+    logger.info(
+        "Gather: %d tasks (parallel=%d, sequential=%d), wall=%.0fms, "
+        "speedup=%.1fx, timed_out=%d, failed=%d",
+        metrics.total_tasks, metrics.parallel_tasks, metrics.sequential_tasks,
+        metrics.wall_clock_ms, metrics.speedup,
+        metrics.tasks_timed_out, metrics.tasks_failed,
+    )
+
+    context_bundle = _format_results(unique_results, all_tasks)
+    return context_bundle, metrics
 
 
 async def compress_gathered_context(
