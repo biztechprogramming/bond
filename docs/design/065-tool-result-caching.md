@@ -27,7 +27,7 @@ Doc 062 (Headroom) tried to address this by compressing tool outputs, but explic
 
 1. **Eliminate redundant file reads** — if a file hasn't changed since last read, return a compact reference instead of the full content
 2. **Change-aware re-reads** — if the agent edited a file and re-reads it, return only the diff or the changed region + surrounding context
-3. **URL content caching** — for `web_fetch`, cache by URL + ETag/Last-Modified; skip re-fetching unchanged pages
+3. **URL content caching** — for `web_fetch`, cache by URL with a 5-minute TTL; skip re-fetching unchanged pages
 4. **Token savings without quality loss** — the agent gets exactly the content it needs, no compression artifacts, no lost line numbers
 
 ## 3. Design
@@ -35,18 +35,18 @@ Doc 062 (Headroom) tried to address this by compressing tool outputs, but explic
 ### Cache Key Structure
 
 ```
-cache_key = hash(tool_name, normalized_args, content_fingerprint)
+cache_key = hash(tool_name, normalized_args)
 ```
 
-Where `content_fingerprint` depends on the tool:
+Where staleness is checked per-tool after a cache key match:
 
-| Tool | Content Fingerprint | Staleness Check |
-|------|-------------------|-----------------|
+| Tool | Fingerprint | Staleness Check |
+|------|-------------|-----------------|
 | `file_read` | file mtime + size | `os.stat()` — <1ms |
-| `web_fetch` | URL + ETag header | Conditional GET (If-None-Match) |
+| `web_fetch` | timestamp | Time-based TTL (5 min) — no network call on cache check |
 | `web_search` | query + timestamp bucket (5min) | Time-based expiry |
-| `shell_grep` | args + mtime of searched paths | `os.stat()` on target files |
-| `code_execute` | Never cached | Execution output is inherently non-deterministic |
+| `shell_grep` | Not cached in Phase 1 | Glob/directory targets make staleness checks expensive; revisit after measuring file_read savings |
+| `code_execute` | Never cached | Non-deterministic output. Triggers batch staleness revalidation of all cached file entries (see `revalidate_after_execute`). |
 
 ### Cache Hit Responses
 
@@ -84,6 +84,8 @@ If the file *has* changed (mtime differs), but the agent was the one who changed
 
 This gives the agent everything it needs to continue working without re-consuming the full file content.
 
+The diff is always computed as `cached_content ↔ current_file_on_disk`. Multiple agent edits between reads are collapsed into a single diff against the last-read version. If the diff exceeds 50 lines or 2,000 characters, the cache hit is skipped and the full file is returned instead (a large diff doesn't save meaningful tokens).
+
 ### Cache Miss Behavior
 
 On a cache miss (first read, or `force=true`), the tool executes normally and the result is cached:
@@ -93,10 +95,10 @@ On a cache miss (first read, or `force=true`), the tool executes normally and th
 class CachedToolResult:
     tool_name: str
     args_hash: str
-    content_hash: str        # hash of the actual content
+    resolved_path: str       # canonical path for file tools, URL for web tools
     content: str             # the full result
     token_count: int
-    fingerprint: str         # mtime, etag, etc.
+    fingerprint: str         # mtime+size for files, timestamp for web
     turn_number: int         # when this was cached
     timestamp: datetime
 ```
@@ -109,23 +111,26 @@ class CachedToolResult:
 
 ```python
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-import hashlib
 import os
 
-# Tools eligible for caching
+# Phase 1: file_read only. web_fetch added in Phase 3.
 CACHEABLE_TOOLS = frozenset({
     "file_read",
-    "web_fetch",
-    "shell_grep",
 })
 
-# Tools that invalidate cached file content
+# Tools that invalidate cached file content.
+# file_write and file_edit invalidate by path.
+# code_execute triggers batch revalidation (see revalidate_after_execute).
 FILE_MUTATING_TOOLS = frozenset({
     "file_write",
     "file_edit",
-    "code_execute",  # might write files as side effect
 })
+
+# Max diff size before we skip the cache hit and return full content.
+MAX_DIFF_LINES = 50
+MAX_DIFF_CHARS = 2000
 
 
 class ToolResultCache:
@@ -133,7 +138,7 @@ class ToolResultCache:
     
     def __init__(self):
         self._cache: dict[str, CachedToolResult] = {}
-        self._file_mutations: dict[str, int] = {}  # path → turn of last mutation
+        self._file_mutations: dict[str, int] = {}  # resolved_path → turn of last mutation
     
     def check(self, tool_name: str, args: dict, turn: int) -> CachedToolResult | None:
         """Check if we have a valid cached result for this tool call."""
@@ -149,23 +154,27 @@ class ToolResultCache:
             return None
         
         # Validate freshness
-        if not self._is_fresh(cached, tool_name, args):
+        if not self._is_fresh(cached):
             del self._cache[key]
             return None
         
         return cached
     
-    def _is_fresh(self, cached: CachedToolResult, tool_name: str, args: dict) -> bool:
+    def _is_fresh(self, cached: CachedToolResult) -> bool:
         """Check if cached result is still valid."""
-        if tool_name == "file_read":
-            path = args.get("path", args.get("file_path", ""))
+        if cached.tool_name == "file_read":
             try:
-                stat = os.stat(path)
+                stat = os.stat(cached.resolved_path)
                 return cached.fingerprint == f"{stat.st_mtime}:{stat.st_size}"
             except OSError:
+                # File was deleted — clean up mutation tracking too
+                self._file_mutations.pop(cached.resolved_path, None)
                 return False
         
-        # Other tools: implement per-tool freshness checks
+        if cached.tool_name == "web_fetch":
+            age = (datetime.utcnow() - cached.timestamp).total_seconds()
+            return age < 300  # 5 minute TTL
+        
         return False
     
     def store(self, tool_name: str, args: dict, result: str, turn: int):
@@ -173,13 +182,14 @@ class ToolResultCache:
         if tool_name not in CACHEABLE_TOOLS:
             return
         
+        resolved_path = self._resolve_path(tool_name, args)
         key = self._make_key(tool_name, args)
-        fingerprint = self._get_fingerprint(tool_name, args)
+        fingerprint = self._get_fingerprint(tool_name, resolved_path)
         
         self._cache[key] = CachedToolResult(
             tool_name=tool_name,
             args_hash=key,
-            content_hash=hashlib.sha256(result.encode()).hexdigest()[:16],
+            resolved_path=resolved_path,
             content=result,
             token_count=_count_tokens(result),
             fingerprint=fingerprint,
@@ -190,21 +200,107 @@ class ToolResultCache:
     def record_mutation(self, tool_name: str, args: dict, turn: int):
         """Record that a tool mutated a file (for change-aware re-reads)."""
         if tool_name in FILE_MUTATING_TOOLS:
-            path = args.get("path", args.get("file_path", ""))
-            if path:
-                self._file_mutations[path] = turn
+            resolved = self._resolve_path(tool_name, args)
+            if resolved:
+                self._file_mutations[resolved] = turn
     
-    def format_cache_hit(self, cached: CachedToolResult, args: dict, current_turn: int) -> str:
+    def revalidate_after_execute(self):
+        """Re-stat all cached file paths after code_execute; drop any that changed.
+        
+        code_execute can write files as a side effect. Rather than invalidating
+        the entire cache, we re-check each cached file's mtime+size. This is
+        O(n) stat calls where n <= TOOL_CACHE_MAX_ENTRIES — microseconds total.
+        """
+        for key, cached in list(self._cache.items()):
+            if cached.tool_name == "file_read":
+                if not self._is_fresh(cached):
+                    del self._cache[key]
+    
+    def format_cache_hit(self, cached: CachedToolResult, current_turn: int) -> str:
         """Format a cache hit response for the agent."""
-        path = args.get("path", args.get("file_path", ""))
-        mutation_turn = self._file_mutations.get(path)
+        mutation_turn = self._file_mutations.get(cached.resolved_path)
         
         if mutation_turn and mutation_turn > cached.turn_number:
             # File was modified by agent since last read — show diff
-            return self._format_diff_response(cached, path, current_turn, mutation_turn)
+            return self._format_diff_response(cached, current_turn, mutation_turn)
         else:
             # File unchanged
-            return self._format_unchanged_response(cached, path, current_turn)
+            return self._format_unchanged_response(cached, current_turn)
+    
+    def _format_diff_response(self, cached: CachedToolResult, current_turn: int, mutation_turn: int) -> str:
+        """Generate a diff between the cached content and current file on disk.
+        
+        If the diff is too large (>MAX_DIFF_LINES or >MAX_DIFF_CHARS),
+        returns None to signal the caller should do a full re-read instead.
+        """
+        try:
+            current_content = Path(cached.resolved_path).read_text()
+        except OSError:
+            return None  # file gone — force a real read to surface the error
+        
+        import difflib
+        diff_lines = list(difflib.unified_diff(
+            cached.content.splitlines(keepends=True),
+            current_content.splitlines(keepends=True),
+            fromfile=f"turn {cached.turn_number} version",
+            tofile="current",
+        ))
+        
+        diff_text = "".join(diff_lines)
+        if len(diff_lines) > MAX_DIFF_LINES or len(diff_text) > MAX_DIFF_CHARS:
+            return None  # diff too large — caller should do full re-read
+        
+        current_line_count = current_content.count("\n") + 1
+        current_tokens = _count_tokens(current_content)
+        
+        return (
+            f"📋 Cache hit: file_read(\"{cached.resolved_path}\")\n"
+            f"   Last read: turn {cached.turn_number}\n"
+            f"   Status: MODIFIED by you in turn {mutation_turn}\n"
+            f"   Changes since last read:\n\n"
+            f"{diff_text}\n\n"
+            f"   Full file: {current_line_count} lines, {current_tokens} tokens\n"
+            f"   To re-read the full file, call file_read with force=true."
+        )
+    
+    def _format_unchanged_response(self, cached: CachedToolResult, current_turn: int) -> str:
+        """Format response for an unchanged file."""
+        return (
+            f"📋 Cache hit: file_read(\"{cached.resolved_path}\")\n"
+            f"   Last read: turn {cached.turn_number}\n"
+            f"   Status: UNCHANGED (mtime unchanged since last read)\n"
+            f"   Content: {cached.content.count(chr(10)) + 1} lines, {cached.token_count} tokens\n\n"
+            f"   To re-read the full file, call file_read with force=true."
+        )
+    
+    def _resolve_path(self, tool_name: str, args: dict) -> str:
+        """Extract and canonicalize the target path/URL from tool args."""
+        if tool_name in ("file_read", "file_write", "file_edit"):
+            raw = args.get("path", args.get("file_path", ""))
+            return str(Path(raw).resolve()) if raw else ""
+        if tool_name == "web_fetch":
+            return args.get("url", "")
+        return ""
+    
+    def _get_fingerprint(self, tool_name: str, resolved_path: str) -> str:
+        """Compute the freshness fingerprint for a cached entry."""
+        if tool_name == "file_read":
+            try:
+                stat = os.stat(resolved_path)
+                return f"{stat.st_mtime}:{stat.st_size}"
+            except OSError:
+                return ""
+        if tool_name == "web_fetch":
+            return ""  # web_fetch uses timestamp-based TTL, no fingerprint needed
+        return ""
+    
+    @staticmethod
+    def _make_key(tool_name: str, args: dict) -> str:
+        """Generate a stable cache key from tool name and normalized args."""
+        # Exclude 'force' from key so force=true hits the same slot
+        filtered = {k: v for k, v in sorted(args.items()) if k != "force"}
+        import json
+        return f"{tool_name}:{json.dumps(filtered, sort_keys=True)}"
 ```
 
 ### Phase 2: Hook into Tool Execution (~0.5 days)
@@ -215,28 +311,34 @@ Before executing a tool:
 ```python
 cached = session.tool_cache.check(tool_name, args, current_turn)
 if cached:
-    result = session.tool_cache.format_cache_hit(cached, args, current_turn)
-    return result, 0.0  # no cost
+    result = session.tool_cache.format_cache_hit(cached, current_turn)
+    if result is not None:  # None means diff was too large — do full read
+        return result, 0.0  # no cost
 ```
 
 After executing a tool:
 ```python
 session.tool_cache.store(tool_name, args, result, current_turn)
 session.tool_cache.record_mutation(tool_name, args, current_turn)
+
+# code_execute can write files as a side effect — revalidate all cached files
+if tool_name == "code_execute":
+    session.tool_cache.revalidate_after_execute()
 ```
 
 ### Phase 3: Web Fetch Caching (~0.5 days)
 
-Extend `_is_fresh` and `_get_fingerprint` for `web_fetch`:
+Add `"web_fetch"` to `CACHEABLE_TOOLS`. The staleness check is already implemented in `_is_fresh` using a 5-minute TTL — no network call required on cache check. The fingerprint is unused for web_fetch; freshness is determined solely by `timestamp` age.
 
 ```python
-def _get_fingerprint_web(self, url: str) -> str:
-    """Get ETag or Last-Modified from a HEAD request."""
-    resp = requests.head(url, timeout=5)
-    etag = resp.headers.get("ETag", "")
-    last_modified = resp.headers.get("Last-Modified", "")
-    return f"{etag}:{last_modified}"
+# Updated set in Phase 3:
+CACHEABLE_TOOLS = frozenset({
+    "file_read",
+    "web_fetch",
+})
 ```
+
+No HEAD requests. If the agent needs fresh content before the TTL expires, it uses `force=true`.
 
 ### Phase 4: Cache Stats and Observability (~0.5 days)
 
@@ -248,6 +350,7 @@ class CacheStats:
     hits: int = 0
     misses: int = 0
     tokens_saved: int = 0
+    diff_too_large: int = 0  # times we fell back to full read due to diff size
     
     @property
     def hit_rate(self) -> float:
@@ -263,6 +366,9 @@ class CacheStats:
 | `TOOL_CACHE_MAX_ENTRIES` | `100` | Max cached results per session (LRU eviction) |
 | `TOOL_CACHE_MAX_CONTENT_SIZE` | `50000` | Don't cache results larger than this (chars) — avoids memory bloat |
 | `TOOL_CACHE_SHOW_DIFF` | `true` | Show diffs for agent-modified files on re-read |
+| `TOOL_CACHE_WEB_TTL_SECONDS` | `300` | TTL for web_fetch cache entries |
+| `TOOL_CACHE_MAX_DIFF_LINES` | `50` | Max diff lines before falling back to full read |
+| `TOOL_CACHE_MAX_DIFF_CHARS` | `2000` | Max diff chars before falling back to full read |
 
 ## 6. Critical Design Decision: `force=true`
 
@@ -274,11 +380,12 @@ The system prompt should include a note: "When you re-read a file and get a cach
 
 | Risk | Severity | Mitigation |
 |------|----------|------------|
-| Stale cache: file changed externally (another process, git pull) | Medium | mtime check catches this — mtime changes on any write. `os.stat()` is authoritative. |
+| Stale cache: file changed externally (another process, git pull) | Medium | mtime+size check catches this — mtime changes on any write. `os.stat()` is authoritative. |
 | Agent confused by cache hit format | Medium | Cache hit format is explicit and tells the agent what to do. Test with eval suite. |
 | Memory usage from caching large files | Low | `TOOL_CACHE_MAX_CONTENT_SIZE` caps per-entry size. LRU eviction caps total entries. |
-| `code_execute` side effects not tracked | Medium | `code_execute` is in `FILE_MUTATING_TOOLS` — it invalidates all file caches for paths it might touch. Conservative: invalidate all file caches after any `code_execute`. |
-| Diff generation for large files is expensive | Low | Use Python's `difflib` — fast for typical file sizes. Cap diff output length. |
+| `code_execute` side effects not tracked | Medium | After every `code_execute`, `revalidate_after_execute()` re-stats all cached file paths and drops any that changed. O(n) stat calls where n ≤ 100 — microseconds. |
+| Diff generation for large files is expensive | Low | Use Python's `difflib` — fast for typical file sizes. Diff output capped at 50 lines / 2k chars; larger diffs fall back to full re-read. |
+| File deleted between reads | Low | `os.stat()` raises `OSError` → cache entry and mutation tracking cleaned up. Next read surfaces the real error from the tool. |
 
 ## 8. Success Metrics
 
@@ -287,6 +394,7 @@ The system prompt should include a note: "When you re-read a file and get a cach
 | Cache hit rate for file_read | `CacheStats.hit_rate` | >40% within coding sessions |
 | Tokens saved per session | `CacheStats.tokens_saved` | >20% reduction in file_read tokens |
 | Agent re-read rate | Count of force=true calls | <10% of cached file reads need force |
+| Diff fallback rate | `CacheStats.diff_too_large` | <5% of cache hits for modified files |
 | Quality | Eval suite (especially edit-test-fix scenarios) | No regression |
 
 ## 9. Relationship to Prior Docs

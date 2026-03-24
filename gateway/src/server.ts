@@ -5,6 +5,7 @@
  * routes messages to the Python backend, and streams responses back.
  */
 
+import "dotenv/config";
 import { WebSocketServer } from "ws";
 import { createServer } from "http";
 import { homedir } from "node:os";

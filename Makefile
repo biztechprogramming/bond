@@ -20,8 +20,8 @@ backend:
 # Gateway (TypeScript WebSocket server)
 gateway:
 	cd gateway && \
-	  SPACETIMEDB_TOKEN=$(grep 'spacetimedb_token' ~/.config/spacetime/cli.toml 2>/dev/null | cut -d'"' -f2) \
-	  BOND_SPACETIMEDB_URL=http://localhost:18787 \
+	  SPACETIMEDB_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJoZXhfaWRlbnRpdHkiOiJjMjAwMjk3ZjMwZGU5OWYxYjk4ZjY4MzgzMTQ4OWRhYjM0ZWQ2YmI2N2M4MmZjZmY0NDU0Y2U1MjVlYzY1YzUxIiwic3ViIjoiOTYwYTBjMjktZDJmYy00MWE1LWE5NDUtOGIyZjIzZjU0NDE2IiwiaXNzIjoibG9jYWxob3N0IiwiYXVkIjpbInNwYWNldGltZWRiIl0sImlhdCI6MTc3NDMxMDUxMSwiZXhwIjpudWxsfQ.Xh2T4q9m_HML8Ukkz9oYf5II6fC4T7G7u6piO7p0boa-WZqq2jY1I_Ai2s3uuPIGQM0HEzKdedX9jCaQWW_C7Q \
+	  BOND_SPACETIMEDB_URL=http://loki:18787 \
 	  BOND_SPACETIMEDB_MODULE=bond-core-v2 \
 	  pnpm dev
 
@@ -265,7 +265,7 @@ opensandbox-logs:
 
 # Check SpacetimeDB health
 spacetimedb-health:
-	@curl -s http://localhost:18787/v1/health && echo "SpacetimeDB is healthy" || echo "SpacetimeDB is not responding"
+	@curl -s http://loki:18787/v1/health && echo "SpacetimeDB is healthy" || echo "SpacetimeDB is not responding"
 
 # Reset SpacetimeDB completely (WARNING: deletes all data)
 spacetimedb-reset: spacetimedb-down

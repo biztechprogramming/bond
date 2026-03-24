@@ -16,14 +16,15 @@ export async function POST(req: NextRequest) {
     );
     const match = toml.match(/spacetimedb_token\s*=\s*"([^"]+)"/);
     cliToken = match ? match[1] : null;
-  } catch {}
+  } catch { }
 
   if (!cliToken) {
     return NextResponse.json({ error: "No CLI token found" }, { status: 500 });
   }
 
   // Exchange it with SpacetimeDB server-side (no CORS issue)
-  const stdbRes = await fetch("http://localhost:18787/v1/identity/websocket-token", {
+  const stdbUrl = process.env.BOND_SPACETIMEDB_URL;
+  const stdbRes = await fetch(`${stdbUrl}/v1/identity/websocket-token`, {
     method: "POST",
     headers: { Authorization: `Bearer ${cliToken}` },
     cache: "no-store",

@@ -4,7 +4,7 @@ const GATEWAY_PORT = process.env.NEXT_PUBLIC_GATEWAY_PORT || "18789";
 
 export async function GET() {
   const gatewayUrl = `http://localhost:${GATEWAY_PORT}/api/v1/spacetimedb/token`;
-  const stdbUrl = "http://localhost:18787/v1/identity/websocket-token";
+  const stdbUrl = `${process.env.BOND_SPACETIMEDB_URL}/v1/identity/websocket-token`;
 
   let gatewayToken = null;
   let gatewayError = null;
@@ -46,7 +46,7 @@ export async function GET() {
     );
     const match = toml.match(/spacetimedb_token\s*=\s*"([^"]+)"/);
     cliToken = match ? match[1] : null;
-  } catch {}
+  } catch { }
 
   return NextResponse.json({
     gateway: {
