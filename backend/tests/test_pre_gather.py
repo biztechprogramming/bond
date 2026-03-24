@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from backend.app.agent.pre_gather import (
+    GatherMetrics,
+    GatherResult,
+    GatherTask,
+    _execute_single_task,
     _extract_json,
+    _plan_to_tasks,
     _should_skip_plan,
+    _strip_html_tags,
     _validate_plan,
     build_handoff_context,
     compute_adaptive_budget,
     WORKSPACE_PLAN_SYSTEM_PROMPT,
     DEEP_MAP_FILE_SELECT_PROMPT,
+    gather_phase,
+    partition_by_dependencies,
 )
 from backend.app.agent.pre_gather_integration import PreGatherResult
 
@@ -231,6 +241,7 @@ class TestPreGatherResult:
         assert r.context_bundle == ""
         assert r.adaptive_budget is None
         assert r.delegate_to_coding_agent is False
+        assert r.gather_metrics is None
 
 
 # ---------------------------------------------------------------------------
@@ -263,3 +274,361 @@ class TestWorkspacePromptTemplates:
         )
         assert "fix the bug" in rendered
         assert "worker.py" in rendered
+
+
+# ---------------------------------------------------------------------------
+# GatherTask
+# ---------------------------------------------------------------------------
+
+
+class TestGatherTask:
+    def test_defaults(self):
+        t = GatherTask(name="test", task_type="file_read")
+        assert t.params == {}
+        assert t.depends_on == []
+        assert t.priority == 0
+
+    def test_with_values(self):
+        t = GatherTask(
+            name="read:foo",
+            task_type="file_read",
+            params={"path": "foo.py"},
+            depends_on=["other"],
+            priority=5,
+        )
+        assert t.depends_on == ["other"]
+        assert t.priority == 5
+
+
+# ---------------------------------------------------------------------------
+# GatherMetrics
+# ---------------------------------------------------------------------------
+
+
+class TestGatherMetrics:
+    def test_dataclass(self):
+        m = GatherMetrics(
+            total_tasks=10, parallel_tasks=8, sequential_tasks=2,
+            wall_clock_ms=500, sequential_equivalent_ms=2000,
+            speedup=4.0, tasks_timed_out=1, tasks_failed=2,
+        )
+        assert m.speedup == 4.0
+        assert m.total_tasks == 10
+
+
+# ---------------------------------------------------------------------------
+# partition_by_dependencies
+# ---------------------------------------------------------------------------
+
+
+class TestPartitionByDependencies:
+    def test_all_independent(self):
+        tasks = [
+            GatherTask(name="a", task_type="file_read"),
+            GatherTask(name="b", task_type="grep"),
+        ]
+        ind, dep = partition_by_dependencies(tasks)
+        assert len(ind) == 2
+        assert len(dep) == 0
+
+    def test_all_dependent(self):
+        tasks = [
+            GatherTask(name="a", task_type="file_read", depends_on=["x"]),
+            GatherTask(name="b", task_type="grep", depends_on=["y"]),
+        ]
+        ind, dep = partition_by_dependencies(tasks)
+        assert len(ind) == 0
+        assert len(dep) == 2
+
+    def test_mixed(self):
+        tasks = [
+            GatherTask(name="a", task_type="file_read"),
+            GatherTask(name="b", task_type="grep", depends_on=["a"]),
+            GatherTask(name="c", task_type="file_read"),
+        ]
+        ind, dep = partition_by_dependencies(tasks)
+        assert [t.name for t in ind] == ["a", "c"]
+        assert [t.name for t in dep] == ["b"]
+
+    def test_empty(self):
+        ind, dep = partition_by_dependencies([])
+        assert ind == []
+        assert dep == []
+
+
+# ---------------------------------------------------------------------------
+# Parallel gather_phase
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_registry(file_contents: dict[str, str] | None = None):
+    """Create a mock tool registry that returns file contents."""
+    contents = file_contents or {}
+
+    async def _file_read(params, ctx):
+        path = params.get("path", "")
+        if path in contents:
+            return contents[path]
+        return f"[content of {path}]"
+
+    registry = MagicMock()
+    registry.get.return_value = AsyncMock(side_effect=_file_read)
+    return registry
+
+
+class TestParallelGatherPhase:
+    @pytest.mark.asyncio
+    async def test_independent_tasks_run(self):
+        plan = {
+            "files_to_read": ["a.py", "b.py"],
+            "grep_patterns": [],
+        }
+        registry = _make_tool_registry({"a.py": "aaa", "b.py": "bbb"})
+        context, metrics = await gather_phase(plan, registry, {}, "/workspace")
+        assert "aaa" in context
+        assert "bbb" in context
+        assert metrics is not None
+        assert metrics.total_tasks == 2
+        assert metrics.parallel_tasks == 2
+        assert metrics.tasks_failed == 0
+
+    @pytest.mark.asyncio
+    async def test_empty_plan(self):
+        context, metrics = await gather_phase(
+            {"files_to_read": [], "grep_patterns": []},
+            MagicMock(), {}, "/workspace",
+        )
+        assert context == ""
+        assert metrics is None
+
+    @pytest.mark.asyncio
+    async def test_cancellation(self):
+        cancel = asyncio.Event()
+        cancel.set()  # Already cancelled
+        plan = {"files_to_read": ["a.py"], "grep_patterns": []}
+        registry = _make_tool_registry()
+        context, metrics = await gather_phase(
+            plan, registry, {}, "/workspace", cancellation_event=cancel,
+        )
+        assert context == ""
+
+    @pytest.mark.asyncio
+    async def test_timeout_handling(self, monkeypatch):
+        monkeypatch.setattr("backend.app.agent.pre_gather.PARALLEL_TASK_TIMEOUT", 0.01)
+
+        async def _slow_read(params, ctx):
+            await asyncio.sleep(5)
+            return "never"
+
+        registry = MagicMock()
+        registry.get.return_value = AsyncMock(side_effect=_slow_read)
+
+        plan = {"files_to_read": ["slow.py"], "grep_patterns": []}
+        context, metrics = await gather_phase(plan, registry, {}, "/workspace")
+        assert metrics is not None
+        assert metrics.tasks_timed_out == 1
+        assert metrics.tasks_failed == 1
+
+    @pytest.mark.asyncio
+    async def test_sequential_fallback(self, monkeypatch):
+        monkeypatch.setattr("backend.app.agent.pre_gather.PARALLEL_GATHERING_ENABLED", False)
+        plan = {"files_to_read": ["a.py"], "grep_patterns": []}
+        registry = _make_tool_registry({"a.py": "content_a"})
+        context, metrics = await gather_phase(plan, registry, {}, "/workspace")
+        assert "content_a" in context
+        assert metrics is None  # No metrics in sequential mode
+
+
+# ---------------------------------------------------------------------------
+# web_fetch task execution
+# ---------------------------------------------------------------------------
+
+
+class TestWebFetchExecution:
+    @pytest.mark.asyncio
+    async def test_web_fetch_task(self, monkeypatch):
+        """web_fetch task fetches URL and returns body text."""
+        import httpx
+
+        mock_response = MagicMock()
+        mock_response.text = "Hello world content"
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        monkeypatch.setattr("httpx.AsyncClient", lambda **kw: mock_client)
+
+        task = GatherTask(name="web:http://example.com", task_type="web_fetch",
+                          params={"url": "http://example.com"})
+        result = await _execute_single_task(task, MagicMock(), {}, "/workspace")
+        assert not result.error
+        assert "Hello world content" in result.content
+
+    @pytest.mark.asyncio
+    async def test_web_fetch_strips_html(self, monkeypatch):
+        """web_fetch strips HTML tags when content-type is html."""
+        mock_response = MagicMock()
+        mock_response.text = "<html><body><p>Hello</p><p>World</p></body></html>"
+        mock_response.headers = {"content-type": "text/html; charset=utf-8"}
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        monkeypatch.setattr("httpx.AsyncClient", lambda **kw: mock_client)
+
+        task = GatherTask(name="web:http://example.com", task_type="web_fetch",
+                          params={"url": "http://example.com"})
+        result = await _execute_single_task(task, MagicMock(), {}, "/workspace")
+        assert not result.error
+        assert "<html>" not in result.content
+        assert "Hello" in result.content
+
+    @pytest.mark.asyncio
+    async def test_web_fetch_error(self, monkeypatch):
+        """web_fetch returns error result on HTTP failure."""
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=Exception("connection refused"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        monkeypatch.setattr("httpx.AsyncClient", lambda **kw: mock_client)
+
+        task = GatherTask(name="web:http://bad.example", task_type="web_fetch",
+                          params={"url": "http://bad.example"})
+        result = await _execute_single_task(task, MagicMock(), {}, "/workspace")
+        assert result.error
+
+
+class TestStripHtmlTags:
+    def test_strips_tags(self):
+        assert _strip_html_tags("<p>hello</p>") == "hello"
+
+    def test_collapses_whitespace(self):
+        result = _strip_html_tags("<div>  hello  \n  world  </div>")
+        assert result == "hello world"
+
+    def test_plain_text_unchanged(self):
+        assert _strip_html_tags("no tags here") == "no tags here"
+
+
+# ---------------------------------------------------------------------------
+# _plan_to_tasks with urls_to_fetch
+# ---------------------------------------------------------------------------
+
+
+class TestPlanToTasksWebFetch:
+    def test_urls_to_fetch_creates_tasks(self):
+        plan = {
+            "files_to_read": [],
+            "grep_patterns": [],
+            "urls_to_fetch": ["http://example.com/a", "http://example.com/b"],
+        }
+        tasks = _plan_to_tasks(plan)
+        web_tasks = [t for t in tasks if t.task_type == "web_fetch"]
+        assert len(web_tasks) == 2
+        assert web_tasks[0].params["url"] == "http://example.com/a"
+        assert web_tasks[1].params["url"] == "http://example.com/b"
+
+    def test_no_urls_to_fetch(self):
+        plan = {"files_to_read": ["a.py"], "grep_patterns": []}
+        tasks = _plan_to_tasks(plan)
+        web_tasks = [t for t in tasks if t.task_type == "web_fetch"]
+        assert len(web_tasks) == 0
+
+    def test_mixed_plan(self):
+        plan = {
+            "files_to_read": ["a.py"],
+            "grep_patterns": [{"pattern": "foo", "directory": "."}],
+            "urls_to_fetch": ["http://example.com"],
+        }
+        tasks = _plan_to_tasks(plan)
+        assert len(tasks) == 3
+        types = {t.task_type for t in tasks}
+        assert types == {"file_read", "grep", "web_fetch"}
+
+
+# ---------------------------------------------------------------------------
+# Per-domain concurrency limiting
+# ---------------------------------------------------------------------------
+
+
+class TestDomainConcurrencyLimiting:
+    @pytest.mark.asyncio
+    async def test_same_domain_serialized(self, monkeypatch):
+        """Two web fetches to same domain should run sequentially."""
+        call_times = []
+
+        original_execute = _execute_single_task
+
+        async def _tracking_execute(task, reg, ctx, root):
+            if task.task_type == "web_fetch":
+                call_times.append(("start", task.name, asyncio.get_event_loop().time()))
+                await asyncio.sleep(0.05)
+                call_times.append(("end", task.name, asyncio.get_event_loop().time()))
+                return GatherResult(task_name=task.name, content="ok", tokens=2)
+            return await original_execute(task, reg, ctx, root)
+
+        monkeypatch.setattr(
+            "backend.app.agent.pre_gather._execute_single_task", _tracking_execute
+        )
+
+        plan = {
+            "files_to_read": [],
+            "grep_patterns": [],
+            "urls_to_fetch": [
+                "http://same.example.com/a",
+                "http://same.example.com/b",
+            ],
+        }
+        context, metrics = await gather_phase(plan, MagicMock(), {}, "/workspace")
+
+        # Second task should start after first ends (serialized)
+        starts = [(n, t) for ev, n, t in call_times if ev == "start"]
+        ends = [(n, t) for ev, n, t in call_times if ev == "end"]
+        assert len(starts) == 2
+        # The second start should be >= first end (serialized by domain semaphore)
+        first_end = ends[0][1]
+        second_start = starts[1][1]
+        assert second_start >= first_end - 0.001  # small tolerance
+
+    @pytest.mark.asyncio
+    async def test_different_domains_parallel(self, monkeypatch):
+        """Web fetches to different domains can run in parallel."""
+        active_count = []
+        active = 0
+
+        original_execute = _execute_single_task
+
+        async def _tracking_execute(task, reg, ctx, root):
+            nonlocal active
+            if task.task_type == "web_fetch":
+                active += 1
+                active_count.append(active)
+                await asyncio.sleep(0.05)
+                active -= 1
+                return GatherResult(task_name=task.name, content="ok", tokens=2)
+            return await original_execute(task, reg, ctx, root)
+
+        monkeypatch.setattr(
+            "backend.app.agent.pre_gather._execute_single_task", _tracking_execute
+        )
+
+        plan = {
+            "files_to_read": [],
+            "grep_patterns": [],
+            "urls_to_fetch": [
+                "http://alpha.example.com/a",
+                "http://beta.example.com/b",
+            ],
+        }
+        context, metrics = await gather_phase(plan, MagicMock(), {}, "/workspace")
+
+        # Both should have been active simultaneously at some point
+        assert max(active_count) == 2
