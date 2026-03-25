@@ -529,4 +529,4 @@ async def agent_turn(
 
     
     logger.warning("Agent hit max iterations (%d)", max_iterations)
-    return "I've reached my maximum number of steps for this request. Please try rephrasing or breaking your request into smaller parts."
+    return "I ran out of iteration budget for this request. Please try again, or consider breaking the request into smaller parts."

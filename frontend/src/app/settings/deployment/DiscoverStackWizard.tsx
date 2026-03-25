@@ -2,6 +2,10 @@ import React, { useState, useEffect, useCallback } from "react";
 import { GATEWAY_API } from "@/lib/config";
 import { useResources, useComponents, callReducer } from "@/hooks/useSpacetimeDB";
 import AddServerModal from "./AddServerModal";
+import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
+import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
+
+const AGENT_DISCOVERY_ENABLED = process.env.NEXT_PUBLIC_BOND_AGENT_DISCOVERY === "true";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,6 +173,10 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   const [monitoringEnabled, setMonitoringEnabled] = useState(true);
   const [monitoringInterval, setMonitoringInterval] = useState(60);
   const [monitorChecks, setMonitorChecks] = useState<Record<string, boolean>>({});
+
+  // Agent discovery fallback flag
+  const [useOldDiscovery, setUseOldDiscovery] = useState(!AGENT_DISCOVERY_ENABLED);
+  const [agentDiscoveryState, setAgentDiscoveryState] = useState<DiscoveryState | null>(null);
 
   // Step 5: Scripts
   const [scriptSelections, setScriptSelections] = useState<Record<string, boolean>>({});
@@ -544,7 +552,20 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       {/* ================================================================ */}
       {/* STEP 2: Discovery */}
       {/* ================================================================ */}
-      {step === "discovery" && (
+      {step === "discovery" && !useOldDiscovery && AGENT_DISCOVERY_ENABLED && (
+        <AgentDiscoveryView
+          resourceId={selectedServerId}
+          environment={selectedEnv || "dev"}
+          onComplete={(state, _completeness) => {
+            setAgentDiscoveryState(state);
+            goNext();
+          }}
+          onFallback={() => setUseOldDiscovery(true)}
+          onCancel={onCancel}
+        />
+      )}
+
+      {step === "discovery" && useOldDiscovery && (
         <>
           <h2 style={styles.title}>Discovering Server</h2>
           <p style={styles.subtitle}>Scanning {selectedServer?.display_name || selectedServerId} for installed services and configuration...</p>

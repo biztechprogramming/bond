@@ -459,6 +459,7 @@ class IterationBudget:
 
     # Threshold percentages
     CHECKPOINT_PCT: float = 0.50
+    NUDGE_PCT: float = 0.65
     WRAP_UP_PCT: float = 0.80
     STOP_PCT: float = 0.95
 
@@ -478,6 +479,11 @@ class IterationBudget:
         return self.pct_used >= self.CHECKPOINT_PCT
 
     @property
+    def should_nudge(self) -> bool:
+        """At 65%: gentle reminder to start wrapping up."""
+        return self.pct_used >= self.NUDGE_PCT
+
+    @property
     def should_wrap_up(self) -> bool:
         """At 80%: stop accepting new work, finish current item."""
         return self.pct_used >= self.WRAP_UP_PCT
@@ -495,13 +501,35 @@ class IterationBudget:
         """Get a budget-awareness message if at a threshold, or None."""
         if self.should_stop:
             return (
-                f"BUDGET CRITICAL: {self.used}/{self.total} iterations used ({self.pct_used:.0%}). "
-                f"Do NOT start new work items. Save your checkpoint and wrap up."
+                f"URGENT — You are at {self.used}/{self.total} iterations ({self.pct_used:.0%}) and approaching your limit. "
+                f"You MUST act NOW to avoid termination.\n\n"
+                f"If you have remaining work that requires code changes, you MUST delegate it to a coding_agent RIGHT NOW. To do this:\n"
+                f"1. Summarize everything you've learned and accomplished so far\n"
+                f"2. Write a detailed, self-contained task description for the coding_agent that includes: "
+                f"what files to modify, what changes to make, what the expected behavior should be, and any context/patterns you've discovered\n"
+                f"3. Call the coding_agent tool with this task description\n"
+                f"4. Then use the respond tool to tell the user what you accomplished directly and what you delegated\n\n"
+                f"If no code changes remain, use the respond tool NOW to give the user a complete answer with everything you've found.\n\n"
+                f"DO NOT continue exploring or reading more files. DO NOT make any more tool calls except coding_agent or respond."
             )
         if self.should_wrap_up:
             return (
-                f"BUDGET WARNING: {self.used}/{self.total} iterations used ({self.pct_used:.0%}). "
-                f"Finish your current item and checkpoint. Do not start new items."
+                f"URGENT — You are at {self.used}/{self.total} iterations ({self.pct_used:.0%}) and approaching your limit. "
+                f"You MUST act NOW to avoid termination.\n\n"
+                f"If you have remaining work that requires code changes, you MUST delegate it to a coding_agent RIGHT NOW. To do this:\n"
+                f"1. Summarize everything you've learned and accomplished so far\n"
+                f"2. Write a detailed, self-contained task description for the coding_agent that includes: "
+                f"what files to modify, what changes to make, what the expected behavior should be, and any context/patterns you've discovered\n"
+                f"3. Call the coding_agent tool with this task description\n"
+                f"4. Then use the respond tool to tell the user what you accomplished directly and what you delegated\n\n"
+                f"If no code changes remain, use the respond tool NOW to give the user a complete answer with everything you've found.\n\n"
+                f"DO NOT continue exploring or reading more files. DO NOT make any more tool calls except coding_agent or respond."
+            )
+        if self.should_nudge:
+            return (
+                f"You've used {self.pct_used:.0%} of your iteration budget ({self.used}/{self.total}). "
+                f"Start wrapping up. If the remaining work involves code changes you haven't started yet, "
+                f"consider delegating to a coding_agent rather than trying to do everything yourself."
             )
         if self.should_checkpoint:
             return (

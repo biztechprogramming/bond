@@ -22,7 +22,11 @@ export type DeploymentEventType =
   | "manual_intervention_needed"
   | "deployment_lock_stale"
   | "monitoring_alert"
-  | "discovery_completed";
+  | "discovery_completed"
+  | "discovery_agent_started"
+  | "discovery_agent_progress"
+  | "discovery_user_question"
+  | "discovery_agent_completed";
 
 export interface DeploymentEvent {
   id: string;
@@ -40,6 +44,14 @@ export interface DeploymentEvent {
 // Optional EventBus integration — set by calling initDeploymentEvents()
 type EmitFn = (event: DeploymentEvent) => void;
 let _emitter: EmitFn | null = null;
+
+// Discovery SSE listeners (§072) — registered by SSE stream endpoints
+const _discoveryListeners = new Set<EmitFn>();
+
+export function addDiscoveryListener(fn: EmitFn): () => void {
+  _discoveryListeners.add(fn);
+  return () => { _discoveryListeners.delete(fn); };
+}
 
 /**
  * Register an emitter function (e.g., wrapping EventBus.emit).
@@ -86,6 +98,15 @@ export function emitDeploymentEvent(
       _emitter(event);
     } catch (err: any) {
       console.warn("[deployment-event] emitter error:", err.message);
+    }
+  }
+
+  // Emit to discovery SSE listeners (§072)
+  for (const listener of _discoveryListeners) {
+    try {
+      listener(event);
+    } catch (err: any) {
+      console.warn("[deployment-event] discovery listener error:", err.message);
     }
   }
 
