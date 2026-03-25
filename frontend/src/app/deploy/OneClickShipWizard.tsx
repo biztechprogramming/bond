@@ -4,6 +4,10 @@ import React, { useState, useCallback } from "react";
 import { GATEWAY_API } from "@/lib/config";
 import { useResources } from "@/hooks/useSpacetimeDB";
 import BuildStrategyDetector from "../settings/deployment/BuildStrategyDetector";
+import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
+import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
+
+const BOND_AGENT_DISCOVERY = true;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -298,6 +302,7 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
   const [step, setStep] = useState<WizardStep>("connect");
   const [connectData, setConnectData] = useState<{ repoUrl?: string; serverAddress?: string; sshKeyId?: string }>({});
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
+  const [agentDiscoveryFallback, setAgentDiscoveryFallback] = useState(false);
 
   const handleConnect = useCallback((_mode: ConnectMode, data: typeof connectData) => {
     setConnectData(data);
@@ -344,7 +349,26 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
       {/* Step content */}
       {step === "connect" && <ConnectStep onNext={handleConnect} onCancel={onCancel} />}
       {step === "discovery" && (
-        <DiscoveryStep connectData={connectData} onNext={handlePlanReady} onBack={() => setStep("connect")} />
+        BOND_AGENT_DISCOVERY && !agentDiscoveryFallback ? (
+          <AgentDiscoveryView
+            resourceId={connectData.repoUrl || connectData.serverAddress || ""}
+            environment="dev"
+            onComplete={(state: DiscoveryState, _completeness: CompletenessReport) => {
+              const plan: DeploymentPlan = {
+                id: crypto.randomUUID(),
+                ...connectData,
+                framework: state.findings.framework?.framework,
+                buildStrategy: state.findings.build_strategy?.strategy,
+                environment: "dev",
+              };
+              handlePlanReady(plan);
+            }}
+            onFallback={() => setAgentDiscoveryFallback(true)}
+            onCancel={() => setStep("connect")}
+          />
+        ) : (
+          <DiscoveryStep connectData={connectData} onNext={handlePlanReady} onBack={() => setStep("connect")} />
+        )
       )}
       {step === "ship" && plan && (
         <ShipStep plan={plan} onShip={handleShip} onBack={() => setStep("discovery")} />

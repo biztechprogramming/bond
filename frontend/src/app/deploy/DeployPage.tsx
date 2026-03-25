@@ -7,7 +7,7 @@ import OneClickShipWizard from "./OneClickShipWizard";
 import ShipProgress from "./ShipProgress";
 import InfraMap from "../settings/deployment/InfraMap";
 
-const NEW_DEPLOY_UI = process.env.NEXT_PUBLIC_NEW_DEPLOY_UI !== "false";
+const NEW_DEPLOY_UI = true;
 
 export type DeployViewMode = "dashboard" | "app-detail" | "new-deploy" | "deploy-progress" | "infrastructure" | "settings";
 
