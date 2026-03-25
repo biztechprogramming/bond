@@ -385,7 +385,10 @@ TOOL_DEFINITIONS: list[dict] = [
                 "IMPORTANT: new_content REPLACES the ENTIRE matched section (start through end). "
                 "It must include ALL code for that range — unchanged lines too — not just the diff. "
                 "Keep search/end_search tight around the lines you actually want to change. "
-                "The file is buffered server-side — only the selected section enters context."
+                "The file is buffered server-side — only the selected section enters context. "
+                "WHITESPACE: search/end_search are flexible — exact indentation is NOT required. "
+                "The tool normalizes whitespace when matching, so focus on the text content, not spaces/tabs. "
+                "MULTI-LINE: search/end_search can contain newlines to match consecutive lines."
             ),
             "parameters": {
                 "type": "object",
@@ -396,11 +399,11 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                     "search": {
                         "type": "string",
-                        "description": "Regex pattern to find the start of the section.",
+                        "description": "Pattern to find the start of the section. Can be a regex or literal text. Whitespace is flexible — exact indentation not required.",
                     },
                     "end_search": {
                         "type": "string",
-                        "description": "Regex pattern for the end of the section (inclusive). Scans forward from the start match. If omitted, uses lines_after.",
+                        "description": "Pattern for the end of the section (inclusive). Scans forward from the start match. Whitespace is flexible. If omitted, uses lines_after.",
                     },
                     "lines_before": {
                         "type": "integer",
