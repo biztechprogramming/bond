@@ -978,9 +978,31 @@ async def _run_agent_loop(
                 messages.append({"role": "user", "content": f"SYSTEM: {_budget_msg}"})
         except Exception:
             if _iteration > 0 and _iteration >= int(max_iterations * 0.8):
+                _pct = int((_iteration / max_iterations) * 100)
                 messages.append({
                     "role": "user",
-                    "content": "SYSTEM: You're approaching your iteration limit. Wrap up or synthesize what you have.",
+                    "content": (
+                        f"SYSTEM: URGENT — You are at {_iteration}/{max_iterations} iterations ({_pct}%) and approaching your limit. "
+                        f"You MUST act NOW to avoid termination.\n\n"
+                        f"If you have remaining work that requires code changes, you MUST delegate it to a coding_agent RIGHT NOW. To do this:\n"
+                        f"1. Summarize everything you've learned and accomplished so far\n"
+                        f"2. Write a detailed, self-contained task description for the coding_agent that includes: "
+                        f"what files to modify, what changes to make, what the expected behavior should be, and any context/patterns you've discovered\n"
+                        f"3. Call the coding_agent tool with this task description\n"
+                        f"4. Then use the respond tool to tell the user what you accomplished directly and what you delegated\n\n"
+                        f"If no code changes remain, use the respond tool NOW to give the user a complete answer with everything you've found.\n\n"
+                        f"DO NOT continue exploring or reading more files. DO NOT make any more tool calls except coding_agent or respond."
+                    ),
+                })
+            elif _iteration > 0 and _iteration >= int(max_iterations * 0.65):
+                _pct = int((_iteration / max_iterations) * 100)
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"SYSTEM: You've used {_pct}% of your iteration budget ({_iteration}/{max_iterations}). "
+                        f"Start wrapping up. If the remaining work involves code changes you haven't started yet, "
+                        f"consider delegating to a coding_agent rather than trying to do everything yourself."
+                    ),
                 })
 
         # Early termination nudges
@@ -1556,7 +1578,10 @@ async def _run_agent_loop(
 
     await _finish()
     return (
-        "I've reached my maximum number of steps. Please try rephrasing.",
+        f"I ran out of iteration budget while working on your request. "
+        f"I made {loop.tool_calls_made} tool calls. "
+        f"Please try again — I may be able to complete it with a fresh start, "
+        f"or you can ask me to delegate complex code changes to a coding agent.",
         loop.tool_calls_made,
     )
 

@@ -72,29 +72,28 @@ Replace the static shell-script discovery with Bond's own AI agent orchestrating
 4. **Validates completeness** — checks the deployment plan against a completeness model before enabling Ship It
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                  CURRENT FLOW                        │
-│                                                      │
-│  User Input ──→ 5 Shell Scripts ──→ Parse JSON ──→   │
-│                   (sequential)       (or fail)       │
-│                                          │           │
-│                                    Incomplete Plan   │
-│                                          │           │
-│                              Ship It button disabled │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                  CURRENT FLOW                            │
+│                                                          │
+│  User Input ──→ 5 Shell Scripts ──→ Parse JSON ──→       │
+│  Fill Form ──→ Hope it worked ──→ Ship It (maybe)        │
+│                                                          │
+│  Problems: Sequential, brittle, no adaptation,           │
+│           no user interaction, silent failures            │
+└──────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────┐
-│                  PROPOSED FLOW                       │
-│                                                      │
-│  User Input ──→ Agent Discovery Loop ──→ Complete    │
-│                   │    ▲                    Plan      │
-│                   │    │                     │        │
-│                   ▼    │               Ship It ready  │
-│                 probe → analyze →                     │
-│                 probe deeper →                        │
-│                 ask user (if needed) →                │
-│                 validate completeness                 │
-└──────────────────────────────────────────────────────┘
+                         ↓ replaced by ↓
+
+┌──────────────────────────────────────────────────────────┐
+│                  NEW FLOW                                │
+│                                                          │
+│  User Input ──→ Agent Broad Scan ──→ Gap Analysis ──→    │
+│  Targeted Probes ──→ Ask User (if needed) ──→            │
+│  Validate Plan ──→ Ship It (confident)                   │
+│                                                          │
+│  Improvements: Parallel, adaptive, interactive,          │
+│               confidence-scored, never silently fails     │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -167,6 +166,14 @@ The discovery agent receives a system prompt that includes:
               └─────────────┘
 ```
 
+**Termination conditions:** The loop exits when any of these are true:
+
+1. **All required fields filled** — completeness model reports `ready: true`
+2. **Timeout:** 60 seconds wall-clock time (see §8.1)
+3. **Max iterations:** 5 probe-evaluate cycles. One cycle = Evaluate Coverage → Targeted Probes (or Ask User) → back to Evaluate. If the agent hasn't resolved all required fields after 5 iterations, it stops and presents what it has, asking the user for remaining required fields via the fallback interview path.
+
+This prevents runaway token spend from an agent looping without making progress.
+
 ### 3.4 State Management
 
 The agent maintains a `DiscoveryState` object that accumulates findings:
@@ -216,7 +223,25 @@ interface SshExecTool {
 }
 ```
 
-**Safety:** Commands are logged and auditable. The agent's system prompt restricts it to read-only commands. Write operations (creating files, starting services) are not permitted during discovery.
+**Safety:** Commands are validated against a code-level allowlist **before execution**. The `ALLOWED_SSH_COMMANDS` constant in `discovery-tools.ts` defines safe read-only command prefixes:
+
+```typescript
+const ALLOWED_SSH_COMMANDS = [
+  "cat", "ls", "docker ps", "docker inspect", "docker compose config",
+  "systemctl status", "systemctl is-active", "uname", "which", "echo",
+  "head", "tail", "grep", "find", "stat", "df", "free", "ss", "netstat",
+  "curl -s", "wget -q -O-", "nginx -T", "node --version", "python3 --version",
+  "pm2 list", "supervisorctl status",
+];
+```
+
+The command validator enforces:
+
+1. **Prefix match** — the command must start with one of the allowed prefixes.
+2. **No shell operators** — commands containing `;`, `&&`, `||`, `|`, `>`, `>>`, `` ` ``, `$(` are rejected unless the full pipeline matches a pre-approved pattern (e.g., `docker ps --format json | head -50` is pre-approved).
+3. **No write operations** — commands matching `rm`, `mv`, `cp`, `mkdir`, `tee`, `dd`, `chmod`, `chown`, `kill`, `systemctl start/stop/restart`, `apt`, `yum`, etc. are always rejected.
+
+The allowlist is the **primary enforcement mechanism**. The agent's system prompt also restricts it to read-only commands as defense-in-depth, but prompt-level restrictions alone are not relied upon. All commands — both allowed and rejected — are logged to the audit log (`~/.bond/deployments/discovery/agent-log.jsonl`) with the rejection reason if applicable.
 
 ### 4.2 `repo_inspect`
 
@@ -267,6 +292,8 @@ interface BuildStrategyDetection {
   evidence: string[];
 }
 ```
+
+**Note:** If `detect_framework` and `detect_build_strategy` return conflicting information (e.g., framework detection implies buildpack but a Dockerfile is present), the agent applies the conflict resolution rules from §5.4. Explicit evidence (a Dockerfile exists) takes priority over inference (framework X typically uses buildpacks).
 
 ### 4.5 `detect_services`
 
@@ -379,22 +406,35 @@ Each field has a confidence score indicating how it was determined:
 |-------------|--------|---------|
 | 0.9–1.0 | `detected` | Found explicit evidence (Dockerfile, `EXPOSE 3000`, `app.listen(3000)`) |
 | 0.6–0.8 | `inferred` | Derived from indirect evidence (Next.js detected → port is probably 3000) |
-| 1.0 | `user-provided` | User answered a question or provided input directly |
-| 0.0–0.5 | — | Not confident enough — agent should probe more or ask user |
+| 1.0 | `user-provided` | User answered a question or provided input directly (trust score — reflects that the user explicitly provided this value; accuracy depends on the user, but we treat it as authoritative) |
+| 0.0–0.59 | — | Not confident enough — agent should probe more or ask user |
 
 ### 5.3 Completeness Check
 
 ```typescript
 interface CompletenessReport {
-  ready: boolean;                          // true if all required fields are filled with score > 0.5
+  ready: boolean;                          // true if all required fields are filled with score >= 0.6
   required_coverage: number;               // 0.0–1.0 fraction of required fields filled
   recommended_coverage: number;            // 0.0–1.0 fraction of recommended fields filled
   missing_required: string[];              // fields the agent still needs
-  low_confidence: string[];                // fields filled but with score < 0.6
+  low_confidence: string[];                // fields filled but with score < 0.7
 }
 ```
 
-The Ship It button is enabled when `ready === true`. The UI shows confidence indicators so the user can see which values were auto-detected vs inferred.
+The Ship It button is enabled when `ready === true`. The UI shows confidence indicators so the user can see which values were auto-detected vs inferred. Fields in `low_confidence` (score 0.6–0.69) are marked with a warning icon — they meet the minimum threshold but the user should review them.
+
+### 5.4 Conflict Resolution
+
+When multiple sources provide conflicting values for the same field, the agent resolves conflicts using this priority order:
+
+1. **User-provided** — always wins (score 1.0)
+2. **Server-detected** — runtime truth from the actual target (e.g., `docker ps` showing port 8080)
+3. **Repo-detected** — static analysis of source code (e.g., `EXPOSE 3000` in Dockerfile)
+4. **Inferred** — derived from indirect evidence (e.g., "Next.js defaults to port 3000")
+
+When a conflict exists between sources at the same priority level (e.g., repo says port 3000 in code but port 8080 in Dockerfile), the agent **asks the user** via `ask_user` rather than guessing. The question includes both values and their sources so the user can make an informed choice.
+
+Conflicts are logged in `DiscoveryState.probes_run` with a `conflict: true` flag for post-session analysis.
 
 ---
 
@@ -434,6 +474,8 @@ For each missing or low-confidence field, the agent runs targeted probes:
 
 - `app_port` missing → `repo_inspect` to read server startup code, `detect_ports` on repo, check Dockerfile for `EXPOSE`
 - `health_endpoint` missing → `detect_health_endpoint`, `repo_inspect` searching for `/health` route patterns
+
+The agent runs at most **5 probe-evaluate cycles** (see §3.3 termination conditions). Each cycle targets the highest-priority missing field first (required fields before recommended, lower-confidence before higher).
 
 **Phase D — User Questions (if needed)**
 
@@ -528,15 +570,16 @@ The deployment plan panel builds up incrementally as fields are discovered. Each
 | Repo clone fails (private repo, bad URL) | Discover from server only via SSH; ask user about build strategy |
 | Both fail | Fall back to targeted questions for all required fields (structured interview) |
 | Agent timeout (> 60 seconds) | Present whatever is complete, ask user for remaining required fields |
+| Agent hits max iterations (5 cycles) | Same as timeout — present partial results, ask for the rest |
 
 ### 8.2 No Silent Skipping
 
 The current discovery silently skips failed layers. The agent-driven approach **never** silently drops a required field. For every required field, exactly one of these must be true:
 
-1. The agent detected it with confidence > 0.5
+1. The agent detected it with confidence >= 0.6
 2. The agent inferred it and flagged the inference to the user
 3. The agent asked the user and received an answer
-4. The agent timed out and explicitly told the user what's missing
+4. The agent timed out or hit max iterations and explicitly told the user what's missing
 
 ### 8.3 Error Reporting
 
@@ -567,13 +610,14 @@ All discovery probes and their results are logged to `~/.bond/deployments/discov
 - Remove `executeSshScript` codepath from `discovery-scripts.ts`
 - Simplify `discovery.ts` to be a thin wrapper around the agent session
 - The `DEFAULT_LAYERS` constant and sequential layer execution are removed
+- **Rollback plan:** The `agent_discovery` feature flag is retained (not removed) even after shell scripts are deleted. If agent discovery regresses in production, the flag can be toggled to a `fallback` mode that uses a structured user interview (the §8.1 "both fail" path) instead of broken shell scripts. The shell script code is archived in a `deprecated/discovery-scripts` branch for emergency restoration during the first release cycle after deletion.
 
 ---
 
 ## 10. Success Metrics
 
 | Metric | Current (Shell Scripts) | Target (Agent Discovery) |
-|--------|------------------------|--------------------------|
+|--------|------------------------|--------------------------| 
 | Discovery completion rate (all required fields found) | ~40% estimated | > 95% |
 | Time to complete discovery | 20–45s (sequential SSH) | 10–30s (parallel + adaptive) |
 | User questions needed per discovery | 0 (no mechanism to ask) | < 2 on average |
@@ -590,12 +634,14 @@ All discovery probes and their results are logged to `~/.bond/deployments/discov
 
 ---
 
-## 11. Open Questions
+## 11. Resolved Design Decisions
 
-1. **Agent model cost** — Each discovery session is an agent run with 5–20 tool calls. What's the acceptable token budget per discovery? Should we use a smaller/faster model for discovery vs the main coding agent?
+The following were originally open questions. They are now resolved with proposed approaches for implementation.
 
-2. **Concurrent discoveries** — If a user starts discovery for multiple apps, do we run multiple agent sessions in parallel? Rate limiting considerations?
+1. **Agent model cost** — Each discovery session is budgeted at **max 20 tool calls** and **max 50k input tokens**. If either limit is hit, the agent stops and presents partial results (same as the timeout/max-iteration path in §8.1). During Phase 2 (A/B testing), we measure actual usage to calibrate these limits. The discovery agent uses the same model as the main agent initially; switching to a smaller model is a Phase 3 optimization if cost data warrants it.
 
-3. **Caching** — If a user re-runs discovery on the same repo + server, should we cache previous findings and only re-probe fields that might have changed?
+2. **Concurrent discoveries** — Each discovery session holds a lightweight lock keyed on `server_host`. If a second discovery targets the same server, it queues behind the first (max wait: 30 seconds, then fails with a clear message: "Another discovery is running against this server. Please wait or cancel the other session."). Different servers run fully in parallel. This prevents SSH connection flooding and ensures probe results don't interleave.
 
-4. **Security audit scope** — The `ssh_exec` tool gives the agent ability to run commands on user servers. Even read-only, this needs a security review. Should commands be allowlisted rather than relying on prompt-level restrictions?
+3. **Caching** — Discovery results are cached per `(repo_url, server_host, ssh_user)` tuple in `~/.bond/deployments/discovery/cache/`. Cache entries have a **1-hour TTL**. On re-run, the agent loads cached findings as its initial state (pre-populating the completeness model) and only re-probes fields that are missing, expired, or have confidence < 0.7. The cache is invalidated entirely on git push events (detected via webhook or polling) or when the user explicitly clicks "Re-discover."
+
+4. **SSH command security** — Resolved: commands are validated against a code-level allowlist (`ALLOWED_SSH_COMMANDS`) before execution. See §4.1 for the full specification. Prompt-level restrictions serve as defense-in-depth only.
