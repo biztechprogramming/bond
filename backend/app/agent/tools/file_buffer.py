@@ -24,6 +24,101 @@ DEFAULT_WINDOW = 100  # lines
 MAX_WINDOW = 300
 
 
+def _normalize_ws(s: str) -> str:
+    """Collapse all whitespace runs to a single space and strip."""
+    return " ".join(s.split())
+
+
+def _find_line(
+    lines: list[str],
+    pattern: str,
+    occurrence: int = 1,
+    start_from: int = 0,
+    skip_first: bool = False,
+    max_lines: int = 0,
+) -> tuple[int | None, int]:
+    """Find the Nth occurrence of *pattern* in *lines*.
+
+    Strategy:
+      1. Compile as regex (case-insensitive) and test each line.
+      2. If that yields 0 matches, fall back to whitespace-normalized
+         literal containment check (also case-insensitive).
+      3. If the pattern contains newlines, join consecutive lines and
+         do a multi-line literal match (whitespace-normalized).
+
+    Args:
+        lines: The buffer lines to search.
+        pattern: Regex or literal pattern to find.
+        occurrence: Which match to return (1 = first).
+        start_from: 0-based index to start searching from.
+        skip_first: If True, skip the line at start_from itself.
+        max_lines: If > 0, only search this many lines from start_from.
+
+    Returns (line_index_1based | None, total_matches_found).
+    """
+    end_idx = len(lines) if max_lines <= 0 else min(len(lines), start_from + max_lines)
+
+    # --- Strategy 1: single-line regex ---
+    if "\n" not in pattern:
+        try:
+            rgx = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            rgx = re.compile(re.escape(pattern), re.IGNORECASE)
+
+        match_count = 0
+        for i in range(start_from, end_idx):
+            if skip_first and i == start_from:
+                continue
+            if rgx.search(lines[i]):
+                match_count += 1
+                if match_count == occurrence:
+                    return (i + 1, match_count)  # 1-indexed
+
+        # --- Strategy 2: whitespace-normalized literal fallback ---
+        if match_count == 0:
+            pat_norm = _normalize_ws(pattern).lower()
+            for i in range(start_from, end_idx):
+                if skip_first and i == start_from:
+                    continue
+                if pat_norm in _normalize_ws(lines[i]).lower():
+                    match_count += 1
+                    if match_count == occurrence:
+                        return (i + 1, match_count)
+
+        return (None, match_count)
+
+    # --- Strategy 3: multi-line search ---
+    # The pattern has newlines — match against consecutive line groups.
+    pat_lines = pattern.split("\n")
+    pat_count = len(pat_lines)
+    # Normalize each pattern line for comparison
+    pat_norms = [_normalize_ws(p).lower() for p in pat_lines]
+    # Strip completely empty pattern lines from the tail
+    # (trailing newline in the search string)
+    while pat_norms and pat_norms[-1] == "":
+        pat_norms.pop()
+        pat_count = len(pat_norms)
+
+    if pat_count == 0:
+        return (None, 0)
+
+    match_count = 0
+    for i in range(start_from, end_idx - pat_count + 1):
+        if skip_first and i == start_from:
+            continue
+        matched = True
+        for j in range(pat_count):
+            if pat_norms[j] not in _normalize_ws(lines[i + j]).lower():
+                matched = False
+                break
+        if matched:
+            match_count += 1
+            if match_count == occurrence:
+                return (i + 1, match_count)  # return first line of the block
+
+    return (None, match_count)
+
+
 class FileBuffer:
     """A single file held in memory."""
 
@@ -387,21 +482,8 @@ async def handle_file_smart_edit(
     except (FileNotFoundError, OSError) as e:
         return {"error": str(e)}
 
-    # Compile search pattern
-    try:
-        start_regex = re.compile(search, re.IGNORECASE)
-    except re.error:
-        start_regex = re.compile(re.escape(search), re.IGNORECASE)
-
-    # Find the Nth occurrence of start pattern
-    match_count = 0
-    start_line = None
-    for i, line in enumerate(buf.lines):
-        if start_regex.search(line):
-            match_count += 1
-            if match_count == occurrence:
-                start_line = i + 1  # 1-indexed
-                break
+    # Find the Nth occurrence of start pattern (with whitespace-normalized fallback)
+    start_line, match_count = _find_line(buf.lines, search, occurrence=occurrence)
 
     if start_line is None:
         return {
@@ -412,21 +494,16 @@ async def handle_file_smart_edit(
 
     # Determine end of selection
     if end_search:
-        # Scan forward from start_line for end pattern
-        try:
-            end_regex = re.compile(end_search, re.IGNORECASE)
-        except re.error:
-            end_regex = re.compile(re.escape(end_search), re.IGNORECASE)
+        # Scan forward from start_line for end pattern (with whitespace fallback)
+        end_line_result, _ = _find_line(
+            buf.lines, end_search, occurrence=1,
+            start_from=start_line - 1, skip_first=True,
+            max_lines=500,
+        )
 
-        end_line = None
-        for i in range(start_line - 1, min(len(buf.lines), start_line - 1 + 500)):
-            if i == start_line - 1:
-                continue  # skip the start line itself
-            if end_regex.search(buf.lines[i]):
-                end_line = i + 1  # 1-indexed, inclusive
-                break
-
-        if end_line is None:
+        if end_line_result is not None:
+            end_line = end_line_result
+        else:
             # Didn't find end pattern — show what we found and use lines_after
             end_line = min(start_line + lines_after, buf.total_lines)
             return {

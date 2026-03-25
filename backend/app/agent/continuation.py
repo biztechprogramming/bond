@@ -119,6 +119,9 @@ class PlanPosition:
     git_has_uncommitted: bool = False
     git_recent_commits: list[str] = field(default_factory=list)
 
+    # Context index stats (Design Doc 075)
+    index_stats: dict[str, int] = field(default_factory=dict)
+
     # Computed
     next_item: dict | None = None
 
@@ -320,6 +323,19 @@ def build_continuation_context(
         lines.append("")
 
     # Instructions
+    # Context index stats (Design Doc 075)
+    if position.index_stats:
+        lines.append("## Indexed Content")
+        sources = position.index_stats.get("sources", 0)
+        chunks = position.index_stats.get("chunks", 0)
+        if sources > 0:
+            lines.append(
+                f"Previous session indexed {sources} tool output{'s' if sources != 1 else ''} "
+                f"({chunks} search chunks available)."
+            )
+            lines.append("Use ctx_search to find specific details from prior work.")
+        lines.append("")
+
     lines.append("## Instructions")
     if position.next_item:
         lines.append(f"Continue with: **{position.next_item['title']}**")

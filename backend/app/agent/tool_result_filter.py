@@ -52,6 +52,7 @@ async def filter_tool_result(
     utility_model: str,
     utility_kwargs: dict,
     langfuse_metadata: dict | None = None,
+    indexed: bool = False,
 ) -> str | tuple[str, float]:
     """Filter a tool result through the utility model.
 
@@ -67,6 +68,8 @@ async def filter_tool_result(
         last_assistant_content: Last assistant message before this tool call
         utility_model: Model ID for the utility model
         utility_kwargs: Extra kwargs for the utility model (api_key, etc.)
+        indexed: If True, the content has been indexed into FTS5 and the
+            summary should include a ctx_search hint (Design Doc 075).
     """
     raw_json = json.dumps(raw_result)
 
@@ -151,6 +154,20 @@ Return ONLY the filtered JSON result, nothing else."""
             )
         else:
             logger.debug("Tool filter [%s]: no reduction (%d tokens) cost=$%.4f", tool_name, original_tokens, call_cost)
+
+        # Append ctx_search hint when content has been indexed (Design Doc 075)
+        if indexed:
+            try:
+                parsed = json.loads(filtered)
+                if isinstance(parsed, dict):
+                    parsed["_indexed"] = True
+                    parsed["_ctx_hint"] = (
+                        "The full output has been indexed. "
+                        "Use ctx_search(queries=[...]) to retrieve specific details."
+                    )
+                    filtered = json.dumps(parsed)
+            except (json.JSONDecodeError, TypeError):
+                pass
 
         return filtered, call_cost
 
