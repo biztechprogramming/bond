@@ -39,6 +39,9 @@ import { SCRIPT_TEMPLATES } from "./script-templates.js";
 import { createPipelineRouter } from "./pipeline-router.js";
 import { listManifests, readManifest } from "./manifest.js";
 import { addDiscoveryListener } from "./events.js";
+import { runAgentDiscovery, isAgentDiscoveryEnabled } from "./discovery.js";
+import { getResource } from "./resources.js";
+import { ulid } from "ulid";
 import { getMonitoringAlerts } from "./stdb.js";
 import { createSecretsRouter } from "./secrets-router.js";
 import { createAlertRulesRouter } from "./alert-rules-router.js";
@@ -336,6 +339,38 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // POST /agent-discover — frontend-facing agent discovery initiation (§072)
+  router.post("/agent-discover", async (req: any, res: any) => {
+    const body = req.body || {};
+    const resourceId = body.resource_id;
+    if (!resourceId) {
+      return res.status(400).json({ status: "error", reason: "resource_id is required" });
+    }
+
+    if (!isAgentDiscoveryEnabled()) {
+      return res.status(501).json({ status: "error", reason: "Agent discovery is not enabled" });
+    }
+
+    const env = body.environment || "dev";
+    const sessionId = ulid();
+    const resource = await getResource(config, resourceId);
+    let conn: any = {};
+    try { conn = JSON.parse(resource?.connection_json || "{}"); } catch {}
+
+    runAgentDiscovery({
+      source: resource?.name,
+      serverHost: conn.host,
+      serverPort: conn.port,
+      sshUser: conn.user,
+      sshKeyPath: conn.key_path,
+      env,
+    }).catch((err) => {
+      console.error("[agent-discover] agent discovery failed:", err.message);
+    });
+
+    res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId });
   });
 
   // Discovery agent SSE stream (§072)

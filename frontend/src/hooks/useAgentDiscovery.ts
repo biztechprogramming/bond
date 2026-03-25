@@ -113,10 +113,10 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
 
     try {
       // Initiate agent discovery — get session_id
-      const initRes = await fetch(`${GATEWAY_API}/broker/deploy`, {
+      const initRes = await fetch(`${GATEWAY_API}/deployments/agent-discover`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "discover", resource_id: resourceId, agent: true }),
+        body: JSON.stringify({ resource_id: resourceId, environment: env }),
         signal: controller.signal,
       });
 
@@ -128,8 +128,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       const sessionId = initData.session_id;
 
       if (!sessionId) {
-        // Agent discovery not enabled — fall back handled by caller
-        throw new Error("no_session");
+        throw new Error("Agent discovery did not return a session");
       }
 
       sessionRef.current = sessionId;
@@ -166,11 +165,6 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       }
     } catch (err: any) {
       if (err.name === "AbortError") return;
-      if (err.message === "no_session") {
-        setError("no_session");
-        setStatus("error");
-        return;
-      }
       setError(err.message);
       setStatus("error");
       addActivity({ type: "error", message: err.message });

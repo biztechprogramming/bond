@@ -5,7 +5,6 @@ import AddServerModal from "./AddServerModal";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
 
-const AGENT_DISCOVERY_ENABLED = process.env.NEXT_PUBLIC_BOND_AGENT_DISCOVERY === "true";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,7 +174,6 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   const [monitorChecks, setMonitorChecks] = useState<Record<string, boolean>>({});
 
   // Agent discovery fallback flag
-  const [useOldDiscovery, setUseOldDiscovery] = useState(!AGENT_DISCOVERY_ENABLED);
   const [agentDiscoveryState, setAgentDiscoveryState] = useState<DiscoveryState | null>(null);
 
   // Step 5: Scripts
@@ -552,7 +550,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       {/* ================================================================ */}
       {/* STEP 2: Discovery */}
       {/* ================================================================ */}
-      {step === "discovery" && !useOldDiscovery && AGENT_DISCOVERY_ENABLED && (
+      {step === "discovery" && (
         <AgentDiscoveryView
           resourceId={selectedServerId}
           environment={selectedEnv || "dev"}
@@ -560,45 +558,8 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
             setAgentDiscoveryState(state);
             goNext();
           }}
-          onFallback={() => setUseOldDiscovery(true)}
           onCancel={onCancel}
         />
-      )}
-
-      {step === "discovery" && useOldDiscovery && (
-        <>
-          <h2 style={styles.title}>Discovering Server</h2>
-          <p style={styles.subtitle}>Scanning {selectedServer?.display_name || selectedServerId} for installed services and configuration...</p>
-
-          <div style={styles.card}>
-            {LAYER_KEYS.map(key => {
-              const status = discoveryProgress[key] || "pending";
-              const layer = discoveryLayers.find(l => l.key === key);
-              return (
-                <div key={key} style={{ marginBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <span style={{ fontSize: "0.8rem", color: "#e0e0e8" }}>{LAYER_LABELS[key]}</span>
-                    <span style={{ fontSize: "0.7rem", color: status === "done" ? "#6cffa0" : status === "running" ? "#6c8aff" : status === "error" ? "#ff6c8a" : "#8888a0" }}>
-                      {status === "done" ? "\u2713 Done" : status === "running" ? "Scanning..." : status === "error" ? "\u2717 Error" : "Pending"}
-                    </span>
-                  </div>
-                  <div style={styles.progressTrack}>
-                    <div style={{ ...styles.progressFill, width: status === "done" ? "100%" : status === "running" ? "60%" : "0%", backgroundColor: status === "error" ? "#ff6c8a" : "#6c8aff" }} />
-                  </div>
-                  {status === "done" && layer && layer.items.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-                      {layer.items.map((item, i) => (
-                        <span key={i} style={styles.tag}>{item.name}{item.version ? ` ${item.version}` : ""}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {discoveryError && <div style={{ fontSize: "0.85rem", color: "#ff6c8a" }}>{discoveryError}</div>}
-        </>
       )}
 
       {/* ================================================================ */}

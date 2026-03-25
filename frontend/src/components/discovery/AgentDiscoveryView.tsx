@@ -11,11 +11,10 @@ interface Props {
   resourceId: string;
   environment: string;
   onComplete: (state: DiscoveryState, completeness: CompletenessReport) => void;
-  onFallback: () => void;
   onCancel: () => void;
 }
 
-export default function AgentDiscoveryView({ resourceId, environment, onComplete, onFallback, onCancel }: Props) {
+export default function AgentDiscoveryView({ resourceId, environment, onComplete, onCancel }: Props) {
   const {
     status,
     discoveryMode,
@@ -37,13 +36,6 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
     }
   }, [resourceId, environment, startDiscovery]);
 
-  // Fall back to old discovery if agent discovery is not available
-  useEffect(() => {
-    if (error === "no_session") {
-      onFallback();
-    }
-  }, [error, onFallback]);
-
   const handleShipIt = useCallback(() => {
     if (discoveryState && completeness) {
       onComplete(discoveryState, completeness);
@@ -55,7 +47,7 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
     onCancel();
   }, [cancelDiscovery, onCancel]);
 
-  if (status === "idle" || error === "no_session") return null;
+  if (status === "idle") return null;
 
   return (
     <div style={styles.wrapper}>
@@ -80,7 +72,7 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
       )}
 
       {/* Error */}
-      {status === "error" && error !== "no_session" && (
+      {status === "error" && (
         <div role="alert" style={styles.errorBanner}>
           Discovery failed: {error}
         </div>

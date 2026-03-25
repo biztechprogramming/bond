@@ -1,13 +1,9 @@
 "use client";
 
 import React, { useState, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
 import { useResources } from "@/hooks/useSpacetimeDB";
-import BuildStrategyDetector from "../settings/deployment/BuildStrategyDetector";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
-
-const BOND_AGENT_DISCOVERY = true;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,113 +154,6 @@ function ConnectStep({
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: Discovery
-// ---------------------------------------------------------------------------
-
-function DiscoveryStep({
-  connectData,
-  onNext,
-  onBack,
-}: {
-  connectData: { repoUrl?: string; serverAddress?: string; sshKeyId?: string };
-  onNext: (plan: DeploymentPlan) => void;
-  onBack: () => void;
-}) {
-  const [scanning, setScanning] = useState(true);
-  const [plan, setPlan] = useState<DeploymentPlan | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  // Kick off discovery
-  React.useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        setScanning(true);
-        const res = await fetch(`${GATEWAY_API}/deployments/generate-plan`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(connectData),
-        });
-        if (!res.ok) throw new Error(`Discovery failed: ${res.statusText}`);
-        const data = await res.json();
-        if (!cancelled) {
-          setPlan({ id: data.id || crypto.randomUUID(), ...data, ...connectData });
-          setScanning(false);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Discovery failed");
-          setScanning(false);
-          // Create a basic fallback plan so user can proceed
-          setPlan({
-            id: crypto.randomUUID(),
-            ...connectData,
-            framework: "Unknown",
-            buildStrategy: "auto",
-            environment: "dev",
-          });
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [connectData]);
-
-  if (scanning) {
-    return (
-      <div style={ws.scanning}>
-        <div style={ws.spinner} />
-        <p style={ws.scanText}>Scanning {connectData.repoUrl || connectData.serverAddress}...</p>
-        <p style={ws.scanSubtext}>Detecting framework, build strategy, and dependencies</p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <h3 style={ws.stepTitle}>Deployment Plan</h3>
-      {error && <div style={ws.warning}>{error} — showing basic plan. Adjust as needed.</div>}
-
-      {plan && (
-        <div style={ws.planCard}>
-          <div style={ws.planRow}><span style={ws.planLabel}>Source</span><span>{plan.repoUrl || plan.serverAddress}</span></div>
-          <div style={ws.planRow}><span style={ws.planLabel}>Framework</span><span>{plan.framework || "Auto-detect"}</span></div>
-          <div style={ws.planRow}><span style={ws.planLabel}>Build Strategy</span><span>{plan.buildStrategy || "auto"}</span></div>
-          <div style={ws.planRow}><span style={ws.planLabel}>Environment</span><span>{plan.environment || "dev"}</span></div>
-          {plan.buildCmd && <div style={ws.planRow}><span style={ws.planLabel}>Build Command</span><span style={ws.code}>{plan.buildCmd}</span></div>}
-          {plan.startCmd && <div style={ws.planRow}><span style={ws.planLabel}>Start Command</span><span style={ws.code}>{plan.startCmd}</span></div>}
-        </div>
-      )}
-
-      <button style={ws.advancedToggle} onClick={() => setShowAdvanced(!showAdvanced)}>
-        {showAdvanced ? "Hide" : "Show"} Advanced Options
-      </button>
-
-      {showAdvanced && plan && (
-        <div style={ws.advancedSection}>
-          {connectData.repoUrl && (
-            <BuildStrategyDetector
-              repoUrl={connectData.repoUrl!}
-              strategy="auto"
-              onDetected={(result: { suggested_build_cmd: string; suggested_start_cmd: string }) => {
-                setPlan((prev) => prev ? { ...prev, buildCmd: result.suggested_build_cmd, startCmd: result.suggested_start_cmd } : prev);
-              }}
-            />
-          )}
-        </div>
-      )}
-
-      <div style={ws.actions}>
-        <button style={ws.cancelBtn} onClick={onBack}>&larr; Back</button>
-        <button style={ws.primaryBtn} onClick={() => plan && onNext(plan)}>
-          Continue to Ship
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Step 3: Ship
 // ---------------------------------------------------------------------------
 
@@ -302,8 +191,6 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
   const [step, setStep] = useState<WizardStep>("connect");
   const [connectData, setConnectData] = useState<{ repoUrl?: string; serverAddress?: string; sshKeyId?: string }>({});
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
-  const [agentDiscoveryFallback, setAgentDiscoveryFallback] = useState(false);
-
   const handleConnect = useCallback((_mode: ConnectMode, data: typeof connectData) => {
     setConnectData(data);
     setStep("discovery");
@@ -349,26 +236,21 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
       {/* Step content */}
       {step === "connect" && <ConnectStep onNext={handleConnect} onCancel={onCancel} />}
       {step === "discovery" && (
-        BOND_AGENT_DISCOVERY && !agentDiscoveryFallback ? (
-          <AgentDiscoveryView
-            resourceId={connectData.repoUrl || connectData.serverAddress || ""}
-            environment="dev"
-            onComplete={(state: DiscoveryState, _completeness: CompletenessReport) => {
-              const plan: DeploymentPlan = {
-                id: crypto.randomUUID(),
-                ...connectData,
-                framework: state.findings.framework?.framework,
-                buildStrategy: state.findings.build_strategy?.strategy,
-                environment: "dev",
-              };
-              handlePlanReady(plan);
-            }}
-            onFallback={() => setAgentDiscoveryFallback(true)}
-            onCancel={() => setStep("connect")}
-          />
-        ) : (
-          <DiscoveryStep connectData={connectData} onNext={handlePlanReady} onBack={() => setStep("connect")} />
-        )
+        <AgentDiscoveryView
+          resourceId={connectData.repoUrl || connectData.serverAddress || ""}
+          environment="dev"
+          onComplete={(state: DiscoveryState, _completeness: CompletenessReport) => {
+            const plan: DeploymentPlan = {
+              id: crypto.randomUUID(),
+              ...connectData,
+              framework: state.findings.framework?.framework,
+              buildStrategy: state.findings.build_strategy?.strategy,
+              environment: "dev",
+            };
+            handlePlanReady(plan);
+          }}
+          onCancel={() => setStep("connect")}
+        />
       )}
       {step === "ship" && plan && (
         <ShipStep plan={plan} onShip={handleShip} onBack={() => setStep("discovery")} />
