@@ -233,6 +233,18 @@ def apply_progressive_decay(
         tokens = _estimate_tokens(content)
         turns_ago = _get_turn_age(i)
 
+        # Accelerated decay for indexed content (Design Doc 075):
+        # Content is recoverable via ctx_search, so decay twice as fast.
+        is_indexed = False
+        try:
+            _check = json.loads(content)
+            if isinstance(_check, dict) and _check.get("_indexed"):
+                is_indexed = True
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if is_indexed:
+            turns_ago = turns_ago * 2  # Accelerate decay
+
         # Small results: keep as-is regardless of age
         if tokens < 200:
             result.append(msg)

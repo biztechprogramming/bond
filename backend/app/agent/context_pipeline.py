@@ -80,6 +80,17 @@ def _prune_tool_result(msg: dict, age: str) -> dict:
     if token_count < 500:
         return msg
 
+    # Indexed content (Design Doc 075): safe to prune aggressively
+    try:
+        _parsed_check = json.loads(content)
+        if isinstance(_parsed_check, dict) and _parsed_check.get("_indexed"):
+            return {**msg, "content": json.dumps({
+                "_pruned": True,
+                "_note": "Content indexed. Use ctx_search to retrieve.",
+            })}
+    except (json.JSONDecodeError, TypeError):
+        pass
+
     # Current topic: keep verbatim
     if age == "current":
         return msg

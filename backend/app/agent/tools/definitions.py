@@ -1503,6 +1503,34 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    # ── Context indexing (Design Doc 075) ──────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "ctx_search",
+            "description": "Search previously indexed tool outputs from this conversation. "
+                           "Use when you need to find specific details from large outputs that "
+                           "were automatically summarized. Returns matching text chunks with "
+                           "source context.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "queries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Search queries (1-3 recommended). Use specific terms: "
+                                       "error messages, function names, variable names, timestamps.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Max results per query (1-10).",
+                    },
+                },
+                "required": ["queries"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
@@ -1705,6 +1733,11 @@ class HostExec(ToolCall):
     cwd: Optional[str] = Field(None, description="Working directory (host path).")
     timeout: int = Field(default=60, description="Timeout in seconds.")
 
+class CtxSearch(ToolCall):
+    """Search previously indexed tool outputs from this conversation."""
+    queries: List[str] = Field(description="Search queries (1-3 recommended).")
+    limit: int = Field(default=5, description="Max results per query (1-10).")
+
 class ShellTree(ToolCall):
     """Show directory tree structure."""
     path: str = Field(default=".", description="Root directory.")
@@ -1741,6 +1774,7 @@ INSTRUCTOR_TOOL_MAP = {
     "shell_tree": ShellTree,
     "coding_agent": CodingAgent,
     "host_exec": HostExec,
+    "ctx_search": CtxSearch,
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:
