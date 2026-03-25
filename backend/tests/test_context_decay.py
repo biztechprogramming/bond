@@ -128,6 +128,43 @@ class TestProgressiveDecay:
         assert len(parsed["results"]) == 2
 
 
+class TestIndexedCodeDecay:
+    """Code files marked _indexed_code should use normal (1×) decay."""
+
+    def test_indexed_non_code_gets_accelerated_decay(self):
+        """Indexed logs/text should still get 2× accelerated decay."""
+        # Build a large indexed (non-code) result 2 turns ago.
+        # With 2× acceleration, turns_ago=2 becomes 4, which hits "turn 3-5" summary.
+        big = json.dumps({"_indexed": True, "content": "log line\n" * 300})
+        msgs = [
+            _user_msg("check logs"),
+            _assistant_msg("", [{"id": "tc1", "function": {"name": "code_execute", "arguments": "{}"}}]),
+            _tool_msg(big, "tc1"),
+            _user_msg("ok"),
+            _assistant_msg("done"),
+            _user_msg("next"),
+        ]
+        result = apply_progressive_decay(msgs)
+        # 2 turns ago × 2 = effective 4 → one-line summary (turn 3-5 bucket)
+        assert len(result[2]["content"]) < 200
+
+    def test_indexed_code_gets_normal_decay(self):
+        """Indexed code files should NOT get accelerated decay."""
+        big = json.dumps({"_indexed": True, "_indexed_code": True, "file_path": "main.py", "content": "def f():\n    pass\n" * 100})
+        msgs = [
+            _user_msg("read main.py"),
+            _assistant_msg("", [{"id": "tc1", "function": {"name": "file_read", "arguments": '{"path":"main.py"}'}}]),
+            _tool_msg(big, "tc1"),
+            _user_msg("ok"),
+            _assistant_msg("done"),
+            _user_msg("next"),
+        ]
+        result = apply_progressive_decay(msgs)
+        # 2 turns ago with NO acceleration → head/tail (turn 1-2 bucket), NOT summary
+        # Head/tail preserves more content than a one-line summary
+        assert len(result[2]["content"]) > 200
+
+
 # ---------------------------------------------------------------------------
 # Selective decay: skip messages that will be compressed
 # ---------------------------------------------------------------------------
