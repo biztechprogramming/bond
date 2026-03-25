@@ -243,7 +243,17 @@ def apply_progressive_decay(
         except (json.JSONDecodeError, TypeError):
             pass
         if is_indexed:
-            turns_ago = turns_ago * 2  # Accelerate decay
+            # Code files use normal decay — they're working material the agent
+            # needs across multiple turns.  Non-code indexed content (logs,
+            # JSON, plain text) is recoverable via ctx_search, so decay 2×.
+            is_indexed_code = False
+            try:
+                if isinstance(_check, dict) and _check.get("_indexed_code"):
+                    is_indexed_code = True
+            except Exception:
+                pass
+            if not is_indexed_code:
+                turns_ago = turns_ago * 2  # Accelerate decay
 
         # Small results: keep as-is regardless of age
         if tokens < 200:

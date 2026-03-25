@@ -22,6 +22,36 @@ from backend.app.agent.context_store import ContextStore
 
 logger = logging.getLogger(__name__)
 
+# File extensions that are considered "code" — these get normal (1×) decay
+# even when indexed, because they are working material the agent references
+# across multiple turns.
+CODE_EXTENSIONS: frozenset[str] = frozenset({
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".java", ".kt",
+    ".cs", ".cpp", ".c", ".h", ".hpp", ".rb", ".php", ".swift", ".scala",
+    ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".json", ".xml",
+    ".html", ".css", ".scss", ".sql", ".md", ".txt", ".cfg", ".ini",
+    ".env", ".dockerfile", ".tf", ".hcl", ".proto", ".graphql", ".vue",
+    ".svelte",
+})
+
+
+def _is_code_file(tool_name: str, tool_args: dict) -> bool:
+    """Check if the tool result is from a code file based on extension."""
+    if tool_name not in ("file_read", "file_open", "file_view"):
+        return False
+    path = tool_args.get("path", tool_args.get("file_path", ""))
+    if not path:
+        return False
+    # Handle dotfiles and names like "Dockerfile"
+    dot_idx = path.rfind(".")
+    if dot_idx == -1:
+        # Check for extensionless known files
+        basename = path.rsplit("/", 1)[-1].lower()
+        return basename in ("dockerfile", "makefile", "rakefile", "gemfile")
+    ext = path[dot_idx:].lower()
+    return ext in CODE_EXTENSIONS
+
+
 # Size thresholds in bytes
 TIER_2_THRESHOLD = 4 * 1024      # 4KB
 TIER_3_THRESHOLD = 16 * 1024     # 16KB
@@ -104,6 +134,8 @@ async def intercept_tool_result(
     content = _extract_text_content(result)
     store = get_store(conversation_id)
 
+    is_code = _is_code_file(tool_name, tool_args)
+
     if tier == 2:
         # Fire-and-forget background indexing
         asyncio.create_task(
@@ -112,6 +144,8 @@ async def intercept_tool_result(
         # Pass through unchanged, but mark as indexed for accelerated decay
         indexed_result = dict(result)
         indexed_result["_indexed"] = True
+        if is_code:
+            indexed_result["_indexed_code"] = True
         return indexed_result, True
 
     # Tier 3 and 4: index synchronously (needed before we can return summary)
@@ -120,6 +154,8 @@ async def intercept_tool_result(
     if raw:
         indexed_result = dict(result)
         indexed_result["_indexed"] = True
+        if is_code:
+            indexed_result["_indexed_code"] = True
         return indexed_result, True
 
     # Build summary header
@@ -149,6 +185,8 @@ async def intercept_tool_result(
         "_summary": header,
         "_search_hint": f"Use ctx_search(queries=[{hint_str}]) to see full details.",
     }
+    if is_code:
+        summary_result["_indexed_code"] = True
 
     if tier == 4:
         summary_result["_warning"] = (

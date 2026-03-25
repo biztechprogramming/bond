@@ -14,6 +14,7 @@ from backend.app.agent.result_interceptor import (
     intercept_tool_result,
     _measure_output,
     _extract_text_content,
+    _is_code_file,
     get_store,
     close_store,
 )
@@ -70,6 +71,29 @@ class TestMeasure:
 # ---------------------------------------------------------------------------
 # Tier routing
 # ---------------------------------------------------------------------------
+
+class TestIsCodeFile:
+    def test_python_file(self):
+        assert _is_code_file("file_read", {"path": "src/main.py"}) is True
+
+    def test_typescript_file(self):
+        assert _is_code_file("file_read", {"file_path": "app/index.tsx"}) is True
+
+    def test_yaml_file(self):
+        assert _is_code_file("file_open", {"path": "config.yaml"}) is True
+
+    def test_non_file_tool(self):
+        assert _is_code_file("code_execute", {"path": "main.py"}) is False
+
+    def test_unknown_extension(self):
+        assert _is_code_file("file_read", {"path": "data.parquet"}) is False
+
+    def test_dockerfile_no_extension(self):
+        assert _is_code_file("file_read", {"path": "Dockerfile"}) is True
+
+    def test_no_path(self):
+        assert _is_code_file("file_read", {}) is False
+
 
 class TestInterceptToolResult:
     @pytest.mark.asyncio
@@ -134,6 +158,30 @@ class TestInterceptToolResult:
         assert out["content"] == content
         # No summary
         assert "_summary" not in out
+
+    @pytest.mark.asyncio
+    async def test_code_file_gets_indexed_code_flag(self):
+        """Code files should get _indexed_code=True alongside _indexed."""
+        content = "x" * (5 * 1024)
+        result = {"content": content}
+        out, indexed = await intercept_tool_result(
+            "file_read", {"path": "src/main.py"}, result, "test-conv",
+        )
+        assert indexed is True
+        assert out["_indexed"] is True
+        assert out["_indexed_code"] is True
+
+    @pytest.mark.asyncio
+    async def test_non_code_file_no_indexed_code_flag(self):
+        """Non-code tool results should NOT get _indexed_code."""
+        content = "x" * (5 * 1024)
+        result = {"content": content}
+        out, indexed = await intercept_tool_result(
+            "code_execute", {"code": "echo hi"}, result, "test-conv",
+        )
+        assert indexed is True
+        assert out["_indexed"] is True
+        assert "_indexed_code" not in out
 
     @pytest.mark.asyncio
     async def test_indexed_flag_on_tier_2(self):
