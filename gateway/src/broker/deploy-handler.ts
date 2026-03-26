@@ -40,7 +40,7 @@ import { writeDeployLog } from "../deployments/log-stream.js";
 import { saveBaseline } from "../deployments/drift-detector.js";
 import { executeHealthCheck } from "../deployments/health-scheduler.js";
 import { getResources, getResource } from "../deployments/resources.js";
-import { runDiscovery, isAgentDiscoveryEnabled, runAgentDiscovery } from "../deployments/discovery.js";
+import { runDiscovery, runAgentDiscovery } from "../deployments/discovery.js";
 import { collectLogs } from "../deployments/log-collector.js";
 import { generateReplicationScripts } from "../deployments/proposal-generator.js";
 import { readManifest } from "../deployments/manifest.js";
@@ -209,7 +209,7 @@ export async function handleDeploy(
     if (!resourceId) return { status: "denied", action, reason: "resource_id is required" };
 
     // Agent discovery path — returns session_id for SSE streaming
-    if ((body as any).agent && isAgentDiscoveryEnabled()) {
+    if ((body as any).agent) {
       const sessionId = ulid();
       const resource = await getResource(cfg, resourceId);
       let conn: any = {};

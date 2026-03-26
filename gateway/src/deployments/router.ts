@@ -39,7 +39,7 @@ import { SCRIPT_TEMPLATES } from "./script-templates.js";
 import { createPipelineRouter } from "./pipeline-router.js";
 import { listManifests, readManifest } from "./manifest.js";
 import { addDiscoveryListener } from "./events.js";
-import { runAgentDiscovery, isAgentDiscoveryEnabled } from "./discovery.js";
+import { runAgentDiscovery } from "./discovery.js";
 import { getResource } from "./resources.js";
 import { ulid } from "ulid";
 import { getMonitoringAlerts } from "./stdb.js";
@@ -349,9 +349,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       return res.status(400).json({ status: "error", reason: "resource_id is required" });
     }
 
-    if (!isAgentDiscoveryEnabled()) {
-      return res.status(501).json({ status: "error", reason: "Agent discovery is not enabled" });
-    }
+
 
     const env = body.environment || "dev";
     const sessionId = ulid();
