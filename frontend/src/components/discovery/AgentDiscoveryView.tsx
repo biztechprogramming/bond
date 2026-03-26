@@ -9,13 +9,13 @@ import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
 
 interface Props {
   resourceId: string;
+  repoUrl?: string;
   environment: string;
   onComplete: (state: DiscoveryState, completeness: CompletenessReport) => void;
-  onFallback: () => void;
   onCancel: () => void;
 }
 
-export default function AgentDiscoveryView({ resourceId, environment, onComplete, onFallback, onCancel }: Props) {
+export default function AgentDiscoveryView({ resourceId, repoUrl, environment, onComplete, onCancel }: Props) {
   const {
     status,
     discoveryMode,
@@ -33,16 +33,9 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
 
   useEffect(() => {
     if (resourceId && environment) {
-      startDiscovery(resourceId, environment);
+      startDiscovery(resourceId, environment, repoUrl);
     }
-  }, [resourceId, environment, startDiscovery]);
-
-  // Fall back to old discovery if agent discovery is not available
-  useEffect(() => {
-    if (error === "no_session") {
-      onFallback();
-    }
-  }, [error, onFallback]);
+  }, [resourceId, environment, repoUrl, startDiscovery]);
 
   const handleShipIt = useCallback(() => {
     if (discoveryState && completeness) {
@@ -55,7 +48,7 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
     onCancel();
   }, [cancelDiscovery, onCancel]);
 
-  if (status === "idle" || error === "no_session") return null;
+  if (status === "idle") return null;
 
   return (
     <div style={styles.wrapper}>
@@ -80,7 +73,7 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
       )}
 
       {/* Error */}
-      {status === "error" && error !== "no_session" && (
+      {status === "error" && (
         <div role="alert" style={styles.errorBanner}>
           Discovery failed: {error}
         </div>
@@ -91,7 +84,18 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
         {/* Activity Feed */}
         <div style={styles.activityPanel}>
           <div style={styles.activityList}>
-            {activityLog.map((item) => (
+            {activityLog
+              .filter((item) => {
+                // Issue 3: Hide question activity items for fields already discovered with high confidence
+                if (item.type === "question" && item.field) {
+                  const discoveredItem = activityLog.find(
+                    a => a.type === "discovery" && a.field === item.field && a.confidence && a.confidence.score >= 0.8
+                  );
+                  if (discoveredItem) return false;
+                }
+                return true;
+              })
+              .map((item) => (
               <div key={item.id} style={styles.activityItem}>
                 <span style={styles.activityIcon}>
                   {item.status === "done" ? "\u2713" : item.status === "error" ? "\u2717" : item.type === "question" ? "?" : "\u2022"}
@@ -119,12 +123,28 @@ export default function AgentDiscoveryView({ resourceId, environment, onComplete
             )}
           </div>
 
-          {/* Inline question */}
-          {status === "question" && currentQuestion && (
-            <div style={styles.questionArea}>
-              <InlineQuestion question={currentQuestion} onAnswer={answerQuestion} />
-            </div>
-          )}
+          {/* Inline question — Issue 3: skip questions for fields already discovered with ≥80% confidence */}
+          {status === "question" && currentQuestion && (() => {
+            const field = currentQuestion.field;
+            const existingConfidence = discoveryState?.confidence?.[field];
+            if (existingConfidence && existingConfidence.score >= 0.8) {
+              // Auto-answer with the discovered value instead of showing question
+              const discoveredValue = discoveryState?.findings?.[field as keyof typeof discoveryState.findings];
+              const autoAnswer = typeof discoveredValue === "object" && discoveredValue !== null
+                ? (discoveredValue as any).framework || (discoveredValue as any).strategy || JSON.stringify(discoveredValue)
+                : String(discoveredValue || "");
+              if (autoAnswer) {
+                // Defer the auto-answer to avoid setState during render
+                setTimeout(() => answerQuestion(field, autoAnswer), 0);
+                return null;
+              }
+            }
+            return (
+              <div style={styles.questionArea}>
+                <InlineQuestion question={currentQuestion} onAnswer={answerQuestion} />
+              </div>
+            );
+          })()}
         </div>
 
         {/* Plan Panel */}

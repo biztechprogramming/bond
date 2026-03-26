@@ -224,6 +224,15 @@ class OpenSandboxAdapter:
         env = dict(agent.get("env", {}))
         # REMOVED: SpacetimeDB token injection (2026-03-12)
         # Agents must NOT have direct SpacetimeDB access — see design docs 035, 039.
+
+        # Forward Langfuse config from the host process so agent workers
+        # report to the correct Langfuse instance without baking creds
+        # into the Docker image.
+        for _lf_key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+            _lf_val = os.environ.get(_lf_key)
+            if _lf_val and _lf_key not in env:
+                env[_lf_key] = _lf_val
+
         if env:
             create_body["env"] = env
 

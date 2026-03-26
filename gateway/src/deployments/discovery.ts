@@ -140,20 +140,11 @@ export async function runDiscovery(
 
 /**
  * Agent-driven discovery — alternative to shell script discovery.
- * Gated behind the `agent_discovery` feature flag (default: off).
  *
  * Design Doc 071 §9 — Phase 1
  */
 export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<DiscoveryState> {
   return runAgentDiscoveryImpl(params);
-}
-
-/**
- * Check if agent discovery is enabled via feature flag.
- * Default: off for Phase 1.
- */
-export function isAgentDiscoveryEnabled(): boolean {
-  return process.env.BOND_AGENT_DISCOVERY === "true";
 }
 
 function extractServerDetails(results: Record<string, any>): Partial<import("./manifest.js").ManifestServer> {
