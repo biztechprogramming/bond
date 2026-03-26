@@ -341,6 +341,16 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     }
   });
 
+  // Discovery SSE session buffers — buffer events between POST and GET (§072)
+  const discoveryBuffers = new Map<string, { events: any[]; listeners: Set<(event: any) => void>; cleanup: () => void }>();
+
+  const DISCOVERY_EVENT_TYPES = new Set([
+    "discovery_agent_started",
+    "discovery_agent_progress",
+    "discovery_user_question",
+    "discovery_agent_completed",
+  ]);
+
   // POST /agent-discover — frontend-facing agent discovery initiation (§072)
   router.post("/agent-discover", async (req: any, res: any) => {
     const body = req.body || {};
@@ -349,13 +359,28 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       return res.status(400).json({ status: "error", reason: "resource_id is required" });
     }
 
-
-
     const env = body.environment || "dev";
     const sessionId = ulid();
     const resource = await getResource(config, resourceId);
     let conn: any = {};
     try { conn = JSON.parse(resource?.connection_json || "{}"); } catch {}
+
+    // Register listener BEFORE starting agent to capture all events
+    const session = { events: [] as any[], listeners: new Set<(event: any) => void>(), cleanup: () => {} };
+    const cleanupListener = addDiscoveryListener((event: any) => {
+      if (!DISCOVERY_EVENT_TYPES.has(event.event) || event.details?.session_id !== sessionId) return;
+      const payload: any = { event: event.event, ...event.details, session_id: sessionId };
+      session.events.push(payload);
+      for (const fn of session.listeners) {
+        try { fn(payload); } catch {}
+      }
+      // Auto-cleanup buffer after completion (with delay for late SSE connects)
+      if (event.event === "discovery_agent_completed") {
+        setTimeout(() => { discoveryBuffers.delete(sessionId); cleanupListener(); }, 30_000);
+      }
+    });
+    session.cleanup = cleanupListener;
+    discoveryBuffers.set(sessionId, session);
 
     runAgentDiscovery({
       source: resource?.name,
@@ -374,6 +399,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId });
   });
 
+
   // Discovery agent SSE stream (§072)
   router.get("/discovery/stream/:sessionId", (req: any, res: any) => {
     const { sessionId } = req.params;
@@ -382,32 +408,50 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    const eventTypes = new Set([
-      "discovery_agent_started",
-      "discovery_agent_progress",
-      "discovery_user_question",
-      "discovery_agent_completed",
-    ]);
-
+    const session = discoveryBuffers.get(sessionId);
     let closed = false;
-    const cleanup = addDiscoveryListener((event: any) => {
-      if (closed) return;
-      if (eventTypes.has(event.event) && event.details?.session_id === sessionId) {
-        const payload: any = { event: event.event, ...event.details };
-        payload.session_id = sessionId;
-        res.write(`data: ${JSON.stringify(payload)}\n\n`);
 
-        if (event.event === "discovery_agent_completed") {
-          res.end();
-          closed = true;
-          cleanup();
-        }
+    // Declare cleanupStream BEFORE write so there's no TDZ issue
+    function cleanupStream() {
+      if (session) session.listeners.delete(onEvent);
+    }
+
+    const write = (payload: any) => {
+      if (closed) return;
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      if (payload.event === "discovery_agent_completed") {
+        res.end();
+        closed = true;
+        cleanupStream();
       }
-    });
+    };
+
+    // Replay buffered events
+    if (session) {
+      for (const evt of session.events) {
+        write(evt);
+      }
+    }
+
+    // Listen for future events
+    const onEvent = (payload: any) => { write(payload); };
+    if (session) {
+      session.listeners.add(onEvent);
+    }
+
+    // Fallback: if no buffer exists, listen globally (shouldn't happen in normal flow)
+    let cleanupGlobal: (() => void) | undefined;
+    if (!session) {
+      cleanupGlobal = addDiscoveryListener((event: any) => {
+        if (!DISCOVERY_EVENT_TYPES.has(event.event) || event.details?.session_id !== sessionId) return;
+        write({ event: event.event, ...event.details, session_id: sessionId });
+      });
+    }
 
     req.on("close", () => {
       closed = true;
-      cleanup();
+      cleanupStream();
+      if (cleanupGlobal) cleanupGlobal();
     });
   });
 
