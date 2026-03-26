@@ -113,11 +113,8 @@ RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox
 # Worker is invoked as: python -m backend.app.worker --port 18791
 ENV PYTHONPATH=/bond
 
-# Langfuse observability — connects to self-hosted instance
-# These match the auto-init keys in docker-compose.langfuse.yml
-ENV LANGFUSE_PUBLIC_KEY=pk-lf-bond-local
-ENV LANGFUSE_SECRET_KEY=sk-lf-bond-local
-ENV LANGFUSE_HOST=http://host.docker.internal:18786
+# Langfuse observability — config is passed at runtime via the sandbox
+# adapter (see opensandbox_adapter.py). No defaults baked into the image.
 
 WORKDIR /bond
 

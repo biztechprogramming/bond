@@ -7,7 +7,7 @@ import OneClickShipWizard from "./OneClickShipWizard";
 import ShipProgress from "./ShipProgress";
 import InfraMap from "../settings/deployment/InfraMap";
 
-const NEW_DEPLOY_UI = process.env.NEXT_PUBLIC_NEW_DEPLOY_UI !== "false";
+const NEW_DEPLOY_UI = true;
 
 export type DeployViewMode = "dashboard" | "app-detail" | "new-deploy" | "deploy-progress" | "infrastructure" | "settings";
 
@@ -119,7 +119,7 @@ const s: Record<string, React.CSSProperties> = {
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
   nav: { display: "flex", gap: "4px", marginLeft: "auto" },
   navBtn: {
-    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "transparent", color: "#8888a0", padding: "6px 14px",
+    backgroundColor: "transparent", borderWidth: "1px", borderStyle: "solid", borderColor: "transparent", color: "#8888a0", padding: "6px 14px",
     fontSize: "0.85rem", fontWeight: 500, cursor: "pointer", borderRadius: "6px", transition: "all 0.2s",
   },
   navBtnActive: { color: "#6c8aff", borderColor: "#6c8aff", backgroundColor: "rgba(108,138,255,0.08)" },

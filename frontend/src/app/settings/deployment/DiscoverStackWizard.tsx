@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { GATEWAY_API } from "@/lib/config";
-import { useResources, useComponents, callReducer } from "@/hooks/useSpacetimeDB";
+import { useResources, useComponents, callReducer, useSettingsMap } from "@/hooks/useSpacetimeDB";
 import AddServerModal from "./AddServerModal";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
 
-const AGENT_DISCOVERY_ENABLED = process.env.NEXT_PUBLIC_BOND_AGENT_DISCOVERY === "true";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,8 +128,27 @@ function relativeTime(iso: string): string {
 // Component
 // ---------------------------------------------------------------------------
 
+const WIZARD_PROGRESS_KEY = "deployment_wizard.progress";
+
+interface WizardProgress {
+  step: WizardStep;
+  selectedServerId: string;
+  selectedRepoUrl: string;
+  agentDiscoveryState: DiscoveryState | null;
+  selectedEnv: string;
+  timestamp: number;
+}
+
 export default function DiscoverStackWizard({ environments, onComplete, onCancel }: DiscoverStackWizardProps) {
-  const [step, setStep] = useState<WizardStep>("select-server");
+  // --- Issue 2: Restore wizard progress from STDB settings ---
+  const settingsMap = useSettingsMap();
+  const savedProgress = useMemo<WizardProgress | null>(() => {
+    const raw = settingsMap[WIZARD_PROGRESS_KEY];
+    if (!raw) return null;
+    try { return JSON.parse(raw) as WizardProgress; } catch { return null; }
+  }, [settingsMap]);
+
+  const [step, setStep] = useState<WizardStep>(() => savedProgress?.step || "select-server");
 
   // Step 1: Select server — live from STDB subscriptions
   const stdbResources = useResources();
@@ -146,8 +164,21 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
     };
   });
   const loadingServers = false; // STDB subscriptions provide data reactively
-  const [selectedServerId, setSelectedServerId] = useState<string>("");
+  const [selectedServerId, setSelectedServerId] = useState<string>(() => savedProgress?.selectedServerId || "");
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // --- Issue 1: Repo selection from known repos ---
+  const [selectedRepoUrl, setSelectedRepoUrl] = useState<string>(() => savedProgress?.selectedRepoUrl || "");
+  const [showManualRepoInput, setShowManualRepoInput] = useState(false);
+  const [manualRepoUrl, setManualRepoUrl] = useState("");
+  const stdbComponents = useComponents();
+  const knownRepoUrls = useMemo(() => {
+    const urls = new Set<string>();
+    stdbComponents.forEach(c => {
+      if (c.repositoryUrl && c.repositoryUrl.trim()) urls.add(c.repositoryUrl.trim());
+    });
+    return Array.from(urls).sort();
+  }, [stdbComponents]);
 
   // Step 2: Discovery
   const [discoveryLayers, setDiscoveryLayers] = useState<DiscoveryLayer[]>([]);
@@ -162,7 +193,6 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   const [draftComponents, setDraftComponents] = useState<DraftComponent[]>([]);
   const [parentSystem, setParentSystem] = useState<string>("none");
   const [newSystemName, setNewSystemName] = useState("");
-  const stdbComponents = useComponents();
   const existingSystems: Component[] = stdbComponents
     .filter(c => c.componentType === "system")
     .map(c => ({ id: c.id, name: c.name, display_name: c.displayName, component_type: c.componentType, parent_id: c.parentId || null, is_active: c.isActive }));
@@ -175,8 +205,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   const [monitorChecks, setMonitorChecks] = useState<Record<string, boolean>>({});
 
   // Agent discovery fallback flag
-  const [useOldDiscovery, setUseOldDiscovery] = useState(!AGENT_DISCOVERY_ENABLED);
-  const [agentDiscoveryState, setAgentDiscoveryState] = useState<DiscoveryState | null>(null);
+  const [agentDiscoveryState, setAgentDiscoveryState] = useState<DiscoveryState | null>(() => savedProgress?.agentDiscoveryState || null);
 
   // Step 5: Scripts
   const [scriptSelections, setScriptSelections] = useState<Record<string, boolean>>({});
@@ -186,6 +215,39 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   const [generating, setGenerating] = useState(false);
 
   const selectedServer = servers.find(s => s.id === selectedServerId);
+
+  // --- Issue 2: Save progress at key milestones ---
+  const saveProgress = useCallback((overrides?: Partial<WizardProgress>) => {
+    const progress: WizardProgress = {
+      step,
+      selectedServerId,
+      selectedRepoUrl,
+      agentDiscoveryState,
+      selectedEnv,
+      timestamp: Date.now(),
+      ...overrides,
+    };
+    callReducer(conn => conn.reducers.setSetting({
+      key: WIZARD_PROGRESS_KEY,
+      value: JSON.stringify(progress),
+      keyType: "string",
+    }));
+  }, [step, selectedServerId, selectedRepoUrl, agentDiscoveryState, selectedEnv]);
+
+  const clearProgress = useCallback(() => {
+    callReducer(conn => conn.reducers.setSetting({
+      key: WIZARD_PROGRESS_KEY,
+      value: "",
+      keyType: "string",
+    }));
+  }, []);
+
+  // Auto-save at step transitions
+  useEffect(() => {
+    if (step !== "select-server") {
+      saveProgress();
+    }
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Discovery
   const runDiscovery = useCallback(async () => {
@@ -536,6 +598,76 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
             + Add New Server
           </button>
 
+          {/* --- Issue 1: Repository Selection --- */}
+          <h3 style={{ ...styles.title, fontSize: "0.95rem", marginTop: 12 }}>Repository (optional)</h3>
+          <p style={styles.subtitle}>Select a known repo or add a new URL for discovery.</p>
+          {knownRepoUrls.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {knownRepoUrls.map(url => (
+                <div
+                  key={url}
+                  style={{
+                    ...styles.serverCard,
+                    borderColor: selectedRepoUrl === url ? "#6c8aff" : "#1e1e2e",
+                    backgroundColor: selectedRepoUrl === url ? "#1a1a3e" : "#12121a",
+                    padding: 10,
+                  }}
+                  onClick={() => { setSelectedRepoUrl(url); setShowManualRepoInput(false); }}
+                >
+                  <span style={{ fontSize: "0.83rem", color: "#e0e0e8" }}>{url}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {!showManualRepoInput ? (
+            <button style={styles.addServerBtn} onClick={() => setShowManualRepoInput(true)}>
+              + Add Repo URL
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                style={{ ...styles.input, flex: 1 }}
+                value={manualRepoUrl}
+                onChange={e => setManualRepoUrl(e.target.value)}
+                placeholder="https://github.com/org/repo.git"
+                onKeyDown={e => {
+                  if (e.key === "Enter" && manualRepoUrl.trim()) {
+                    setSelectedRepoUrl(manualRepoUrl.trim());
+                    setShowManualRepoInput(false);
+                  }
+                }}
+              />
+              <button
+                style={{ ...styles.primaryButton, padding: "8px 14px", fontSize: "0.8rem" }}
+                onClick={() => {
+                  if (manualRepoUrl.trim()) {
+                    setSelectedRepoUrl(manualRepoUrl.trim());
+                    setShowManualRepoInput(false);
+                  }
+                }}
+              >
+                Add
+              </button>
+              <button
+                style={{ ...styles.secondaryButton, padding: "8px 14px", fontSize: "0.8rem" }}
+                onClick={() => setShowManualRepoInput(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {selectedRepoUrl && (
+            <div style={{ fontSize: "0.8rem", color: "#6cffa0" }}>
+              Selected: {selectedRepoUrl}
+              <button
+                style={{ marginLeft: 8, background: "none", border: "none", color: "#8888a0", cursor: "pointer", fontSize: "0.75rem" }}
+                onClick={() => setSelectedRepoUrl("")}
+              >
+                clear
+              </button>
+            </div>
+          )}
+
           {showAddModal && (
             <AddServerModal
               environments={environments}
@@ -552,53 +684,18 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       {/* ================================================================ */}
       {/* STEP 2: Discovery */}
       {/* ================================================================ */}
-      {step === "discovery" && !useOldDiscovery && AGENT_DISCOVERY_ENABLED && (
+      {step === "discovery" && (
         <AgentDiscoveryView
           resourceId={selectedServerId}
+          repoUrl={selectedRepoUrl}
           environment={selectedEnv || "dev"}
           onComplete={(state, _completeness) => {
             setAgentDiscoveryState(state);
+            saveProgress({ agentDiscoveryState: state, step: "review" });
             goNext();
           }}
-          onFallback={() => setUseOldDiscovery(true)}
           onCancel={onCancel}
         />
-      )}
-
-      {step === "discovery" && useOldDiscovery && (
-        <>
-          <h2 style={styles.title}>Discovering Server</h2>
-          <p style={styles.subtitle}>Scanning {selectedServer?.display_name || selectedServerId} for installed services and configuration...</p>
-
-          <div style={styles.card}>
-            {LAYER_KEYS.map(key => {
-              const status = discoveryProgress[key] || "pending";
-              const layer = discoveryLayers.find(l => l.key === key);
-              return (
-                <div key={key} style={{ marginBottom: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <span style={{ fontSize: "0.8rem", color: "#e0e0e8" }}>{LAYER_LABELS[key]}</span>
-                    <span style={{ fontSize: "0.7rem", color: status === "done" ? "#6cffa0" : status === "running" ? "#6c8aff" : status === "error" ? "#ff6c8a" : "#8888a0" }}>
-                      {status === "done" ? "\u2713 Done" : status === "running" ? "Scanning..." : status === "error" ? "\u2717 Error" : "Pending"}
-                    </span>
-                  </div>
-                  <div style={styles.progressTrack}>
-                    <div style={{ ...styles.progressFill, width: status === "done" ? "100%" : status === "running" ? "60%" : "0%", backgroundColor: status === "error" ? "#ff6c8a" : "#6c8aff" }} />
-                  </div>
-                  {status === "done" && layer && layer.items.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
-                      {layer.items.map((item, i) => (
-                        <span key={i} style={styles.tag}>{item.name}{item.version ? ` ${item.version}` : ""}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {discoveryError && <div style={{ fontSize: "0.85rem", color: "#ff6c8a" }}>{discoveryError}</div>}
-        </>
       )}
 
       {/* ================================================================ */}
@@ -807,7 +904,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
             </div>
           </div>
 
-          <button style={styles.primaryButton} onClick={onComplete}>Done</button>
+          <button style={styles.primaryButton} onClick={() => { clearProgress(); onComplete(); }}>Done</button>
         </>
       )}
 
