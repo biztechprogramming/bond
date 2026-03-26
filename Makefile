@@ -19,15 +19,13 @@ dev:
 
 # Backend (FastAPI)
 backend:
+	set -a && . ./.env && set +a && \
 	uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload
 
 # Gateway (TypeScript WebSocket server)
 gateway:
-	cd gateway && \
-	  SPACETIMEDB_TOKEN=$(SPACETIMEDB_TOKEN) \
-	  BOND_SPACETIMEDB_URL=$(SPACETIMEDB_URL) \
-	  BOND_SPACETIMEDB_MODULE=$(SPACETIMEDB_MODULE) \
-	  pnpm dev
+	set -a && . ./.env && set +a && \
+	cd gateway && pnpm dev
 
 # Frontend (Next.js)
 frontend:
