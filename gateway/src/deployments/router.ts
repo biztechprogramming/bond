@@ -411,7 +411,9 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     const session = discoveryBuffers.get(sessionId);
     let closed = false;
 
-    // Declare cleanupStream BEFORE write so there's no TDZ issue
+    // Declare onEvent BEFORE cleanupStream to avoid TDZ
+    const onEvent = (payload: any) => { write(payload); };
+
     function cleanupStream() {
       if (session) session.listeners.delete(onEvent);
     }
@@ -434,10 +436,10 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     }
 
     // Listen for future events
-    const onEvent = (payload: any) => { write(payload); };
     if (session) {
       session.listeners.add(onEvent);
     }
+
 
     // Fallback: if no buffer exists, listen globally (shouldn't happen in normal flow)
     let cleanupGlobal: (() => void) | undefined;
