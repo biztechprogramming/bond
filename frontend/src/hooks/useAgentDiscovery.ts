@@ -25,7 +25,7 @@ export interface UseAgentDiscoveryReturn {
   completeness: CompletenessReport | null;
   probesRun: ProbeRecord[];
   error: string | null;
-  startDiscovery: (resourceId: string, env: string) => Promise<void>;
+  startDiscovery: (resourceId: string, env: string, repoUrl?: string) => Promise<void>;
   answerQuestion: (field: string, value: string) => Promise<void>;
   cancelDiscovery: () => void;
   editField: (field: string, value: string) => void;
@@ -49,6 +49,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
 
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<string | null>(null);
+  const discoveredFieldsRef = useRef<Map<string, number>>(new Map()); // field -> confidence score
 
   const addActivity = useCallback((item: Omit<ActivityItem, "id" | "timestamp">) => {
     setActivityLog((prev) => [...prev, { ...item, id: makeActivityId(), timestamp: Date.now() }]);
@@ -69,6 +70,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       }
       case "discovery_agent_progress": {
         setCompleteness(data.completeness);
+        discoveredFieldsRef.current.set(data.field, data.confidence.score);
         addActivity({
           type: "discovery",
           message: `Discovered ${data.field}`,
@@ -80,6 +82,13 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       }
       case "discovery_user_question": {
         const q = data.question;
+        // Issue 3: Don't show questions for fields already discovered with ≥80% confidence
+        const existingScore = discoveredFieldsRef.current.get(q.field);
+        if (existingScore !== undefined && existingScore >= 0.8) {
+          // Skip this question — field already has high confidence
+          addActivity({ type: "info", message: `Skipped question for ${q.field} (already ${Math.round(existingScore * 100)}% confident)`, status: "done" });
+          break;
+        }
         setCurrentQuestion(q);
         setQuestionsRemaining(q.questions_remaining ?? 0);
         setStatus("question");
@@ -97,7 +106,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     }
   }, [addActivity]);
 
-  const startDiscovery = useCallback(async (resourceId: string, env: string) => {
+  const startDiscovery = useCallback(async (resourceId: string, env: string, repoUrl?: string) => {
     // Reset
     setStatus("connecting");
     setError(null);
@@ -118,7 +127,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           resource_id: resourceId,
-          repo_url: resourceId,
+          repo_url: repoUrl || resourceId,
           environment: env,
         }),
         signal: controller.signal,
@@ -180,13 +189,27 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     setCurrentQuestion(null);
     setStatus("discovering");
     addActivity({ type: "answer", message: `Answered: ${value}`, field });
+    // Track as discovered with full confidence
+    discoveredFieldsRef.current.set(field, 1.0);
 
     try {
-      await fetch(`${GATEWAY_API}/deployments/discovery/answer/${sessionRef.current}`, {
+      const res = await fetch(`${GATEWAY_API}/deployments/discovery/answer/${sessionRef.current}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ field, value }),
       });
+      // If the answer endpoint returns a next action or triggers agent resume,
+      // the SSE stream (still open) will deliver subsequent events.
+      // If the response indicates completion, handle it:
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.completed && data?.state) {
+          setDiscoveryState(data.state);
+          setCompleteness(data.completeness || null);
+          setStatus("complete");
+          addActivity({ type: "info", message: "Discovery complete", status: "done" });
+        }
+      }
     } catch (err: any) {
       setError(err.message);
     }
