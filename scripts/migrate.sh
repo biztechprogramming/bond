@@ -39,7 +39,7 @@ $MIGRATE -path "$MIGRATIONS_PATH" -database "sqlite3://$DB_FILE" up
 echo "SQLite migrations complete."
 
 # Run SpacetimeDB migrations (publish module)
-SPACETIMEDB_URL="${SPACETIMEDB_URL:-http://localhost:18787}"
+SPACETIMEDB_URL="${SPACETIMEDB_URL:-$(python3 -c "import json; print(json.load(open('$PROJECT_ROOT/bond.json')).get('spacetimedb', {}).get('url', 'http://localhost:18787'))" 2>/dev/null || echo "http://localhost:18787")}"
 SPACETIMEDB_MODULE="$PROJECT_ROOT/spacetimedb/spacetimedb"
 SPACETIMEDB_CONFIG_DIR="$PROJECT_ROOT/spacetimedb"
 SPACETIMEDB_DATABASE=$(python3 -c "import json; print(json.load(open('$SPACETIMEDB_CONFIG_DIR/spacetime.local.json')).get('database', json.load(open('$SPACETIMEDB_CONFIG_DIR/spacetime.json')).get('database', '')))" 2>/dev/null)

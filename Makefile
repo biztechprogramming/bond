@@ -3,6 +3,10 @@
 	langfuse-up langfuse-down langfuse-logs langfuse-ps langfuse-restart langfuse-stop langfuse-start langfuse-health langfuse-reset \
 	opensandbox-health opensandbox-logs
 
+SPACETIMEDB_URL := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('url', 'http://localhost:18787'))" 2>/dev/null || echo "http://localhost:18787")
+SPACETIMEDB_MODULE := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('module', 'bond-core-v2'))" 2>/dev/null || echo "bond-core-v2")
+SPACETIMEDB_TOKEN := $(shell grep -oP 'spacetimedb_token\s*=\s*"\K[^"]+' $(HOME)/.config/spacetime/cli.toml 2>/dev/null)
+
 # Start all services for development
 dev:
 	@echo "Starting Bond development servers..."
@@ -20,9 +24,9 @@ backend:
 # Gateway (TypeScript WebSocket server)
 gateway:
 	cd gateway && \
-	  SPACETIMEDB_TOKEN=eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9.eyJoZXhfaWRlbnRpdHkiOiJjMjAwMjk3ZjMwZGU5OWYxYjk4ZjY4MzgzMTQ4OWRhYjM0ZWQ2YmI2N2M4MmZjZmY0NDU0Y2U1MjVlYzY1YzUxIiwic3ViIjoiOTYwYTBjMjktZDJmYy00MWE1LWE5NDUtOGIyZjIzZjU0NDE2IiwiaXNzIjoibG9jYWxob3N0IiwiYXVkIjpbInNwYWNldGltZWRiIl0sImlhdCI6MTc3NDMxMDUxMSwiZXhwIjpudWxsfQ.Xh2T4q9m_HML8Ukkz9oYf5II6fC4T7G7u6piO7p0boa-WZqq2jY1I_Ai2s3uuPIGQM0HEzKdedX9jCaQWW_C7Q \
-	  BOND_SPACETIMEDB_URL=http://loki:18787 \
-	  BOND_SPACETIMEDB_MODULE=bond-core-v2 \
+	  SPACETIMEDB_TOKEN=$(SPACETIMEDB_TOKEN) \
+	  BOND_SPACETIMEDB_URL=$(SPACETIMEDB_URL) \
+	  BOND_SPACETIMEDB_MODULE=$(SPACETIMEDB_MODULE) \
 	  pnpm dev
 
 # Frontend (Next.js)
@@ -265,7 +269,7 @@ opensandbox-logs:
 
 # Check SpacetimeDB health
 spacetimedb-health:
-	@curl -s http://loki:18787/v1/health && echo "SpacetimeDB is healthy" || echo "SpacetimeDB is not responding"
+	@curl -s $(SPACETIMEDB_URL)/v1/health && echo "SpacetimeDB is healthy" || echo "SpacetimeDB is not responding"
 
 # Reset SpacetimeDB completely (WARNING: deletes all data)
 spacetimedb-reset: spacetimedb-down
