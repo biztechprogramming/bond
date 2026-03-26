@@ -40,6 +40,11 @@ echo "SQLite migrations complete."
 
 # Run SpacetimeDB migrations (publish module)
 SPACETIMEDB_URL="${SPACETIMEDB_URL:-$(python3 -c "import json; print(json.load(open('$PROJECT_ROOT/bond.json')).get('spacetimedb', {}).get('url', 'http://localhost:18787'))" 2>/dev/null || echo "http://localhost:18787")}"
+
+# Load token from .env if available
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    SPACETIMEDB_TOKEN=$(grep -oP '^SPACETIMEDB_TOKEN\s*=\s*"?\K[^"]+' "$PROJECT_ROOT/.env" 2>/dev/null || true)
+fi
 SPACETIMEDB_MODULE="$PROJECT_ROOT/spacetimedb/spacetimedb"
 SPACETIMEDB_CONFIG_DIR="$PROJECT_ROOT/spacetimedb"
 SPACETIMEDB_DATABASE=$(python3 -c "import json; print(json.load(open('$SPACETIMEDB_CONFIG_DIR/spacetime.local.json')).get('database', json.load(open('$SPACETIMEDB_CONFIG_DIR/spacetime.json')).get('database', '')))" 2>/dev/null)
@@ -50,7 +55,7 @@ spacetime_publish() {
     local exit_code
 
     set +e
-    output=$(spacetime publish --server "$server_url" --yes $SPACETIMEDB_DATABASE 2>&1)
+    output=$(spacetime publish --server "$server_url" ${SPACETIMEDB_TOKEN:+--token "$SPACETIMEDB_TOKEN"} --yes $SPACETIMEDB_DATABASE 2>&1)
     exit_code=$?
     set -e
 
@@ -70,7 +75,7 @@ spacetime_publish() {
         spacetime login --token "$fresh_token"
 
         echo "  Retrying publish..."
-        spacetime publish --server "$server_url" --yes $SPACETIMEDB_DATABASE
+        spacetime publish --server "$server_url" ${SPACETIMEDB_TOKEN:+--token "$SPACETIMEDB_TOKEN"} --yes $SPACETIMEDB_DATABASE
         return $?
     fi
 

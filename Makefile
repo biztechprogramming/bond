@@ -5,7 +5,7 @@
 
 SPACETIMEDB_URL := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('url', 'http://localhost:18787'))" 2>/dev/null || echo "http://localhost:18787")
 SPACETIMEDB_MODULE := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('module', 'bond-core-v2'))" 2>/dev/null || echo "bond-core-v2")
-SPACETIMEDB_TOKEN := $(shell grep -oP 'spacetimedb_token\s*=\s*"\K[^"]+' $(HOME)/.config/spacetime/cli.toml 2>/dev/null)
+SPACETIMEDB_TOKEN := $(shell grep -oP '^SPACETIMEDB_TOKEN\s*=\s*"?\K[^"]+' .env 2>/dev/null || grep -oP 'spacetimedb_token\s*=\s*"\K[^"]+' $(HOME)/.config/spacetime/cli.toml 2>/dev/null)
 
 # Start all services for development
 dev:
