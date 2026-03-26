@@ -116,7 +116,11 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       const initRes = await fetch(`${GATEWAY_API}/deployments/agent-discover`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resource_id: resourceId, environment: env }),
+        body: JSON.stringify({
+          resource_id: resourceId,
+          repo_url: resourceId,
+          environment: env,
+        }),
         signal: controller.signal,
       });
 

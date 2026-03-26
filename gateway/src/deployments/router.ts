@@ -359,11 +359,14 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
     runAgentDiscovery({
       source: resource?.name,
+      repoPath: conn.repo_path || body.repo_path,
+      repoUrl: conn.repo_url || body.repo_url,
       serverHost: conn.host,
       serverPort: conn.port,
       sshUser: conn.user,
       sshKeyPath: conn.key_path,
       env,
+      sessionId,
     }).catch((err) => {
       console.error("[agent-discover] agent discovery failed:", err.message);
     });
@@ -389,7 +392,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     let closed = false;
     const cleanup = addDiscoveryListener((event: any) => {
       if (closed) return;
-      if (eventTypes.has(event.event)) {
+      if (eventTypes.has(event.event) && event.details?.session_id === sessionId) {
         const payload: any = { event: event.event, ...event.details };
         payload.session_id = sessionId;
         res.write(`data: ${JSON.stringify(payload)}\n\n`);

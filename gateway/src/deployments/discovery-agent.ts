@@ -4,6 +4,10 @@
  * Design Doc 071 §3, §5, §6 — Agent Discovery Loop
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execSync } from "node:child_process";
 import {
   detectFramework,
   detectBuildStrategy,
@@ -86,6 +90,7 @@ export interface AgentDiscoveryParams {
   sshKeyPath?: string;
   env: string;
   repoPath?: string;
+  sessionId?: string;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -168,10 +173,30 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
     command: "", // placeholder, overridden per call
   } : undefined;
 
+  const sessionId = params.sessionId;
+
+  // If repoUrl is provided but no local repoPath, clone to a temp directory
+  let clonedTmpDir: string | undefined;
+  if (!params.repoPath && params.repoUrl) {
+    try {
+      clonedTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "bond-discovery-"));
+      execSync(`git clone --depth 1 ${params.repoUrl} ${clonedTmpDir}`, {
+        stdio: "pipe",
+        timeout: 30_000,
+      });
+      params = { ...params, repoPath: clonedTmpDir };
+    } catch (err: any) {
+      console.warn("[discovery-agent] Failed to clone repo:", err.message);
+      // Continue without repoPath — agent will fall back to asking questions
+    }
+  }
+
+  try {
+
   emitDeploymentEvent("discovery_agent_started", {
     environment: params.env,
     summary: `Agent discovery started${params.repoPath ? ` for ${params.repoPath}` : ""}`,
-    details: { server_host: params.serverHost, repo_path: params.repoPath },
+    details: { server_host: params.serverHost, repo_path: params.repoPath, session_id: sessionId },
   });
 
   // Set source if provided
@@ -215,7 +240,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "framework");
+      emitProgress(params.env, state, "framework", sessionId);
     }
 
     // Build strategy detection
@@ -232,7 +257,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "build_strategy");
+      emitProgress(params.env, state, "build_strategy", sessionId);
     }
 
     // Port detection
@@ -252,7 +277,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "app_port");
+      emitProgress(params.env, state, "app_port", sessionId);
     }
 
     // Service detection
@@ -327,7 +352,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
           emitDeploymentEvent("discovery_user_question", {
             environment: params.env,
             summary: `Agent needs input: ${question.question}`,
-            details: { question },
+            details: { question, session_id: sessionId },
           });
         }
       }
@@ -342,7 +367,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
   emitDeploymentEvent("discovery_agent_completed", {
     environment: params.env,
     summary: `Agent discovery completed: ${state.completeness.ready ? "ready" : "needs input"}`,
-    details: { completeness: state.completeness, probes_run: state.probes_run.length, tool_calls: toolCalls },
+    details: { completeness: state.completeness, probes_run: state.probes_run.length, tool_calls: toolCalls, session_id: sessionId },
   });
 
   // Write manifest if we have enough data
@@ -352,6 +377,13 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
   }
 
   return state;
+
+  } finally {
+    // Clean up cloned temp dir
+    if (clonedTmpDir) {
+      try { fs.rmSync(clonedTmpDir, { recursive: true, force: true }); } catch {}
+    }
+  }
 }
 
 // ── Manifest Conversion ─────────────────────────────────────────────────────
@@ -402,11 +434,11 @@ async function runProbe(tool: string, fn: () => Promise<string[]>): Promise<Prob
   }
 }
 
-function emitProgress(env: string, state: DiscoveryState, field: string): void {
+function emitProgress(env: string, state: DiscoveryState, field: string, sessionId?: string): void {
   emitDeploymentEvent("discovery_agent_progress", {
     environment: env,
     summary: `Discovered: ${field}`,
-    details: { field, confidence: state.confidence[field] },
+    details: { field, confidence: state.confidence[field], session_id: sessionId },
   });
 }
 
