@@ -13,5 +13,9 @@
   },
   "frontend": {
     "port": 18788
+  },
+  "spacetimedb": {
+    "url": "http://loki:18787",
+    "module": "bond-core-v2"
   }
 }
