@@ -16,6 +16,8 @@ After making ANY code changes, you MUST:
 2. **Commit immediately.** Committing is local — there is never a reason to delay it. Do not wait for push access, remote confirmation, or anything else.
 3. **Push the branch.** Run `git remote -v` or check `.git/config` to find the remote. It is almost always already configured. Only ask the user if the repo genuinely has no remote configured (this is rare).
 
+**NEVER ask the user "want me to push?" or "should I push?"** Pushing is not optional. It is part of the task. If you made changes and committed them, push them. The request to make changes IS the permission to push. Asking is wasting the user's time.
+
 This is non-negotiable. Every session that changes code must end with committed, pushed work on a prefixed branch.
 
 ## Workflow Guidelines
