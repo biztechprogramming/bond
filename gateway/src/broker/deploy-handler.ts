@@ -41,6 +41,7 @@ import { saveBaseline } from "../deployments/drift-detector.js";
 import { executeHealthCheck } from "../deployments/health-scheduler.js";
 import { getResources, getResource } from "../deployments/resources.js";
 import { runDiscovery, runAgentDiscovery } from "../deployments/discovery.js";
+import { BackendClient } from "../backend/client.js";
 import { collectLogs } from "../deployments/log-collector.js";
 import { generateReplicationScripts } from "../deployments/proposal-generator.js";
 import { readManifest } from "../deployments/manifest.js";
@@ -223,6 +224,7 @@ export async function handleDeploy(
         sshUser: conn.user,
         sshKeyPath: conn.key_path,
         env,
+        backendClient: new BackendClient(cfg.backendUrl),
       }).catch((err) => {
         console.error("[discover] agent discovery failed:", err.message);
       });

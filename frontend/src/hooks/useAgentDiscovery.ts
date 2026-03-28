@@ -29,6 +29,7 @@ export interface UseAgentDiscoveryReturn {
   answerQuestion: (field: string, value: string) => Promise<void>;
   cancelDiscovery: () => void;
   editField: (field: string, value: string) => void;
+  forceComplete: () => void;
 }
 
 let activityCounter = 0;
@@ -50,12 +51,24 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<string | null>(null);
   const discoveredFieldsRef = useRef<Map<string, number>>(new Map()); // field -> confidence score
+  const lastEventTimeRef = useRef<number>(0);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Accumulate discovery state from progress events for fallback
+  const accumulatedStateRef = useRef<DiscoveryState>({
+    findings: {},
+    confidence: {},
+    probes_run: [],
+    user_answers: {},
+    completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+  });
 
   const addActivity = useCallback((item: Omit<ActivityItem, "id" | "timestamp">) => {
     setActivityLog((prev) => [...prev, { ...item, id: makeActivityId(), timestamp: Date.now() }]);
   }, []);
 
   const handleSSEEvent = useCallback((data: DiscoverySSEEvent) => {
+    lastEventTimeRef.current = Date.now();
+
     switch (data.event) {
       case "discovery_agent_started": {
         const mode = data.mode || "full";
@@ -69,8 +82,26 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         break;
       }
       case "discovery_agent_progress": {
-        setCompleteness(data.completeness);
-        discoveredFieldsRef.current.set(data.field, data.confidence.score);
+        if (data.completeness) setCompleteness(data.completeness);
+        if (data.confidence) {
+          discoveredFieldsRef.current.set(data.field, data.confidence.score);
+        }
+        // Accumulate state from progress events for fallback
+        if (data.field && data.value !== undefined) {
+          accumulatedStateRef.current.findings = {
+            ...accumulatedStateRef.current.findings,
+            [data.field]: data.value,
+          };
+        }
+        if (data.confidence) {
+          accumulatedStateRef.current.confidence = {
+            ...accumulatedStateRef.current.confidence,
+            [data.field]: data.confidence,
+          };
+        }
+        if (data.completeness) {
+          accumulatedStateRef.current.completeness = data.completeness;
+        }
         addActivity({
           type: "discovery",
           message: `Discovered ${data.field}`,
@@ -85,7 +116,6 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         // Issue 3: Don't show questions for fields already discovered with ≥80% confidence
         const existingScore = discoveredFieldsRef.current.get(q.field);
         if (existingScore !== undefined && existingScore >= 0.8) {
-          // Skip this question — field already has high confidence
           addActivity({ type: "info", message: `Skipped question for ${q.field} (already ${Math.round(existingScore * 100)}% confident)`, status: "done" });
           break;
         }
@@ -96,9 +126,12 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         break;
       }
       case "discovery_agent_completed": {
-        setDiscoveryState(data.state);
-        setCompleteness(data.completeness);
-        setProbesRun(data.state.probes_run);
+        if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+        const finalState = data.state || accumulatedStateRef.current;
+        const finalCompleteness = data.completeness || accumulatedStateRef.current.completeness;
+        setDiscoveryState(finalState);
+        setCompleteness(finalCompleteness);
+        setProbesRun(finalState.probes_run || []);
         setStatus("complete");
         addActivity({ type: "info", message: "Discovery complete", status: "done" });
         break;
@@ -159,6 +192,27 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       let buffer = "";
 
       setStatus("discovering");
+      lastEventTimeRef.current = Date.now();
+
+      // Timeout: if no events for 30s after the last event, auto-complete with accumulated data
+      const startTimeout = () => {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        timeoutRef.current = setTimeout(() => {
+          // Only auto-complete if still in a discovering/question state
+          setStatus((currentStatus) => {
+            if (currentStatus === "discovering" || currentStatus === "degraded" || currentStatus === "question") {
+              const accState = accumulatedStateRef.current;
+              setDiscoveryState(accState);
+              setCompleteness(accState.completeness);
+              setProbesRun(accState.probes_run || []);
+              addActivity({ type: "info", message: "Discovery timed out — completing with available data", status: "done" });
+              return "complete";
+            }
+            return currentStatus;
+          });
+        }, 30_000);
+      };
+      startTimeout();
 
       while (true) {
         const { done, value } = await reader.read();
@@ -172,10 +226,25 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
             try {
               const event = JSON.parse(line.slice(6)) as DiscoverySSEEvent;
               handleSSEEvent(event);
+              startTimeout(); // Reset timeout on each event
             } catch { /* skip malformed */ }
           }
         }
       }
+      // Stream ended — if we didn't get a completion event, auto-complete with accumulated data
+      if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+      setStatus((currentStatus) => {
+        if (currentStatus === "discovering" || currentStatus === "degraded" || currentStatus === "question") {
+          const accState = accumulatedStateRef.current;
+          setDiscoveryState(accState);
+          setCompleteness(accState.completeness);
+          setProbesRun(accState.probes_run || []);
+          setCurrentQuestion(null);
+          addActivity({ type: "info", message: "Discovery stream ended — completing with available data", status: "done" });
+          return "complete";
+        }
+        return currentStatus;
+      });
     } catch (err: any) {
       if (err.name === "AbortError") return;
       setError(err.message);
@@ -225,6 +294,17 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     setStatus("idle");
   }, []);
 
+  const forceComplete = useCallback(() => {
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    const accState = accumulatedStateRef.current;
+    setDiscoveryState(accState);
+    setCompleteness(accState.completeness);
+    setProbesRun(accState.probes_run || []);
+    setCurrentQuestion(null);
+    setStatus("complete");
+    addActivity({ type: "info", message: "Discovery force-completed with available data", status: "done" });
+  }, [addActivity]);
+
   const editField = useCallback((field: string, value: string) => {
     setDiscoveryState((prev) => {
       if (!prev) return prev;
@@ -243,6 +323,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
   useEffect(() => {
     return () => {
       if (abortRef.current) abortRef.current.abort();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
     };
   }, []);
 
@@ -260,5 +341,6 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     answerQuestion,
     cancelDiscovery,
     editField,
+    forceComplete,
   };
 }

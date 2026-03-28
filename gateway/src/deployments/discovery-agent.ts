@@ -30,6 +30,7 @@ import type {
   UserQuestion,
 } from "./discovery-tools.js";
 import { runLLMDiscovery } from "./llm-discovery.js";
+import type { BackendClient } from "../backend/client.js";
 import { writeManifest } from "./manifest.js";
 import { emitDeploymentEvent } from "./events.js";
 import type { DeploymentManifest, ManifestServer } from "./manifest.js";
@@ -92,6 +93,7 @@ export interface AgentDiscoveryParams {
   env: string;
   repoPath?: string;
   sessionId?: string;
+  backendClient?: BackendClient;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -253,7 +255,9 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
   // ── Phase 0: LLM-powered analysis (if repo available) ──────────────────
   if (params.repoPath) {
     const llmProbe = await runProbe("llm_discovery", async () => {
-      const llmResult = await runLLMDiscovery(params.repoPath!);
+      const llmResult = params.backendClient
+        ? await runLLMDiscovery(params.repoPath!, params.backendClient)
+        : null;
       if (!llmResult) return [];
       const discovered: string[] = [];
 

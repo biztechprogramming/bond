@@ -19,6 +19,7 @@ const mockHook: UseAgentDiscoveryReturn = {
   answerQuestion: vi.fn(),
   cancelDiscovery: vi.fn(),
   editField: vi.fn(),
+  forceComplete: vi.fn(),
 };
 
 vi.mock("@/hooks/useAgentDiscovery", () => ({

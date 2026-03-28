@@ -495,8 +495,8 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
             const newPlan: DeploymentPlan = {
               id: crypto.randomUUID(),
               ...connectData,
-              framework: state.findings.framework?.framework,
-              buildStrategy: state.findings.build_strategy?.strategy,
+              framework: state.findings.framework?.framework || "unknown",
+              buildStrategy: state.findings.build_strategy?.strategy || "docker",
               environment: "dev",
             };
             handlePlanReady(newPlan);

@@ -29,6 +29,7 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
     answerQuestion,
     cancelDiscovery,
     editField,
+    forceComplete,
   } = useAgentDiscovery();
 
   useEffect(() => {
@@ -154,6 +155,8 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
             completeness={completeness}
             onEditField={editField}
             onShipIt={handleShipIt}
+            onForceComplete={forceComplete}
+            isDiscovering={status === "discovering" || status === "degraded" || status === "question"}
           />
         </div>
       </div>

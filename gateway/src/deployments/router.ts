@@ -52,11 +52,13 @@ import { createFolderBrowserRouter } from "./folder-browser.js";
 import { createAllocationRouter } from "./allocation-router.js";
 import { collectLogs } from "./log-stream.js";
 import { createRun, getRun, listRuns, updateRunStatus, getRunEmitter, executeDeploymentRun } from "./runs.js";
+import { BackendClient } from "../backend/client.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
 export function createDeploymentsRouter(config: GatewayConfig): Router {
   const router = Router();
+  const backendClient = new BackendClient(config.backendUrl);
 
   // Ensure deployments directory structure exists
   for (const dir of [
@@ -538,7 +540,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     session.cleanup = cleanupListener;
     discoveryBuffers.set(sessionId, session);
 
-    runAgentDiscovery({
+    const agentParams = {
       source: resource?.name,
       repoPath: conn.repo_path || body.repo_path,
       repoUrl: conn.repo_url || body.repo_url,
@@ -548,7 +550,13 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       sshKeyPath: conn.key_path,
       env,
       sessionId,
-    }).catch((err) => {
+      backendClient,
+    };
+    discoveryParamsCache.set(sessionId, agentParams);
+    // Clean up params cache after 5 minutes
+    setTimeout(() => { discoveryParamsCache.delete(sessionId); }, 300_000);
+
+    runAgentDiscovery(agentParams).catch((err) => {
       console.error("[agent-discover] agent discovery failed:", err.message);
     });
 
@@ -614,21 +622,53 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
   });
 
   // Discovery agent answer endpoint (§072)
-  router.post("/discovery/answer/:sessionId", (req: any, res: any) => {
+  // Track discovery params per session so we can resume after answers
+  const discoveryParamsCache = new Map<string, any>();
+
+  router.post("/discovery/answer/:sessionId", async (req: any, res: any) => {
     const { field, value } = req.body || {};
+    const { sessionId } = req.params;
     if (!field || value === undefined) {
       return res.status(400).json({ error: "field and value are required" });
     }
-    // Store the answer — the agent will pick it up on next iteration
+    // Store the answer
     const answersDir = path.join(DEPLOYMENTS_DIR, "discovery", "answers");
     fs.mkdirSync(answersDir, { recursive: true });
-    const answerFile = path.join(answersDir, `${req.params.sessionId}.json`);
+    const answerFile = path.join(answersDir, `${sessionId}.json`);
     let answers: Record<string, string> = {};
     if (fs.existsSync(answerFile)) {
       try { answers = JSON.parse(fs.readFileSync(answerFile, "utf8")); } catch {}
     }
     answers[field] = value;
     fs.writeFileSync(answerFile, JSON.stringify(answers, null, 2));
+
+    // Emit a progress event for the user-provided answer so the SSE stream picks it up
+    const { emitDeploymentEvent: emit } = await import("./events.js");
+    emit("discovery_agent_progress", {
+      environment: "dev",
+      summary: `User provided: ${field}`,
+      details: {
+        field,
+        value,
+        confidence: { source: "user-provided", detail: "Provided by user", score: 1.0 },
+        completeness: null,
+        probe_name: "user_answer",
+        session_id: sessionId,
+      },
+    });
+
+    // Re-run discovery with the cached params + user answers to reach completion
+    const cachedParams = discoveryParamsCache.get(sessionId);
+    if (cachedParams) {
+      // Run a follow-up discovery pass in the background — it will emit completion
+      runAgentDiscovery({
+        ...cachedParams,
+        sessionId,
+      }).catch((err) => {
+        console.error("[discovery/answer] follow-up discovery failed:", err.message);
+      });
+    }
+
     res.json({ success: true, field, value });
   });
 
