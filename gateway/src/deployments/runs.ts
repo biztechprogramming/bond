@@ -3,9 +3,6 @@
 
 import { EventEmitter } from "events";
 import { ulid } from "ulid";
-import { writeReceipt, DeploymentReceipt } from "./receipts.js";
-import * as fs from "fs";
-import * as path from "path";
 
 export type RunStatus = "queued" | "running" | "success" | "failed" | "cancelled";
 export type RunType = "deploy" | "rollback" | "health-check";
@@ -93,72 +90,19 @@ function emitEvent(id: string, event: string, data: unknown): void {
   if (emitter) emitter.emit(event, data);
 }
 
-// Simulate a deployment execution with realistic steps
+/**
+ * Execute a deployment run. Platform-specific deployers must be wired in
+ * before this function will do real work.
+ */
 export async function executeDeploymentRun(
   run: DeploymentRun,
   deploymentsDir: string,
   config: any
 ): Promise<void> {
   updateRunStatus(run.id, "running");
-
-  const steps = [
-    { name: "validate", label: "Validating configuration", duration: 800 },
-    { name: "build", label: "Building application", duration: 2000 },
-    { name: "push", label: "Pushing artifacts", duration: 1500 },
-    { name: "deploy", label: "Deploying to environment", duration: 2000 },
-    { name: "health", label: "Running health checks", duration: 1000 },
-    { name: "monitor", label: "Setting up monitoring", duration: 500 },
-  ];
-
-  try {
-    for (const step of steps) {
-      emitEvent(run.id, "step", { step: step.name, status: "running", detail: step.label });
-      appendRunLog(run.id, `[${new Date().toISOString()}] ${step.label}...`);
-
-      // Simulate step execution
-      await new Promise((resolve) => setTimeout(resolve, step.duration));
-
-      // Check for cancellation
-      const current = runs.get(run.id);
-      if (current?.status === "cancelled") {
-        appendRunLog(run.id, `[${new Date().toISOString()}] Deployment cancelled.`);
-        emitEvent(run.id, "step", { step: step.name, status: "cancelled" });
-        emitEvent(run.id, "done", { status: "cancelled" });
-        return;
-      }
-
-      appendRunLog(run.id, `[${new Date().toISOString()}] ✓ ${step.label} complete`);
-      emitEvent(run.id, "step", { step: step.name, status: "done", detail: `${step.label} complete` });
-    }
-
-    updateRunStatus(run.id, "success");
-
-    // Write receipt
-    const receipt: DeploymentReceipt = {
-      receipt_id: `${run.script_id}-${run.environment}-${Date.now()}`,
-      type: run.run_type === "rollback" ? "manual_intervention" : "deployment",
-      script_id: run.script_id,
-      script_version: run.script_version,
-      environment: run.environment,
-      agent_id: run.triggered_by,
-      timestamp_start: run.started_at,
-      timestamp_end: run.finished_at || new Date().toISOString(),
-      duration_ms: Date.now() - new Date(run.started_at).getTime(),
-      status: "success",
-      rollback_triggered: false,
-      bug_ticket_filed: false,
-    };
-    try {
-      writeReceipt(deploymentsDir, receipt);
-      run.receipt_id = receipt.receipt_id;
-    } catch (_) {
-      // Receipt write failure is non-fatal
-    }
-
-    emitEvent(run.id, "done", { status: "success", receipt_id: receipt.receipt_id });
-  } catch (err: any) {
-    appendRunLog(run.id, `[${new Date().toISOString()}] ✗ Error: ${err.message}`);
-    updateRunStatus(run.id, "failed");
-    emitEvent(run.id, "done", { status: "failed", error: err.message });
-  }
+  const errorMsg = "Deployment execution not yet implemented — platform-specific deployers required";
+  appendRunLog(run.id, `[${new Date().toISOString()}] ✗ Error: ${errorMsg}`);
+  updateRunStatus(run.id, "failed");
+  emitEvent(run.id, "done", { status: "failed", error: errorMsg });
+  throw new Error(errorMsg);
 }

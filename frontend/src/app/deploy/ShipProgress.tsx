@@ -60,7 +60,6 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
   const [runId, setRunId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const simulateCleanupRef = useRef<(() => void) | null>(null);
 
   const handleProgressEvent = useCallback((event: {
     step?: string;
@@ -109,41 +108,6 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
     }
   }, []);
 
-  // Fallback: simulate progress when API is unavailable
-  const simulateProgress = useCallback(() => {
-    const stepIds = INITIAL_STEPS.map((s) => s.id);
-    let i = 0;
-    let cancelled = false;
-    const interval = setInterval(() => {
-      if (cancelled) return;
-      if (i >= stepIds.length) {
-        clearInterval(interval);
-        setCompleted(true);
-        setShowConfetti(true);
-        setTimeout(() => setShowConfetti(false), 4000);
-        return;
-      }
-      setSteps((prev) =>
-        prev.map((s, idx) => {
-          if (idx === i) return { ...s, status: "running" };
-          if (idx < i) return { ...s, status: "done" };
-          return s;
-        })
-      );
-      setTimeout(() => {
-        if (cancelled) return;
-        setSteps((prev) =>
-          prev.map((s, idx) => (idx === i ? { ...s, status: "done" } : s))
-        );
-        i++;
-      }, 800);
-    }, 1200);
-    simulateCleanupRef.current = () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
   useEffect(() => {
     // Start deployment execution via SSE
     const url = `${GATEWAY_API}/deployments/execute-plan`;
@@ -159,9 +123,10 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
       .then(async (res) => {
         if (!res.ok || !res.body) {
           // Try to get error details
-          const text = await res.text().catch(() => "");
+          const text = await res.text().catch(() => "unknown error");
           console.error("Deploy execute-plan failed:", res.status, text);
-          simulateProgress();
+          setLogLines((prev) => [...prev, `[ERROR] Deploy API returned ${res.status}: ${text}`]);
+          setFailed(true);
           return;
         }
         const reader = res.body.getReader();
@@ -208,16 +173,15 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
       })
       .catch((err) => {
         if (err.name === "AbortError") return;
-        // API not available — simulate progress for demo
-        console.warn("Deploy SSE connection failed, falling back to simulation:", err.message);
-        simulateProgress();
+        console.error("Deploy SSE connection failed:", err.message);
+        setLogLines((prev) => [...prev, `[ERROR] Deploy connection failed: ${err.message}`]);
+        setFailed(true);
       });
 
     return () => {
       controller.abort();
-      if (simulateCleanupRef.current) simulateCleanupRef.current();
     };
-  }, [plan, handleProgressEvent, simulateProgress]);
+  }, [plan, handleProgressEvent]);
 
   const handleCancel = async () => {
     if (!runId) return;

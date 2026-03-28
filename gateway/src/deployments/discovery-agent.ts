@@ -189,8 +189,14 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       params = { ...params, repoPath: clonedTmpDir };
     } catch (err: any) {
-      console.warn("[discovery-agent] Failed to clone repo:", err.message);
-      // Continue without repoPath — agent will fall back to asking questions
+      const cloneError = `Failed to clone repo ${params.repoUrl}: ${err.message}`;
+      console.error("[discovery-agent]", cloneError);
+      emitDeploymentEvent("discovery_agent_progress", {
+        environment: params.env,
+        summary: cloneError,
+        details: { error: cloneError, session_id: params.sessionId },
+      });
+      throw new Error(cloneError);
     }
   }
 
