@@ -49,6 +49,13 @@ export class TurnExecutor implements PipelineHandler {
           break;
         }
 
+        case "interim_message":
+          await context.emit("interim_message", {
+            content: event.data.content as string,
+            conversationId: message.conversationId,
+          });
+          break;
+
         case "tool_call":
           await context.emit("tool_call", {
             content: JSON.stringify(event.data),

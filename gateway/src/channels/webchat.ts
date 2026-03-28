@@ -323,6 +323,15 @@ export class WebChatChannel {
               conversationId,
             });
             break;
+          case "interim_message":
+            this.sendToConversation(conversationId, {
+              type: "interim_message",
+              sessionId,
+              content: data.content,
+              agentName: pipelineMessage.agentName || this.streamBuffers.get(conversationId)?.agentName,
+              conversationId,
+            } as any);
+            break;
           case "coding_agent_started":
             this.sendToConversation(conversationId, {
               type: "coding_agent_started", sessionId,

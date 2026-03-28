@@ -27,7 +27,8 @@ export interface GatewayMessage {
     | "coding_agent_started" | "coding_agent_diff" | "coding_agent_done" | "coding_agent_output"
     | "webhook_push"
     | "branch_changed"
-    | "skill_activated" | "skill_feedback";
+    | "skill_activated" | "skill_feedback"
+    | "interim_message";
   sessionId?: string;
   content?: string;
   error?: string;
