@@ -159,41 +159,46 @@ function buildUserPrompt(files: Map<string, string>): string {
 }
 
 /**
- * Call the Anthropic API to analyze project files.
- * Uses ANTHROPIC_API_KEY from environment.
+ * Resolve the backend URL from environment, matching the gateway's config pattern.
+ */
+function getBackendUrl(): string {
+  const url = process.env.BOND_BACKEND_URL;
+  if (url) return url;
+  const host = process.env.BOND_BACKEND_HOST || "127.0.0.1";
+  const port = process.env.BOND_BACKEND_PORT || "8000";
+  return `http://${host}:${port}`;
+}
+
+/**
+ * Call the backend's agent turn endpoint for LLM analysis.
+ * Uses Bond's existing LLM infrastructure (LiteLLM, provider config, key resolution).
  */
 async function callLLM(files: Map<string, string>): Promise<LLMAnalysisResponse> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY not set — cannot use LLM discovery");
-  }
-
+  const backendUrl = getBackendUrl();
   const userPrompt = buildUserPrompt(files);
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  // Combine system prompt and user prompt into a single message for the agent turn.
+  // The backend routes this through LiteLLM with proper API key resolution.
+  const message = `${SYSTEM_PROMPT}\n\n${userPrompt}`;
+
+  const response = await fetch(`${backendUrl}/api/v1/agent/turn`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+      message,
+      stream: false,
     }),
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`Anthropic API error ${response.status}: ${body}`);
+    throw new Error(`Backend LLM error ${response.status}: ${body}`);
   }
 
   const data = (await response.json()) as any;
-  const text = data?.content?.[0]?.text;
+  const text = data?.response;
   if (!text) {
-    throw new Error("Empty response from Anthropic API");
+    throw new Error("Empty response from backend LLM");
   }
 
   // Extract JSON from response (it might be wrapped in markdown code block)
