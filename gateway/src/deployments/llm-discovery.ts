@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { BackendClient } from "../backend/client.js";
 import type {
   FrameworkDetection,
   BuildStrategyDetection,
@@ -159,51 +160,27 @@ function buildUserPrompt(files: Map<string, string>): string {
 }
 
 /**
- * Resolve the backend URL from environment, matching the gateway's config pattern.
- */
-function getBackendUrl(): string {
-  const url = process.env.BOND_BACKEND_URL;
-  if (url) return url;
-  const host = process.env.BOND_BACKEND_HOST || "127.0.0.1";
-  const port = process.env.BOND_BACKEND_PORT || "8000";
-  return `http://${host}:${port}`;
-}
-
-/**
  * Call the backend's agent turn endpoint for LLM analysis.
- * Uses Bond's existing LLM infrastructure (LiteLLM, provider config, key resolution).
+ * Uses Bond's existing BackendClient → LiteLLM infrastructure.
  */
-async function callLLM(files: Map<string, string>): Promise<LLMAnalysisResponse> {
-  const backendUrl = getBackendUrl();
+async function callLLM(client: BackendClient, files: Map<string, string>): Promise<LLMAnalysisResponse> {
   const userPrompt = buildUserPrompt(files);
 
-  // Combine system prompt and user prompt into a single message for the agent turn.
-  // The backend routes this through LiteLLM with proper API key resolution.
-  const message = `${SYSTEM_PROMPT}\n\n${userPrompt}`;
+  const text = await client.llmComplete(
+    [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userPrompt },
+    ],
+    { max_tokens: 4096, temperature: 0.1 },
+  );
 
-  const response = await fetch(`${backendUrl}/api/v1/agent/turn`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      stream: false,
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Backend LLM error ${response.status}: ${body}`);
-  }
-
-  const data = (await response.json()) as any;
-  const text = data?.response;
   if (!text) {
-    throw new Error("Empty response from backend LLM");
+    throw new Error("Empty response from LLM");
   }
 
   // Extract JSON from response (it might be wrapped in markdown code block)
   const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, text];
-  const jsonStr = jsonMatch[1].trim();
+  const jsonStr = jsonMatch[1]!.trim();
   return JSON.parse(jsonStr);
 }
 
@@ -289,7 +266,7 @@ function convertToDiscoveryResult(llm: LLMAnalysisResponse): LLMDiscoveryResult 
  * Run LLM-powered discovery on a repository.
  * Returns null if the LLM is unavailable or fails (caller should fall back to static scanners).
  */
-export async function runLLMDiscovery(repoPath: string): Promise<LLMDiscoveryResult | null> {
+export async function runLLMDiscovery(repoPath: string, client: BackendClient): Promise<LLMDiscoveryResult | null> {
   try {
     const files = readProjectFiles(repoPath);
     if (files.size === 0) {
@@ -298,7 +275,7 @@ export async function runLLMDiscovery(repoPath: string): Promise<LLMDiscoveryRes
     }
 
     console.log(`[llm-discovery] Analyzing ${files.size} project files via LLM...`);
-    const llmResponse = await callLLM(files);
+    const llmResponse = await callLLM(client, files);
     const result = convertToDiscoveryResult(llmResponse);
     console.log(`[llm-discovery] LLM analysis complete: framework=${result.framework?.framework}, port=${result.app_port}`);
     return result;
