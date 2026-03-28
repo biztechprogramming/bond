@@ -494,7 +494,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   // Navigation
   const stepIdx = STEPS.findIndex(s => s.key === step);
   const canNext = () => {
-    if (step === "select-agent") return !!selectedAgentId && (!!selectedRepoId || agentMounts.length === 0);
+    if (step === "select-agent") return selectedAgentId.length > 0 && (selectedRepoId.length > 0 || agentMounts.length === 0);
     if (step === "discovery") return !!agentDiscoveryState || discoveryLayers.length > 0;
     if (step === "review") return true;
     if (step === "environment") return !!selectedEnv;
@@ -705,8 +705,6 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
         <AgentDiscoveryView
           agentId={selectedAgentId}
           repoId={selectedRepoId}
-          resourceId={selectedServerId || undefined}
-          repoUrl={selectedRepoUrl || undefined}
           environment={selectedEnv || "dev"}
           onComplete={(state, _completeness) => {
             setAgentDiscoveryState(state);
