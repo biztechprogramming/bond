@@ -29,6 +29,7 @@ import type {
   HealthEndpointDetection,
   UserQuestion,
 } from "./discovery-tools.js";
+import { runLLMDiscovery } from "./llm-discovery.js";
 import { writeManifest } from "./manifest.js";
 import { emitDeploymentEvent } from "./events.js";
 import type { DeploymentManifest, ManifestServer } from "./manifest.js";
@@ -193,11 +194,45 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
 
   try {
 
+  // Determine discovery mode based on available inputs
+  const discoveryMode = (params.repoPath && params.serverHost) ? "full"
+    : params.repoPath ? "repo-only"
+    : params.serverHost ? "server-only"
+    : "interview";
+
   emitDeploymentEvent("discovery_agent_started", {
     environment: params.env,
     summary: `Agent discovery started${params.repoPath ? ` for ${params.repoPath}` : ""}`,
-    details: { server_host: params.serverHost, repo_path: params.repoPath, session_id: sessionId },
+    details: { server_host: params.serverHost, repo_path: params.repoPath, session_id: sessionId, mode: discoveryMode },
   });
+
+  // Load any previously stored user answers (from /discovery/answer endpoint)
+  if (sessionId) {
+    const answersFile = path.join(os.homedir(), ".bond", "deployments", "discovery", "answers", `${sessionId}.json`);
+    if (fs.existsSync(answersFile)) {
+      try {
+        const storedAnswers = JSON.parse(fs.readFileSync(answersFile, "utf8"));
+        for (const [field, value] of Object.entries(storedAnswers)) {
+          state.user_answers[field] = String(value);
+          // Apply answers to findings
+          if (field === "app_port") {
+            state.findings.app_port = parseInt(String(value), 10) || undefined;
+          } else if (field === "target_server") {
+            state.findings.target_server = { host: String(value), port: 22, user: "deploy" };
+          } else if (field === "framework") {
+            state.findings.framework = { framework: String(value), confidence: 1.0, evidence: ["user"] };
+          } else if (field === "build_strategy") {
+            state.findings.build_strategy = { strategy: String(value), confidence: 1.0, evidence: ["user"] };
+          } else if (field === "source") {
+            state.findings.source = String(value);
+          } else {
+            (state.findings as any)[field] = value;
+          }
+          state.confidence[field] = { source: "user-provided", detail: "Provided by user", score: 1.0 };
+        }
+      } catch {}
+    }
+  }
 
   // Set source if provided
   if (params.source || params.repoUrl) {
@@ -215,11 +250,65 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
     state.confidence.target_server = { source: "user-provided", detail: "SSH connection provided", score: 1.0 };
   }
 
+  // ── Phase 0: LLM-powered analysis (if repo available) ──────────────────
+  if (params.repoPath) {
+    const llmProbe = await runProbe("llm_discovery", async () => {
+      const llmResult = await runLLMDiscovery(params.repoPath!);
+      if (!llmResult) return [];
+      const discovered: string[] = [];
+
+      if (llmResult.framework && !state.findings.framework) {
+        state.findings.framework = llmResult.framework;
+        state.confidence.framework = { source: "detected", detail: "LLM analysis", score: llmResult.framework.confidence };
+        discovered.push("framework");
+      }
+      if (llmResult.build_strategy && !state.findings.build_strategy) {
+        state.findings.build_strategy = llmResult.build_strategy;
+        state.confidence.build_strategy = { source: "detected", detail: "LLM analysis", score: llmResult.build_strategy.confidence };
+        discovered.push("build_strategy");
+      }
+      if (llmResult.app_port && !state.findings.app_port) {
+        state.findings.app_port = llmResult.app_port;
+        state.confidence.app_port = { source: "detected", detail: "LLM analysis", score: 0.9 };
+        discovered.push("app_port");
+      }
+      if (llmResult.ports && llmResult.ports.length > 0 && !state.findings.ports) {
+        state.findings.ports = llmResult.ports;
+        state.confidence.ports = { source: "detected", detail: `LLM found ${llmResult.ports.length} port(s)`, score: 0.9 };
+        discovered.push("ports");
+      }
+      if (llmResult.env_vars && llmResult.env_vars.length > 0 && !state.findings.env_vars) {
+        state.findings.env_vars = llmResult.env_vars;
+        state.confidence.env_vars = { source: "detected", detail: `LLM found ${llmResult.env_vars.length} env var(s)`, score: 0.9 };
+        discovered.push("env_vars");
+      }
+      if (llmResult.health_endpoint && !state.findings.health_endpoint) {
+        state.findings.health_endpoint = llmResult.health_endpoint;
+        state.confidence.health_endpoint = { source: "detected", detail: "LLM analysis", score: llmResult.health_endpoint.confidence };
+        discovered.push("health_endpoint");
+      }
+      if (llmResult.services && llmResult.services.length > 0 && !state.findings.services) {
+        state.findings.services = llmResult.services;
+        state.confidence.services = { source: "detected", detail: `LLM found ${llmResult.services.length} service(s)`, score: 0.9 };
+        discovered.push("services");
+      }
+
+      return discovered;
+    });
+    state.probes_run.push(llmProbe);
+    toolCalls++;
+
+    // Emit progress for each LLM-discovered field
+    for (const field of llmProbe.fields_discovered) {
+      emitProgress(params.env, state, field, sessionId, "llm_discovery");
+    }
+  }
+
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     if (Date.now() - startTime > TIMEOUT_MS) break;
     if (toolCalls >= MAX_TOOL_CALLS) break;
 
-    // Phase A/C: Run probes based on what's missing
+    // Phase A/C: Run probes based on what's missing (fallback for fields LLM didn't cover)
     const completeness = evaluateCompleteness(state);
     state.completeness = completeness;
 
@@ -240,7 +329,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "framework", sessionId);
+      emitProgress(params.env, state, "framework", sessionId, "detect_framework");
     }
 
     // Build strategy detection
@@ -257,7 +346,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "build_strategy", sessionId);
+      emitProgress(params.env, state, "build_strategy", sessionId, "detect_build_strategy");
     }
 
     // Port detection
@@ -277,7 +366,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "app_port", sessionId);
+      emitProgress(params.env, state, "app_port", sessionId, "detect_ports");
     }
 
     // Service detection
@@ -367,7 +456,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
   emitDeploymentEvent("discovery_agent_completed", {
     environment: params.env,
     summary: `Agent discovery completed: ${state.completeness.ready ? "ready" : "needs input"}`,
-    details: { completeness: state.completeness, probes_run: state.probes_run.length, tool_calls: toolCalls, session_id: sessionId },
+    details: { state, completeness: state.completeness, probes_run: state.probes_run.length, tool_calls: toolCalls, session_id: sessionId },
   });
 
   // Write manifest if we have enough data
@@ -434,11 +523,18 @@ async function runProbe(tool: string, fn: () => Promise<string[]>): Promise<Prob
   }
 }
 
-function emitProgress(env: string, state: DiscoveryState, field: string, sessionId?: string): void {
+function emitProgress(env: string, state: DiscoveryState, field: string, sessionId?: string, probeName?: string): void {
   emitDeploymentEvent("discovery_agent_progress", {
     environment: env,
     summary: `Discovered: ${field}`,
-    details: { field, confidence: state.confidence[field], session_id: sessionId },
+    details: {
+      field,
+      value: (state.findings as any)[field],
+      confidence: state.confidence[field],
+      completeness: evaluateCompleteness(state),
+      probe_name: probeName || field,
+      session_id: sessionId,
+    },
   });
 }
 
