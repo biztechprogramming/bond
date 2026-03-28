@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { GATEWAY_API } from "@/lib/config";
-import { useResources, useComponents, callReducer, useSettingsMap } from "@/hooks/useSpacetimeDB";
+import { useResources, useComponents, callReducer, useSettingsMap, useAgents, useAgentMounts } from "@/hooks/useSpacetimeDB";
 import AddServerModal from "./AddServerModal";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
@@ -10,7 +10,7 @@ import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
 // Types
 // ---------------------------------------------------------------------------
 
-type WizardStep = "select-server" | "discovery" | "review" | "environment" | "scripts" | "done";
+type WizardStep = "select-agent" | "discovery" | "review" | "environment" | "scripts" | "done";
 
 interface DiscoverStackWizardProps {
   environments: Array<{ name: string; display_name: string }>;
@@ -81,7 +81,7 @@ const LAYER_TO_COMPONENT_TYPE: Record<string, string> = {
 };
 
 const STEPS: { key: WizardStep; label: string }[] = [
-  { key: "select-server", label: "Select Server" },
+  { key: "select-agent", label: "Select Agent & Repo" },
   { key: "discovery", label: "Discovery" },
   { key: "review", label: "Review" },
   { key: "environment", label: "Environment" },
@@ -132,6 +132,8 @@ const WIZARD_PROGRESS_KEY = "deployment_wizard.progress";
 
 interface WizardProgress {
   step: WizardStep;
+  selectedAgentId: string;
+  selectedRepoId: string;
   selectedServerId: string;
   selectedRepoUrl: string;
   agentDiscoveryState: DiscoveryState | null;
@@ -148,9 +150,34 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
     try { return JSON.parse(raw) as WizardProgress; } catch { return null; }
   }, [settingsMap]);
 
-  const [step, setStep] = useState<WizardStep>(() => savedProgress?.step || "select-server");
+  const [step, setStep] = useState<WizardStep>(() => savedProgress?.step || "select-agent");
 
-  // Step 1: Select server — live from STDB subscriptions
+  // Agent selection
+  const agents = useAgents();
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(() => savedProgress?.selectedAgentId || "");
+  const [selectedRepoId, setSelectedRepoId] = useState<string>(() => savedProgress?.selectedRepoId || "");
+  const agentMounts = useAgentMounts(selectedAgentId);
+
+  // Auto-select if only one agent
+  useEffect(() => {
+    if (agents.length === 1 && !selectedAgentId) {
+      setSelectedAgentId(agents[0].id);
+    }
+  }, [agents, selectedAgentId]);
+
+  // Auto-select if only one mount
+  useEffect(() => {
+    if (agentMounts.length === 1 && !selectedRepoId) {
+      setSelectedRepoId(agentMounts[0].mountName || agentMounts[0].hostPath);
+    }
+  }, [agentMounts, selectedRepoId]);
+
+  // Reset repo when agent changes
+  useEffect(() => {
+    setSelectedRepoId("");
+  }, [selectedAgentId]);
+
+  // Server selection (optional)
   const stdbResources = useResources();
   const servers: ServerResource[] = stdbResources.map(r => {
     const state = (() => { try { return JSON.parse(r.stateJson || "{}"); } catch { return {}; } })();
@@ -220,6 +247,8 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   const saveProgress = useCallback((overrides?: Partial<WizardProgress>) => {
     const progress: WizardProgress = {
       step,
+      selectedAgentId,
+      selectedRepoId,
       selectedServerId,
       selectedRepoUrl,
       agentDiscoveryState,
@@ -232,7 +261,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       value: JSON.stringify(progress),
       keyType: "string",
     }));
-  }, [step, selectedServerId, selectedRepoUrl, agentDiscoveryState, selectedEnv]);
+  }, [step, selectedAgentId, selectedRepoId, selectedServerId, selectedRepoUrl, agentDiscoveryState, selectedEnv]);
 
   const clearProgress = useCallback(() => {
     callReducer(conn => conn.reducers.setSetting({
@@ -244,118 +273,79 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
 
   // Auto-save at step transitions
   useEffect(() => {
-    if (step !== "select-server") {
+    if (step !== "select-agent") {
       saveProgress();
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Discovery
-  const runDiscovery = useCallback(async () => {
-    if (!selectedServerId) return;
-    setDiscoveryRunning(true);
-    setDiscoveryError("");
+  // Discovery is now handled by AgentDiscoveryView in step 2
 
-    const progress: Record<string, "pending" | "running" | "done" | "error"> = {};
-    LAYER_KEYS.forEach(k => { progress[k] = "pending"; });
-    setDiscoveryProgress(progress);
-
-    let layerIdx = 0;
-    const progressTimer = setInterval(() => {
-      if (layerIdx < LAYER_KEYS.length) {
-        setDiscoveryProgress(prev => ({ ...prev, [LAYER_KEYS[layerIdx]]: "running" }));
-        if (layerIdx > 0) setDiscoveryProgress(prev => ({ ...prev, [LAYER_KEYS[layerIdx - 1]]: "done" }));
-        layerIdx++;
-      }
-    }, 800);
-
-    try {
-      const res = await fetch(`${GATEWAY_API}/broker/deploy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "discover", resource_id: selectedServerId }),
-      });
-
-      clearInterval(progressTimer);
-
-      if (res.ok) {
-        const data = await res.json();
-        const manifest = data.manifest || data;
-        setManifestName(manifest.application || selectedServerId);
-
-        const layers: DiscoveryLayer[] = [];
-        const rawLayers = manifest.layers || manifest;
-        for (const key of LAYER_KEYS) {
-          if (rawLayers[key]) {
-            layers.push({ label: LAYER_LABELS[key], key, items: flattenLayerItems(rawLayers[key]), raw: rawLayers[key] });
-          }
-        }
-        setDiscoveryLayers(layers);
-        setSecurityObs(manifest.security_observations || []);
-
-        const done: Record<string, "done"> = {};
-        LAYER_KEYS.forEach(k => { done[k] = "done"; });
-        setDiscoveryProgress(done);
-      } else {
-        clearInterval(progressTimer);
-        try {
-          const fallback = await fetch(`${GATEWAY_API}/deployments/discovery/manifests/${selectedServerId}`);
-          if (fallback.ok) {
-            const manifest = await fallback.json();
-            setManifestName(manifest.application || selectedServerId);
-            const layers: DiscoveryLayer[] = [];
-            const rawLayers = manifest.layers || {};
-            for (const key of LAYER_KEYS) {
-              if (rawLayers[key]) {
-                layers.push({ label: LAYER_LABELS[key], key, items: flattenLayerItems(rawLayers[key]), raw: rawLayers[key] });
-              }
-            }
-            setDiscoveryLayers(layers);
-            setSecurityObs(manifest.security_observations || []);
-            const done: Record<string, "done"> = {};
-            LAYER_KEYS.forEach(k => { done[k] = "done"; });
-            setDiscoveryProgress(done);
-          } else {
-            setDiscoveryError("Discovery failed. The endpoint may not be available yet.");
-            LAYER_KEYS.forEach(k => setDiscoveryProgress(prev => ({ ...prev, [k]: "error" })));
-          }
-        } catch {
-          setDiscoveryError("Discovery failed. The endpoint may not be available yet.");
-        }
-      }
-    } catch (err: any) {
-      clearInterval(progressTimer);
-      setDiscoveryError(err.message);
-    }
-    setDiscoveryRunning(false);
-  }, [selectedServerId]);
-
-  // Auto-start discovery when entering step 2
+  // Build draft components when entering step 3 — from agent discovery state or legacy layers
   useEffect(() => {
-    if (step === "discovery" && selectedServerId && discoveryLayers.length === 0 && !discoveryRunning) {
-      runDiscovery();
-    }
-  }, [step, selectedServerId, discoveryLayers.length, discoveryRunning, runDiscovery]);
-
-  // Build draft components when entering step 3
-  useEffect(() => {
-    if (step === "review" && discoveryLayers.length > 0 && draftComponents.length === 0) {
+    if (step === "review" && draftComponents.length === 0) {
       const drafts: DraftComponent[] = [];
-      for (const layer of discoveryLayers) {
-        for (const item of layer.items) {
-          const ctype = LAYER_TO_COMPONENT_TYPE[layer.key] || "application";
-          drafts.push({
-            name: item.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-"),
-            display_name: item.name,
-            component_type: ctype,
-            icon: "",
-            enabled: ctype === "application" || ctype === "web-server",
-            sourceLayer: layer.key,
-          });
+
+      if (agentDiscoveryState && Object.keys(agentDiscoveryState.findings || {}).length > 0) {
+        // Map agent discovery findings to draft components
+        const findings = agentDiscoveryState.findings as Record<string, any>;
+        // Build layers from findings for the review UI
+        const layers: DiscoveryLayer[] = [];
+        for (const key of LAYER_KEYS) {
+          if (findings[key]) {
+            layers.push({ label: LAYER_LABELS[key], key, items: flattenLayerItems(findings[key]), raw: findings[key] });
+          }
+        }
+        if (layers.length > 0) setDiscoveryLayers(layers);
+
+        // Also create drafts from any named items in findings
+        for (const layer of layers) {
+          for (const item of layer.items) {
+            const ctype = LAYER_TO_COMPONENT_TYPE[layer.key] || "application";
+            drafts.push({
+              name: item.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-"),
+              display_name: item.name,
+              component_type: ctype,
+              icon: "",
+              enabled: ctype === "application" || ctype === "web-server",
+              sourceLayer: layer.key,
+            });
+          }
+        }
+
+        // If no layer-based items, create components from top-level findings
+        if (drafts.length === 0) {
+          for (const [field, value] of Object.entries(findings)) {
+            if (typeof value === "string" && value && !LAYER_KEYS.includes(field as any)) {
+              drafts.push({
+                name: field.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-"),
+                display_name: `${field}: ${value}`,
+                component_type: "application",
+                icon: "",
+                enabled: true,
+                sourceLayer: "findings",
+              });
+            }
+          }
+        }
+      } else if (discoveryLayers.length > 0) {
+        // Legacy path: build from discovery layers
+        for (const layer of discoveryLayers) {
+          for (const item of layer.items) {
+            const ctype = LAYER_TO_COMPONENT_TYPE[layer.key] || "application";
+            drafts.push({
+              name: item.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-"),
+              display_name: item.name,
+              component_type: ctype,
+              icon: "",
+              enabled: ctype === "application" || ctype === "web-server",
+              sourceLayer: layer.key,
+            });
+          }
         }
       }
-      setDraftComponents(drafts);
+      if (drafts.length > 0) setDraftComponents(drafts);
     }
-  }, [step, discoveryLayers, draftComponents.length]);
+  }, [step, discoveryLayers, agentDiscoveryState, draftComponents.length]);
 
   // existingSystems now derived from useComponents() STDB hook above
 
@@ -504,8 +494,8 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   // Navigation
   const stepIdx = STEPS.findIndex(s => s.key === step);
   const canNext = () => {
-    if (step === "select-server") return !!selectedServerId;
-    if (step === "discovery") return discoveryLayers.length > 0;
+    if (step === "select-agent") return !!selectedAgentId && (!!selectedRepoId || agentMounts.length === 0);
+    if (step === "discovery") return !!agentDiscoveryState || discoveryLayers.length > 0;
     if (step === "review") return true;
     if (step === "environment") return !!selectedEnv;
     if (step === "scripts") return true;
@@ -553,120 +543,147 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       </div>
 
       {/* ================================================================ */}
-      {/* STEP 1: Select Server */}
+      {/* STEP 1: Select Agent & Repo */}
       {/* ================================================================ */}
-      {step === "select-server" && (
+      {step === "select-agent" && (
         <>
-          <h2 style={styles.title}>Select a Server</h2>
-          <p style={styles.subtitle}>Choose a connected server to run discovery on.</p>
+          <h2 style={styles.title}>Select Agent & Repository</h2>
+          <p style={styles.subtitle}>Choose an agent and repository to analyze for deployment configuration.</p>
 
-          {loadingServers ? (
-            <div style={{ color: "#8888a0", fontSize: "0.85rem" }}>Loading servers...</div>
-          ) : servers.length === 0 ? (
+          {/* Agent selection */}
+          <div style={styles.card}>
+            <span style={styles.cardTitle}>Agent</span>
+            {agents.length === 0 ? (
+              <p style={{ fontSize: "0.85rem", color: "#8888a0", margin: 0 }}>No agents available. Create one in Settings.</p>
+            ) : (
+              <select
+                style={styles.select}
+                value={selectedAgentId}
+                onChange={(e) => setSelectedAgentId(e.target.value)}
+              >
+                <option value="">Select an agent...</option>
+                {agents.filter(a => a.isActive).map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.displayName || agent.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Repo selection from agent mounts */}
+          {selectedAgentId && agentMounts.length > 0 && (
             <div style={styles.card}>
-              <p style={{ fontSize: "0.85rem", color: "#8888a0", margin: 0 }}>No servers connected yet.</p>
-            </div>
-          ) : (
-            <div style={styles.serverGrid}>
-              {servers.map(srv => {
-                const isSelected = selectedServerId === srv.id;
-                const dotColor = srv.status === "online" ? "#6cffa0" : srv.status === "degraded" ? "#ffcc6c" : srv.status === "offline" ? "#ff6c8a" : "#5a5a6e";
-                return (
-                  <div
-                    key={srv.id}
-                    style={{
-                      ...styles.serverCard,
-                      borderColor: isSelected ? "#6c8aff" : "#1e1e2e",
-                      backgroundColor: isSelected ? "#1a1a3e" : "#12121a",
-                    }}
-                    onClick={() => setSelectedServerId(srv.id)}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ color: dotColor, fontSize: "0.7rem" }}>{"\u25CF"}</span>
-                      <span style={{ fontSize: "0.9rem", fontWeight: 600, color: "#e0e0e8" }}>{srv.display_name}</span>
-                    </div>
-                    <div style={{ fontSize: "0.75rem", color: "#8888a0" }}>
-                      {srv.status}{srv.last_probed_at && srv.last_probed_at !== "0" && new Date(Number(srv.last_probed_at) || srv.last_probed_at).getTime() > 0 ? ` \u00b7 probed ${relativeTime(new Date(Number(srv.last_probed_at) || srv.last_probed_at).toISOString())}` : ""}
-                    </div>
-                  </div>
-                );
-              })}
+              <span style={styles.cardTitle}>Repository</span>
+              <select
+                style={styles.select}
+                value={selectedRepoId}
+                onChange={(e) => setSelectedRepoId(e.target.value)}
+              >
+                <option value="">Select a repository...</option>
+                {agentMounts.map((mount) => (
+                  <option key={mount.id} value={mount.mountName || mount.hostPath}>
+                    {mount.mountName || mount.hostPath}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
-          <button style={styles.addServerBtn} onClick={() => setShowAddModal(true)}>
-            + Add New Server
-          </button>
-
-          {/* --- Issue 1: Repository Selection --- */}
-          <h3 style={{ ...styles.title, fontSize: "0.95rem", marginTop: 12 }}>Repository (optional)</h3>
-          <p style={styles.subtitle}>Select a known repo or add a new URL for discovery.</p>
-          {knownRepoUrls.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {knownRepoUrls.map(url => (
-                <div
-                  key={url}
-                  style={{
-                    ...styles.serverCard,
-                    borderColor: selectedRepoUrl === url ? "#6c8aff" : "#1e1e2e",
-                    backgroundColor: selectedRepoUrl === url ? "#1a1a3e" : "#12121a",
-                    padding: 10,
-                  }}
-                  onClick={() => { setSelectedRepoUrl(url); setShowManualRepoInput(false); }}
-                >
-                  <span style={{ fontSize: "0.83rem", color: "#e0e0e8" }}>{url}</span>
-                </div>
-              ))}
-            </div>
+          {selectedAgentId && agentMounts.length === 0 && (
+            <p style={{ fontSize: "0.8rem", color: "#666680", fontStyle: "italic" }}>
+              No repos mounted on this agent. Discovery will analyze the agent&apos;s workspace.
+            </p>
           )}
-          {!showManualRepoInput ? (
-            <button style={styles.addServerBtn} onClick={() => setShowManualRepoInput(true)}>
-              + Add Repo URL
+
+          {/* Optional: Target server */}
+          <div style={styles.card}>
+            <span style={styles.cardTitle}>Target Server (optional)</span>
+            <p style={{ fontSize: "0.8rem", color: "#8888a0", margin: 0 }}>Optionally select a server to deploy to.</p>
+            {servers.length === 0 ? (
+              <p style={{ fontSize: "0.8rem", color: "#666680", fontStyle: "italic", margin: 0 }}>No servers connected.</p>
+            ) : (
+              <select
+                style={styles.select}
+                value={selectedServerId}
+                onChange={(e) => setSelectedServerId(e.target.value)}
+              >
+                <option value="">None</option>
+                {servers.map(srv => (
+                  <option key={srv.id} value={srv.id}>{srv.display_name} ({srv.status})</option>
+                ))}
+              </select>
+            )}
+            <button style={{ ...styles.addServerBtn, alignSelf: "flex-start" }} onClick={() => setShowAddModal(true)}>
+              + Add New Server
             </button>
-          ) : (
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input
-                style={{ ...styles.input, flex: 1 }}
-                value={manualRepoUrl}
-                onChange={e => setManualRepoUrl(e.target.value)}
-                placeholder="https://github.com/org/repo.git"
-                onKeyDown={e => {
-                  if (e.key === "Enter" && manualRepoUrl.trim()) {
-                    setSelectedRepoUrl(manualRepoUrl.trim());
-                    setShowManualRepoInput(false);
-                  }
-                }}
-              />
-              <button
-                style={{ ...styles.primaryButton, padding: "8px 14px", fontSize: "0.8rem" }}
-                onClick={() => {
-                  if (manualRepoUrl.trim()) {
-                    setSelectedRepoUrl(manualRepoUrl.trim());
-                    setShowManualRepoInput(false);
-                  }
-                }}
+          </div>
+
+          {/* Optional: Manual repo URL */}
+          <div style={styles.card}>
+            <span style={styles.cardTitle}>Repository URL (optional)</span>
+            <p style={{ fontSize: "0.8rem", color: "#8888a0", margin: 0 }}>Override with a specific repo URL for discovery.</p>
+            {knownRepoUrls.length > 0 && (
+              <select
+                style={styles.select}
+                value={selectedRepoUrl}
+                onChange={(e) => setSelectedRepoUrl(e.target.value)}
               >
-                Add
+                <option value="">None</option>
+                {knownRepoUrls.map(url => (
+                  <option key={url} value={url}>{url}</option>
+                ))}
+              </select>
+            )}
+            {!showManualRepoInput ? (
+              <button style={{ ...styles.addServerBtn, alignSelf: "flex-start" }} onClick={() => setShowManualRepoInput(true)}>
+                + Add Repo URL
               </button>
-              <button
-                style={{ ...styles.secondaryButton, padding: "8px 14px", fontSize: "0.8rem" }}
-                onClick={() => setShowManualRepoInput(false)}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-          {selectedRepoUrl && (
-            <div style={{ fontSize: "0.8rem", color: "#6cffa0" }}>
-              Selected: {selectedRepoUrl}
-              <button
-                style={{ marginLeft: 8, background: "none", border: "none", color: "#8888a0", cursor: "pointer", fontSize: "0.75rem" }}
-                onClick={() => setSelectedRepoUrl("")}
-              >
-                clear
-              </button>
-            </div>
-          )}
+            ) : (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  style={{ ...styles.input, flex: 1 }}
+                  value={manualRepoUrl}
+                  onChange={e => setManualRepoUrl(e.target.value)}
+                  placeholder="https://github.com/org/repo.git"
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && manualRepoUrl.trim()) {
+                      setSelectedRepoUrl(manualRepoUrl.trim());
+                      setShowManualRepoInput(false);
+                    }
+                  }}
+                />
+                <button
+                  style={{ ...styles.primaryButton, padding: "8px 14px", fontSize: "0.8rem" }}
+                  onClick={() => {
+                    if (manualRepoUrl.trim()) {
+                      setSelectedRepoUrl(manualRepoUrl.trim());
+                      setShowManualRepoInput(false);
+                    }
+                  }}
+                >
+                  Add
+                </button>
+                <button
+                  style={{ ...styles.secondaryButton, padding: "8px 14px", fontSize: "0.8rem" }}
+                  onClick={() => setShowManualRepoInput(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {selectedRepoUrl && (
+              <div style={{ fontSize: "0.8rem", color: "#6cffa0" }}>
+                Selected: {selectedRepoUrl}
+                <button
+                  style={{ marginLeft: 8, background: "none", border: "none", color: "#8888a0", cursor: "pointer", fontSize: "0.75rem" }}
+                  onClick={() => setSelectedRepoUrl("")}
+                >
+                  clear
+                </button>
+              </div>
+            )}
+          </div>
 
           {showAddModal && (
             <AddServerModal
@@ -686,8 +703,10 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       {/* ================================================================ */}
       {step === "discovery" && (
         <AgentDiscoveryView
-          resourceId={selectedServerId}
-          repoUrl={selectedRepoUrl}
+          agentId={selectedAgentId}
+          repoId={selectedRepoId}
+          resourceId={selectedServerId || undefined}
+          repoUrl={selectedRepoUrl || undefined}
           environment={selectedEnv || "dev"}
           onComplete={(state, _completeness) => {
             setAgentDiscoveryState(state);

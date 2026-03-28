@@ -96,6 +96,13 @@ describe("AgentDiscoveryView", () => {
     expect(mockHook.startDiscovery).toHaveBeenCalledWith("", "dev", undefined, "agent-1", "my-app");
   });
 
+  // --- Agent-first mode tests (agentId provided via props) ---
+
+  it("skips selector and starts discovery when agentId is provided", () => {
+    render(<AgentDiscoveryView {...defaultProps} agentId="agent-1" repoId="my-app" />);
+    expect(mockHook.startDiscovery).toHaveBeenCalledWith("", "dev", undefined, "agent-1", "my-app");
+  });
+
   // --- Legacy mode tests (resourceId provided) ---
 
   it("skips selector and starts discovery when resourceId is provided", () => {

@@ -12,6 +12,8 @@ import type { AgentRow, AgentMountRow } from "@/lib/spacetimedb-client";
 interface Props {
   resourceId?: string;
   repoUrl?: string;
+  agentId?: string;
+  repoId?: string;
   environment: string;
   onComplete: (state: DiscoveryState, completeness: CompletenessReport) => void;
   onCancel: () => void;
@@ -121,7 +123,7 @@ function AgentRepoSelector({
   );
 }
 
-export default function AgentDiscoveryView({ resourceId, repoUrl, environment, onComplete, onCancel }: Props) {
+export default function AgentDiscoveryView({ resourceId, repoUrl, agentId: propAgentId, repoId: propRepoId, environment, onComplete, onCancel }: Props) {
   const {
     status,
     discoveryMode,
@@ -142,7 +144,7 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
   const agents = useAgents();
 
   const [rawPanelOpen, setRawPanelOpen] = useState(true);
-  const [showSelector, setShowSelector] = useState(!resourceId);
+  const [showSelector, setShowSelector] = useState(!resourceId && !propAgentId);
 
   // Legacy mode: if resourceId is provided, start immediately (skip agent selection)
   useEffect(() => {
@@ -150,6 +152,14 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
       startDiscovery(resourceId, environment, repoUrl);
     }
   }, [resourceId, environment, repoUrl, startDiscovery]);
+
+  // Agent-first mode: if agentId is provided via props, start immediately (skip selector)
+  useEffect(() => {
+    if (propAgentId && environment && !resourceId) {
+      setShowSelector(false);
+      startDiscovery("", environment, repoUrl, propAgentId, propRepoId);
+    }
+  }, [propAgentId, propRepoId, environment, repoUrl, resourceId, startDiscovery]);
 
   const handleAgentStart = useCallback((agentId: string, repoId: string) => {
     setShowSelector(false);
