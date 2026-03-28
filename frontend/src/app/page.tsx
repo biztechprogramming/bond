@@ -313,6 +313,24 @@ export default function Home() {
             agentName: "Coding Agent",
           }]);
         } catch { /* ignore */ }
+      } else if (msg.type === "interim_message" && msg.content) {
+        // Say tool: finalize any current streaming content, add the interim
+        // message as its own bubble, then reset streaming so the thinking
+        // indicator reappears.
+        setStreamingContent((prev) => {
+          if (prev) {
+            setMessages((msgs) => [
+              ...msgs,
+              { role: "assistant", content: prev, agentName: msg.agentName || currentAgentNameRef.current || undefined },
+            ]);
+          }
+          return "";
+        });
+        setMessages((msgs) => [
+          ...msgs,
+          { role: "assistant", content: msg.content!, agentName: msg.agentName || currentAgentNameRef.current || undefined },
+        ]);
+        setAgentStatus("thinking");
       } else if (msg.type === "chunk" && msg.content) {
         setStreamingContent((prev) => prev + msg.content!);
         setAgentStatus("responding");

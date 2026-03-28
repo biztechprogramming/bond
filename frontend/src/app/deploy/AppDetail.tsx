@@ -10,6 +10,9 @@ import SecretManager from "../settings/deployment/SecretManager";
 import AlertRulesEditor from "../settings/deployment/AlertRulesEditor";
 import PipelineYamlEditor from "../settings/deployment/PipelineYamlEditor";
 import ScriptRegistration from "../settings/deployment/ScriptRegistration";
+import DeploymentRunsList from "./DeploymentRunsList";
+import type { DeploymentRun } from "./DeploymentRunsList";
+import { GATEWAY_API } from "@/lib/config";
 
 type Tab = "overview" | "pipelines" | "monitoring" | "timeline" | "logs";
 
@@ -22,6 +25,7 @@ export default function AppDetail({ appId, onBack }: Props) {
   const [tab, setTab] = useState<Tab>("overview");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [selectedOperator, setSelectedOperator] = useState<string | null>(null);
+  const [rollbackStatus, setRollbackStatus] = useState<string | null>(null);
 
   const components = useComponents();
   const componentResources = useComponentResources(appId);
@@ -48,6 +52,29 @@ export default function AppDetail({ appId, onBack }: Props) {
 
   const envNames = useMemo(() => envBindings.map((b) => b.cr.environment), [envBindings]);
   const primaryEnv = envNames[0] || "dev";
+
+  const handleRollback = async (run: DeploymentRun) => {
+    setRollbackStatus("rolling back...");
+    try {
+      const res = await fetch(`${GATEWAY_API}/deployments/rollback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          script_id: run.script_id,
+          environment: run.environment,
+          target_version: run.script_version,
+        }),
+      });
+      if (res.ok) {
+        setRollbackStatus("Rollback initiated");
+      } else {
+        setRollbackStatus("Rollback failed");
+      }
+    } catch {
+      setRollbackStatus("Rollback failed — network error");
+    }
+    setTimeout(() => setRollbackStatus(null), 3000);
+  };
 
   if (!component) {
     return (
@@ -96,6 +123,11 @@ export default function AppDetail({ appId, onBack }: Props) {
         ))}
       </div>
 
+      {/* Rollback status toast */}
+      {rollbackStatus && (
+        <div style={s.toast}>{rollbackStatus}</div>
+      )}
+
       {/* Tab content */}
       <div style={s.content}>
         {tab === "overview" && (
@@ -104,9 +136,9 @@ export default function AppDetail({ appId, onBack }: Props) {
             <div style={s.details}>
               <div style={s.detailRow}><span style={s.detailLabel}>Name</span><span>{component.name}</span></div>
               <div style={s.detailRow}><span style={s.detailLabel}>Type</span><span>{component.componentType}</span></div>
-              <div style={s.detailRow}><span style={s.detailLabel}>Framework</span><span>{component.framework || "—"}</span></div>
-              <div style={s.detailRow}><span style={s.detailLabel}>Runtime</span><span>{component.runtime || "—"}</span></div>
-              <div style={s.detailRow}><span style={s.detailLabel}>Repository</span><span style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{component.repositoryUrl || "—"}</span></div>
+              <div style={s.detailRow}><span style={s.detailLabel}>Framework</span><span>{component.framework || "\u2014"}</span></div>
+              <div style={s.detailRow}><span style={s.detailLabel}>Runtime</span><span>{component.runtime || "\u2014"}</span></div>
+              <div style={s.detailRow}><span style={s.detailLabel}>Repository</span><span style={{ fontFamily: "monospace", fontSize: "0.85rem" }}>{component.repositoryUrl || "\u2014"}</span></div>
               {component.description && (
                 <div style={s.detailRow}><span style={s.detailLabel}>Description</span><span>{component.description}</span></div>
               )}
@@ -133,6 +165,19 @@ export default function AppDetail({ appId, onBack }: Props) {
               </div>
             )}
 
+            {/* Deployments for this app */}
+            <div style={{ marginTop: "24px" }}>
+              <h4 style={{ ...s.sectionTitle, fontSize: "0.9rem" }}>Deployments</h4>
+              <DeploymentRunsList
+                environment={primaryEnv}
+                limit={10}
+                onRollback={handleRollback}
+                onViewLogs={(run) => {
+                  setTab("logs");
+                }}
+              />
+            </div>
+
             {/* Assign Operator */}
             <div style={{ marginTop: "20px" }}>
               <h4 style={{ ...s.sectionTitle, fontSize: "0.9rem" }}>Assign Operator (AI Agent)</h4>
@@ -157,6 +202,7 @@ export default function AppDetail({ appId, onBack }: Props) {
             <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
               <button style={s.actionBtn} onClick={() => setTab("pipelines")}>View Pipelines</button>
               <button style={s.actionBtn} onClick={() => setTab("logs")}>View Logs</button>
+              <button style={s.actionBtn} onClick={() => setTab("monitoring")}>Monitoring</button>
               <button style={{ ...s.actionBtn, ...s.advancedToggle }} onClick={() => setShowAdvanced(!showAdvanced)}>
                 {showAdvanced ? "Hide" : "Show"} Advanced
               </button>
@@ -253,4 +299,8 @@ const s: Record<string, React.CSSProperties> = {
   advancedGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" },
   advancedCard: { backgroundColor: "#0a0a0f", borderRadius: "8px", padding: "16px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
   advancedCardTitle: { fontSize: "0.9rem", fontWeight: 600, color: "#e0e0e8", margin: "0 0 12px 0" },
+  toast: {
+    padding: "8px 16px", backgroundColor: "rgba(108,138,255,0.15)", borderRadius: "6px",
+    color: "#6c8aff", fontSize: "0.85rem", marginBottom: "12px", textAlign: "center",
+  },
 };

@@ -104,6 +104,12 @@ export class CompletionHandler {
               content: parsed.content,
               conversationId: event.conversationId,
             });
+          } else if (parsed.type === "interim_message" && parsed.content) {
+            this.broadcastToConversation(event.conversationId, {
+              type: "interim_message",
+              content: parsed.content,
+              conversationId: event.conversationId,
+            });
           } else if (parsed.type === "done") {
             toolCallsMade = (parsed.tool_calls_made as number) ?? 0;
             messageId = (parsed.message_id as string) ?? "";

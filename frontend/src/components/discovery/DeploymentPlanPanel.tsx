@@ -8,6 +8,8 @@ interface Props {
   completeness: CompletenessReport | null;
   onEditField: (field: string, value: string) => void;
   onShipIt: () => void;
+  onForceComplete?: () => void;
+  isDiscovering?: boolean;
 }
 
 const REQUIRED_FIELDS = ["source", "framework", "build_strategy", "target_server", "app_port"];
@@ -164,12 +166,29 @@ function ProgressBar({ label, value }: { label: string; value: number }) {
   );
 }
 
-export default function DeploymentPlanPanel({ state, completeness, onEditField, onShipIt }: Props) {
+export default function DeploymentPlanPanel({ state, completeness, onEditField, onShipIt, onForceComplete, isDiscovering }: Props) {
+  const [waitTime, setWaitTime] = useState(0);
+
+  // Track how long we've been waiting without state
+  React.useEffect(() => {
+    if (state || !isDiscovering) {
+      setWaitTime(0);
+      return;
+    }
+    const interval = setInterval(() => setWaitTime((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, [state, isDiscovering]);
+
   if (!state) {
     return (
       <div style={styles.container}>
         <h3 style={styles.heading}>Deployment Plan</h3>
         <p style={styles.placeholder}>Waiting for discovery data...</p>
+        {waitTime >= 10 && onForceComplete && (
+          <button style={styles.continueBtn} onClick={onForceComplete}>
+            Continue Anyway
+          </button>
+        )}
       </div>
     );
   }
@@ -192,13 +211,12 @@ export default function DeploymentPlanPanel({ state, completeness, onEditField, 
       <button
         style={{
           ...styles.shipBtn,
-          opacity: completeness?.ready ? 1 : 0.4,
-          cursor: completeness?.ready ? "pointer" : "not-allowed",
+          opacity: completeness?.ready ? 1 : 0.6,
+          cursor: "pointer",
         }}
-        disabled={!completeness?.ready}
         onClick={onShipIt}
       >
-        Ship It
+        {completeness?.ready ? "Ship It" : "Ship with Partial Data"}
       </button>
     </div>
   );
@@ -281,6 +299,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.7rem",
     padding: "2px 8px",
     cursor: "pointer",
+  },
+  continueBtn: {
+    backgroundColor: "#2a2a3e",
+    color: "#e0e0e8",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#6c8aff",
+    borderRadius: 8,
+    padding: "10px 20px",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    marginTop: 8,
   },
   shipBtn: {
     backgroundColor: "#6cffa0",

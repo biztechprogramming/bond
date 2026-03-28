@@ -6,10 +6,9 @@ import AppDetail from "./AppDetail";
 import OneClickShipWizard from "./OneClickShipWizard";
 import ShipProgress from "./ShipProgress";
 import InfraMap from "../settings/deployment/InfraMap";
+import DeploymentRunsList from "./DeploymentRunsList";
 
-const NEW_DEPLOY_UI = true;
-
-export type DeployViewMode = "dashboard" | "app-detail" | "new-deploy" | "deploy-progress" | "infrastructure" | "settings";
+export type DeployViewMode = "dashboard" | "app-detail" | "new-deploy" | "deploy-progress" | "infrastructure" | "deployments" | "settings";
 
 interface DeploymentPlan {
   id: string;
@@ -21,20 +20,12 @@ interface DeploymentPlan {
   [key: string]: unknown;
 }
 
+type TopTab = "dashboard" | "deployments" | "infrastructure";
+
 export default function DeployPage() {
   const [view, setView] = useState<DeployViewMode>("dashboard");
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [activePlan, setActivePlan] = useState<DeploymentPlan | null>(null);
-
-  if (!NEW_DEPLOY_UI) {
-    return (
-      <div style={s.container}>
-        <div style={s.fallback}>
-          New deploy UI is disabled. Visit <a href="/settings#deployment" style={{ color: "#6c8aff" }}>Settings &rarr; Deployment</a>.
-        </div>
-      </div>
-    );
-  }
 
   const navigateTo = (mode: DeployViewMode, appId?: string) => {
     if (appId) setSelectedAppId(appId);
@@ -45,6 +36,19 @@ export default function DeployPage() {
     setActivePlan(plan);
     setView("deploy-progress");
   };
+
+  // Map top-level tabs to view modes
+  const topTabs: { id: TopTab; label: string }[] = [
+    { id: "dashboard", label: "Apps" },
+    { id: "deployments", label: "Deployments" },
+    { id: "infrastructure", label: "Infrastructure" },
+  ];
+
+  const activeTopTab: TopTab | null =
+    view === "dashboard" ? "dashboard" :
+    view === "deployments" ? "deployments" :
+    view === "infrastructure" ? "infrastructure" :
+    null;
 
   const renderContent = () => {
     switch (view) {
@@ -79,6 +83,30 @@ export default function DeployPage() {
         );
       case "infrastructure":
         return <InfraMap onAddServer={() => setView("new-deploy")} />;
+      case "deployments":
+        return (
+          <div>
+            <h2 style={s.sectionHeading}>Recent Deployments</h2>
+            <DeploymentRunsList
+              limit={50}
+              onViewLogs={(run) => {
+                // Navigate to app detail for this run's app
+                navigateTo("app-detail", run.script_id);
+              }}
+              onRollback={(run) => {
+                fetch(`/api/v1/deployments/rollback`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    script_id: run.script_id,
+                    environment: run.environment,
+                    target_version: run.script_version,
+                  }),
+                }).catch(() => {});
+              }}
+            />
+          </div>
+        );
       case "settings":
         return (
           <div style={s.placeholder}>
@@ -96,13 +124,13 @@ export default function DeployPage() {
         <a href="/" style={s.backLink}>&larr; Chat</a>
         <h1 style={s.title}>Deploy</h1>
         <nav style={s.nav}>
-          {(["dashboard", "infrastructure", "settings"] as const).map((tab) => (
+          {topTabs.map((tab) => (
             <button
-              key={tab}
-              style={view === tab ? { ...s.navBtn, ...s.navBtnActive } : s.navBtn}
-              onClick={() => setView(tab)}
+              key={tab.id}
+              style={activeTopTab === tab.id ? { ...s.navBtn, ...s.navBtnActive } : s.navBtn}
+              onClick={() => setView(tab.id)}
             >
-              {tab === "dashboard" ? "Apps" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab.label}
             </button>
           ))}
         </nav>
@@ -124,6 +152,6 @@ const s: Record<string, React.CSSProperties> = {
   },
   navBtnActive: { color: "#6c8aff", borderColor: "#6c8aff", backgroundColor: "rgba(108,138,255,0.08)" },
   content: { flex: 1, overflowY: "auto", padding: "24px", minHeight: 0 },
-  fallback: { padding: "40px", textAlign: "center", color: "#8888a0" },
   placeholder: { padding: "40px", textAlign: "center", color: "#8888a0" },
+  sectionHeading: { fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e8", margin: "0 0 16px 0" },
 };

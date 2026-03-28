@@ -805,7 +805,7 @@ async def handle_say(
     return {
         "status": "said",
         "_sse_event": {
-            "event": "chunk",
+            "event": "interim_message",
             "data": {"content": message},
         },
     }
