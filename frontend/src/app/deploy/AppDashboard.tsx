@@ -4,6 +4,9 @@ import React, { useMemo } from "react";
 import { useComponents, useEnvironments, useResources, useAlerts, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
 import { getComponentResources, type ComponentResourceRow } from "@/lib/spacetimedb-client";
 import AppCard, { type AppInfo } from "./AppCard";
+import DeploymentRunsList from "./DeploymentRunsList";
+import type { DeploymentRun } from "./DeploymentRunsList";
+import { GATEWAY_API } from "@/lib/config";
 
 interface Props {
   onSelectApp: (id: string) => void;
@@ -65,6 +68,18 @@ export default function AppDashboard({ onSelectApp, onNewDeploy }: Props) {
       });
   }, [components, crMap, alerts, environments]);
 
+  const handleRollback = (run: DeploymentRun) => {
+    fetch(`${GATEWAY_API}/deployments/rollback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        script_id: run.script_id,
+        environment: run.environment,
+        target_version: run.script_version,
+      }),
+    }).catch(() => {});
+  };
+
   return (
     <div>
       <div style={s.toolbar}>
@@ -88,6 +103,16 @@ export default function AppDashboard({ onSelectApp, onNewDeploy }: Props) {
           ))}
         </div>
       )}
+
+      {/* Recent Deployments */}
+      <div style={s.recentSection}>
+        <h3 style={s.recentHeading}>Recent Deployments</h3>
+        <DeploymentRunsList
+          limit={10}
+          onRollback={handleRollback}
+          onViewLogs={(run) => onSelectApp(run.script_id)}
+        />
+      </div>
     </div>
   );
 }
@@ -106,4 +131,6 @@ const s: Record<string, React.CSSProperties> = {
   emptyIcon: { fontSize: "3rem", marginBottom: "12px" },
   emptyTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e8", margin: "0 0 8px 0" },
   emptyDesc: { fontSize: "0.9rem", color: "#8888a0", margin: "0 0 20px 0" },
+  recentSection: { marginTop: "32px", paddingTop: "24px", borderTopWidth: "1px", borderTopStyle: "solid", borderTopColor: "#1e1e2e" },
+  recentHeading: { fontSize: "1rem", fontWeight: 600, color: "#e0e0e8", margin: "0 0 12px 0" },
 };

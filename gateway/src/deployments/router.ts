@@ -51,6 +51,7 @@ import { createComponentsRouter } from "./components-router.js";
 import { createFolderBrowserRouter } from "./folder-browser.js";
 import { createAllocationRouter } from "./allocation-router.js";
 import { collectLogs } from "./log-stream.js";
+import { createRun, getRun, listRuns, updateRunStatus, getRunEmitter, executeDeploymentRun } from "./runs.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -261,6 +262,156 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       console.error("[quick-deploy] failed:", err.message);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // --- Deployment Runs ---
+  const userAuth = (req: any, res: any, next: any) => {
+    const identity = extractUserIdentity(req.headers.authorization);
+    if (!identity) return res.status(403).json({ error: "User auth required" });
+    (req as any).userId = identity.user_id;
+    next();
+  };
+
+  // POST /runs — start a deployment run
+  router.post("/runs", userAuth, async (req: any, res: any) => {
+    const { script_id, script_version, environment, resource_id, run_type, plan } = req.body;
+    const userId = (req as any).userId || "anonymous";
+    const run = createRun({
+      script_id: script_id || "quick-deploy",
+      script_version: script_version || "1",
+      environment: environment || "dev",
+      resource_id,
+      triggered_by: userId,
+      run_type: run_type || "deploy",
+      plan,
+    });
+    // Start execution in background
+    executeDeploymentRun(run, DEPLOYMENTS_DIR, config).catch(() => {});
+    res.json(run);
+  });
+
+  // GET /runs — list runs
+  router.get("/runs", async (_req: any, res: any) => {
+    const env = _req.query.environment as string | undefined;
+    res.json(listRuns(env));
+  });
+
+  // GET /runs/:id — get run status
+  router.get("/runs/:id", async (req: any, res: any) => {
+    const run = getRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Run not found" });
+    res.json(run);
+  });
+
+  // GET /runs/:id/stream — SSE stream of run output
+  router.get("/runs/:id/stream", (req: any, res: any) => {
+    const run = getRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Run not found" });
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    // Send current state
+    res.write(`data: ${JSON.stringify({ type: "init", run })}\n\n`);
+
+    const emitter = getRunEmitter(run.id);
+    if (!emitter) {
+      res.write(`data: ${JSON.stringify({ type: "done", status: run.status })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const onStep = (data: any) => res.write(`data: ${JSON.stringify({ type: "step", ...data })}\n\n`);
+    const onLog = (data: any) => res.write(`data: ${JSON.stringify({ type: "log", ...data })}\n\n`);
+    const onStatus = (data: any) => res.write(`data: ${JSON.stringify({ type: "status", ...data })}\n\n`);
+    const onDone = (data: any) => {
+      res.write(`data: ${JSON.stringify({ type: "done", ...data })}\n\n`);
+      cleanup();
+      res.end();
+    };
+
+    emitter.on("step", onStep);
+    emitter.on("log", onLog);
+    emitter.on("status", onStatus);
+    emitter.on("done", onDone);
+
+    const heartbeat = setInterval(() => {
+      res.write(`: heartbeat\n\n`);
+    }, 15000);
+
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      emitter.off("step", onStep);
+      emitter.off("log", onLog);
+      emitter.off("status", onStatus);
+      emitter.off("done", onDone);
+    };
+
+    req.on("close", cleanup);
+  });
+
+  // POST /runs/:id/cancel — cancel a run
+  router.post("/runs/:id/cancel", userAuth, async (req: any, res: any) => {
+    const run = getRun(req.params.id);
+    if (!run) return res.status(404).json({ error: "Run not found" });
+    if (run.status !== "queued" && run.status !== "running") {
+      return res.status(400).json({ error: "Run is not active" });
+    }
+    updateRunStatus(run.id, "cancelled");
+    res.json({ ok: true });
+  });
+
+  // POST /rollback — initiate rollback
+  router.post("/rollback", userAuth, async (req: any, res: any) => {
+    const { receipt_id, environment } = req.body;
+    const userId = (req as any).userId || "anonymous";
+    const run = createRun({
+      script_id: receipt_id || "rollback",
+      script_version: "1",
+      environment: environment || "dev",
+      triggered_by: userId,
+      run_type: "rollback",
+    });
+    executeDeploymentRun(run, DEPLOYMENTS_DIR, config).catch(() => {});
+    res.json(run);
+  });
+
+  // POST /execute-plan — SSE stream deployment from a plan (legacy endpoint for ShipProgress)
+  router.post("/execute-plan", userAuth, async (req: any, res: any) => {
+    const plan = req.body;
+    const userId = (req as any).userId || "anonymous";
+    const run = createRun({
+      script_id: plan?.appName || "quick-deploy",
+      script_version: "1",
+      environment: plan?.environment || "dev",
+      triggered_by: userId,
+      run_type: "deploy",
+      plan,
+    });
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    const emitter = getRunEmitter(run.id);
+    if (emitter) {
+      emitter.on("step", (data: any) => res.write(`data: ${JSON.stringify(data)}\n\n`));
+      emitter.on("log", (data: any) => res.write(`data: ${JSON.stringify({ ...data, type: "log" })}\n\n`));
+      emitter.on("done", (data: any) => {
+        res.write(`data: ${JSON.stringify({ ...data, completed: data.status === "success", error: data.status === "failed" })}\n\n`);
+        res.end();
+      });
+    }
+
+    // Start execution
+    executeDeploymentRun(run, DEPLOYMENTS_DIR, config).catch(() => {});
   });
 
   // Build detection endpoint

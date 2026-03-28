@@ -1,15 +1,16 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useResources } from "@/hooks/useSpacetimeDB";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
+import { GATEWAY_API } from "@/lib/config";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type WizardStep = "connect" | "discovery" | "ship";
+type WizardStep = "connect" | "discovery" | "allocate" | "ship";
 type ConnectMode = "repo" | "server";
 
 interface DeploymentPlan {
@@ -22,7 +23,24 @@ interface DeploymentPlan {
   buildCmd?: string;
   startCmd?: string;
   monitoringEnabled?: boolean;
+  allocation?: AllocationData;
   [key: string]: unknown;
+}
+
+interface AllocationData {
+  base_port: number;
+  app_dir: string;
+  data_dir: string;
+  log_dir: string;
+  config_dir: string;
+  service_ports: Record<string, number>;
+}
+
+interface AllocationConflict {
+  field: string;
+  message: string;
+  severity: "error" | "warning";
+  suggestion?: string;
 }
 
 interface Props {
@@ -154,7 +172,209 @@ function ConnectStep({
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Ship
+// Step 3: Allocate
+// ---------------------------------------------------------------------------
+
+function AllocationStep({
+  connectData,
+  plan,
+  onNext,
+  onBack,
+}: {
+  connectData: { repoUrl?: string; serverAddress?: string; sshKeyId?: string };
+  plan: DeploymentPlan;
+  onNext: (allocation: AllocationData) => void;
+  onBack: () => void;
+}) {
+  const [basePort, setBasePort] = useState(3000);
+  const [appDir, setAppDir] = useState("/opt/apps");
+  const [dataDir, setDataDir] = useState("/var/data");
+  const [logDir, setLogDir] = useState("/var/log/apps");
+  const [configDir, setConfigDir] = useState("/etc/apps");
+  const [servicePorts, setServicePorts] = useState<Record<string, number>>({
+    app: 3000,
+    postgres: 5432,
+    redis: 6379,
+  });
+  const [conflicts, setConflicts] = useState<AllocationConflict[]>([]);
+  const [loading, setLoading] = useState(true);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fetch suggested defaults on mount
+  useEffect(() => {
+    const resourceId = connectData.serverAddress || connectData.repoUrl || "";
+    const appName = plan.repoUrl?.split("/").pop()?.replace(".git", "") || plan.serverAddress || "app";
+    fetch(`${GATEWAY_API}/deployments/allocations/suggest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resource_id: resourceId,
+        app_name: appName,
+        environment_name: plan.environment || "dev",
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) {
+          if (data.base_port) setBasePort(data.base_port);
+          if (data.app_dir) setAppDir(data.app_dir);
+          if (data.data_dir) setDataDir(data.data_dir);
+          if (data.log_dir) setLogDir(data.log_dir);
+          if (data.config_dir) setConfigDir(data.config_dir);
+          if (data.service_ports) setServicePorts(data.service_ports);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [connectData, plan]);
+
+  // Check conflicts on field changes (debounced)
+  const checkConflicts = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetch(`${GATEWAY_API}/deployments/allocations/check-conflicts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_port: basePort,
+          app_dir: appDir,
+          data_dir: dataDir,
+          log_dir: logDir,
+          config_dir: configDir,
+          service_ports: servicePorts,
+          environment_name: plan.environment || "dev",
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : { conflicts: [] }))
+        .then((data) => setConflicts(Array.isArray(data.conflicts) ? data.conflicts : []))
+        .catch(() => setConflicts([]));
+    }, 500);
+  }, [basePort, appDir, dataDir, logDir, configDir, servicePorts, plan.environment]);
+
+  useEffect(() => {
+    if (!loading) checkConflicts();
+  }, [checkConflicts, loading]);
+
+  const handleServicePortChange = (key: string, value: number) => {
+    setServicePorts((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const hasErrors = conflicts.some((c) => c.severity === "error");
+
+  if (loading) {
+    return (
+      <div style={ws.scanning}>
+        <div style={ws.spinner} />
+        <p style={ws.scanText}>Fetching allocation defaults...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <h3 style={ws.stepTitle}>Port & Directory Allocation</h3>
+      <p style={{ color: "#8888a0", fontSize: "0.85rem", marginBottom: "20px" }}>
+        Configure ports and directories for this deployment. Defaults are suggested based on existing allocations.
+      </p>
+
+      {/* Conflicts / Warnings */}
+      {conflicts.length > 0 && (
+        <div style={{ marginBottom: "16px", display: "flex", flexDirection: "column", gap: "6px" }}>
+          {conflicts.map((c, i) => (
+            <div
+              key={i}
+              style={{
+                padding: "8px 12px",
+                borderRadius: "6px",
+                fontSize: "0.83rem",
+                backgroundColor: c.severity === "error" ? "rgba(255,108,138,0.1)" : "rgba(255,204,108,0.1)",
+                borderWidth: "1px",
+                borderStyle: "solid",
+                borderColor: c.severity === "error" ? "#ff6c8a44" : "#ffcc6c44",
+                color: c.severity === "error" ? "#ff6c8a" : "#ffcc6c",
+              }}
+            >
+              <strong>{c.field}:</strong> {c.message}
+              {c.suggestion && <span style={{ color: "#8888a0", marginLeft: 8 }}>Suggestion: {c.suggestion}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Base Port */}
+      <div style={ws.field}>
+        <label style={ws.label}>Base Port</label>
+        <input
+          style={ws.input}
+          type="number"
+          value={basePort}
+          onChange={(e) => setBasePort(parseInt(e.target.value) || 0)}
+        />
+      </div>
+
+      {/* Directories */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+        <div style={ws.field}>
+          <label style={ws.label}>App Directory</label>
+          <input style={ws.input} value={appDir} onChange={(e) => setAppDir(e.target.value)} />
+        </div>
+        <div style={ws.field}>
+          <label style={ws.label}>Data Directory</label>
+          <input style={ws.input} value={dataDir} onChange={(e) => setDataDir(e.target.value)} />
+        </div>
+        <div style={ws.field}>
+          <label style={ws.label}>Log Directory</label>
+          <input style={ws.input} value={logDir} onChange={(e) => setLogDir(e.target.value)} />
+        </div>
+        <div style={ws.field}>
+          <label style={ws.label}>Config Directory</label>
+          <input style={ws.input} value={configDir} onChange={(e) => setConfigDir(e.target.value)} />
+        </div>
+      </div>
+
+      {/* Service Ports */}
+      <div style={{ marginBottom: "16px" }}>
+        <label style={{ ...ws.label, marginBottom: "10px", display: "block" }}>Service Ports</label>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+          {Object.entries(servicePorts).map(([key, port]) => (
+            <div key={key} style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <span style={{ color: "#8888a0", fontSize: "0.85rem", minWidth: "80px", fontWeight: 500 }}>{key}</span>
+              <input
+                style={{ ...ws.input, width: "120px" }}
+                type="number"
+                value={port}
+                onChange={(e) => handleServicePortChange(key, parseInt(e.target.value) || 0)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={ws.actions}>
+        <button style={ws.cancelBtn} onClick={onBack}>&larr; Back</button>
+        <button
+          style={{ ...ws.primaryBtn, opacity: hasErrors ? 0.5 : 1 }}
+          disabled={hasErrors}
+          onClick={() =>
+            onNext({
+              base_port: basePort,
+              app_dir: appDir,
+              data_dir: dataDir,
+              log_dir: logDir,
+              config_dir: configDir,
+              service_ports: servicePorts,
+            })
+          }
+        >
+          Continue
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 4: Ship
 // ---------------------------------------------------------------------------
 
 function ShipStep({
@@ -172,12 +392,17 @@ function ShipStep({
       <div style={ws.planSummary}>
         <p>Deploying <strong>{plan.repoUrl || plan.serverAddress}</strong></p>
         <p>{plan.framework} &middot; {plan.buildStrategy} &middot; {plan.environment}</p>
+        {plan.allocation && (
+          <p style={{ fontSize: "0.85rem", color: "#6c8aff" }}>
+            Port {plan.allocation.base_port} &middot; {plan.allocation.app_dir}
+          </p>
+        )}
       </div>
       <button style={ws.shipBtn} onClick={onShip}>
         Ship It
       </button>
       <div style={ws.actions}>
-        <button style={ws.cancelBtn} onClick={onBack}>&larr; Back to Plan</button>
+        <button style={ws.cancelBtn} onClick={onBack}>&larr; Back to Allocation</button>
       </div>
     </div>
   );
@@ -191,6 +416,8 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
   const [step, setStep] = useState<WizardStep>("connect");
   const [connectData, setConnectData] = useState<{ repoUrl?: string; serverAddress?: string; sshKeyId?: string }>({});
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
+  const [allocation, setAllocation] = useState<AllocationData | null>(null);
+
   const handleConnect = useCallback((_mode: ConnectMode, data: typeof connectData) => {
     setConnectData(data);
     setStep("discovery");
@@ -198,17 +425,42 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
 
   const handlePlanReady = useCallback((p: DeploymentPlan) => {
     setPlan(p);
-    setStep("ship");
+    setStep("allocate");
   }, []);
 
+  const handleAllocationComplete = useCallback((alloc: AllocationData) => {
+    setAllocation(alloc);
+    if (plan) {
+      setPlan({ ...plan, allocation: alloc });
+    }
+    setStep("ship");
+  }, [plan]);
+
   const handleShip = useCallback(() => {
-    if (plan) onComplete(plan);
-  }, [plan, onComplete]);
+    if (!plan) return;
+    const finalPlan = { ...plan, allocation: allocation || undefined };
+
+    // Save allocation before shipping
+    if (allocation) {
+      fetch(`${GATEWAY_API}/deployments/allocations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...allocation,
+          environment_name: plan.environment || "dev",
+          app_name: plan.repoUrl?.split("/").pop()?.replace(".git", "") || plan.serverAddress || "app",
+        }),
+      }).catch(() => {});
+    }
+
+    onComplete(finalPlan);
+  }, [plan, allocation, onComplete]);
 
   // Progress indicator
   const steps: { id: WizardStep; label: string }[] = [
     { id: "connect", label: "Connect" },
     { id: "discovery", label: "Discover" },
+    { id: "allocate", label: "Allocate" },
     { id: "ship", label: "Ship" },
   ];
 
@@ -240,20 +492,28 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
           resourceId={connectData.repoUrl || connectData.serverAddress || ""}
           environment="dev"
           onComplete={(state: DiscoveryState, _completeness: CompletenessReport) => {
-            const plan: DeploymentPlan = {
+            const newPlan: DeploymentPlan = {
               id: crypto.randomUUID(),
               ...connectData,
               framework: state.findings.framework?.framework,
               buildStrategy: state.findings.build_strategy?.strategy,
               environment: "dev",
             };
-            handlePlanReady(plan);
+            handlePlanReady(newPlan);
           }}
           onCancel={() => setStep("connect")}
         />
       )}
+      {step === "allocate" && plan && (
+        <AllocationStep
+          connectData={connectData}
+          plan={plan}
+          onNext={handleAllocationComplete}
+          onBack={() => setStep("discovery")}
+        />
+      )}
       {step === "ship" && plan && (
-        <ShipStep plan={plan} onShip={handleShip} onBack={() => setStep("discovery")} />
+        <ShipStep plan={plan} onShip={handleShip} onBack={() => setStep("allocate")} />
       )}
     </div>
   );

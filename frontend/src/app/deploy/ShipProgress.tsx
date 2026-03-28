@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GATEWAY_API } from "@/lib/config";
 import LiveLogViewer from "../settings/deployment/LiveLogViewer";
 
@@ -56,63 +56,49 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
   const [failed, setFailed] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const simulateCleanupRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    // Start deployment execution via SSE
-    const url = `${GATEWAY_API}/deployments/execute-plan`;
-
-    try {
-      // Use fetch + ReadableStream for POST SSE (EventSource only supports GET)
-      const controller = new AbortController();
-      fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(plan),
-        signal: controller.signal,
-      }).then(async (res) => {
-        if (!res.ok || !res.body) {
-          setFailed(true);
-          return;
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          // Parse SSE events
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const event = JSON.parse(line.slice(6));
-                handleProgressEvent(event);
-              } catch { /* skip malformed */ }
-            }
-          }
-        }
-      }).catch(() => {
-        // API not available — simulate progress for demo
-        simulateProgress();
-      });
-
-      return () => controller.abort();
-    } catch {
-      simulateProgress();
+  const handleProgressEvent = useCallback((event: {
+    step?: string;
+    status?: string;
+    detail?: string;
+    completed?: boolean;
+    error?: boolean;
+    log?: string;
+    run_id?: string;
+    steps?: Array<{ id: string; label: string; status: string; detail?: string }>;
+  }) => {
+    // Update run ID if provided
+    if (event.run_id) {
+      setRunId(event.run_id);
     }
-  }, [plan]);
 
-  const handleProgressEvent = (event: { step?: string; status?: string; detail?: string; completed?: boolean; error?: boolean }) => {
+    // Bulk step update
+    if (event.steps) {
+      setSteps((prev) =>
+        prev.map((s) => {
+          const update = event.steps!.find((u) => u.id === s.id);
+          return update ? { ...s, status: update.status as ProgressStep["status"], detail: update.detail } : s;
+        })
+      );
+    }
+
+    // Single step update
     if (event.step && event.status) {
       setSteps((prev) =>
         prev.map((s) => s.id === event.step ? { ...s, status: event.status as ProgressStep["status"], detail: event.detail } : s)
       );
     }
+
+    // Log line
+    if (event.log) {
+      setLogLines((prev) => [...prev, event.log!]);
+    }
+
     if (event.completed) {
       setCompleted(true);
       setShowConfetti(true);
@@ -121,13 +107,15 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
     if (event.error) {
       setFailed(true);
     }
-  };
+  }, []);
 
   // Fallback: simulate progress when API is unavailable
-  const simulateProgress = () => {
+  const simulateProgress = useCallback(() => {
     const stepIds = INITIAL_STEPS.map((s) => s.id);
     let i = 0;
+    let cancelled = false;
     const interval = setInterval(() => {
+      if (cancelled) return;
       if (i >= stepIds.length) {
         clearInterval(interval);
         setCompleted(true);
@@ -143,16 +131,117 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
         })
       );
       setTimeout(() => {
+        if (cancelled) return;
         setSteps((prev) =>
           prev.map((s, idx) => (idx === i ? { ...s, status: "done" } : s))
         );
         i++;
       }, 800);
     }, 1200);
-    return () => clearInterval(interval);
+    simulateCleanupRef.current = () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    // Start deployment execution via SSE
+    const url = `${GATEWAY_API}/deployments/execute-plan`;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(plan),
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok || !res.body) {
+          // Try to get error details
+          const text = await res.text().catch(() => "");
+          console.error("Deploy execute-plan failed:", res.status, text);
+          simulateProgress();
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events: split on double newlines
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const lines = part.split("\n");
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const event = JSON.parse(line.slice(6));
+                  handleProgressEvent(event);
+                } catch {
+                  /* skip malformed JSON */
+                }
+              }
+            }
+          }
+        }
+
+        // Process any remaining buffer
+        if (buffer.trim()) {
+          const lines = buffer.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const event = JSON.parse(line.slice(6));
+                handleProgressEvent(event);
+              } catch {
+                /* skip */
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        // API not available — simulate progress for demo
+        console.warn("Deploy SSE connection failed, falling back to simulation:", err.message);
+        simulateProgress();
+      });
+
+    return () => {
+      controller.abort();
+      if (simulateCleanupRef.current) simulateCleanupRef.current();
+    };
+  }, [plan, handleProgressEvent, simulateProgress]);
+
+  const handleCancel = async () => {
+    if (!runId) return;
+    setCancelling(true);
+    try {
+      await fetch(`${GATEWAY_API}/deployments/runs/${runId}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      // Abort the SSE connection
+      if (abortRef.current) abortRef.current.abort();
+      setFailed(true);
+      setSteps((prev) =>
+        prev.map((s) => s.status === "running" ? { ...s, status: "error", detail: "Cancelled" } : s)
+      );
+    } catch {
+      // If cancel fails, still allow user to go back
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const appId = plan.repoUrl?.split("/").pop()?.replace(".git", "") || plan.serverAddress || "app";
+  const isRunning = !completed && !failed;
 
   return (
     <div style={s.container}>
@@ -187,13 +276,34 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
         ))}
       </div>
 
+      {/* Cancel button during deployment */}
+      {isRunning && (
+        <div style={{ textAlign: "center", marginBottom: "12px" }}>
+          <button
+            style={s.cancelBtn}
+            onClick={handleCancel}
+            disabled={cancelling}
+          >
+            {cancelling ? "Cancelling..." : "Cancel Deployment"}
+          </button>
+        </div>
+      )}
+
       {/* Logs toggle */}
       <button style={s.logsToggle} onClick={() => setShowLogs(!showLogs)}>
         {showLogs ? "Hide" : "Show"} Live Logs
       </button>
       {showLogs && (
         <div style={s.logsContainer}>
-          <LiveLogViewer environment={plan.environment || "dev"} />
+          {logLines.length > 0 ? (
+            <div style={s.logViewer}>
+              {logLines.map((line, i) => (
+                <div key={i} style={s.logLine}>{line}</div>
+              ))}
+            </div>
+          ) : (
+            <LiveLogViewer environment={plan.environment || "dev"} />
+          )}
         </div>
       )}
 
@@ -235,6 +345,11 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: "0.85rem", padding: "4px 0", textDecoration: "underline", display: "block", margin: "0 auto",
   },
   logsContainer: { marginTop: "12px", maxHeight: "300px", overflow: "auto" },
+  logViewer: {
+    backgroundColor: "#0a0a0f", borderRadius: "8px", padding: "12px", fontFamily: "monospace", fontSize: "0.8rem",
+    color: "#8888a0", maxHeight: "280px", overflowY: "auto",
+  },
+  logLine: { padding: "2px 0", whiteSpace: "pre-wrap", wordBreak: "break-all" },
   actions: { display: "flex", justifyContent: "center", gap: "12px", marginTop: "24px" },
   viewBtn: {
     backgroundColor: "#6c8aff", color: "#fff", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderRadius: "8px",
@@ -243,6 +358,10 @@ const s: Record<string, React.CSSProperties> = {
   doneBtn: {
     background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", color: "#8888a0", borderRadius: "8px",
     padding: "10px 20px", fontSize: "0.9rem", cursor: "pointer",
+  },
+  cancelBtn: {
+    background: "none", borderWidth: "1px", borderStyle: "solid", borderColor: "#ff6c8a44", color: "#ff6c8a", borderRadius: "8px",
+    padding: "8px 20px", fontSize: "0.85rem", cursor: "pointer",
   },
   confetti: { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 1000, overflow: "hidden" },
   confettiPiece: {
