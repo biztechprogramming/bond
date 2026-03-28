@@ -71,6 +71,9 @@ async def _stream_container_turn_stdb(
                         elif event_type == "status":
                             logger.info(f"[TURN_STDB] Worker status: {data}")
                             yield _sse("status", data)
+                        elif event_type == "interim_message":
+                            logger.info(f"[TURN_STDB] Interim message: {data.get('content', '')[:50]}...")
+                            yield _sse("interim_message", data)
                         elif event_type in ("tool_call", "plan_created", "item_created", "item_updated", "plan_completed"):
                             logger.info(f"[TURN_STDB] {event_type}: {data}")
                             yield _sse(event_type, data)

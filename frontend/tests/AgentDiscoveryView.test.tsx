@@ -9,6 +9,7 @@ const mockHook: UseAgentDiscoveryReturn = {
   status: "idle",
   discoveryMode: "full",
   activityLog: [],
+  rawEvents: [],
   currentQuestion: null,
   questionsRemaining: 0,
   discoveryState: null,
@@ -19,6 +20,7 @@ const mockHook: UseAgentDiscoveryReturn = {
   answerQuestion: vi.fn(),
   cancelDiscovery: vi.fn(),
   editField: vi.fn(),
+  forceComplete: vi.fn(),
 };
 
 vi.mock("@/hooks/useAgentDiscovery", () => ({

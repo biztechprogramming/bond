@@ -105,6 +105,23 @@ export class BackendClient {
     return (await res.json()) as AgentTurnResponse;
   }
 
+  async llmComplete(
+    messages: Array<{ role: string; content: string }>,
+    options?: { max_tokens?: number; temperature?: number },
+  ): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/v1/llm/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, ...options }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`LLM complete error ${res.status}: ${text}`);
+    }
+    const data = (await res.json()) as { content: string };
+    return data.content;
+  }
+
   async getConversation(id: string): Promise<ConversationDetail> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${id}`);
     if (!res.ok) {

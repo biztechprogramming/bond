@@ -484,3 +484,449 @@ function normalizeApprovalRow(r: any): DeploymentApproval {
     approved_at: Number(r.approved_at),
   };
 }
+
+// ── Environment Allocation (Doc 077) ──────────────────────────────────────────
+
+export interface EnvironmentAllocation {
+  id: string;
+  resource_id: string;
+  app_name: string;
+  environment_name: string;
+  base_port: number;
+  app_dir: string;
+  data_dir: string;
+  log_dir: string;
+  config_dir: string;
+  tls_cert_path: string;
+  tls_key_path: string;
+  revision: number;
+  created_at: number;
+  updated_at: number;
+  is_active: boolean;
+}
+
+export interface ServicePortAssignment {
+  id: string;
+  allocation_id: string;
+  service_name: string;
+  port: number;
+  protocol: string;
+  data_dir: string;
+  health_endpoint: string;
+  description: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AllocationHistory {
+  id: string;
+  allocation_id: string;
+  revision: number;
+  change_type: string;
+  changed_fields: string;
+  changed_by: string;
+  timestamp: number;
+}
+
+// ── Allocation queries ────────────────────────────────────────────────────────
+
+export async function getEnvironmentAllocations(
+  cfg: GatewayConfig,
+  resourceId?: string,
+  appName?: string,
+): Promise<EnvironmentAllocation[]> {
+  let query = "SELECT * FROM environment_allocation WHERE is_active = true";
+  if (resourceId) query += ` AND resource_id = '${esc(resourceId)}'`;
+  if (appName) query += ` AND app_name = '${esc(appName)}'`;
+  const rows = await sqlQuery(cfg.spacetimedbUrl, cfg.spacetimedbModuleName, query, cfg.spacetimedbToken);
+  return rows.map(normalizeAllocation);
+}
+
+export async function getEnvironmentAllocation(
+  cfg: GatewayConfig,
+  id: string,
+): Promise<EnvironmentAllocation | null> {
+  const rows = await sqlQuery(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    `SELECT * FROM environment_allocation WHERE id = '${esc(id)}'`,
+    cfg.spacetimedbToken,
+  );
+  return rows.length ? normalizeAllocation(rows[0]) : null;
+}
+
+export async function getAllocationsForResource(
+  cfg: GatewayConfig,
+  resourceId: string,
+): Promise<EnvironmentAllocation[]> {
+  return getEnvironmentAllocations(cfg, resourceId);
+}
+
+export async function createEnvironmentAllocation(
+  cfg: GatewayConfig,
+  alloc: Omit<EnvironmentAllocation, "id" | "revision" | "created_at" | "updated_at" | "is_active">,
+  changedBy: string,
+): Promise<string> {
+  const id = ulid();
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "create_environment_allocation",
+    [{
+      id,
+      ...alloc,
+      revision: 1,
+      is_active: true,
+      changed_by: changedBy,
+    }],
+    cfg.spacetimedbToken,
+  );
+  return id;
+}
+
+export async function updateEnvironmentAllocation(
+  cfg: GatewayConfig,
+  id: string,
+  updates: Partial<Pick<EnvironmentAllocation, "base_port" | "app_dir" | "data_dir" | "log_dir" | "config_dir" | "tls_cert_path" | "tls_key_path">>,
+  changedBy: string,
+): Promise<void> {
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "update_environment_allocation",
+    [{ id, ...updates, changed_by: changedBy }],
+    cfg.spacetimedbToken,
+  );
+}
+
+export async function deactivateEnvironmentAllocation(
+  cfg: GatewayConfig,
+  id: string,
+  changedBy: string,
+): Promise<void> {
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "deactivate_environment_allocation",
+    [{ id, changed_by: changedBy }],
+    cfg.spacetimedbToken,
+  );
+}
+
+export async function deleteEnvironmentAllocation(
+  cfg: GatewayConfig,
+  id: string,
+): Promise<void> {
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "delete_environment_allocation",
+    [{ id }],
+    cfg.spacetimedbToken,
+  );
+}
+
+// ── Port assignment queries ───────────────────────────────────────────────────
+
+export async function getServicePortAssignments(
+  cfg: GatewayConfig,
+  allocationId: string,
+): Promise<ServicePortAssignment[]> {
+  const rows = await sqlQuery(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    `SELECT * FROM service_port_assignment WHERE allocation_id = '${esc(allocationId)}'`,
+    cfg.spacetimedbToken,
+  );
+  return rows.map(normalizePortAssignment);
+}
+
+export async function createServicePortAssignment(
+  cfg: GatewayConfig,
+  assignment: Omit<ServicePortAssignment, "id" | "created_at" | "updated_at">,
+): Promise<string> {
+  const id = ulid();
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "create_service_port_assignment",
+    [{ id, ...assignment }],
+    cfg.spacetimedbToken,
+  );
+  return id;
+}
+
+export async function updateServicePortAssignment(
+  cfg: GatewayConfig,
+  id: string,
+  updates: Partial<Pick<ServicePortAssignment, "port" | "protocol" | "data_dir" | "health_endpoint" | "description">>,
+): Promise<void> {
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "update_service_port_assignment",
+    [{ id, ...updates }],
+    cfg.spacetimedbToken,
+  );
+}
+
+export async function deleteServicePortAssignment(
+  cfg: GatewayConfig,
+  id: string,
+): Promise<void> {
+  await callReducer(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    "delete_service_port_assignment",
+    [{ id }],
+    cfg.spacetimedbToken,
+  );
+}
+
+// ── Server port map (cross-allocation collision detection) ────────────────────
+
+export async function getServerPortMap(
+  cfg: GatewayConfig,
+  resourceId: string,
+): Promise<Map<number, { app: string; env: string; service: string; protocol: string }>> {
+  const allocations = await getEnvironmentAllocations(cfg, resourceId);
+  const portMap = new Map<number, { app: string; env: string; service: string; protocol: string }>();
+  for (const alloc of allocations) {
+    const ports = await getServicePortAssignments(cfg, alloc.id);
+    for (const p of ports) {
+      portMap.set(p.port, {
+        app: alloc.app_name,
+        env: alloc.environment_name,
+        service: p.service_name,
+        protocol: p.protocol,
+      });
+    }
+  }
+  return portMap;
+}
+
+// ── Allocation history ────────────────────────────────────────────────────────
+
+export async function getAllocationHistory(
+  cfg: GatewayConfig,
+  allocationId: string,
+  limit = 50,
+): Promise<AllocationHistory[]> {
+  const rows = await sqlQuery(
+    cfg.spacetimedbUrl, cfg.spacetimedbModuleName,
+    `SELECT * FROM allocation_history WHERE allocation_id = '${esc(allocationId)}' ORDER BY timestamp DESC LIMIT ${limit}`,
+    cfg.spacetimedbToken,
+  );
+  return rows.map(normalizeAllocationHistory);
+}
+
+// ── Collision detection (gateway-side, for API use) ───────────────────────────
+
+export interface ConflictCheckRequest {
+  resource_id: string;
+  app_name: string;
+  environment_name: string;
+  ports: Array<{ service_name: string; port: number; protocol: string }>;
+  directories: { app_dir: string; data_dir: string; log_dir: string; config_dir: string };
+  exclude_allocation_id?: string;
+}
+
+export interface ConflictResult {
+  conflicts: Array<{ type: "port" | "directory"; field: string; value: string | number; conflicting_app: string; conflicting_env: string; detail: string }>;
+  warnings: Array<{ type: string; field: string; message: string }>;
+  suggestions: Record<string, number | string>;
+}
+
+export async function checkPortConflicts(
+  cfg: GatewayConfig,
+  req: ConflictCheckRequest,
+): Promise<ConflictResult> {
+  const conflicts: ConflictResult["conflicts"] = [];
+  const warnings: ConflictResult["warnings"] = [];
+  const suggestions: Record<string, number | string> = {};
+
+  const existingAllocations = await getEnvironmentAllocations(cfg, req.resource_id);
+  const filtered = existingAllocations.filter(a =>
+    req.exclude_allocation_id ? a.id !== req.exclude_allocation_id : true,
+  );
+
+  // Port conflict detection
+  const portMap = new Map<string, { app: string; env: string; service: string }>();
+  for (const alloc of filtered) {
+    const ports = await getServicePortAssignments(cfg, alloc.id);
+    for (const p of ports) {
+      portMap.set(`${p.port}/${p.protocol}`, { app: alloc.app_name, env: alloc.environment_name, service: p.service_name });
+    }
+  }
+
+  for (const p of req.ports) {
+    const key = `${p.port}/${p.protocol}`;
+    const existing = portMap.get(key);
+    if (existing) {
+      conflicts.push({
+        type: "port",
+        field: p.service_name,
+        value: p.port,
+        conflicting_app: existing.app,
+        conflicting_env: existing.env,
+        detail: `Port ${p.port}/${p.protocol} is used by ${existing.app}/${existing.env} (${existing.service})`,
+      });
+      // Suggest next available
+      let suggested = p.port + 1;
+      while (portMap.has(`${suggested}/${p.protocol}`)) suggested++;
+      suggestions[p.service_name] = suggested;
+    }
+    if (p.port < 1024) {
+      warnings.push({ type: "privileged_port", field: p.service_name, message: `Port ${p.port} requires root/sudo` });
+    }
+    if (p.port < 1 || p.port > 65535) {
+      conflicts.push({ type: "port", field: p.service_name, value: p.port, conflicting_app: "", conflicting_env: "", detail: `Port ${p.port} is out of valid range (1-65535)` });
+    }
+  }
+
+  // Directory conflict detection (substring containment)
+  const dirFields = ["app_dir", "data_dir", "log_dir", "config_dir"] as const;
+  for (const alloc of filtered) {
+    for (const field of dirFields) {
+      const newDir = req.directories[field];
+      const existingDir = (alloc as any)[field] as string;
+      if (!newDir || !existingDir) continue;
+      if (newDir === existingDir || newDir.startsWith(existingDir + "/") || existingDir.startsWith(newDir + "/")) {
+        conflicts.push({
+          type: "directory",
+          field,
+          value: newDir,
+          conflicting_app: alloc.app_name,
+          conflicting_env: alloc.environment_name,
+          detail: `Directory '${newDir}' conflicts with '${existingDir}' (${alloc.app_name}/${alloc.environment_name})`,
+        });
+      }
+    }
+  }
+
+  return { conflicts, warnings, suggestions };
+}
+
+// ── Suggest defaults ──────────────────────────────────────────────────────────
+
+const ENV_PORT_OFFSETS: Record<string, number> = {
+  prod: 0, production: 0,
+  staging: 100,
+  dev: 200, development: 200,
+  qa: 300,
+  uat: 400,
+};
+
+const WELL_KNOWN_PORTS: Record<string, number> = {
+  postgres: 5432, postgresql: 5432,
+  redis: 6379,
+  mysql: 3306,
+  mongodb: 27017,
+  rabbitmq: 5672,
+};
+
+export interface SuggestDefaultsRequest {
+  resource_id: string;
+  app_name: string;
+  environment_name: string;
+  base_port?: number;
+  services?: string[];
+}
+
+export interface SuggestDefaultsResult {
+  base_port: number;
+  app_dir: string;
+  data_dir: string;
+  log_dir: string;
+  config_dir: string;
+  service_ports: Array<{ service_name: string; port: number; protocol: string }>;
+}
+
+export async function suggestDefaults(
+  cfg: GatewayConfig,
+  req: SuggestDefaultsRequest,
+): Promise<SuggestDefaultsResult> {
+  const envOffset = ENV_PORT_OFFSETS[req.environment_name] ?? (Object.keys(ENV_PORT_OFFSETS).length * 100);
+  const basePort = req.base_port ?? (3000 + envOffset);
+
+  const existingAllocations = await getEnvironmentAllocations(cfg, req.resource_id);
+  const portMap = new Map<string, boolean>();
+  for (const alloc of existingAllocations) {
+    const ports = await getServicePortAssignments(cfg, alloc.id);
+    for (const p of ports) {
+      portMap.set(`${p.port}/${p.protocol}`, true);
+    }
+  }
+
+  // Suggest app port — find first available starting from basePort
+  let appPort = basePort;
+  while (portMap.has(`${appPort}/tcp`)) appPort++;
+
+  const servicePorts: Array<{ service_name: string; port: number; protocol: string }> = [
+    { service_name: "app", port: appPort, protocol: "tcp" },
+  ];
+
+  // Add well-known service ports
+  const envOrder = ENV_PORT_OFFSETS[req.environment_name] !== undefined
+    ? Math.floor(ENV_PORT_OFFSETS[req.environment_name] / 100)
+    : 5;
+
+  for (const svc of req.services || []) {
+    const svcLower = svc.toLowerCase();
+    const wellKnown = WELL_KNOWN_PORTS[svcLower];
+    if (wellKnown) {
+      let port = wellKnown + envOrder;
+      while (portMap.has(`${port}/tcp`)) port++;
+      servicePorts.push({ service_name: svc, port, protocol: "tcp" });
+    }
+  }
+
+  return {
+    base_port: appPort,
+    app_dir: `/opt/${req.app_name}/${req.environment_name}`,
+    data_dir: `/var/data/${req.app_name}/${req.environment_name}`,
+    log_dir: `/var/log/${req.app_name}/${req.environment_name}`,
+    config_dir: `/etc/${req.app_name}/${req.environment_name}`,
+    service_ports: servicePorts,
+  };
+}
+
+// ── Allocation normalizers ────────────────────────────────────────────────────
+
+function normalizeAllocation(r: any): EnvironmentAllocation {
+  return {
+    id: r.id,
+    resource_id: r.resource_id,
+    app_name: r.app_name,
+    environment_name: r.environment_name,
+    base_port: Number(r.base_port),
+    app_dir: r.app_dir || "",
+    data_dir: r.data_dir || "",
+    log_dir: r.log_dir || "",
+    config_dir: r.config_dir || "",
+    tls_cert_path: r.tls_cert_path || "",
+    tls_key_path: r.tls_key_path || "",
+    revision: Number(r.revision),
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
+    is_active: Boolean(r.is_active),
+  };
+}
+
+function normalizePortAssignment(r: any): ServicePortAssignment {
+  return {
+    id: r.id,
+    allocation_id: r.allocation_id,
+    service_name: r.service_name,
+    port: Number(r.port),
+    protocol: r.protocol || "tcp",
+    data_dir: r.data_dir || "",
+    health_endpoint: r.health_endpoint || "",
+    description: r.description || "",
+    created_at: Number(r.created_at),
+    updated_at: Number(r.updated_at),
+  };
+}
+
+function normalizeAllocationHistory(r: any): AllocationHistory {
+  return {
+    id: r.id,
+    allocation_id: r.allocation_id,
+    revision: Number(r.revision),
+    change_type: r.change_type,
+    changed_fields: r.changed_fields || "{}",
+    changed_by: r.changed_by || "",
+    timestamp: Number(r.timestamp),
+  };
+}

@@ -29,6 +29,7 @@ import type {
   HealthEndpointDetection,
   UserQuestion,
 } from "./discovery-tools.js";
+import type { BackendClient } from "../backend/client.js";
 import { writeManifest } from "./manifest.js";
 import { emitDeploymentEvent } from "./events.js";
 import type { DeploymentManifest, ManifestServer } from "./manifest.js";
@@ -91,6 +92,7 @@ export interface AgentDiscoveryParams {
   env: string;
   repoPath?: string;
   sessionId?: string;
+  backendClient?: BackendClient;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -143,7 +145,130 @@ export function evaluateCompleteness(state: DiscoveryState): CompletenessReport 
   return { ready, required_coverage, recommended_coverage, missing_required, low_confidence };
 }
 
-// ── Agent Discovery Orchestrator (§6) ───────────────────────────────────────
+// ── Probe Runner (§080 — pre-gather for agent-first discovery) ──────────────
+
+/** Structured probe results for injection into agent context. */
+export interface ProbeResults {
+  framework?: FrameworkDetection;
+  build_strategy?: BuildStrategyDetection;
+  services?: ServiceDetection[];
+  env_vars?: EnvVarDetection[];
+  ports?: PortDetection[];
+  health_endpoint?: HealthEndpointDetection;
+  app_port?: number;
+  server_os?: string;
+  probes_run: ProbeRecord[];
+}
+
+/**
+ * Run file/SSH probes on a repo path and/or server. Returns structured results
+ * without any LLM calls — designed to be injected into an agent turn as context.
+ */
+export async function runProbes(
+  repoPath?: string,
+  sshParams?: SshExecParams,
+): Promise<ProbeResults> {
+  const results: ProbeResults = { probes_run: [] };
+
+  // Framework detection
+  if (repoPath) {
+    const probe = await runProbe("detect_framework", async () => {
+      const frameworks = await detectFramework(repoPath);
+      if (frameworks.length > 0) {
+        results.framework = frameworks.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        return ["framework"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Build strategy detection
+  if (repoPath) {
+    const probe = await runProbe("detect_build_strategy", async () => {
+      const strategies = await detectBuildStrategy(repoPath);
+      if (strategies.length > 0) {
+        results.build_strategy = strategies.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        return ["build_strategy"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Port detection
+  {
+    const searchScope = repoPath && sshParams ? "both" : repoPath ? "repo" : "server";
+    const probe = await runProbe("detect_ports", async () => {
+      const ports = await detectPorts(repoPath || ".", sshParams, searchScope as any);
+      if (ports.length > 0) {
+        results.ports = ports;
+        const best = ports.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        results.app_port = best.port;
+        return ["app_port", "ports"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Service detection
+  {
+    const searchScope = repoPath && sshParams ? "both" : repoPath ? "repo" : "server";
+    const probe = await runProbe("detect_services", async () => {
+      const services = await detectServices(repoPath || ".", sshParams, searchScope as any);
+      if (services.length > 0) {
+        results.services = services;
+        return ["services"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Env var detection
+  if (repoPath) {
+    const probe = await runProbe("detect_env_vars", async () => {
+      const envVars = await detectEnvVars(repoPath);
+      if (envVars.length > 0) {
+        results.env_vars = envVars;
+        return ["env_vars"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Health endpoint detection
+  {
+    const probe = await runProbe("detect_health_endpoint", async () => {
+      const endpoints = await detectHealthEndpoint(repoPath || ".", sshParams, results.app_port);
+      if (endpoints.length > 0) {
+        results.health_endpoint = endpoints.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        return ["health_endpoint"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Server OS detection via SSH
+  if (sshParams) {
+    const probe = await runProbe("ssh_exec:uname", async () => {
+      const result = await sshExec({ ...sshParams, command: "uname -a", parse_as: "raw" });
+      if (result.exit_code === 0 && result.output) {
+        results.server_os = String(result.output).trim();
+        return ["server_os"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  return results;
+}
+
+// ── Agent Discovery Orchestrator (§6) — legacy, kept for backward compat ────
 
 /**
  * Run the adaptive agent discovery loop.
@@ -186,18 +311,58 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       params = { ...params, repoPath: clonedTmpDir };
     } catch (err: any) {
-      console.warn("[discovery-agent] Failed to clone repo:", err.message);
-      // Continue without repoPath — agent will fall back to asking questions
+      const cloneError = `Failed to clone repo ${params.repoUrl}: ${err.message}`;
+      console.error("[discovery-agent]", cloneError);
+      emitDeploymentEvent("discovery_agent_progress", {
+        environment: params.env,
+        summary: cloneError,
+        details: { error: cloneError, session_id: params.sessionId },
+      });
+      throw new Error(cloneError);
     }
   }
 
   try {
 
+  // Determine discovery mode based on available inputs
+  const discoveryMode = (params.repoPath && params.serverHost) ? "full"
+    : params.repoPath ? "repo-only"
+    : params.serverHost ? "server-only"
+    : "interview";
+
   emitDeploymentEvent("discovery_agent_started", {
     environment: params.env,
     summary: `Agent discovery started${params.repoPath ? ` for ${params.repoPath}` : ""}`,
-    details: { server_host: params.serverHost, repo_path: params.repoPath, session_id: sessionId },
+    details: { server_host: params.serverHost, repo_path: params.repoPath, session_id: sessionId, mode: discoveryMode },
   });
+
+  // Load any previously stored user answers (from /discovery/answer endpoint)
+  if (sessionId) {
+    const answersFile = path.join(os.homedir(), ".bond", "deployments", "discovery", "answers", `${sessionId}.json`);
+    if (fs.existsSync(answersFile)) {
+      try {
+        const storedAnswers = JSON.parse(fs.readFileSync(answersFile, "utf8"));
+        for (const [field, value] of Object.entries(storedAnswers)) {
+          state.user_answers[field] = String(value);
+          // Apply answers to findings
+          if (field === "app_port") {
+            state.findings.app_port = parseInt(String(value), 10) || undefined;
+          } else if (field === "target_server") {
+            state.findings.target_server = { host: String(value), port: 22, user: "deploy" };
+          } else if (field === "framework") {
+            state.findings.framework = { framework: String(value), confidence: 1.0, evidence: ["user"] };
+          } else if (field === "build_strategy") {
+            state.findings.build_strategy = { strategy: String(value), confidence: 1.0, evidence: ["user"] };
+          } else if (field === "source") {
+            state.findings.source = String(value);
+          } else {
+            (state.findings as any)[field] = value;
+          }
+          state.confidence[field] = { source: "user-provided", detail: "Provided by user", score: 1.0 };
+        }
+      } catch {}
+    }
+  }
 
   // Set source if provided
   if (params.source || params.repoUrl) {
@@ -219,7 +384,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
     if (Date.now() - startTime > TIMEOUT_MS) break;
     if (toolCalls >= MAX_TOOL_CALLS) break;
 
-    // Phase A/C: Run probes based on what's missing
+    // Phase A/C: Run probes based on what's missing (fallback for fields LLM didn't cover)
     const completeness = evaluateCompleteness(state);
     state.completeness = completeness;
 
@@ -240,7 +405,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "framework", sessionId);
+      emitProgress(params.env, state, "framework", sessionId, "detect_framework");
     }
 
     // Build strategy detection
@@ -257,7 +422,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "build_strategy", sessionId);
+      emitProgress(params.env, state, "build_strategy", sessionId, "detect_build_strategy");
     }
 
     // Port detection
@@ -277,7 +442,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       });
       state.probes_run.push(probe);
       toolCalls++;
-      emitProgress(params.env, state, "app_port", sessionId);
+      emitProgress(params.env, state, "app_port", sessionId, "detect_ports");
     }
 
     // Service detection
@@ -367,7 +532,7 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
   emitDeploymentEvent("discovery_agent_completed", {
     environment: params.env,
     summary: `Agent discovery completed: ${state.completeness.ready ? "ready" : "needs input"}`,
-    details: { completeness: state.completeness, probes_run: state.probes_run.length, tool_calls: toolCalls, session_id: sessionId },
+    details: { state, completeness: state.completeness, probes_run: state.probes_run.length, tool_calls: toolCalls, session_id: sessionId },
   });
 
   // Write manifest if we have enough data
@@ -424,21 +589,41 @@ export function convertToManifest(state: DiscoveryState, env: string): Deploymen
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-async function runProbe(tool: string, fn: () => Promise<string[]>): Promise<ProbeRecord> {
+async function runProbe(tool: string, fn: () => Promise<string[]>): Promise<ProbeRecord & { error?: string }> {
   const start = Date.now();
   try {
     const fields = await fn();
     return { tool, timestamp: start, duration_ms: Date.now() - start, success: true, fields_discovered: fields };
-  } catch {
-    return { tool, timestamp: start, duration_ms: Date.now() - start, success: false, fields_discovered: [] };
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error(`[discovery-agent] probe ${tool} failed:`, errorMsg);
+    return { tool, timestamp: start, duration_ms: Date.now() - start, success: false, fields_discovered: [], error: errorMsg };
   }
 }
 
-function emitProgress(env: string, state: DiscoveryState, field: string, sessionId?: string): void {
+function emitProgress(env: string, state: DiscoveryState, field: string, sessionId?: string, probeName?: string, probeRecord?: ProbeRecord & { error?: string }): void {
+  const value = (state.findings as any)[field];
+  const details: any = {
+    field,
+    value,
+    raw_response: value,
+    confidence: state.confidence[field],
+    completeness: evaluateCompleteness(state),
+    probe_name: probeName || field,
+    session_id: sessionId,
+  };
+  if (probeRecord) {
+    details.probe_duration_ms = probeRecord.duration_ms;
+    details.probe_success = probeRecord.success;
+    if (probeRecord.error) {
+      details.probe_error = probeRecord.error;
+    }
+  }
+  console.log(`[discovery-agent] emitProgress: field=${field}, value=${JSON.stringify(value)?.slice(0, 200)}`);
   emitDeploymentEvent("discovery_agent_progress", {
     environment: env,
     summary: `Discovered: ${field}`,
-    details: { field, confidence: state.confidence[field], session_id: sessionId },
+    details,
   });
 }
 
