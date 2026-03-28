@@ -31,7 +31,7 @@ export interface UseAgentDiscoveryReturn {
   completeness: CompletenessReport | null;
   probesRun: ProbeRecord[];
   error: string | null;
-  startDiscovery: (resourceId: string, env: string, repoUrl?: string) => Promise<void>;
+  startDiscovery: (resourceId: string, env: string, repoUrl?: string, agentId?: string, repoId?: string) => Promise<void>;
   answerQuestion: (field: string, value: string) => Promise<void>;
   cancelDiscovery: () => void;
   editField: (field: string, value: string) => void;
@@ -173,7 +173,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     }
   }, [addActivity]);
 
-  const startDiscovery = useCallback(async (resourceId: string, env: string, repoUrl?: string) => {
+  const startDiscovery = useCallback(async (resourceId: string, env: string, repoUrl?: string, agentId?: string, repoId?: string) => {
     // Reset
     setStatus("connecting");
     setError(null);
@@ -194,9 +194,11 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          resource_id: resourceId,
+          resource_id: resourceId || undefined,
           repo_url: repoUrl || resourceId,
           environment: env,
+          agent_id: agentId || undefined,
+          repo_id: repoId || undefined,
         }),
         signal: controller.signal,
       });

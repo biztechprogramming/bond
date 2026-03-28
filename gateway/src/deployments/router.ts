@@ -41,6 +41,9 @@ import { createPipelineRouter } from "./pipeline-router.js";
 import { listManifests, readManifest } from "./manifest.js";
 import { addDiscoveryListener } from "./events.js";
 import { runAgentDiscovery } from "./discovery.js";
+import { runProbes } from "./discovery-agent.js";
+import type { SshExecParams } from "./discovery-tools.js";
+import { buildDiscoveryPrompt, mapAgentEventToDiscovery } from "./discovery-sse-adapter.js";
 import { getResource } from "./resources.js";
 import { ulid } from "ulid";
 import { getMonitoringAlerts } from "./stdb.js";
@@ -53,6 +56,10 @@ import { createAllocationRouter } from "./allocation-router.js";
 import { collectLogs } from "./log-stream.js";
 import { createRun, getRun, listRuns, updateRunStatus, getRunEmitter, executeDeploymentRun } from "./runs.js";
 import { BackendClient } from "../backend/client.js";
+import { generateDeploymentPlan } from "./deployment-planner.js";
+import { executeDeploymentPlan as execPlan } from "./deployment-executor.js";
+import type { DeploymentPlan } from "./deployment-planner.js";
+import type { DiscoveryState } from "./discovery-agent.js";
 
 export const DEPLOYMENTS_DIR = path.join(homedir(), ".bond", "deployments");
 
@@ -509,21 +516,132 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     "discovery_agent_completed",
   ]);
 
-  // POST /agent-discover — frontend-facing agent discovery initiation (§072)
+  // POST /agent-discover — agent-first deployment discovery (§080)
+  // Accepts agent_id + repo_id (new) or resource_id (legacy fallback)
   router.post("/agent-discover", async (req: any, res: any) => {
     const body = req.body || {};
+    const agentId = body.agent_id;
+    const repoId = body.repo_id;
     const resourceId = body.resource_id;
-    if (!resourceId) {
-      return res.status(400).json({ status: "error", reason: "resource_id is required" });
-    }
-
     const env = body.environment || "dev";
     const sessionId = ulid();
-    const resource = await getResource(config, resourceId);
-    let conn: any = {};
-    try { conn = JSON.parse(resource?.connection_json || "{}"); } catch {}
 
-    // Register listener BEFORE starting agent to capture all events
+    // Agent-first path: agent_id + repo_id required (§080)
+    // Legacy fallback: resource_id only (§072)
+    if (!agentId && !resourceId) {
+      return res.status(400).json({ status: "error", reason: "agent_id and repo_id are required (or resource_id for legacy mode)" });
+    }
+
+    // Resolve connection info from resource if provided
+    let conn: any = {};
+    let resourceName: string | undefined;
+    if (resourceId) {
+      const resource = await getResource(config, resourceId);
+      try { conn = JSON.parse(resource?.connection_json || "{}"); } catch {}
+      resourceName = resource?.name;
+    }
+
+    const repoPath = conn.repo_path || body.repo_path;
+    const repoUrl = conn.repo_url || body.repo_url;
+
+    // Build SSH params if server info available
+    const sshParams: SshExecParams | undefined = conn.host ? {
+      host: conn.host,
+      port: conn.port || 22,
+      user: conn.user || "deploy",
+      key_path: conn.key_path,
+      command: "",
+      parse_as: "raw",
+    } : undefined;
+
+    // If agent_id is provided, use the agent-first path (§080)
+    if (agentId) {
+      // Register SSE buffer
+      const session = { events: [] as any[], listeners: new Set<(event: any) => void>(), cleanup: () => {} };
+      discoveryBuffers.set(sessionId, session);
+
+      // Run probes + agent turn in background
+      (async () => {
+        try {
+          // Phase 1: Pre-gather probes (fast, no LLM)
+          const probeResults = await runProbes(repoPath, sshParams);
+
+          // Emit probe progress
+          for (const probe of probeResults.probes_run) {
+            if (probe.success && probe.fields_discovered.length > 0) {
+              const payload = {
+                event: "discovery_agent_progress",
+                session_id: sessionId,
+                field: probe.fields_discovered[0],
+                value: (probeResults as any)[probe.fields_discovered[0]],
+                confidence: { source: "detected", detail: `From ${probe.tool}`, score: 0.8 },
+                completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+                probe_name: probe.tool,
+              };
+              session.events.push(payload);
+              for (const fn of session.listeners) { try { fn(payload); } catch {} }
+            }
+          }
+
+          // Phase 2: Create conversation and send agent message
+          const conversationId = ulid();
+          await backendClient.createConversation(conversationId, agentId, "discovery", `Discovery: ${resourceName || repoId || "repo"}`);
+
+          const discoveryPrompt = buildDiscoveryPrompt(repoId || repoPath || repoUrl || "unknown", probeResults, resourceId);
+
+          // Stream agent turn and map events to discovery format
+          const accumulatedText = { value: "" };
+          for await (const sseEvent of backendClient.conversationTurnStream(conversationId, discoveryPrompt, agentId)) {
+            const mapped = mapAgentEventToDiscovery(sseEvent, sessionId, accumulatedText);
+            if (mapped) {
+              session.events.push(mapped);
+              for (const fn of session.listeners) { try { fn(mapped); } catch {} }
+
+              // On completion, cache state and auto-generate plan
+              if (mapped.event === "discovery_agent_completed" && mapped.state) {
+                const state = mapped.state as DiscoveryState;
+                discoveryStateCache.set(sessionId, state);
+                if (state.completeness?.ready) {
+                  generateDeploymentPlan(state, backendClient).then((plan) => {
+                    planStore.set(plan.id, plan);
+                    const planPayload = { ...mapped, event: "discovery_agent_completed", session_id: sessionId, plan };
+                    for (const fn of session.listeners) { try { fn(planPayload); } catch {} }
+                  }).catch((err) => {
+                    console.error("[auto-plan] failed to generate plan:", err.message);
+                  });
+                }
+                setTimeout(() => { discoveryBuffers.delete(sessionId); }, 30_000);
+              }
+            }
+          }
+
+          // If stream ended without a "done" event, send completion
+          const hasDone = session.events.some((e: any) => e.event === "discovery_agent_completed");
+          if (!hasDone) {
+            const finalPayload = mapAgentEventToDiscovery({ event: "done", data: {} }, sessionId, accumulatedText);
+            if (finalPayload) {
+              session.events.push(finalPayload);
+              for (const fn of session.listeners) { try { fn(finalPayload); } catch {} }
+            }
+          }
+        } catch (err: any) {
+          console.error("[agent-discover] agent-first discovery failed:", err.message);
+          const errorPayload = {
+            event: "discovery_agent_completed",
+            session_id: sessionId,
+            state: null,
+            completeness: null,
+            error: err.message,
+          };
+          session.events.push(errorPayload);
+          for (const fn of session.listeners) { try { fn(errorPayload); } catch {} }
+        }
+      })();
+
+      return res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId, mode: "agent-first" });
+    }
+
+    // Legacy fallback: resource_id-only path (§072)
     const session = { events: [] as any[], listeners: new Set<(event: any) => void>(), cleanup: () => {} };
     const cleanupListener = addDiscoveryListener((event: any) => {
       if (!DISCOVERY_EVENT_TYPES.has(event.event) || event.details?.session_id !== sessionId) return;
@@ -532,8 +650,18 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       for (const fn of session.listeners) {
         try { fn(payload); } catch {}
       }
-      // Auto-cleanup buffer after completion (with delay for late SSE connects)
-      if (event.event === "discovery_agent_completed") {
+      if (event.event === "discovery_agent_completed" && event.details?.state) {
+        const state = event.details.state as DiscoveryState;
+        discoveryStateCache.set(sessionId, state);
+        if (state.completeness?.ready) {
+          generateDeploymentPlan(state, backendClient).then((plan) => {
+            planStore.set(plan.id, plan);
+            const planPayload = { event: "discovery_agent_completed", session_id: sessionId, plan, ...event.details };
+            for (const fn of session.listeners) { try { fn(planPayload); } catch {} }
+          }).catch((err) => {
+            console.error("[auto-plan] failed to generate plan:", err.message);
+          });
+        }
         setTimeout(() => { discoveryBuffers.delete(sessionId); cleanupListener(); }, 30_000);
       }
     });
@@ -541,9 +669,9 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     discoveryBuffers.set(sessionId, session);
 
     const agentParams = {
-      source: resource?.name,
-      repoPath: conn.repo_path || body.repo_path,
-      repoUrl: conn.repo_url || body.repo_url,
+      source: resourceName,
+      repoPath,
+      repoUrl,
       serverHost: conn.host,
       serverPort: conn.port,
       sshUser: conn.user,
@@ -553,26 +681,19 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       backendClient,
     };
     discoveryParamsCache.set(sessionId, agentParams);
-    // Clean up params cache after 5 minutes
     setTimeout(() => { discoveryParamsCache.delete(sessionId); }, 300_000);
 
     runAgentDiscovery(agentParams).catch((err) => {
-      console.error("[agent-discover] agent discovery failed:", err.message);
-      // Emit the error as an SSE event so the frontend sees it
+      console.error("[agent-discover] legacy discovery failed:", err.message);
       const { emitDeploymentEvent: emit } = require("./events.js");
       emit("discovery_agent_completed", {
         environment: env,
         summary: `Discovery failed: ${err.message}`,
-        details: {
-          state: null,
-          completeness: null,
-          error: err.message,
-          session_id: sessionId,
-        },
+        details: { state: null, completeness: null, error: err.message, session_id: sessionId },
       });
     });
 
-    res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId });
+    res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId, mode: "legacy" });
   });
 
 
@@ -717,6 +838,137 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       result[level] = fs.readdirSync(path.join(proposalDir, level));
     }
     res.json({ app, levels: result });
+  });
+
+  // ── Deployment Plan endpoints ─────────────────────────────────────────────
+
+  const planStore = new Map<string, DeploymentPlan>();
+  const discoveryStateCache = new Map<string, DiscoveryState>();
+
+  // POST /plan/generate — generate a deployment plan from discovery state
+  router.post("/plan/generate", async (req: any, res: any) => {
+    const { session_id, discovery_state } = req.body || {};
+    const state: DiscoveryState | undefined = discovery_state || discoveryStateCache.get(session_id);
+    if (!state) {
+      return res.status(400).json({ error: "discovery_state or valid session_id is required" });
+    }
+    try {
+      const plan = await generateDeploymentPlan(state, backendClient);
+      planStore.set(plan.id, plan);
+      res.json(plan);
+    } catch (err: any) {
+      console.error("[plan/generate] failed:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /plan/:planId/approve — approve and execute a plan
+  router.post("/plan/:planId/approve", userAuth, async (req: any, res: any) => {
+    const { planId } = req.params;
+    const { ssh_config } = req.body || {};
+    const plan = planStore.get(planId);
+    if (!plan) return res.status(404).json({ error: "Plan not found" });
+    if (!ssh_config?.host || !ssh_config?.username) {
+      return res.status(400).json({ error: "ssh_config with host and username is required" });
+    }
+
+    const userId = (req as any).userId || "anonymous";
+    const run = createRun({
+      script_id: plan.app_name,
+      script_version: "1",
+      environment: "deploy",
+      triggered_by: userId,
+      run_type: "deploy",
+      plan: plan as any,
+    });
+
+    // Execute in background
+    const emitter = getRunEmitter(run.id);
+    execPlan(plan, ssh_config, {
+      onStepStart: (step) => emitter?.emit("step", { step_id: step.id, action: step.action, description: step.description, status: "running" }),
+      onStepComplete: (step, result) => emitter?.emit("step", { step_id: step.id, status: result.status, output: result.output, error: result.error }),
+      onLog: (stepId, line) => emitter?.emit("log", { step_id: stepId, line }),
+    }).then((result) => {
+      updateRunStatus(run.id, result.status === "success" ? "success" : "failed");
+      emitter?.emit("done", { status: result.status, steps: result.steps });
+    }).catch((err) => {
+      updateRunStatus(run.id, "failed");
+      emitter?.emit("done", { status: "failed", error: err.message });
+    });
+
+    res.json({ run_id: run.id, plan_id: planId });
+  });
+
+  // GET /plan/:planId/stream — SSE stream for plan execution (reuse run stream)
+  router.get("/plan/:planId/stream", (req: any, res: any) => {
+    // Find the run associated with this plan
+    const { planId } = req.params;
+    const allRuns = listRuns();
+    const run = allRuns.find(r => (r.plan as any)?.id === planId);
+    if (!run) return res.status(404).json({ error: "No execution found for this plan" });
+
+    // Redirect to run stream logic
+    req.params.id = run.id;
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    res.write(`data: ${JSON.stringify({ type: "init", run })}\n\n`);
+    const emitter = getRunEmitter(run.id);
+    if (!emitter) {
+      res.write(`data: ${JSON.stringify({ type: "done", status: run.status })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const onStep = (data: any) => res.write(`data: ${JSON.stringify({ type: "step", ...data })}\n\n`);
+    const onLog = (data: any) => res.write(`data: ${JSON.stringify({ type: "log", ...data })}\n\n`);
+    const onDone = (data: any) => { res.write(`data: ${JSON.stringify({ type: "done", ...data })}\n\n`); cleanup(); res.end(); };
+    emitter.on("step", onStep);
+    emitter.on("log", onLog);
+    emitter.on("done", onDone);
+
+    const heartbeat = setInterval(() => res.write(`: heartbeat\n\n`), 15000);
+    const cleanup = () => { clearInterval(heartbeat); emitter.off("step", onStep); emitter.off("log", onLog); emitter.off("done", onDone); };
+    req.on("close", cleanup);
+  });
+
+  // POST /plan/:planId/rollback — execute rollback steps
+  router.post("/plan/:planId/rollback", userAuth, async (req: any, res: any) => {
+    const { planId } = req.params;
+    const { ssh_config } = req.body || {};
+    const plan = planStore.get(planId);
+    if (!plan) return res.status(404).json({ error: "Plan not found" });
+    if (!plan.rollback_steps.length) return res.status(400).json({ error: "No rollback steps in plan" });
+    if (!ssh_config?.host || !ssh_config?.username) {
+      return res.status(400).json({ error: "ssh_config with host and username is required" });
+    }
+
+    const userId = (req as any).userId || "anonymous";
+    const rollbackPlan: DeploymentPlan = { ...plan, id: plan.id + "-rollback", steps: plan.rollback_steps, rollback_steps: [] };
+    const run = createRun({
+      script_id: plan.app_name,
+      script_version: "1",
+      environment: "deploy",
+      triggered_by: userId,
+      run_type: "rollback",
+      plan: rollbackPlan as any,
+    });
+
+    execPlan(rollbackPlan, ssh_config, {
+      onLog: (_stepId, line) => getRunEmitter(run.id)?.emit("log", { line }),
+    }).then((result) => {
+      updateRunStatus(run.id, result.status === "success" ? "success" : "failed");
+      getRunEmitter(run.id)?.emit("done", { status: result.status });
+    }).catch((err) => {
+      updateRunStatus(run.id, "failed");
+      getRunEmitter(run.id)?.emit("done", { status: "failed", error: err.message });
+    });
+
+    res.json({ run_id: run.id, plan_id: planId });
   });
 
   // Monitoring status

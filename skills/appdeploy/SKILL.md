@@ -67,6 +67,68 @@ After deployment:
 3. Report the live URL to the user
 4. If the platform provides a dashboard URL, share that too
 
+## Discovery Mode
+
+When invoked with a discovery prompt (message starts with `[DEPLOYMENT DISCOVERY]`), analyze the repository and return a **structured JSON object** as your final response. The JSON must match this schema:
+
+```json
+{
+  "framework": {
+    "framework": "string — e.g. Next.js, Express, FastAPI",
+    "version": "string | null",
+    "runtime": "string — e.g. node, python, go",
+    "confidence": 0.95,
+    "evidence": ["list of files/signals that led to this conclusion"]
+  },
+  "build_strategy": {
+    "strategy": "string — docker, docker-compose, npm, pip, cargo, etc.",
+    "confidence": 0.9,
+    "evidence": ["list of files/signals"],
+    "dockerfile_path": "string | null",
+    "compose_path": "string | null"
+  },
+  "services": [
+    {
+      "name": "string",
+      "type": "database | cache | queue | search | storage | other",
+      "source": "string — how detected",
+      "confidence": 0.9
+    }
+  ],
+  "env_vars": [
+    {
+      "name": "string",
+      "required": true,
+      "source": "string — file where found",
+      "has_default": false
+    }
+  ],
+  "ports": [
+    {
+      "port": 3000,
+      "source": "string",
+      "confidence": 0.9
+    }
+  ],
+  "health_endpoint": {
+    "path": "/health",
+    "method": "GET",
+    "source": "string",
+    "confidence": 0.85
+  },
+  "app_port": 3000,
+  "deployment_notes": "string — important deployment considerations"
+}
+```
+
+The discovery prompt will include pre-gathered probe results. Use them to confirm or augment your analysis. Wrap the JSON in a markdown code block tagged `discovery-result`:
+
+````
+```discovery-result
+{ ... }
+```
+````
+
 ## Important Rules
 
 - **Always detect first.** Don't guess the app type — run the detection script.

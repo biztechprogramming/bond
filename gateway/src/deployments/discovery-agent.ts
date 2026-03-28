@@ -29,7 +29,6 @@ import type {
   HealthEndpointDetection,
   UserQuestion,
 } from "./discovery-tools.js";
-import { runLLMDiscovery } from "./llm-discovery.js";
 import type { BackendClient } from "../backend/client.js";
 import { writeManifest } from "./manifest.js";
 import { emitDeploymentEvent } from "./events.js";
@@ -146,7 +145,130 @@ export function evaluateCompleteness(state: DiscoveryState): CompletenessReport 
   return { ready, required_coverage, recommended_coverage, missing_required, low_confidence };
 }
 
-// ── Agent Discovery Orchestrator (§6) ───────────────────────────────────────
+// ── Probe Runner (§080 — pre-gather for agent-first discovery) ──────────────
+
+/** Structured probe results for injection into agent context. */
+export interface ProbeResults {
+  framework?: FrameworkDetection;
+  build_strategy?: BuildStrategyDetection;
+  services?: ServiceDetection[];
+  env_vars?: EnvVarDetection[];
+  ports?: PortDetection[];
+  health_endpoint?: HealthEndpointDetection;
+  app_port?: number;
+  server_os?: string;
+  probes_run: ProbeRecord[];
+}
+
+/**
+ * Run file/SSH probes on a repo path and/or server. Returns structured results
+ * without any LLM calls — designed to be injected into an agent turn as context.
+ */
+export async function runProbes(
+  repoPath?: string,
+  sshParams?: SshExecParams,
+): Promise<ProbeResults> {
+  const results: ProbeResults = { probes_run: [] };
+
+  // Framework detection
+  if (repoPath) {
+    const probe = await runProbe("detect_framework", async () => {
+      const frameworks = await detectFramework(repoPath);
+      if (frameworks.length > 0) {
+        results.framework = frameworks.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        return ["framework"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Build strategy detection
+  if (repoPath) {
+    const probe = await runProbe("detect_build_strategy", async () => {
+      const strategies = await detectBuildStrategy(repoPath);
+      if (strategies.length > 0) {
+        results.build_strategy = strategies.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        return ["build_strategy"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Port detection
+  {
+    const searchScope = repoPath && sshParams ? "both" : repoPath ? "repo" : "server";
+    const probe = await runProbe("detect_ports", async () => {
+      const ports = await detectPorts(repoPath || ".", sshParams, searchScope as any);
+      if (ports.length > 0) {
+        results.ports = ports;
+        const best = ports.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        results.app_port = best.port;
+        return ["app_port", "ports"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Service detection
+  {
+    const searchScope = repoPath && sshParams ? "both" : repoPath ? "repo" : "server";
+    const probe = await runProbe("detect_services", async () => {
+      const services = await detectServices(repoPath || ".", sshParams, searchScope as any);
+      if (services.length > 0) {
+        results.services = services;
+        return ["services"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Env var detection
+  if (repoPath) {
+    const probe = await runProbe("detect_env_vars", async () => {
+      const envVars = await detectEnvVars(repoPath);
+      if (envVars.length > 0) {
+        results.env_vars = envVars;
+        return ["env_vars"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Health endpoint detection
+  {
+    const probe = await runProbe("detect_health_endpoint", async () => {
+      const endpoints = await detectHealthEndpoint(repoPath || ".", sshParams, results.app_port);
+      if (endpoints.length > 0) {
+        results.health_endpoint = endpoints.reduce((a, b) => a.confidence > b.confidence ? a : b);
+        return ["health_endpoint"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  // Server OS detection via SSH
+  if (sshParams) {
+    const probe = await runProbe("ssh_exec:uname", async () => {
+      const result = await sshExec({ ...sshParams, command: "uname -a", parse_as: "raw" });
+      if (result.exit_code === 0 && result.output) {
+        results.server_os = String(result.output).trim();
+        return ["server_os"];
+      }
+      return [];
+    });
+    results.probes_run.push(probe);
+  }
+
+  return results;
+}
+
+// ── Agent Discovery Orchestrator (§6) — legacy, kept for backward compat ────
 
 /**
  * Run the adaptive agent discovery loop.
@@ -256,78 +378,6 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
       user: params.sshUser || "deploy",
     };
     state.confidence.target_server = { source: "user-provided", detail: "SSH connection provided", score: 1.0 };
-  }
-
-  // ── Phase 0: LLM-powered analysis (if repo available) ──────────────────
-  if (params.repoPath) {
-    const llmProbe = await runProbe("llm_discovery", async () => {
-      const llmResult = params.backendClient
-        ? await runLLMDiscovery(params.repoPath!, params.backendClient)
-        : null;
-      if (!llmResult) return [];
-      const discovered: string[] = [];
-
-      if (llmResult.framework && !state.findings.framework) {
-        state.findings.framework = llmResult.framework;
-        state.confidence.framework = { source: "detected", detail: "LLM analysis", score: llmResult.framework.confidence };
-        discovered.push("framework");
-      }
-      if (llmResult.build_strategy && !state.findings.build_strategy) {
-        state.findings.build_strategy = llmResult.build_strategy;
-        state.confidence.build_strategy = { source: "detected", detail: "LLM analysis", score: llmResult.build_strategy.confidence };
-        discovered.push("build_strategy");
-      }
-      if (llmResult.app_port && !state.findings.app_port) {
-        state.findings.app_port = llmResult.app_port;
-        state.confidence.app_port = { source: "detected", detail: "LLM analysis", score: 0.9 };
-        discovered.push("app_port");
-      }
-      if (llmResult.ports && llmResult.ports.length > 0 && !state.findings.ports) {
-        state.findings.ports = llmResult.ports;
-        state.confidence.ports = { source: "detected", detail: `LLM found ${llmResult.ports.length} port(s)`, score: 0.9 };
-        discovered.push("ports");
-      }
-      if (llmResult.env_vars && llmResult.env_vars.length > 0 && !state.findings.env_vars) {
-        state.findings.env_vars = llmResult.env_vars;
-        state.confidence.env_vars = { source: "detected", detail: `LLM found ${llmResult.env_vars.length} env var(s)`, score: 0.9 };
-        discovered.push("env_vars");
-      }
-      if (llmResult.health_endpoint && !state.findings.health_endpoint) {
-        state.findings.health_endpoint = llmResult.health_endpoint;
-        state.confidence.health_endpoint = { source: "detected", detail: "LLM analysis", score: llmResult.health_endpoint.confidence };
-        discovered.push("health_endpoint");
-      }
-      if (llmResult.services && llmResult.services.length > 0 && !state.findings.services) {
-        state.findings.services = llmResult.services;
-        state.confidence.services = { source: "detected", detail: `LLM found ${llmResult.services.length} service(s)`, score: 0.9 };
-        discovered.push("services");
-      }
-
-      return discovered;
-    });
-    state.probes_run.push(llmProbe);
-    toolCalls++;
-
-    // Emit progress for each LLM-discovered field
-    for (const field of llmProbe.fields_discovered) {
-      emitProgress(params.env, state, field, sessionId, "llm_discovery", llmProbe);
-    }
-    // If LLM probe failed or found nothing, emit that as progress so UI sees it
-    if (!llmProbe.success || llmProbe.fields_discovered.length === 0) {
-      emitDeploymentEvent("discovery_agent_progress", {
-        environment: params.env,
-        summary: llmProbe.success ? "LLM probe returned no fields" : `LLM probe failed: ${(llmProbe as any).error || "unknown"}`,
-        details: {
-          field: "llm_discovery",
-          value: null,
-          raw_response: (llmProbe as any).error || "No fields discovered",
-          probe_success: llmProbe.success,
-          probe_error: (llmProbe as any).error || null,
-          probe_duration_ms: llmProbe.duration_ms,
-          session_id: sessionId,
-        },
-      });
-    }
   }
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
