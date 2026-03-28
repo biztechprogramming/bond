@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAgentDiscovery } from "@/hooks/useAgentDiscovery";
 import DegradedModeBanner from "./DegradedModeBanner";
 import InlineQuestion from "./InlineQuestion";
@@ -20,6 +20,7 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
     status,
     discoveryMode,
     activityLog,
+    rawEvents,
     currentQuestion,
     questionsRemaining,
     discoveryState,
@@ -31,6 +32,8 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
     editField,
     forceComplete,
   } = useAgentDiscovery();
+
+  const [rawPanelOpen, setRawPanelOpen] = useState(true);
 
   useEffect(() => {
     if (resourceId && environment) {
@@ -73,10 +76,21 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
         <DegradedModeBanner mode={discoveryMode} />
       )}
 
-      {/* Error */}
+      {/* Error — show FULL error message */}
       {status === "error" && (
         <div role="alert" style={styles.errorBanner}>
-          Discovery failed: {error}
+          <strong>Discovery failed</strong>
+          <pre style={{ margin: "8px 0 0", whiteSpace: "pre-wrap", fontSize: "0.8rem", color: "#ff6c8a" }}>{error || "Unknown error"}</pre>
+        </div>
+      )}
+
+      {/* Complete but empty state */}
+      {status === "complete" && (!discoveryState || Object.keys(discoveryState.findings || {}).length === 0) && (
+        <div role="alert" style={styles.errorBanner}>
+          <strong>Discovery completed but returned no data</strong>
+          <pre style={{ margin: "8px 0 0", whiteSpace: "pre-wrap", fontSize: "0.8rem", color: "#ff6c8a" }}>
+            discoveryState: {JSON.stringify(discoveryState, null, 2)}
+          </pre>
         </div>
       )}
 
@@ -160,6 +174,23 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
           />
         </div>
       </div>
+
+      {/* Raw Events Debug Panel */}
+      <div style={styles.rawPanel}>
+        <button
+          style={styles.rawToggle}
+          onClick={() => setRawPanelOpen((v) => !v)}
+        >
+          {rawPanelOpen ? "▼" : "▶"} Raw SSE Events ({rawEvents.length})
+        </button>
+        {rawPanelOpen && (
+          <pre style={styles.rawContent}>
+            {rawEvents.length === 0
+              ? "No SSE events received yet."
+              : rawEvents.map((evt, i) => `[${new Date(evt.receivedAt).toISOString()}]\n${JSON.stringify(evt.data, null, 2)}`).join("\n\n")}
+          </pre>
+        )}
+      </div>
     </div>
   );
 }
@@ -241,5 +272,35 @@ const styles: Record<string, React.CSSProperties> = {
   planPanel: {
     flex: "1 1 350px",
     minWidth: 300,
+  },
+  rawPanel: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#2a2a3e",
+    borderRadius: 8,
+    backgroundColor: "#0a0a12",
+    overflow: "hidden",
+  },
+  rawToggle: {
+    width: "100%",
+    padding: "8px 14px",
+    backgroundColor: "transparent",
+    border: "none",
+    color: "#8888a0",
+    fontSize: "0.8rem",
+    textAlign: "left" as const,
+    cursor: "pointer",
+  },
+  rawContent: {
+    padding: "8px 14px",
+    margin: 0,
+    color: "#a0a0b8",
+    fontSize: "0.72rem",
+    lineHeight: 1.5,
+    maxHeight: 400,
+    overflow: "auto",
+    whiteSpace: "pre-wrap" as const,
+    wordBreak: "break-all" as const,
   },
 };

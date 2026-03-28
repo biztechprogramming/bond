@@ -15,10 +15,16 @@ import type {
 export type DiscoveryStatus = "idle" | "connecting" | "discovering" | "degraded" | "question" | "complete" | "error";
 export type DiscoveryMode = "full" | "repo-only" | "server-only" | "interview";
 
+export interface RawSSEEvent {
+  receivedAt: number;
+  data: any;
+}
+
 export interface UseAgentDiscoveryReturn {
   status: DiscoveryStatus;
   discoveryMode: DiscoveryMode;
   activityLog: ActivityItem[];
+  rawEvents: RawSSEEvent[];
   currentQuestion: UserQuestion | null;
   questionsRemaining: number;
   discoveryState: DiscoveryState | null;
@@ -47,6 +53,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
   const [completeness, setCompleteness] = useState<CompletenessReport | null>(null);
   const [probesRun, setProbesRun] = useState<ProbeRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [rawEvents, setRawEvents] = useState<RawSSEEvent[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -66,8 +73,11 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     setActivityLog((prev) => [...prev, { ...item, id: makeActivityId(), timestamp: Date.now() }]);
   }, []);
 
-  const handleSSEEvent = useCallback((data: DiscoverySSEEvent) => {
+  const handleSSEEvent = useCallback((data: DiscoverySSEEvent & Record<string, any>) => {
     lastEventTimeRef.current = Date.now();
+
+    // Capture every raw SSE event
+    setRawEvents((prev) => [...prev, { receivedAt: Date.now(), data }]);
 
     switch (data.event) {
       case "discovery_agent_started": {
@@ -102,12 +112,19 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         if (data.completeness) {
           accumulatedStateRef.current.completeness = data.completeness;
         }
+        const rawDetail = (data as any).raw_response ?? (data as any).value;
+        const probeError = (data as any).probe_error;
+        const detailStr = probeError
+          ? ` — ERROR: ${probeError}`
+          : rawDetail != null
+            ? ` — ${typeof rawDetail === "object" ? JSON.stringify(rawDetail) : String(rawDetail)}`
+            : "";
         addActivity({
-          type: "discovery",
-          message: `Discovered ${data.field}`,
+          type: probeError ? "error" : "discovery",
+          message: `${probeError ? "Probe failed" : "Discovered"} ${data.field}${detailStr}`,
           field: data.field,
           confidence: data.confidence,
-          status: "done",
+          status: probeError ? "error" : "done",
         });
         break;
       }
@@ -127,6 +144,14 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       }
       case "discovery_agent_completed": {
         if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+        const completedData = data as any;
+        // If the backend sent an error (e.g. agent threw), surface it
+        if (completedData.error) {
+          setError(completedData.error);
+          setStatus("error");
+          addActivity({ type: "error", message: `Discovery failed: ${completedData.error}`, status: "error" });
+          break;
+        }
         const finalState = data.state || accumulatedStateRef.current;
         const finalCompleteness = data.completeness || accumulatedStateRef.current.completeness;
         setDiscoveryState(finalState);
@@ -134,6 +159,15 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         setProbesRun(finalState.probes_run || []);
         setStatus("complete");
         addActivity({ type: "info", message: "Discovery complete", status: "done" });
+        break;
+      }
+      default: {
+        // Catch-all: log unknown event types with full payload
+        addActivity({
+          type: "info",
+          message: `Unknown SSE event: ${(data as any).event} — ${JSON.stringify(data)}`,
+          status: "done",
+        });
         break;
       }
     }
@@ -149,6 +183,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     setCompleteness(null);
     setProbesRun([]);
     setDiscoveryMode("full");
+    setRawEvents([]);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -231,8 +266,16 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
           }
         }
       }
-      // Stream ended — if we didn't get a completion event, auto-complete with accumulated data
+      // Stream ended — check if we received ANY events
       if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+      setRawEvents((evts) => {
+        if (evts.length === 0) {
+          setError("No SSE events received from gateway");
+          setStatus("error");
+          addActivity({ type: "error", message: "No SSE events received from gateway — the discovery stream returned empty", status: "error" });
+        }
+        return evts;
+      });
       setStatus((currentStatus) => {
         if (currentStatus === "discovering" || currentStatus === "degraded" || currentStatus === "question") {
           const accState = accumulatedStateRef.current;
@@ -331,6 +374,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     status,
     discoveryMode,
     activityLog,
+    rawEvents,
     currentQuestion,
     questionsRemaining,
     discoveryState,

@@ -558,6 +558,18 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
     runAgentDiscovery(agentParams).catch((err) => {
       console.error("[agent-discover] agent discovery failed:", err.message);
+      // Emit the error as an SSE event so the frontend sees it
+      const { emitDeploymentEvent: emit } = require("./events.js");
+      emit("discovery_agent_completed", {
+        environment: env,
+        summary: `Discovery failed: ${err.message}`,
+        details: {
+          state: null,
+          completeness: null,
+          error: err.message,
+          session_id: sessionId,
+        },
+      });
     });
 
     res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId });
@@ -584,6 +596,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
 
     const write = (payload: any) => {
       if (closed) return;
+      console.log(`[discovery-stream] SSE event sent for session=${sessionId}: event=${payload.event}, field=${payload.field || "N/A"}`);
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
       if (payload.event === "discovery_agent_completed") {
         res.end();

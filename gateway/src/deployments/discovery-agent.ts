@@ -310,7 +310,23 @@ export async function runAgentDiscovery(params: AgentDiscoveryParams): Promise<D
 
     // Emit progress for each LLM-discovered field
     for (const field of llmProbe.fields_discovered) {
-      emitProgress(params.env, state, field, sessionId, "llm_discovery");
+      emitProgress(params.env, state, field, sessionId, "llm_discovery", llmProbe);
+    }
+    // If LLM probe failed or found nothing, emit that as progress so UI sees it
+    if (!llmProbe.success || llmProbe.fields_discovered.length === 0) {
+      emitDeploymentEvent("discovery_agent_progress", {
+        environment: params.env,
+        summary: llmProbe.success ? "LLM probe returned no fields" : `LLM probe failed: ${(llmProbe as any).error || "unknown"}`,
+        details: {
+          field: "llm_discovery",
+          value: null,
+          raw_response: (llmProbe as any).error || "No fields discovered",
+          probe_success: llmProbe.success,
+          probe_error: (llmProbe as any).error || null,
+          probe_duration_ms: llmProbe.duration_ms,
+          session_id: sessionId,
+        },
+      });
     }
   }
 
@@ -523,28 +539,41 @@ export function convertToManifest(state: DiscoveryState, env: string): Deploymen
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-async function runProbe(tool: string, fn: () => Promise<string[]>): Promise<ProbeRecord> {
+async function runProbe(tool: string, fn: () => Promise<string[]>): Promise<ProbeRecord & { error?: string }> {
   const start = Date.now();
   try {
     const fields = await fn();
     return { tool, timestamp: start, duration_ms: Date.now() - start, success: true, fields_discovered: fields };
-  } catch {
-    return { tool, timestamp: start, duration_ms: Date.now() - start, success: false, fields_discovered: [] };
+  } catch (err: any) {
+    const errorMsg = err?.message || String(err);
+    console.error(`[discovery-agent] probe ${tool} failed:`, errorMsg);
+    return { tool, timestamp: start, duration_ms: Date.now() - start, success: false, fields_discovered: [], error: errorMsg };
   }
 }
 
-function emitProgress(env: string, state: DiscoveryState, field: string, sessionId?: string, probeName?: string): void {
+function emitProgress(env: string, state: DiscoveryState, field: string, sessionId?: string, probeName?: string, probeRecord?: ProbeRecord & { error?: string }): void {
+  const value = (state.findings as any)[field];
+  const details: any = {
+    field,
+    value,
+    raw_response: value,
+    confidence: state.confidence[field],
+    completeness: evaluateCompleteness(state),
+    probe_name: probeName || field,
+    session_id: sessionId,
+  };
+  if (probeRecord) {
+    details.probe_duration_ms = probeRecord.duration_ms;
+    details.probe_success = probeRecord.success;
+    if (probeRecord.error) {
+      details.probe_error = probeRecord.error;
+    }
+  }
+  console.log(`[discovery-agent] emitProgress: field=${field}, value=${JSON.stringify(value)?.slice(0, 200)}`);
   emitDeploymentEvent("discovery_agent_progress", {
     environment: env,
     summary: `Discovered: ${field}`,
-    details: {
-      field,
-      value: (state.findings as any)[field],
-      confidence: state.confidence[field],
-      completeness: evaluateCompleteness(state),
-      probe_name: probeName || field,
-      session_id: sessionId,
-    },
+    details,
   });
 }
 

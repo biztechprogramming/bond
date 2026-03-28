@@ -9,6 +9,7 @@ const mockHook: UseAgentDiscoveryReturn = {
   status: "idle",
   discoveryMode: "full",
   activityLog: [],
+  rawEvents: [],
   currentQuestion: null,
   questionsRemaining: 0,
   discoveryState: null,
