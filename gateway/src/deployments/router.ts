@@ -537,6 +537,17 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
     let resourceName: string | undefined;
     if (resourceId) {
       const resource = await getResource(config, resourceId);
+      if (!resource) {
+        return res.status(404).json({ status: "error", reason: "Resource not found" });
+      }
+      // Environment isolation: resource must belong to the requested environment (§080, preserves discovery.ts line 57)
+      if (resource.environment && resource.environment !== env) {
+        return res.status(403).json({
+          status: "denied",
+          action: "discover",
+          reason: `Resource '${resource.name}' belongs to environment '${resource.environment}', not '${env}'. Agents can only discover resources in their own environment.`,
+        });
+      }
       try { conn = JSON.parse(resource?.connection_json || "{}"); } catch {}
       resourceName = resource?.name;
     }

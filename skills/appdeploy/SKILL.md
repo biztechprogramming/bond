@@ -117,6 +117,11 @@ When invoked with a discovery prompt (message starts with `[DEPLOYMENT DISCOVERY
     "confidence": 0.85
   },
   "app_port": 3000,
+  "deploy_target": {
+    "recommended": "string — fly.io, railway, render, vercel, ssh, etc.",
+    "reason": "string — why this target is recommended",
+    "alternatives": ["other viable platforms"]
+  },
   "deployment_notes": "string — important deployment considerations"
 }
 ```

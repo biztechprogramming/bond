@@ -2,17 +2,123 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useAgentDiscovery } from "@/hooks/useAgentDiscovery";
+import { useAgents, useAgentMounts } from "@/hooks/useSpacetimeDB";
 import DegradedModeBanner from "./DegradedModeBanner";
 import InlineQuestion from "./InlineQuestion";
 import DeploymentPlanPanel from "./DeploymentPlanPanel";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
+import type { AgentRow, AgentMountRow } from "@/lib/spacetimedb-client";
 
 interface Props {
-  resourceId: string;
+  resourceId?: string;
   repoUrl?: string;
   environment: string;
   onComplete: (state: DiscoveryState, completeness: CompletenessReport) => void;
   onCancel: () => void;
+}
+
+/**
+ * Agent/repo selection pre-step before discovery starts.
+ */
+function AgentRepoSelector({
+  agents,
+  onStart,
+  onCancel,
+}: {
+  agents: AgentRow[];
+  onStart: (agentId: string, repoId: string) => void;
+  onCancel: () => void;
+}) {
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedRepoId, setSelectedRepoId] = useState<string>("");
+
+  // Auto-select if only one agent
+  useEffect(() => {
+    if (agents.length === 1 && !selectedAgentId) {
+      setSelectedAgentId(agents[0].id);
+    }
+  }, [agents, selectedAgentId]);
+
+  // Get mounts for selected agent (these serve as "repos")
+  const mounts = useAgentMounts(selectedAgentId);
+
+  // Auto-select if only one mount
+  useEffect(() => {
+    if (mounts.length === 1 && !selectedRepoId) {
+      setSelectedRepoId(mounts[0].mountName || mounts[0].hostPath);
+    }
+  }, [mounts, selectedRepoId]);
+
+  // Reset repo selection when agent changes
+  useEffect(() => {
+    setSelectedRepoId("");
+  }, [selectedAgentId]);
+
+  const canStart = selectedAgentId && (selectedRepoId || mounts.length === 0);
+
+  return (
+    <div style={styles.selectorWrapper}>
+      <h2 style={styles.title}>Start Deployment Discovery</h2>
+      <p style={styles.selectorDesc}>
+        Select an agent and repository to analyze for deployment configuration.
+      </p>
+
+      <div style={styles.selectorField}>
+        <label style={styles.selectorLabel}>Agent</label>
+        {agents.length === 0 ? (
+          <p style={styles.selectorHint}>No agents available. Create one in Settings.</p>
+        ) : (
+          <select
+            style={styles.selectorSelect}
+            value={selectedAgentId}
+            onChange={(e) => setSelectedAgentId(e.target.value)}
+          >
+            <option value="">Select an agent...</option>
+            {agents.filter(a => a.isActive).map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.displayName || agent.name}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {selectedAgentId && mounts.length > 0 && (
+        <div style={styles.selectorField}>
+          <label style={styles.selectorLabel}>Repository</label>
+          <select
+            style={styles.selectorSelect}
+            value={selectedRepoId}
+            onChange={(e) => setSelectedRepoId(e.target.value)}
+          >
+            <option value="">Select a repository...</option>
+            {mounts.map((mount) => (
+              <option key={mount.id} value={mount.mountName || mount.hostPath}>
+                {mount.mountName || mount.hostPath}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {selectedAgentId && mounts.length === 0 && (
+        <p style={styles.selectorHint}>
+          No repos mounted on this agent. Discovery will analyze the agent&apos;s workspace.
+        </p>
+      )}
+
+      <div style={styles.selectorActions}>
+        <button style={styles.cancelBtn} onClick={onCancel}>Cancel</button>
+        <button
+          style={{ ...styles.startBtn, opacity: canStart ? 1 : 0.5 }}
+          disabled={!canStart}
+          onClick={() => onStart(selectedAgentId, selectedRepoId)}
+        >
+          Start Discovery
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function AgentDiscoveryView({ resourceId, repoUrl, environment, onComplete, onCancel }: Props) {
@@ -33,13 +139,22 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
     forceComplete,
   } = useAgentDiscovery();
 
-  const [rawPanelOpen, setRawPanelOpen] = useState(true);
+  const agents = useAgents();
 
+  const [rawPanelOpen, setRawPanelOpen] = useState(true);
+  const [showSelector, setShowSelector] = useState(!resourceId);
+
+  // Legacy mode: if resourceId is provided, start immediately (skip agent selection)
   useEffect(() => {
     if (resourceId && environment) {
       startDiscovery(resourceId, environment, repoUrl);
     }
   }, [resourceId, environment, repoUrl, startDiscovery]);
+
+  const handleAgentStart = useCallback((agentId: string, repoId: string) => {
+    setShowSelector(false);
+    startDiscovery("", environment, repoUrl, agentId, repoId);
+  }, [environment, repoUrl, startDiscovery]);
 
   const handleShipIt = useCallback(() => {
     if (discoveryState && completeness) {
@@ -51,6 +166,11 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
     cancelDiscovery();
     onCancel();
   }, [cancelDiscovery, onCancel]);
+
+  // Show agent/repo selector pre-step
+  if (showSelector && status === "idle") {
+    return <AgentRepoSelector agents={agents} onStart={handleAgentStart} onCancel={onCancel} />;
+  }
 
   if (status === "idle") return null;
 
@@ -223,6 +343,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 14px",
     cursor: "pointer",
   },
+  startBtn: {
+    backgroundColor: "#6c8aff",
+    border: "none",
+    borderRadius: 6,
+    color: "#fff",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    padding: "8px 20px",
+    cursor: "pointer",
+  },
   errorBanner: {
     padding: "10px 16px",
     backgroundColor: "rgba(255, 108, 138, 0.1)",
@@ -302,5 +432,50 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: "auto",
     whiteSpace: "pre-wrap" as const,
     wordBreak: "break-all" as const,
+  },
+  // Selector pre-step styles
+  selectorWrapper: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+    padding: "20px 0",
+  },
+  selectorDesc: {
+    color: "#8888a0",
+    fontSize: "0.85rem",
+    margin: 0,
+  },
+  selectorField: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  selectorLabel: {
+    fontSize: "0.8rem",
+    fontWeight: 600,
+    color: "#a0a0b8",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
+  },
+  selectorSelect: {
+    backgroundColor: "#12121a",
+    border: "1px solid #2a2a3e",
+    borderRadius: 6,
+    color: "#e0e0e8",
+    fontSize: "0.85rem",
+    padding: "8px 12px",
+    outline: "none",
+  },
+  selectorHint: {
+    color: "#666680",
+    fontSize: "0.8rem",
+    fontStyle: "italic",
+    margin: 0,
+  },
+  selectorActions: {
+    display: "flex",
+    gap: 12,
+    justifyContent: "flex-end",
+    marginTop: 8,
   },
 };
