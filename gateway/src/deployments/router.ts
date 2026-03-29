@@ -614,23 +614,28 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
           // Stream agent turn and map events to discovery format
           const accumulatedText = { value: "" };
           for await (const sseEvent of backendClient.conversationTurnStream(conversationId, discoveryPrompt, agentId)) {
+            console.log(`[agent-discover] SSE event received: event=${sseEvent.event}, data_keys=${Object.keys(sseEvent.data).join(",")}`);
             const mapped = mapAgentEventToDiscovery(sseEvent, sessionId, accumulatedText);
             if (mapped) {
-              emit(mapped);
+              const events = Array.isArray(mapped) ? mapped : [mapped];
+              for (const ev of events) {
+              console.log(`[agent-discover] Emitting mapped event: ${ev.event}, msg_type=${(ev as any).msg_type || "n/a"}`);
+              emit(ev);
 
               // On completion, cache state and auto-generate plan
-              if (mapped.event === "discovery_agent_completed" && mapped.state) {
-                const state = mapped.state as DiscoveryState;
+              if (ev.event === "discovery_agent_completed" && ev.state) {
+                const state = ev.state as DiscoveryState;
                 discoveryStateCache.set(sessionId, state);
                 if (state.completeness?.ready) {
                   generateDeploymentPlan(state, backendClient).then((plan) => {
                     planStore.set(plan.id, plan);
-                    emit({ ...mapped, event: "discovery_agent_completed", session_id: sessionId, plan });
+                    emit({ ...ev, event: "discovery_agent_completed", session_id: sessionId, plan });
                   }).catch((err) => {
                     console.error("[auto-plan] failed to generate plan:", err.message);
                   });
                 }
                 setTimeout(() => { discoveryBuffers.delete(sessionId); }, 30_000);
+              }
               }
             }
           }
@@ -639,7 +644,10 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
           const hasDone = session.events.some((e: any) => e.event === "discovery_agent_completed");
           if (!hasDone) {
             const finalPayload = mapAgentEventToDiscovery({ event: "done", data: {} }, sessionId, accumulatedText);
-            if (finalPayload) emit(finalPayload);
+            if (finalPayload) {
+              const finals = Array.isArray(finalPayload) ? finalPayload : [finalPayload];
+              for (const ev of finals) emit(ev);
+            }
           }
         } catch (err: any) {
           console.error("[agent-discover] agent-first discovery failed:", err.message);

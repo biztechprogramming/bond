@@ -86,7 +86,7 @@ export function mapAgentEventToDiscovery(
   sseEvent: SSEEvent,
   sessionId: string,
   accumulatedText: { value: string },
-): DiscoverySSEPayload | null {
+): DiscoverySSEPayload | DiscoverySSEPayload[] | null {
   const { event, data } = sseEvent;
 
   if (event === "error") {
@@ -100,10 +100,33 @@ export function mapAgentEventToDiscovery(
   }
 
   if (event === "done") {
+    // If the done event carries text content, accumulate it
+    const doneText = String(data.text || data.content || data.response || data.message || "");
+    if (doneText) {
+      accumulatedText.value += doneText;
+    }
+
+    const results: DiscoverySSEPayload[] = [];
+
+    // Emit accumulated text as a conversation message so the frontend shows it
+    if (accumulatedText.value) {
+      results.push({
+        event: "discovery_agent_progress",
+        session_id: sessionId,
+        field: "agent_analysis",
+        value: accumulatedText.value,
+        agent_text: accumulatedText.value,
+        msg_type: "assistant",
+        confidence: { source: "inferred", detail: "Agent final response", score: 0 },
+        completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+        probe_name: "agent_turn",
+      });
+    }
+
     // Try to parse the accumulated agent text for discovery results
     const parsed = parseDiscoveryResult(accumulatedText.value);
     if (parsed) {
-      return {
+      results.push({
         event: "discovery_agent_completed",
         session_id: sessionId,
         state: {
@@ -114,26 +137,78 @@ export function mapAgentEventToDiscovery(
           completeness: { ready: true, required_coverage: 1, recommended_coverage: 1, missing_required: [], low_confidence: [] },
         },
         completeness: { ready: true, required_coverage: 1, recommended_coverage: 1, missing_required: [], low_confidence: [] },
-      };
+      });
+    } else {
+      // No structured output found — complete with what we have
+      results.push({
+        event: "discovery_agent_completed",
+        session_id: sessionId,
+        state: { findings: {}, confidence: {}, probes_run: [], user_answers: {}, completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] } },
+        completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+        agent_text: accumulatedText.value,
+      });
     }
-    // No structured output found — complete with what we have
+
+    return results;
+  }
+
+  // Backend sends top-level event names: "chunk", "tool_call", "status", "interim_message"
+  // Also handle legacy "message" wrapper format with data.type
+
+  if (event === "chunk" || event === "interim_message") {
+    const chunk = String(data.content || data.text || "");
+    accumulatedText.value += chunk;
     return {
-      event: "discovery_agent_completed",
+      event: "discovery_agent_progress",
       session_id: sessionId,
-      state: { findings: {}, confidence: {}, probes_run: [], user_answers: {}, completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] } },
+      field: "agent_analysis",
+      value: chunk,
+      agent_text: chunk,
+      msg_type: "assistant",
+      confidence: { source: "inferred", detail: "Agent analysis in progress", score: 0 },
       completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
-      agent_text: accumulatedText.value,
+      probe_name: "agent_turn",
     };
   }
 
-  // Accumulate text from message events
+  if (event === "tool_call") {
+    const toolName = String(data.tool_name || data.name || data.tool || "unknown_tool");
+    const toolArgs = data.args || data.arguments || data.input || {};
+    return {
+      event: "discovery_agent_progress",
+      session_id: sessionId,
+      field: "agent_analysis",
+      value: `Calling tool: ${toolName}`,
+      agent_text: JSON.stringify({ tool: toolName, args: toolArgs }),
+      msg_type: "tool_call",
+      tool_name: toolName,
+      confidence: { source: "inferred", detail: `Tool call: ${toolName}`, score: 0 },
+      completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+      probe_name: "agent_turn",
+    };
+  }
+
+  if (event === "status") {
+    const statusText = String(data.state || data.status || data.content || "");
+    return {
+      event: "discovery_agent_progress",
+      session_id: sessionId,
+      field: "status",
+      value: statusText,
+      agent_text: statusText,
+      msg_type: "status",
+      confidence: { source: "inferred", detail: "Agent status update", score: 0 },
+      completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+      probe_name: "agent_turn",
+    };
+  }
+
+  // Legacy "message" wrapper format (data.type discriminator)
   if (event === "message") {
     const type = data.type as string;
     if (type === "text" || type === "content") {
       const chunk = String(data.content || data.text || data.delta || "");
       accumulatedText.value += chunk;
-
-      // Emit progress events for agent reasoning — includes agent_text for conversation rendering
       return {
         event: "discovery_agent_progress",
         session_id: sessionId,
@@ -148,8 +223,8 @@ export function mapAgentEventToDiscovery(
     }
 
     if (type === "tool_call") {
-      const toolName = String(data.name || data.tool || "unknown_tool");
-      const toolArgs = data.arguments || data.args || data.input || {};
+      const toolName = String(data.tool_name || data.name || data.tool || "unknown_tool");
+      const toolArgs = data.args || data.arguments || data.input || {};
       return {
         event: "discovery_agent_progress",
         session_id: sessionId,
@@ -157,6 +232,7 @@ export function mapAgentEventToDiscovery(
         value: `Calling tool: ${toolName}`,
         agent_text: JSON.stringify({ tool: toolName, args: toolArgs }),
         msg_type: "tool_call",
+        tool_name: toolName,
         confidence: { source: "inferred", detail: `Tool call: ${toolName}`, score: 0 },
         completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
         probe_name: "agent_turn",
@@ -181,11 +257,14 @@ export function mapAgentEventToDiscovery(
     }
 
     if (type === "status") {
+      const statusText = String(data.state || data.status || data.content || "");
       return {
         event: "discovery_agent_progress",
         session_id: sessionId,
         field: "status",
-        value: String(data.status || data.content || ""),
+        value: statusText,
+        agent_text: statusText,
+        msg_type: "status",
         confidence: { source: "inferred", detail: "Agent status update", score: 0 },
         completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
         probe_name: "agent_turn",
