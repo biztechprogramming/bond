@@ -9,6 +9,7 @@ const mockHook: UseAgentDiscoveryReturn = {
   status: "idle",
   discoveryMode: "full",
   activityLog: [],
+  conversationMessages: [],
   rawEvents: [],
   currentQuestion: null,
   questionsRemaining: 0,
@@ -96,15 +97,13 @@ describe("AgentDiscoveryView", () => {
     expect(screen.getByText(/Connection refused/)).toBeTruthy();
   });
 
-  it("shows activity log items", () => {
+  it("shows conversation messages", () => {
     mockHook.status = "discovering";
-    mockHook.activityLog = [
-      { id: "1", type: "discovery", message: "Discovered framework", timestamp: Date.now(), status: "done" },
-      { id: "2", type: "discovery", message: "Discovered ports", timestamp: Date.now(), status: "done" },
+    (mockHook as any).conversationMessages = [
+      { id: "c1", type: "assistant", content: "Analyzing your codebase...", timestamp: Date.now() },
     ];
     render(<AgentDiscoveryView {...defaultProps} />);
-    expect(screen.getByText("Discovered framework")).toBeTruthy();
-    expect(screen.getByText("Discovered ports")).toBeTruthy();
+    expect(screen.getByText("Analyzing your codebase...")).toBeTruthy();
   });
 
   it("shows complete state", () => {
