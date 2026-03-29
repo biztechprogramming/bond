@@ -30,6 +30,160 @@ export function parseDiscoveryResult(text: string): Record<string, unknown> | nu
 }
 
 /**
+ * Normalize the agent's rich discovery-result JSON into the flat findings
+ * schema the frontend DiscoveryState expects.
+ *
+ * Agent returns:  { app_name, services[], runtime, containerization, ... }
+ * Frontend needs: { source, framework, build_strategy, app_port, health_endpoint, target_server, services, env_vars, ports, ... }
+ */
+export function normalizeAgentFindings(raw: Record<string, unknown>): Record<string, unknown> {
+  const findings: Record<string, unknown> = {};
+
+  // source / app name
+  const appName = raw.app_name || raw.name || raw.repo_id || "";
+  if (appName) findings.source = String(appName);
+
+  // framework — frontend expects { framework, runtime?, confidence, evidence[] }
+  const services = raw.services as any[] | undefined;
+  const runtimeInfo = raw.runtime as any;
+  if (raw.framework) {
+    // Already in the right shape
+    findings.framework = raw.framework;
+  } else if (services?.length) {
+    const primary = services[0];
+    findings.framework = {
+      framework: String(primary.framework || primary.type || "unknown"),
+      runtime: runtimeInfo?.primary
+        ? `${runtimeInfo.primary}${runtimeInfo.version ? " " + runtimeInfo.version : ""}`
+        : primary.language || undefined,
+      confidence: primary.confidence ?? 0.9,
+      evidence: [`Detected from service: ${primary.name || "primary"}`],
+    };
+  }
+
+  // build_strategy — frontend expects { strategy, confidence, evidence[] }
+  if (raw.build_strategy) {
+    findings.build_strategy = raw.build_strategy;
+  } else if (raw.containerization) {
+    const c = raw.containerization as any;
+    findings.build_strategy = {
+      strategy: c.dockerfile ? "docker" : "script",
+      confidence: 0.9,
+      evidence: c.dockerfile ? [`Dockerfile: ${c.dockerfile}`] : ["No Dockerfile found"],
+    };
+  } else if (raw.build) {
+    const b = raw.build as any;
+    findings.build_strategy = {
+      strategy: b.install_command ? "script" : "unknown",
+      confidence: 0.8,
+      evidence: b.install_command ? [`Install: ${b.install_command}`] : [],
+    };
+  }
+
+  // app_port — frontend expects a top-level number
+  if (raw.app_port != null) {
+    findings.app_port = Number(raw.app_port);
+  } else if (services?.length) {
+    // Pick the first API/backend service port, or just the first port found
+    const apiService = services.find((s: any) => s.type === "api" || s.type === "backend") || services[0];
+    if (apiService?.port) {
+      findings.app_port = Number(apiService.port);
+    }
+  } else if (raw.ports_summary) {
+    // ports_summary is { "18790": "backend", ... }
+    const ports = Object.keys(raw.ports_summary as Record<string, string>);
+    if (ports.length) findings.app_port = Number(ports[0]);
+  }
+
+  // health_endpoint — frontend expects { path, source, confidence }
+  if (raw.health_endpoint) {
+    findings.health_endpoint = raw.health_endpoint;
+  } else if (services?.length) {
+    for (const svc of services) {
+      if ((svc as any).health_endpoint) {
+        findings.health_endpoint = (svc as any).health_endpoint;
+        break;
+      }
+    }
+  }
+
+  // target_server — frontend expects { host, port, user, os? }
+  // The agent can't know this, so provide an editable default
+  if (raw.target_server) {
+    findings.target_server = raw.target_server;
+  } else {
+    findings.target_server = {
+      host: "your-server.example.com",
+      port: 22,
+      user: "deploy",
+      os: (raw.containerization as any)?.base_image ? "linux" : "linux",
+    };
+  }
+
+  // services — pass through as-is, frontend can render the array
+  if (services?.length) {
+    findings.services = services.map((s: any) => ({
+      name: s.name || "unknown",
+      type: s.type || "service",
+      source: s.source || s.entry_point || `${s.framework || s.language || "unknown"}`,
+      confidence: s.confidence ?? 0.85,
+      port: s.port,
+      command: s.command,
+      dev_command: s.dev_command,
+    }));
+  }
+
+  // env_vars — frontend expects Array<{ name, required, source }>
+  if (raw.env_vars) {
+    const ev = raw.env_vars as any;
+    if (Array.isArray(ev)) {
+      findings.env_vars = ev;
+    } else if (ev.required || ev.optional) {
+      const vars: any[] = [];
+      for (const name of (ev.required || [])) {
+        vars.push({ name, required: true, source: "discovery" });
+      }
+      for (const name of (ev.optional || [])) {
+        vars.push({ name, required: false, source: "discovery" });
+      }
+      findings.env_vars = vars;
+    }
+  }
+
+  // ports — frontend expects Array<{ port, source, confidence }>
+  if (raw.ports) {
+    findings.ports = raw.ports;
+  } else if (raw.ports_summary) {
+    const ps = raw.ports_summary as Record<string, string>;
+    findings.ports = Object.entries(ps).map(([port, desc]) => ({
+      port: Number(port),
+      source: String(desc),
+      confidence: 0.9,
+    }));
+  } else if (services?.length) {
+    findings.ports = services
+      .filter((s: any) => s.port)
+      .map((s: any) => ({ port: Number(s.port), source: s.name, confidence: 0.9 }));
+  }
+
+  // build/start commands
+  if (raw.build) {
+    const b = raw.build as any;
+    if (b.install_command) findings.build_command = b.install_command;
+    if (b.dev_command) findings.start_command = b.dev_command;
+  }
+
+  // Pass through description
+  if (raw.description) findings.description = raw.description;
+  if (raw.architecture) findings.architecture = raw.architecture;
+  if (raw.database) findings.database = raw.database;
+  if (raw.docker_compose) findings.docker_compose = raw.docker_compose;
+  if (raw.containerization) findings.containerization = raw.containerization;
+
+  return findings;
+}
+
+/**
  * Convert pre-gathered probe results into a discovery state findings object,
  * for use in building the final DiscoveryState.
  */
@@ -130,7 +284,7 @@ export function mapAgentEventToDiscovery(
         event: "discovery_agent_completed",
         session_id: sessionId,
         state: {
-          findings: parsed,
+          findings: normalizeAgentFindings(parsed),
           confidence: {},
           probes_run: [],
           user_answers: {},
