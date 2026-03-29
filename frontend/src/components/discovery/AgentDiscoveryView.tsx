@@ -13,6 +13,7 @@ interface Props {
   environment: string;
   onComplete: (state: DiscoveryState, completeness: CompletenessReport) => void;
   onCancel: () => void;
+  onStateChange?: (state: DiscoveryState | null, conversationMessages: ConversationMessage[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ function ConversationBubble({ msg }: { msg: ConversationMessage }) {
 // Main Component
 // ---------------------------------------------------------------------------
 
-export default function AgentDiscoveryView({ agentId, repoId, environment, onComplete, onCancel }: Props) {
+export default function AgentDiscoveryView({ agentId, repoId, environment, onComplete, onCancel, onStateChange }: Props) {
   const {
     status,
     discoveryMode,
@@ -112,6 +113,13 @@ export default function AgentDiscoveryView({ agentId, repoId, environment, onCom
       conversationEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [conversationMessages]);
+
+  // Bubble up state changes to parent
+  useEffect(() => {
+    if (onStateChange) {
+      onStateChange(discoveryState, conversationMessages);
+    }
+  }, [discoveryState, conversationMessages, onStateChange]);
 
   const handleShipIt = useCallback(() => {
     if (discoveryState && completeness) {
