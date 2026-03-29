@@ -133,13 +133,48 @@ export function mapAgentEventToDiscovery(
       const chunk = String(data.content || data.text || data.delta || "");
       accumulatedText.value += chunk;
 
-      // Emit progress events for agent reasoning
+      // Emit progress events for agent reasoning — includes agent_text for conversation rendering
       return {
         event: "discovery_agent_progress",
         session_id: sessionId,
         field: "agent_analysis",
         value: chunk,
+        agent_text: chunk,
+        msg_type: "assistant",
         confidence: { source: "inferred", detail: "Agent analysis in progress", score: 0 },
+        completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+        probe_name: "agent_turn",
+      };
+    }
+
+    if (type === "tool_call") {
+      const toolName = String(data.name || data.tool || "unknown_tool");
+      const toolArgs = data.arguments || data.args || data.input || {};
+      return {
+        event: "discovery_agent_progress",
+        session_id: sessionId,
+        field: "agent_analysis",
+        value: `Calling tool: ${toolName}`,
+        agent_text: JSON.stringify({ tool: toolName, args: toolArgs }),
+        msg_type: "tool_call",
+        confidence: { source: "inferred", detail: `Tool call: ${toolName}`, score: 0 },
+        completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+        probe_name: "agent_turn",
+      };
+    }
+
+    if (type === "tool_result") {
+      const toolName = String(data.name || data.tool || "tool");
+      const toolOutput = String(data.content || data.output || data.result || "");
+      return {
+        event: "discovery_agent_progress",
+        session_id: sessionId,
+        field: "agent_analysis",
+        value: `Tool result: ${toolName}`,
+        agent_text: toolOutput,
+        msg_type: "tool_result",
+        tool_name: toolName,
+        confidence: { source: "inferred", detail: `Tool result: ${toolName}`, score: 0 },
         completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
         probe_name: "agent_turn",
       };

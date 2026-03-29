@@ -571,16 +571,29 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
       const session = { events: [] as any[], listeners: new Set<(event: any) => void>(), cleanup: () => {} };
       discoveryBuffers.set(sessionId, session);
 
+      // Helper to push event to buffer + notify listeners
+      const emit = (payload: any) => {
+        session.events.push(payload);
+        for (const fn of session.listeners) { try { fn(payload); } catch {} }
+      };
+
       // Run probes + agent turn in background
       (async () => {
         try {
+          // Emit started event immediately so frontend transitions from "connecting"
+          emit({
+            event: "discovery_agent_started",
+            session_id: sessionId,
+            mode: "full",
+          });
+
           // Phase 1: Pre-gather probes (fast, no LLM)
           const probeResults = await runProbes(repoPath, sshParams);
 
           // Emit probe progress
           for (const probe of probeResults.probes_run) {
             if (probe.success && probe.fields_discovered.length > 0) {
-              const payload = {
+              emit({
                 event: "discovery_agent_progress",
                 session_id: sessionId,
                 field: probe.fields_discovered[0],
@@ -588,9 +601,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
                 confidence: { source: "detected", detail: `From ${probe.tool}`, score: 0.8 },
                 completeness: { ready: false, required_coverage: 0, recommended_coverage: 0, missing_required: [], low_confidence: [] },
                 probe_name: probe.tool,
-              };
-              session.events.push(payload);
-              for (const fn of session.listeners) { try { fn(payload); } catch {} }
+              });
             }
           }
 
@@ -605,8 +616,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
           for await (const sseEvent of backendClient.conversationTurnStream(conversationId, discoveryPrompt, agentId)) {
             const mapped = mapAgentEventToDiscovery(sseEvent, sessionId, accumulatedText);
             if (mapped) {
-              session.events.push(mapped);
-              for (const fn of session.listeners) { try { fn(mapped); } catch {} }
+              emit(mapped);
 
               // On completion, cache state and auto-generate plan
               if (mapped.event === "discovery_agent_completed" && mapped.state) {
@@ -615,8 +625,7 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
                 if (state.completeness?.ready) {
                   generateDeploymentPlan(state, backendClient).then((plan) => {
                     planStore.set(plan.id, plan);
-                    const planPayload = { ...mapped, event: "discovery_agent_completed", session_id: sessionId, plan };
-                    for (const fn of session.listeners) { try { fn(planPayload); } catch {} }
+                    emit({ ...mapped, event: "discovery_agent_completed", session_id: sessionId, plan });
                   }).catch((err) => {
                     console.error("[auto-plan] failed to generate plan:", err.message);
                   });
@@ -630,26 +639,21 @@ export function createDeploymentsRouter(config: GatewayConfig): Router {
           const hasDone = session.events.some((e: any) => e.event === "discovery_agent_completed");
           if (!hasDone) {
             const finalPayload = mapAgentEventToDiscovery({ event: "done", data: {} }, sessionId, accumulatedText);
-            if (finalPayload) {
-              session.events.push(finalPayload);
-              for (const fn of session.listeners) { try { fn(finalPayload); } catch {} }
-            }
+            if (finalPayload) emit(finalPayload);
           }
         } catch (err: any) {
           console.error("[agent-discover] agent-first discovery failed:", err.message);
-          const errorPayload = {
+          emit({
             event: "discovery_agent_completed",
             session_id: sessionId,
             state: null,
             completeness: null,
             error: err.message,
-          };
-          session.events.push(errorPayload);
-          for (const fn of session.listeners) { try { fn(errorPayload); } catch {} }
+          });
         }
       })();
 
-      return res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId, mode: "agent-first" });
+      return res.json({ status: "ok", action: "discover", environment: env, session_id: sessionId, mode: "agent-first", conversation_id: `pending:${sessionId}` });
     }
 
     // Legacy fallback: resource_id-only path (§072)

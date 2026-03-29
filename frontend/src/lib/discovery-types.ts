@@ -38,6 +38,8 @@ export interface DiscoveryState {
     health_endpoint?: { path: string; source: string; confidence: number };
     target_server?: { host: string; port: number; user: string; os?: string };
     app_port?: number;
+    build_command?: string;
+    start_command?: string;
   };
   confidence: Record<string, FieldConfidence>;
   probes_run: ProbeRecord[];
@@ -79,6 +81,9 @@ export interface DiscoveryAgentProgressEvent {
   confidence: FieldConfidence;
   completeness: CompletenessReport;
   probe_name: string;
+  msg_type?: "assistant" | "tool_call" | "tool_result" | "status";
+  agent_text?: string;
+  tool_name?: string;
 }
 
 export interface DiscoveryUserQuestionEvent {

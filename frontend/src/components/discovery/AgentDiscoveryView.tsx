@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
-import { useAgentDiscovery } from "@/hooks/useAgentDiscovery";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useAgentDiscovery, type ConversationMessage } from "@/hooks/useAgentDiscovery";
 import DegradedModeBanner from "./DegradedModeBanner";
 import InlineQuestion from "./InlineQuestion";
 import DeploymentPlanPanel from "./DeploymentPlanPanel";
@@ -15,11 +15,72 @@ interface Props {
   onCancel: () => void;
 }
 
+// ---------------------------------------------------------------------------
+// Conversation Message Bubble
+// ---------------------------------------------------------------------------
+
+function ConversationBubble({ msg }: { msg: ConversationMessage }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (msg.type === "tool_call") {
+    let parsed: { tool?: string; args?: Record<string, unknown> } | null = null;
+    try { parsed = JSON.parse(msg.content); } catch { /* not JSON */ }
+    const toolName = parsed?.tool || msg.toolName || "tool";
+    return (
+      <div style={bubbleStyles.toolCall}>
+        <button style={bubbleStyles.toolToggle} onClick={() => setExpanded(!expanded)}>
+          <span style={bubbleStyles.toolIcon}>{expanded ? "\u25BC" : "\u25B6"}</span>
+          <span style={bubbleStyles.toolLabel}>Calling {toolName}</span>
+        </button>
+        {expanded && parsed?.args && (
+          <pre style={bubbleStyles.toolArgs}>{JSON.stringify(parsed.args, null, 2)}</pre>
+        )}
+      </div>
+    );
+  }
+
+  if (msg.type === "tool_result") {
+    const toolName = msg.toolName || "tool";
+    const content = msg.content.length > 500 ? msg.content.slice(0, 500) + "..." : msg.content;
+    return (
+      <div style={bubbleStyles.toolResult}>
+        <button style={bubbleStyles.toolToggle} onClick={() => setExpanded(!expanded)}>
+          <span style={bubbleStyles.toolIcon}>{expanded ? "\u25BC" : "\u25B6"}</span>
+          <span style={bubbleStyles.toolResultLabel}>Result from {toolName}</span>
+        </button>
+        {expanded && (
+          <pre style={bubbleStyles.toolArgs}>{content}</pre>
+        )}
+      </div>
+    );
+  }
+
+  if (msg.type === "status") {
+    return (
+      <div style={bubbleStyles.status}>
+        <span style={bubbleStyles.statusDot}>{"\u2022"}</span> {msg.content}
+      </div>
+    );
+  }
+
+  // Assistant message
+  return (
+    <div style={bubbleStyles.assistant}>
+      {msg.content}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main Component
+// ---------------------------------------------------------------------------
+
 export default function AgentDiscoveryView({ agentId, repoId, environment, onComplete, onCancel }: Props) {
   const {
     status,
     discoveryMode,
     activityLog,
+    conversationMessages,
     rawEvents,
     currentQuestion,
     questionsRemaining,
@@ -33,8 +94,8 @@ export default function AgentDiscoveryView({ agentId, repoId, environment, onCom
     forceComplete,
   } = useAgentDiscovery();
 
-  const [rawPanelOpen, setRawPanelOpen] = useState(true);
   const [startError, setStartError] = useState<string | null>(null);
+  const conversationEndRef = useRef<HTMLDivElement>(null);
 
   // Start discovery on mount (only when agentId is valid)
   useEffect(() => {
@@ -44,6 +105,13 @@ export default function AgentDiscoveryView({ agentId, repoId, environment, onCom
       });
     }
   }, [agentId, repoId, environment, startDiscovery]);
+
+  // Auto-scroll conversation to bottom
+  useEffect(() => {
+    if (conversationEndRef.current && typeof conversationEndRef.current.scrollIntoView === "function") {
+      conversationEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [conversationMessages]);
 
   const handleShipIt = useCallback(() => {
     if (discoveryState && completeness) {
@@ -89,7 +157,7 @@ export default function AgentDiscoveryView({ agentId, repoId, environment, onCom
         <DegradedModeBanner mode={discoveryMode} />
       )}
 
-      {/* Start error — e.g. startDiscovery() promise rejected */}
+      {/* Start error */}
       {startError && (
         <div role="alert" style={styles.errorBanner}>
           <strong>Failed to start discovery</strong>
@@ -97,7 +165,7 @@ export default function AgentDiscoveryView({ agentId, repoId, environment, onCom
         </div>
       )}
 
-      {/* Error — show FULL error message */}
+      {/* Error */}
       {status === "error" && (
         <div role="alert" style={styles.errorBanner}>
           <strong>Discovery failed</strong>
@@ -115,51 +183,24 @@ export default function AgentDiscoveryView({ agentId, repoId, environment, onCom
         </div>
       )}
 
-      {/* Main layout: activity feed + plan panel */}
+      {/* Main layout: conversation + plan panel */}
       <div style={styles.layout}>
-        {/* Activity Feed */}
-        <div style={styles.activityPanel}>
-          <div style={styles.activityList}>
-            {activityLog
-              .filter((item) => {
-                // Hide question activity items for fields already discovered with high confidence
-                if (item.type === "question" && item.field) {
-                  const discoveredItem = activityLog.find(
-                    a => a.type === "discovery" && a.field === item.field && a.confidence && a.confidence.score >= 0.8
-                  );
-                  if (discoveredItem) return false;
-                }
-                return true;
-              })
-              .map((item) => (
-              <div key={item.id} style={styles.activityItem}>
-                <span style={styles.activityIcon}>
-                  {item.status === "done" ? "\u2713" : item.status === "error" ? "\u2717" : item.type === "question" ? "?" : "\u2022"}
-                </span>
-                <span style={{
-                  ...styles.activityText,
-                  color: item.status === "error" ? "#ff6c8a" : item.status === "done" ? "#6cffa0" : "#e0e0e8",
-                }}>
-                  {item.message}
-                </span>
-                {item.confidence && (
-                  <span style={styles.activityConf}>
-                    {Math.round(item.confidence.score * 100)}%
-                  </span>
-                )}
-              </div>
-            ))}
-            {(status === "connecting" || status === "discovering" || status === "degraded") && (
-              <div style={styles.activityItem}>
-                <span style={{ ...styles.activityIcon, color: "#6c8aff" }}>{"\u25cf"}</span>
-                <span style={styles.activityText}>
-                  {status === "connecting" ? "Connecting to discovery agent..." : "Scanning..."}
-                </span>
+        {/* Conversation Panel */}
+        <div style={styles.conversationPanel}>
+          <div style={styles.conversationHeader}>Agent Conversation</div>
+          <div style={styles.conversationScroll}>
+            {conversationMessages.length === 0 && (status === "connecting" || status === "discovering") && (
+              <div style={styles.conversationEmpty}>
+                {status === "connecting" ? "Connecting to agent..." : "Agent is analyzing your codebase..."}
               </div>
             )}
+            {conversationMessages.map((msg) => (
+              <ConversationBubble key={msg.id} msg={msg} />
+            ))}
+            <div ref={conversationEndRef} />
           </div>
 
-          {/* Inline question — skip questions for fields already discovered with >=80% confidence */}
+          {/* Inline question */}
           {status === "question" && currentQuestion && (() => {
             const field = currentQuestion.field;
             const existingConfidence = discoveryState?.confidence?.[field];
@@ -193,26 +234,73 @@ export default function AgentDiscoveryView({ agentId, repoId, environment, onCom
           />
         </div>
       </div>
-
-      {/* Raw Events Debug Panel */}
-      <div style={styles.rawPanel}>
-        <button
-          style={styles.rawToggle}
-          onClick={() => setRawPanelOpen((v) => !v)}
-        >
-          {rawPanelOpen ? "▼" : "▶"} Raw SSE Events ({rawEvents.length})
-        </button>
-        {rawPanelOpen && (
-          <pre style={styles.rawContent}>
-            {rawEvents.length === 0
-              ? "No SSE events received yet."
-              : rawEvents.map((evt, i) => `[${new Date(evt.receivedAt).toISOString()}]\n${JSON.stringify(evt.data, null, 2)}`).join("\n\n")}
-          </pre>
-        )}
-      </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
+const bubbleStyles: Record<string, React.CSSProperties> = {
+  assistant: {
+    padding: "10px 14px",
+    backgroundColor: "#1a1a2e",
+    borderRadius: 10,
+    color: "#e0e0e8",
+    fontSize: "0.85rem",
+    lineHeight: 1.55,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    marginBottom: 8,
+  },
+  toolCall: {
+    marginBottom: 6,
+  },
+  toolToggle: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    background: "none",
+    border: "none",
+    color: "#6c8aff",
+    fontSize: "0.8rem",
+    cursor: "pointer",
+    padding: "4px 0",
+  },
+  toolIcon: {
+    fontSize: "0.65rem",
+  },
+  toolLabel: {
+    fontWeight: 500,
+  },
+  toolResultLabel: {
+    fontWeight: 500,
+    color: "#6cffa0",
+  },
+  toolArgs: {
+    margin: "4px 0 8px 18px",
+    padding: "8px 10px",
+    backgroundColor: "#0a0a12",
+    borderRadius: 6,
+    color: "#a0a0b8",
+    fontSize: "0.72rem",
+    lineHeight: 1.5,
+    overflow: "auto",
+    maxHeight: 200,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-all",
+  },
+  status: {
+    padding: "4px 8px",
+    color: "#8888a0",
+    fontSize: "0.78rem",
+    marginBottom: 4,
+  },
+  statusDot: {
+    color: "#6c8aff",
+  },
+};
 
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
@@ -257,69 +345,43 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 16,
     flexWrap: "wrap" as const,
   },
-  activityPanel: {
+  conversationPanel: {
     flex: "1 1 400px",
     minWidth: 300,
     display: "flex",
     flexDirection: "column",
-    gap: 12,
-  },
-  activityList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  activityItem: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "6px 12px",
     backgroundColor: "#12121a",
-    borderRadius: 6,
-    fontSize: "0.83rem",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#1e1e2e",
+    overflow: "hidden",
   },
-  activityIcon: {
-    width: 16,
-    textAlign: "center" as const,
-    color: "#6cffa0",
-    fontWeight: 700,
+  conversationHeader: {
+    padding: "10px 14px",
     fontSize: "0.85rem",
+    fontWeight: 600,
+    color: "#8888a0",
+    borderBottomWidth: 1,
+    borderBottomStyle: "solid",
+    borderBottomColor: "#1e1e2e",
   },
-  activityText: { flex: 1, color: "#e0e0e8" },
-  activityConf: { fontSize: "0.75rem", color: "#8888a0" },
-  questionArea: { marginTop: 4 },
+  conversationScroll: {
+    flex: 1,
+    padding: "12px 14px",
+    overflow: "auto",
+    maxHeight: 500,
+    minHeight: 200,
+  },
+  conversationEmpty: {
+    color: "#5a5a70",
+    fontSize: "0.85rem",
+    textAlign: "center",
+    padding: "40px 20px",
+  },
+  questionArea: { marginTop: 4, padding: "0 14px 12px" },
   planPanel: {
     flex: "1 1 350px",
     minWidth: 300,
-  },
-  rawPanel: {
-    marginTop: 8,
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: "#2a2a3e",
-    borderRadius: 8,
-    backgroundColor: "#0a0a12",
-    overflow: "hidden",
-  },
-  rawToggle: {
-    width: "100%",
-    padding: "8px 14px",
-    backgroundColor: "transparent",
-    border: "none",
-    color: "#8888a0",
-    fontSize: "0.8rem",
-    textAlign: "left" as const,
-    cursor: "pointer",
-  },
-  rawContent: {
-    padding: "8px 14px",
-    margin: 0,
-    color: "#a0a0b8",
-    fontSize: "0.72rem",
-    lineHeight: 1.5,
-    maxHeight: 400,
-    overflow: "auto",
-    whiteSpace: "pre-wrap" as const,
-    wordBreak: "break-all" as const,
   },
 };
