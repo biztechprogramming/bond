@@ -20,10 +20,20 @@ export interface RawSSEEvent {
   data: any;
 }
 
+export interface ConversationMessage {
+  id: string;
+  type: "assistant" | "tool_call" | "tool_result" | "status";
+  content: string;
+  toolName?: string;
+  timestamp: number;
+  collapsed?: boolean;
+}
+
 export interface UseAgentDiscoveryReturn {
   status: DiscoveryStatus;
   discoveryMode: DiscoveryMode;
   activityLog: ActivityItem[];
+  conversationMessages: ConversationMessage[];
   rawEvents: RawSSEEvent[];
   currentQuestion: UserQuestion | null;
   questionsRemaining: number;
@@ -54,6 +64,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
   const [probesRun, setProbesRun] = useState<ProbeRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [rawEvents, setRawEvents] = useState<RawSSEEvent[]>([]);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -97,14 +108,52 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         if (data.confidence) {
           discoveredFieldsRef.current.set(data.field, data.confidence.score);
         }
-        // Accumulate state from progress events for fallback
-        if (data.field && data.value !== undefined) {
+
+        // Collect conversation messages from agent turn events
+        const msgType = (data as any).msg_type as string | undefined;
+        const agentText = (data as any).agent_text as string | undefined;
+        if (msgType && agentText) {
+          const convType = msgType === "tool_call" ? "tool_call" as const
+            : msgType === "tool_result" ? "tool_result" as const
+            : msgType === "assistant" ? "assistant" as const
+            : "status" as const;
+
+          // For assistant text, append to the last assistant message if consecutive
+          if (convType === "assistant") {
+            setConversationMessages((prev) => {
+              const last = prev[prev.length - 1];
+              if (last && last.type === "assistant") {
+                const updated = [...prev];
+                updated[updated.length - 1] = { ...last, content: last.content + agentText };
+                return updated;
+              }
+              return [...prev, {
+                id: `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                type: convType,
+                content: agentText,
+                toolName: (data as any).tool_name,
+                timestamp: Date.now(),
+              }];
+            });
+          } else {
+            setConversationMessages((prev) => [...prev, {
+              id: `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              type: convType,
+              content: agentText,
+              toolName: (data as any).tool_name,
+              timestamp: Date.now(),
+            }]);
+          }
+        }
+
+        // Accumulate state from progress events (skip agent_analysis field — that's conversation, not findings)
+        if (data.field && data.field !== "agent_analysis" && data.field !== "status" && data.value !== undefined) {
           accumulatedStateRef.current.findings = {
             ...accumulatedStateRef.current.findings,
             [data.field]: data.value,
           };
         }
-        if (data.confidence) {
+        if (data.confidence && data.field !== "agent_analysis" && data.field !== "status") {
           accumulatedStateRef.current.confidence = {
             ...accumulatedStateRef.current.confidence,
             [data.field]: data.confidence,
@@ -115,21 +164,24 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         }
         // Update discoveryState progressively so the plan panel renders live
         setDiscoveryState({ ...accumulatedStateRef.current });
-        if (data.completeness) setCompleteness(data.completeness);
-        const rawDetail = (data as any).raw_response ?? (data as any).value;
-        const probeError = (data as any).probe_error;
-        const detailStr = probeError
-          ? ` — ERROR: ${probeError}`
-          : rawDetail != null
-            ? ` — ${typeof rawDetail === "object" ? JSON.stringify(rawDetail) : String(rawDetail)}`
-            : "";
-        addActivity({
-          type: probeError ? "error" : "discovery",
-          message: `${probeError ? "Probe failed" : "Discovered"} ${data.field}${detailStr}`,
-          field: data.field,
-          confidence: data.confidence,
-          status: probeError ? "error" : "done",
-        });
+
+        // Only add activity items for non-conversation events (actual discoveries)
+        if (!msgType || msgType === "tool_result") {
+          const rawDetail = (data as any).raw_response ?? (data as any).value;
+          const probeError = (data as any).probe_error;
+          const detailStr = probeError
+            ? ` — ERROR: ${probeError}`
+            : rawDetail != null
+              ? ` — ${typeof rawDetail === "object" ? JSON.stringify(rawDetail) : String(rawDetail)}`
+              : "";
+          addActivity({
+            type: probeError ? "error" : "discovery",
+            message: `${probeError ? "Probe failed" : "Discovered"} ${data.field}${detailStr}`,
+            field: data.field,
+            confidence: data.confidence,
+            status: probeError ? "error" : "done",
+          });
+        }
         break;
       }
       case "discovery_user_question": {
@@ -190,6 +242,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     setProbesRun([]);
     setDiscoveryMode("full");
     setRawEvents([]);
+    setConversationMessages([]);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -385,6 +438,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     status,
     discoveryMode,
     activityLog,
+    conversationMessages,
     rawEvents,
     currentQuestion,
     questionsRemaining,
