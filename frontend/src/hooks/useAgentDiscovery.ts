@@ -60,6 +60,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
   const discoveredFieldsRef = useRef<Map<string, number>>(new Map()); // field -> confidence score
   const lastEventTimeRef = useRef<number>(0);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completedRef = useRef(false);
   // Accumulate discovery state from progress events for fallback
   const accumulatedStateRef = useRef<DiscoveryState>({
     findings: {},
@@ -112,6 +113,9 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         if (data.completeness) {
           accumulatedStateRef.current.completeness = data.completeness;
         }
+        // Update discoveryState progressively so the plan panel renders live
+        setDiscoveryState({ ...accumulatedStateRef.current });
+        if (data.completeness) setCompleteness(data.completeness);
         const rawDetail = (data as any).raw_response ?? (data as any).value;
         const probeError = (data as any).probe_error;
         const detailStr = probeError
@@ -143,6 +147,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         break;
       }
       case "discovery_agent_completed": {
+        completedRef.current = true;
         if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
         const completedData = data as any;
         // If the backend sent an error (e.g. agent threw), surface it
@@ -175,6 +180,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
 
   const startDiscovery = useCallback(async (resourceId: string, env: string, repoUrl?: string, agentId?: string, repoId?: string) => {
     // Reset
+    completedRef.current = false;
     setStatus("connecting");
     setError(null);
     setActivityLog([]);
@@ -235,6 +241,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
       const startTimeout = () => {
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
         timeoutRef.current = setTimeout(() => {
+          if (completedRef.current) return;
           // Only auto-complete if still in a discovering/question state
           setStatus((currentStatus) => {
             if (currentStatus === "discovering" || currentStatus === "degraded" || currentStatus === "question") {
@@ -278,18 +285,20 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
         }
         return evts;
       });
-      setStatus((currentStatus) => {
-        if (currentStatus === "discovering" || currentStatus === "degraded" || currentStatus === "question") {
-          const accState = accumulatedStateRef.current;
-          setDiscoveryState(accState);
-          setCompleteness(accState.completeness);
-          setProbesRun(accState.probes_run || []);
-          setCurrentQuestion(null);
-          addActivity({ type: "info", message: "Discovery stream ended — completing with available data", status: "done" });
-          return "complete";
-        }
-        return currentStatus;
-      });
+      if (!completedRef.current) {
+        setStatus((currentStatus) => {
+          if (currentStatus === "discovering" || currentStatus === "degraded" || currentStatus === "question") {
+            const accState = accumulatedStateRef.current;
+            setDiscoveryState(accState);
+            setCompleteness(accState.completeness);
+            setProbesRun(accState.probes_run || []);
+            setCurrentQuestion(null);
+            addActivity({ type: "info", message: "Discovery stream ended — completing with available data", status: "done" });
+            return "complete";
+          }
+          return currentStatus;
+        });
+      }
     } catch (err: any) {
       if (err.name === "AbortError") return;
       setError(err.message);
