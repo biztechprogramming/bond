@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
-import { useResources } from "@/hooks/useSpacetimeDB";
+import { useAgentsWithRelations } from "@/hooks/useSpacetimeDB";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
 import { GATEWAY_API } from "@/lib/config";
@@ -10,13 +10,12 @@ import { GATEWAY_API } from "@/lib/config";
 // Types
 // ---------------------------------------------------------------------------
 
-type WizardStep = "connect" | "discovery" | "allocate" | "ship";
-type ConnectMode = "repo" | "server";
+type WizardStep = "select-agent" | "discovery" | "allocate" | "ship";
 
 interface DeploymentPlan {
   id: string;
-  repoUrl?: string;
-  serverAddress?: string;
+  agentId?: string;
+  repoPath?: string;
   framework?: string;
   buildStrategy?: string;
   environment?: string;
@@ -49,59 +48,53 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: Connect
+// Step 1: Select Agent & Repo
 // ---------------------------------------------------------------------------
 
-function ConnectStep({
+function SelectAgentStep({
   onNext,
   onCancel,
 }: {
-  onNext: (mode: ConnectMode, data: { repoUrl?: string; serverAddress?: string; sshKeyId?: string }) => void;
+  onNext: (agentId: string, repoPath: string) => void;
   onCancel: () => void;
 }) {
-  const [mode, setMode] = useState<ConnectMode | null>(null);
-  const [repoUrl, setRepoUrl] = useState("");
-  const [serverAddress, setServerAddress] = useState("");
-  const [sshKeyId, setSshKeyId] = useState("");
-  const resources = useResources();
+  const agents = useAgentsWithRelations();
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedRepo, setSelectedRepo] = useState<string>("");
 
-  // Existing servers for quick selection
-  const existingServers = resources.filter((r) => r.resourceType === "server");
+  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+  const mounts = selectedAgent?.workspace_mounts ?? [];
 
-  if (!mode) {
+  // Auto-select if only one agent exists
+  useEffect(() => {
+    if (agents.length === 1 && !selectedAgentId) {
+      setSelectedAgentId(agents[0].id);
+    }
+  }, [agents, selectedAgentId]);
+
+  // Reset repo when agent changes
+  useEffect(() => {
+    setSelectedRepo("");
+  }, [selectedAgentId]);
+
+  // Auto-select if only one mount
+  useEffect(() => {
+    if (mounts.length === 1 && !selectedRepo) {
+      setSelectedRepo(mounts[0].host_path);
+    }
+  }, [mounts, selectedRepo]);
+
+  if (agents.length === 0) {
     return (
       <div>
-        <h3 style={ws.stepTitle}>What are you deploying?</h3>
-        <div style={ws.cardRow}>
-          <div style={ws.optionCard} onClick={() => setMode("repo")} role="button" tabIndex={0}>
-            <div style={ws.optionIcon}>&#128230;</div>
-            <div style={ws.optionLabel}>Connect Repository</div>
-            <div style={ws.optionDesc}>Deploy from a Git repository URL</div>
-          </div>
-          <div style={ws.optionCard} onClick={() => setMode("server")} role="button" tabIndex={0}>
-            <div style={ws.optionIcon}>&#128421;</div>
-            <div style={ws.optionLabel}>Connect Server</div>
-            <div style={ws.optionDesc}>Deploy to a server via SSH</div>
-          </div>
+        <div role="alert" style={{
+          padding: "16px 20px",
+          backgroundColor: "rgba(255, 108, 138, 0.1)",
+          borderWidth: 1, borderStyle: "solid", borderColor: "#ff6c8a",
+          borderRadius: "8px", color: "#ff6c8a", fontSize: "0.9rem", marginBottom: "20px",
+        }}>
+          <strong>No agents configured.</strong> Create an agent first to deploy.
         </div>
-
-        {existingServers.length > 0 && (
-          <div style={{ marginTop: "24px" }}>
-            <h4 style={ws.subheading}>Or select an existing resource:</h4>
-            <div style={ws.existingList}>
-              {existingServers.map((srv) => (
-                <button
-                  key={srv.id}
-                  style={ws.existingItem}
-                  onClick={() => onNext("server", { serverAddress: srv.name })}
-                >
-                  {srv.displayName || srv.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         <div style={ws.actions}>
           <button style={ws.cancelBtn} onClick={onCancel}>Cancel</button>
         </div>
@@ -109,62 +102,58 @@ function ConnectStep({
     );
   }
 
-  if (mode === "repo") {
-    return (
-      <div>
-        <h3 style={ws.stepTitle}>Connect Repository</h3>
-        <div style={ws.field}>
-          <label style={ws.label}>Repository URL</label>
-          <input
-            style={ws.input}
-            placeholder="https://github.com/org/repo.git"
-            value={repoUrl}
-            onChange={(e) => setRepoUrl(e.target.value)}
-          />
-        </div>
-        <div style={ws.actions}>
-          <button style={ws.cancelBtn} onClick={() => setMode(null)}>&larr; Back</button>
-          <button
-            style={{ ...ws.primaryBtn, opacity: repoUrl ? 1 : 0.5 }}
-            disabled={!repoUrl}
-            onClick={() => onNext("repo", { repoUrl })}
-          >
-            Continue
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div>
-      <h3 style={ws.stepTitle}>Connect Server</h3>
+      <h3 style={ws.stepTitle}>Select Agent & Repository</h3>
+
       <div style={ws.field}>
-        <label style={ws.label}>Server Address</label>
-        <input
+        <label style={ws.label}>Agent</label>
+        <select
           style={ws.input}
-          placeholder="192.168.1.100 or hostname"
-          value={serverAddress}
-          onChange={(e) => setServerAddress(e.target.value)}
-        />
-      </div>
-      <div style={ws.field}>
-        <label style={ws.label}>SSH Key (optional)</label>
-        <input
-          style={ws.input}
-          placeholder="SSH key ID or paste key"
-          value={sshKeyId}
-          onChange={(e) => setSshKeyId(e.target.value)}
-        />
-      </div>
-      <div style={ws.actions}>
-        <button style={ws.cancelBtn} onClick={() => setMode(null)}>&larr; Back</button>
-        <button
-          style={{ ...ws.primaryBtn, opacity: serverAddress ? 1 : 0.5 }}
-          disabled={!serverAddress}
-          onClick={() => onNext("server", { serverAddress, sshKeyId })}
+          value={selectedAgentId}
+          onChange={(e) => setSelectedAgentId(e.target.value)}
         >
-          Continue
+          <option value="">Select an agent...</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.display_name || a.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {selectedAgentId && (
+        <div style={ws.field}>
+          <label style={ws.label}>Repository</label>
+          {mounts.length === 0 ? (
+            <p style={{ color: "#ff6c8a", fontSize: "0.85rem", margin: 0 }}>
+              This agent has no workspace mounts configured.
+            </p>
+          ) : (
+            <select
+              style={ws.input}
+              value={selectedRepo}
+              onChange={(e) => setSelectedRepo(e.target.value)}
+            >
+              <option value="">Select a repository...</option>
+              {mounts.map((m) => (
+                <option key={m.host_path} value={m.host_path}>
+                  {m.mount_name || m.host_path}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
+
+      <div style={ws.actions}>
+        <button style={ws.cancelBtn} onClick={onCancel}>Cancel</button>
+        <button
+          style={{ ...ws.primaryBtn, opacity: selectedAgentId && selectedRepo ? 1 : 0.5 }}
+          disabled={!selectedAgentId || !selectedRepo}
+          onClick={() => onNext(selectedAgentId, selectedRepo)}
+        >
+          Start Discovery
         </button>
       </div>
     </div>
@@ -176,12 +165,10 @@ function ConnectStep({
 // ---------------------------------------------------------------------------
 
 function AllocationStep({
-  connectData,
   plan,
   onNext,
   onBack,
 }: {
-  connectData: { repoUrl?: string; serverAddress?: string; sshKeyId?: string };
   plan: DeploymentPlan;
   onNext: (allocation: AllocationData) => void;
   onBack: () => void;
@@ -202,8 +189,8 @@ function AllocationStep({
 
   // Fetch suggested defaults on mount
   useEffect(() => {
-    const resourceId = connectData.serverAddress || connectData.repoUrl || "";
-    const appName = plan.repoUrl?.split("/").pop()?.replace(".git", "") || plan.serverAddress || "app";
+    const resourceId = plan.agentId || "";
+    const appName = plan.repoPath?.split("/").pop() || "app";
     fetch(`${GATEWAY_API}/deployments/allocations/suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -226,7 +213,7 @@ function AllocationStep({
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [connectData, plan]);
+  }, [plan]);
 
   // Check conflicts on field changes (debounced)
   const checkConflicts = useCallback(() => {
@@ -390,7 +377,7 @@ function ShipStep({
     <div style={ws.shipContainer}>
       <h3 style={ws.stepTitle}>Ready to Ship</h3>
       <div style={ws.planSummary}>
-        <p>Deploying <strong>{plan.repoUrl || plan.serverAddress}</strong></p>
+        <p>Deploying <strong>{plan.repoPath || plan.agentId}</strong></p>
         <p>{plan.framework} &middot; {plan.buildStrategy} &middot; {plan.environment}</p>
         {plan.allocation && (
           <p style={{ fontSize: "0.85rem", color: "#6c8aff" }}>
@@ -413,13 +400,15 @@ function ShipStep({
 // ---------------------------------------------------------------------------
 
 export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
-  const [step, setStep] = useState<WizardStep>("connect");
-  const [connectData, setConnectData] = useState<{ repoUrl?: string; serverAddress?: string; sshKeyId?: string }>({});
+  const [step, setStep] = useState<WizardStep>("select-agent");
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [selectedRepoPath, setSelectedRepoPath] = useState("");
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
   const [allocation, setAllocation] = useState<AllocationData | null>(null);
 
-  const handleConnect = useCallback((_mode: ConnectMode, data: typeof connectData) => {
-    setConnectData(data);
+  const handleAgentSelected = useCallback((agentId: string, repoPath: string) => {
+    setSelectedAgentId(agentId);
+    setSelectedRepoPath(repoPath);
     setStep("discovery");
   }, []);
 
@@ -448,7 +437,7 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
         body: JSON.stringify({
           ...allocation,
           environment_name: plan.environment || "dev",
-          app_name: plan.repoUrl?.split("/").pop()?.replace(".git", "") || plan.serverAddress || "app",
+          app_name: plan.repoPath?.split("/").pop() || "app",
         }),
       }).catch(() => {});
     }
@@ -458,7 +447,7 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
 
   // Progress indicator
   const steps: { id: WizardStep; label: string }[] = [
-    { id: "connect", label: "Connect" },
+    { id: "select-agent", label: "Select Agent" },
     { id: "discovery", label: "Discover" },
     { id: "allocate", label: "Allocate" },
     { id: "ship", label: "Ship" },
@@ -486,27 +475,44 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
       </div>
 
       {/* Step content */}
-      {step === "connect" && <ConnectStep onNext={handleConnect} onCancel={onCancel} />}
+      {step === "select-agent" && <SelectAgentStep onNext={handleAgentSelected} onCancel={onCancel} />}
       {step === "discovery" && (
         <AgentDiscoveryView
-          resourceId={connectData.repoUrl || connectData.serverAddress || ""}
+          agentId={selectedAgentId}
+          repoId={selectedRepoPath}
           environment="dev"
           onComplete={(state: DiscoveryState, _completeness: CompletenessReport) => {
+            const f = state.findings;
+            const str = (v: unknown): string | undefined => {
+              if (v == null) return undefined;
+              if (typeof v === "string") return v;
+              if (typeof v === "object") {
+                const o = v as Record<string, unknown>;
+                return (o.framework ?? o.strategy ?? o.path ?? o.name ?? JSON.stringify(v)) as string;
+              }
+              return String(v);
+            };
             const newPlan: DeploymentPlan = {
               id: crypto.randomUUID(),
-              ...connectData,
-              framework: state.findings.framework?.framework || "unknown",
-              buildStrategy: state.findings.build_strategy?.strategy || "docker",
+              agentId: selectedAgentId,
+              repoPath: selectedRepoPath,
+              framework: str(f.framework) || "unknown",
+              buildStrategy: str(f.build_strategy) || "docker",
+              buildCmd: str(f.build_command),
+              startCmd: str(f.start_command),
               environment: "dev",
+              ...((f.app_port != null) && { appPort: Number(f.app_port) }),
+              ...((f.health_endpoint != null) && { healthEndpoint: str(f.health_endpoint) }),
+              ...((f.env_vars != null) && { envVars: f.env_vars }),
+              ...((f.services != null) && { services: f.services }),
             };
             handlePlanReady(newPlan);
           }}
-          onCancel={() => setStep("connect")}
+          onCancel={() => setStep("select-agent")}
         />
       )}
       {step === "allocate" && plan && (
         <AllocationStep
-          connectData={connectData}
           plan={plan}
           onNext={handleAllocationComplete}
           onBack={() => setStep("discovery")}
@@ -540,21 +546,6 @@ const ws: Record<string, React.CSSProperties> = {
 
   stepTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e8", marginBottom: "20px" },
   subheading: { fontSize: "0.9rem", fontWeight: 500, color: "#8888a0", marginBottom: "10px" },
-
-  cardRow: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "20px" },
-  optionCard: {
-    backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e",
-    cursor: "pointer", textAlign: "center", transition: "border-color 0.2s",
-  },
-  optionIcon: { fontSize: "2rem", marginBottom: "8px" },
-  optionLabel: { fontSize: "1rem", fontWeight: 600, color: "#e0e0e8", marginBottom: "4px" },
-  optionDesc: { fontSize: "0.8rem", color: "#8888a0" },
-
-  existingList: { display: "flex", gap: "8px", flexWrap: "wrap" },
-  existingItem: {
-    backgroundColor: "#1e1e2e", color: "#e0e0e8", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e", borderRadius: "8px",
-    padding: "8px 14px", fontSize: "0.85rem", cursor: "pointer",
-  },
 
   field: { marginBottom: "16px" },
   label: { display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500 },

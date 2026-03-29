@@ -13,7 +13,7 @@ import litellm
 import yaml
 
 from backend.app.config import get_settings
-from backend.app.core.oauth import get_oauth_extra_headers
+from backend.app.core.oauth import get_oauth_extra_headers, get_provider_api_key
 from backend.app.core.vault import Vault
 
 logger = logging.getLogger("bond.agent.llm")
@@ -120,7 +120,16 @@ async def chat_completion(
     provider = provider or settings.llm_provider
     model = model or settings.llm_model
 
-    api_key = await _resolve_api_key(provider)
+    # Resolve API key through the Gateway (handles OAuth token refresh)
+    # Falls back to legacy _resolve_api_key if Gateway is unreachable
+    gateway_result = await get_provider_api_key(provider)
+    if gateway_result:
+        api_key, key_type = gateway_result
+        logger.info("LLM key resolved via Gateway for %s (key_type=%s)", provider, key_type)
+    else:
+        api_key = await _resolve_api_key(provider)
+        logger.info("LLM key resolved via legacy fallback for %s", provider)
+
     model_string = _resolve_model_string(provider, model)
 
     logger.info("LLM call: provider=%s model=%s messages=%d", provider, model, len(messages))
@@ -135,6 +144,17 @@ async def chat_completion(
     # Inject OAuth system prompt prefix if needed (centralized)
     from backend.app.core.oauth import ensure_oauth_system_prefix
     ensure_oauth_system_prefix(messages, extra_kwargs=extra_kwargs)
+
+    # Debug: log the exact payload being sent to LiteLLM
+    _has_oauth_headers = "extra_headers" in extra_kwargs
+    _sys_preview = ""
+    if messages and messages[0].get("role") == "system":
+        _content = messages[0].get("content", "")
+        _sys_preview = _content[:200] if isinstance(_content, str) else str(_content)[:200]
+    logger.info(
+        "LLM payload: model=%s, oauth_headers=%s, num_messages=%d, sys_preview=%s",
+        model_string, _has_oauth_headers, len(messages), _sys_preview,
+    )
 
     if stream:
         response = await litellm.acompletion(
@@ -155,7 +175,6 @@ async def chat_completion(
             **extra_kwargs,
         )
         return response.choices[0].message.content
-
 
 async def _stream_response(response) -> AsyncIterator[str]:
     """Yield text chunks from a streaming LLM response."""

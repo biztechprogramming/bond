@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import React from "react";
 
 import type { UseAgentDiscoveryReturn } from "@/hooks/useAgentDiscovery";
@@ -16,7 +16,7 @@ const mockHook: UseAgentDiscoveryReturn = {
   completeness: null,
   probesRun: [],
   error: null,
-  startDiscovery: vi.fn(),
+  startDiscovery: vi.fn().mockResolvedValue(undefined),
   answerQuestion: vi.fn(),
   cancelDiscovery: vi.fn(),
   editField: vi.fn(),
@@ -27,14 +27,19 @@ vi.mock("@/hooks/useAgentDiscovery", () => ({
   useAgentDiscovery: () => mockHook,
 }));
 
+vi.mock("@/hooks/useSpacetimeDB", () => ({
+  useAgents: () => [],
+  useAgentMounts: () => [],
+}));
+
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 
 describe("AgentDiscoveryView", () => {
   const defaultProps = {
-    resourceId: "res-1",
+    agentId: "agent-1",
+    repoId: "my-app",
     environment: "dev",
     onComplete: vi.fn(),
-    onFallback: vi.fn(),
     onCancel: vi.fn(),
   };
 
@@ -51,9 +56,25 @@ describe("AgentDiscoveryView", () => {
     });
   });
 
-  it("returns null when idle", () => {
-    const { container } = render(<AgentDiscoveryView {...defaultProps} />);
-    expect(container.innerHTML).toBe("");
+  // --- Error when no agentId ---
+
+  it("shows error when agentId is empty string", () => {
+    render(<AgentDiscoveryView {...defaultProps} agentId="" />);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText(/No agent selected/)).toBeTruthy();
+  });
+
+  it("shows error when agentId is undefined", () => {
+    render(<AgentDiscoveryView {...defaultProps} agentId={undefined as any} />);
+    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText(/No agent selected/)).toBeTruthy();
+  });
+
+  // --- Agent-first mode tests (agentId provided via props) ---
+
+  it("starts discovery when agentId is provided", () => {
+    render(<AgentDiscoveryView {...defaultProps} />);
+    expect(mockHook.startDiscovery).toHaveBeenCalledWith("", "dev", undefined, "agent-1", "my-app");
   });
 
   it("shows discovering state", () => {
@@ -84,12 +105,6 @@ describe("AgentDiscoveryView", () => {
     render(<AgentDiscoveryView {...defaultProps} />);
     expect(screen.getByText("Discovered framework")).toBeTruthy();
     expect(screen.getByText("Discovered ports")).toBeTruthy();
-  });
-
-  it("calls onFallback when error is no_session", () => {
-    mockHook.error = "no_session";
-    render(<AgentDiscoveryView {...defaultProps} />);
-    expect(defaultProps.onFallback).toHaveBeenCalled();
   });
 
   it("shows complete state", () => {

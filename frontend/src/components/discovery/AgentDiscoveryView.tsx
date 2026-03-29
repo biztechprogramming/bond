@@ -8,14 +8,14 @@ import DeploymentPlanPanel from "./DeploymentPlanPanel";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
 
 interface Props {
-  resourceId: string;
-  repoUrl?: string;
+  agentId: string;
+  repoId?: string;
   environment: string;
   onComplete: (state: DiscoveryState, completeness: CompletenessReport) => void;
   onCancel: () => void;
 }
 
-export default function AgentDiscoveryView({ resourceId, repoUrl, environment, onComplete, onCancel }: Props) {
+export default function AgentDiscoveryView({ agentId, repoId, environment, onComplete, onCancel }: Props) {
   const {
     status,
     discoveryMode,
@@ -34,12 +34,16 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
   } = useAgentDiscovery();
 
   const [rawPanelOpen, setRawPanelOpen] = useState(true);
+  const [startError, setStartError] = useState<string | null>(null);
 
+  // Start discovery on mount (only when agentId is valid)
   useEffect(() => {
-    if (resourceId && environment) {
-      startDiscovery(resourceId, environment, repoUrl);
+    if (agentId && environment) {
+      startDiscovery("", environment, undefined, agentId, repoId).catch((err: unknown) => {
+        setStartError(err instanceof Error ? err.message : String(err));
+      });
     }
-  }, [resourceId, environment, repoUrl, startDiscovery]);
+  }, [agentId, repoId, environment, startDiscovery]);
 
   const handleShipIt = useCallback(() => {
     if (discoveryState && completeness) {
@@ -52,7 +56,16 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
     onCancel();
   }, [cancelDiscovery, onCancel]);
 
-  if (status === "idle") return null;
+  // If agentId is falsy, show an error — never fall back silently
+  if (!agentId) {
+    return (
+      <div role="alert" style={styles.errorBanner}>
+        <strong>No agent selected.</strong> Please go back and select an agent.
+      </div>
+    );
+  }
+
+  if (status === "idle" && !startError) return null;
 
   return (
     <div style={styles.wrapper}>
@@ -74,6 +87,14 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
       {/* Degraded mode banner */}
       {(status === "degraded" || (status === "discovering" && discoveryMode !== "full")) && (
         <DegradedModeBanner mode={discoveryMode} />
+      )}
+
+      {/* Start error — e.g. startDiscovery() promise rejected */}
+      {startError && (
+        <div role="alert" style={styles.errorBanner}>
+          <strong>Failed to start discovery</strong>
+          <pre style={{ margin: "8px 0 0", whiteSpace: "pre-wrap", fontSize: "0.8rem", color: "#ff6c8a" }}>{startError}</pre>
+        </div>
       )}
 
       {/* Error — show FULL error message */}
@@ -101,7 +122,7 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
           <div style={styles.activityList}>
             {activityLog
               .filter((item) => {
-                // Issue 3: Hide question activity items for fields already discovered with high confidence
+                // Hide question activity items for fields already discovered with high confidence
                 if (item.type === "question" && item.field) {
                   const discoveredItem = activityLog.find(
                     a => a.type === "discovery" && a.field === item.field && a.confidence && a.confidence.score >= 0.8
@@ -138,18 +159,16 @@ export default function AgentDiscoveryView({ resourceId, repoUrl, environment, o
             )}
           </div>
 
-          {/* Inline question — Issue 3: skip questions for fields already discovered with ≥80% confidence */}
+          {/* Inline question — skip questions for fields already discovered with >=80% confidence */}
           {status === "question" && currentQuestion && (() => {
             const field = currentQuestion.field;
             const existingConfidence = discoveryState?.confidence?.[field];
             if (existingConfidence && existingConfidence.score >= 0.8) {
-              // Auto-answer with the discovered value instead of showing question
               const discoveredValue = discoveryState?.findings?.[field as keyof typeof discoveryState.findings];
               const autoAnswer = typeof discoveredValue === "object" && discoveredValue !== null
                 ? (discoveredValue as any).framework || (discoveredValue as any).strategy || JSON.stringify(discoveredValue)
                 : String(discoveredValue || "");
               if (autoAnswer) {
-                // Defer the auto-answer to avoid setState during render
                 setTimeout(() => answerQuestion(field, autoAnswer), 0);
                 return null;
               }

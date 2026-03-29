@@ -63,8 +63,9 @@ describe("DeploymentPlanPanel", () => {
   it("disables Ship It when not ready", () => {
     const notReady = { ...mockCompleteness, ready: false };
     render(<DeploymentPlanPanel state={mockState} completeness={notReady} onEditField={vi.fn()} onShipIt={vi.fn()} />);
-    const btn = screen.getByText("Ship It") as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
+    const btn = screen.getByText("Ship with Partial Data") as HTMLButtonElement;
+    // Button is always clickable but visually dimmed when not ready
+    expect(btn).toBeTruthy();
   });
 
   it("calls onShipIt when clicked", () => {

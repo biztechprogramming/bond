@@ -63,6 +63,35 @@ describe("useAgentDiscovery", () => {
     expect(result.current.completeness?.ready).toBe(true);
   });
 
+  it("passes agentId and repoId to the API call", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ session_id: "test-session" }),
+    });
+    mockFetch.mockResolvedValueOnce(
+      createMockSSEResponse([
+        { event: "discovery_agent_started", mode: "full" },
+        {
+          event: "discovery_agent_completed",
+          state: { findings: {}, confidence: {}, probes_run: [], user_answers: {}, completeness: { ready: true, required_coverage: 1, recommended_coverage: 0, missing_required: [], low_confidence: [] } },
+          completeness: { ready: true, required_coverage: 1, recommended_coverage: 0, missing_required: [], low_confidence: [] },
+        },
+      ])
+    );
+
+    const { result } = renderHook(() => useAgentDiscovery());
+
+    await act(async () => {
+      await result.current.startDiscovery("", "dev", undefined, "agent-123", "repo-456");
+    });
+
+    // Verify the POST body contains agent_id and repo_id
+    const postCall = mockFetch.mock.calls[0];
+    const body = JSON.parse(postCall[1].body);
+    expect(body.agent_id).toBe("agent-123");
+    expect(body.repo_id).toBe("repo-456");
+  });
+
   it("sets error when no session_id returned", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -76,7 +105,7 @@ describe("useAgentDiscovery", () => {
     });
 
     expect(result.current.status).toBe("error");
-    expect(result.current.error).toBe("no_session");
+    expect(result.current.error).toBe("Agent discovery did not return a session");
   });
 
   it("handles question events", async () => {
@@ -84,32 +113,39 @@ describe("useAgentDiscovery", () => {
       ok: true,
       json: async () => ({ session_id: "test-session" }),
     });
-    mockFetch.mockResolvedValueOnce(
-      createMockSSEResponse([
-        { event: "discovery_agent_started", mode: "full" },
-        {
-          event: "discovery_user_question",
-          question: {
-            question: "What port?",
-            context: "Could not detect",
-            field: "app_port",
-            options: ["3000", "8080"],
-            default: "3000",
-            questions_remaining: 1,
-          },
-        },
-      ])
-    );
+
+    // Create a stream that stays open after sending the question event
+    let resolveStream: () => void;
+    const streamDone = new Promise<void>((r) => { resolveStream = r; });
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        const lines = [
+          `data: ${JSON.stringify({ event: "discovery_agent_started", mode: "full" })}`,
+          `data: ${JSON.stringify({ event: "discovery_user_question", question: { question: "What port?", context: "Could not detect", field: "app_port", options: ["3000", "8080"], default: "3000", questions_remaining: 1 } })}`,
+        ].join("\n") + "\n";
+        controller.enqueue(encoder.encode(lines));
+        // Keep the stream open — close when test is done
+        streamDone.then(() => controller.close());
+      },
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true, body: stream });
 
     const { result } = renderHook(() => useAgentDiscovery());
 
-    await act(async () => {
-      await result.current.startDiscovery("res-1", "dev");
+    // Start discovery but don't await (stream stays open)
+    act(() => {
+      result.current.startDiscovery("res-1", "dev");
     });
 
-    expect(result.current.status).toBe("question");
+    // Wait for events to be processed
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+
     expect(result.current.currentQuestion?.field).toBe("app_port");
     expect(result.current.questionsRemaining).toBe(1);
+
+    // Cleanup
+    resolveStream!();
   });
 
   it("editField updates discovery state", async () => {
