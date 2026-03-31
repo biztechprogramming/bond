@@ -1552,14 +1552,95 @@ async def _run_agent_loop(
         except Exception as e:
             logger.warning("Failed to save work plan checkpoint: %s", e)
 
-    try:
-        tool_summary_parts = []
-        for msg in messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    fn = tc.get("function", {})
-                    tool_summary_parts.append(fn.get("name", "unknown"))
+    # ── 7b. Auto-delegate to coding agent if budget exhausted on a coding task ──
+    _coding_agent_called = False
+    tool_summary_parts = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function", {})
+                _tc_name = fn.get("name", "unknown")
+                tool_summary_parts.append(_tc_name)
+                if _tc_name == "coding_agent":
+                    _coding_agent_called = True
 
+    _should_auto_delegate = (
+        loop.is_coding_task
+        and not _coding_agent_called
+        and loop.has_made_consequential_call
+        and "coding_agent" in agent_tools
+    )
+
+    if _should_auto_delegate:
+        logger.warning(
+            "Max iterations reached on coding task without coding_agent delegation — auto-spawning"
+        )
+        try:
+            from backend.app.agent.pre_gather import build_handoff_context
+            from backend.app.agent.tools.coding_agent import handle_coding_agent
+
+            handoff_ctx = build_handoff_context(messages)
+
+            # Extract the original user request
+            _user_request = ""
+            for msg in messages:
+                if msg.get("role") == "user" and not str(msg.get("content", "")).startswith("SYSTEM:"):
+                    _user_request = str(msg.get("content", ""))[:2000]
+
+            # Determine working directory from file paths in context
+            _working_dir = os.environ.get("WORKSPACE_DIR", "/workspace")
+            _files_mentioned = []
+            for msg in messages:
+                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                    for tc in msg["tool_calls"]:
+                        fn = tc.get("function", {})
+                        try:
+                            args = json.loads(fn.get("arguments", "{}"))
+                        except (json.JSONDecodeError, TypeError):
+                            args = {}
+                        if "path" in args:
+                            _files_mentioned.append(args["path"])
+                        elif "working_directory" in args:
+                            _working_dir = args["working_directory"]
+
+            _handoff_task = (
+                f"CONTINUE AND COMPLETE this task that ran out of iteration budget.\n\n"
+                f"## Original User Request\n{_user_request}\n\n"
+                f"## Files Already Read\n{handoff_ctx['files_read']}\n\n"
+                f"## Changes Already Made\n{handoff_ctx['edits_made']}\n\n"
+                f"## Instructions\n"
+                f"Pick up where the previous agent left off. The files above have already been "
+                f"read — don't re-read them unless you need to verify something. Focus on "
+                f"completing the remaining work. Make sure to commit and push your changes."
+            )
+
+            _ca_result = await handle_coding_agent(
+                {
+                    "task": _handoff_task,
+                    "working_directory": _working_dir,
+                    "agent_type": "claude",
+                    "timeout_minutes": 30,
+                },
+                tool_context,
+            )
+
+            if _ca_result.get("error"):
+                logger.error("Auto-delegation to coding_agent failed: %s", _ca_result["error"])
+            else:
+                logger.info("Auto-delegated to coding_agent: %s", _ca_result.get("status", "unknown"))
+                await _finish()
+                return (
+                    f"I used all {loop.tool_calls_made} of my tool calls exploring the codebase, "
+                    f"so I've automatically handed off the remaining work to a coding agent. "
+                    f"It's running now in the background and will complete the changes. "
+                    f"You can monitor its progress in the UI.",
+                    loop.tool_calls_made,
+                )
+        except Exception as e:
+            logger.error("Auto-delegation to coding_agent failed with exception: %s", e, exc_info=True)
+
+    # If auto-delegation wasn't attempted or failed, save memory and return budget message
+    try:
         if tool_summary_parts and _state.agent_db:
             from backend.app.agent.tools.native import handle_memory_save
             summary = (

@@ -529,4 +529,57 @@ async def agent_turn(
 
     
     logger.warning("Agent hit max iterations (%d)", max_iterations)
+
+    # Auto-delegate to coding agent if we made edits but ran out of time
+    _has_edits = any(
+        any(
+            tc.get("function", {}).get("name") in ("file_edit", "file_write")
+            for tc in msg.get("tool_calls", [])
+        )
+        for msg in messages
+        if msg.get("role") == "assistant" and msg.get("tool_calls")
+    )
+    _called_coding_agent = any(
+        any(
+            tc.get("function", {}).get("name") == "coding_agent"
+            for tc in msg.get("tool_calls", [])
+        )
+        for msg in messages
+        if msg.get("role") == "assistant" and msg.get("tool_calls")
+    )
+
+    if _has_edits and not _called_coding_agent and "coding_agent" in all_enabled_tools:
+        try:
+            from backend.app.agent.pre_gather import build_handoff_context
+            handoff_ctx = build_handoff_context(messages)
+            _user_msg = user_message[:2000]
+            _working_dir = os.path.expanduser(
+                agent.get("workspace_mounts", [{}])[0].get("host_path", "/workspace")
+            ) if agent.get("workspace_mounts") else os.environ.get("WORKSPACE_DIR", "/workspace")
+
+            _handoff_task = (
+                f"CONTINUE AND COMPLETE this task that ran out of iteration budget.\n\n"
+                f"## Original User Request\n{_user_msg}\n\n"
+                f"## Files Already Read\n{handoff_ctx['files_read']}\n\n"
+                f"## Changes Already Made\n{handoff_ctx['edits_made']}\n\n"
+                f"## Instructions\n"
+                f"Pick up where the previous agent left off. Complete the remaining work."
+            )
+
+            _ca_result = await registry.execute("coding_agent", {
+                "task": _handoff_task,
+                "working_directory": _working_dir,
+                "agent_type": "claude",
+                "timeout_minutes": 30,
+            }, tool_context)
+
+            if not _ca_result.get("error"):
+                logger.info("Auto-delegated to coding_agent from loop.py fallback")
+                return (
+                    "I used all my iterations exploring the codebase, so I've handed off "
+                    "the remaining work to a coding agent running in the background."
+                )
+        except Exception as e:
+            logger.error("Auto-delegation failed in loop.py: %s", e)
+
     return "I ran out of iteration budget for this request. Please try again, or consider breaking the request into smaller parts."
