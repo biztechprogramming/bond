@@ -121,6 +121,29 @@ def handle_budget_escalation(
         effective_threshold = NON_CODING_WARN_THRESHOLD
         effective_budget = loop_state.max_iterations
 
+    # Tool-call density trigger: soft warning when tool calls consumed quickly
+    # This catches agents that batch efficiently and burn through budget in few iterations
+    tool_call_ratio = loop_state.tool_calls_made / max(loop_state.adaptive_budget, 1)
+    if (tool_call_ratio >= 0.65
+            and not loop_state._tool_density_warned
+            and loop_state.is_coding_task
+            and loop_state.has_made_consequential_call
+            and iteration > 2):
+        loop_state._tool_density_warned = True
+        remaining = effective_budget - iteration - 1
+        messages.append({"role": "user", "content":
+            f"SYSTEM: You have made {loop_state.tool_calls_made} tool calls across "
+            f"{iteration + 1} iterations (budget: {effective_budget} iterations). "
+            f"Your batching is efficient, but you're consuming budget quickly. "
+            f"If you have remaining code changes to make, delegate to coding_agent "
+            f"in your next response. You have ~{remaining} iterations left."
+        })
+        logger.info(
+            "Tool density warning: %d tool calls in %d iterations (ratio %.2f), budget %d",
+            loop_state.tool_calls_made, iteration + 1, tool_call_ratio, effective_budget,
+        )
+        return False  # Don't break — soft warning only, give agent time to adjust
+
     if not (iteration >= effective_threshold and iteration > 2
             and not any(tc.function.name == "coding_agent" for tc in (llm_message.tool_calls or []))):
         return False
