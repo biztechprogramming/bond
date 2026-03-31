@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger("bond.agent.repomap.cache")
@@ -17,7 +18,11 @@ class RepoMapCache:
 
     def __init__(self, cache_dir: str | Path | None = None):
         if cache_dir is None:
-            self.cache_dir = Path("data/repomap-cache")
+            bond_home = os.environ.get("BOND_HOME", "")
+            if bond_home:
+                self.cache_dir = Path(bond_home) / "cache" / "repomap"
+            else:
+                self.cache_dir = Path("data/repomap-cache")
         else:
             self.cache_dir = Path(cache_dir)
 

@@ -65,6 +65,58 @@ async def async_client(_reset_db_globals):
         yield client
 
 
+class _InMemoryStdb:
+    """In-memory SpacetimeDB mock that stores settings and provider keys in dicts."""
+
+    def __init__(self) -> None:
+        self.settings: dict[str, str] = {}
+        self.provider_api_keys: dict[str, dict] = {}
+        self.providers: list[dict] = [
+            {"id": "anthropic", "display_name": "Anthropic", "is_enabled": True, "litellm_prefix": "anthropic"},
+            {"id": "openai", "display_name": "OpenAI", "is_enabled": True, "litellm_prefix": "openai"},
+            {"id": "google", "display_name": "Google", "is_enabled": True, "litellm_prefix": "google"},
+        ]
+        self.llm_models: list[dict] = []
+
+    async def query(self, sql: str) -> list[dict]:
+        sql_upper = sql.strip().upper()
+        if "FROM SETTINGS" in sql_upper:
+            if "WHERE KEY =" in sql_upper:
+                # Extract key value
+                key = sql.split("'")[1]
+                if key in self.settings:
+                    return [{"key": key, "value": self.settings[key]}]
+                return []
+            return [{"key": k, "value": v} for k, v in self.settings.items()]
+        if "FROM PROVIDERS" in sql_upper:
+            return self.providers
+        if "FROM PROVIDER_API_KEYS" in sql_upper:
+            return [{"provider_id": k, "key_type": v.get("key_type", "")} for k, v in self.provider_api_keys.items()]
+        if "FROM LLM_MODELS" in sql_upper:
+            return self.llm_models
+        return []
+
+    async def call_reducer(self, reducer: str, args: list) -> bool:
+        if reducer == "set_setting":
+            self.settings[args[0]] = args[1]
+        elif reducer == "set_provider_api_key":
+            self.provider_api_keys[args[0]] = {
+                "encrypted": args[1], "key_type": args[2],
+                "created_at": args[3], "updated_at": args[4],
+            }
+        elif reducer == "delete_setting":
+            self.settings.pop(args[0], None)
+        return True
+
+
+@pytest.fixture()
+def mock_stdb():
+    """Patch get_stdb to return an in-memory store for all SpacetimeDB calls."""
+    stdb = _InMemoryStdb()
+    with patch("backend.app.core.spacetimedb.get_stdb", return_value=stdb):
+        yield stdb
+
+
 @pytest.fixture()
 def mock_chat_completion():
     """Mock the LLM so tests don't call real APIs.

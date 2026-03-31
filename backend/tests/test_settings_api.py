@@ -21,8 +21,8 @@ async def _apply_sql(db: aiosqlite.Connection, sql_file: Path) -> None:
 
 
 @pytest.fixture()
-async def settings_client(_clear_settings_cache):
-    """Client with fully migrated DB (settings + embedding_configs tables)."""
+async def settings_client(_clear_settings_cache, mock_stdb):
+    """Client with fully migrated DB (settings + embedding_configs tables) and mocked SpacetimeDB."""
     import backend.app.db.session as sess
 
     # Reset DB globals
@@ -35,7 +35,7 @@ async def settings_client(_clear_settings_cache):
 
     # Apply migrations to create tables
     async with aiosqlite.connect(db_path) as db:
-        from tests.conftest import apply_all_migrations
+        from backend.tests.conftest import apply_all_migrations
         await apply_all_migrations(db)
 
     # Clear settings cache again after env change
