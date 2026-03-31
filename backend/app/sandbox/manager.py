@@ -584,9 +584,20 @@ class SandboxManager:
         cmd.extend(["-e", "BOND_API_URL=http://host.docker.internal:18790"])
         cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
 
-        # SpacetimeDB URL — pass through from host environment
-        stdb_url = os.environ["BOND_SPACETIMEDB_URL"]
-        cmd.extend(["-e", f"BOND_SPACETIMEDB_URL={stdb_url}"])
+        # --- Forward all .env vars via --env-file ---
+        # The backend is started with `set -a && . ./.env && set +a` so all
+        # .env vars are in os.environ.  Pass the file directly to Docker so
+        # agent containers always pick up the latest values without needing
+        # per-variable forwarding.
+        _env_file = _PROJECT_ROOT / ".env"
+        if _env_file.is_file():
+            cmd.extend(["--env-file", str(_env_file)])
+
+        # SpacetimeDB URL — pass through from host environment (fallback if
+        # not in .env)
+        stdb_url = os.environ.get("BOND_SPACETIMEDB_URL", "")
+        if stdb_url:
+            cmd.extend(["-e", f"BOND_SPACETIMEDB_URL={stdb_url}"])
 
         # --- Agent identity & repo env vars ---
         cmd.extend(["-e", f"AGENT_NAME=bond-agent-{agent_id}"])

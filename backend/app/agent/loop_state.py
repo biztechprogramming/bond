@@ -74,6 +74,9 @@ class LoopState:
     tool_calls_made: int = 0
     max_iterations: int = 25
 
+    # Tool-call density warning
+    _tool_density_warned: bool = False
+
     # Lifecycle phase tracking (Doc 024)
     lifecycle_turn_number: int = 0
     lifecycle_injected: bool = False

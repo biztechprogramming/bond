@@ -99,14 +99,34 @@ export default function DeploymentTab() {
 
   useEffect(() => { fetchExceptions(); }, [fetchExceptions]);
 
+  // Check for in-progress wizard state
+  const wizardProgress = useMemo(() => {
+    const raw = settingsMap["deployment_wizard.progress"];
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      // Consider progress valid if saved within the last 7 days and wizard wasn't finished
+      const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+      if (parsed?.timestamp && Date.now() - parsed.timestamp < MAX_AGE_MS && parsed.step !== "done") {
+        return parsed;
+      }
+    } catch { /* invalid JSON, ignore */ }
+    return null;
+  }, [settingsMap]);
+
   // Set initial view once data arrives
   useEffect(() => {
     if (!initialized && allAgents.length >= 0) {
       if (!selectedEnvironment) setSelectedEnvironment(DEFAULT_ENVIRONMENTS[0].name);
-      setView(agents.length > 0 ? "dashboard" : "empty");
+      if (wizardProgress && agents.length === 0) {
+        // Resume incomplete wizard
+        setView("discover");
+      } else {
+        setView(agents.length > 0 ? "dashboard" : "empty");
+      }
       setInitialized(true);
     }
-  }, [allAgents, agents.length, initialized, selectedEnvironment]);
+  }, [allAgents, agents.length, initialized, selectedEnvironment, wizardProgress]);
 
   // Keep view in sync when agents change after init
   useEffect(() => {
@@ -262,6 +282,16 @@ export default function DeploymentTab() {
   if (view === "empty") {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        {wizardProgress && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#1a1a3e", borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff44", borderRadius: "8px", padding: "12px 16px" }}>
+            <span style={{ fontSize: "0.9rem", color: "#c0c0d0" }}>
+              You have an in-progress discovery session (step: <strong style={{ color: "#6c8aff" }}>{wizardProgress.step}</strong>).
+            </span>
+            <button style={{ ...styles.secondaryButton, backgroundColor: "#6c8aff", color: "#fff" }} onClick={() => setView("discover")}>
+              Resume Setup
+            </button>
+          </div>
+        )}
         <SetupWizard
           environments={environments}
           availableModels={availableModels}
@@ -368,6 +398,18 @@ export default function DeploymentTab() {
           </button>
         </div>
       </div>
+
+      {/* Resume wizard banner */}
+      {wizardProgress && view === "dashboard" && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#1a1a3e", borderWidth: "1px", borderStyle: "solid", borderColor: "#6c8aff44", borderRadius: "8px", padding: "10px 16px" }}>
+          <span style={{ fontSize: "0.85rem", color: "#c0c0d0" }}>
+            In-progress discovery session (step: <strong style={{ color: "#6c8aff" }}>{wizardProgress.step}</strong>)
+          </span>
+          <button style={{ ...styles.secondaryButton, backgroundColor: "#6c8aff", color: "#fff", padding: "6px 14px" }} onClick={() => setView("discover")}>
+            Resume
+          </button>
+        </div>
+      )}
 
       {/* Edit-all shared settings */}
       {view === "edit-all" && (

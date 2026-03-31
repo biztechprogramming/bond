@@ -3,6 +3,7 @@ import { GATEWAY_API } from "@/lib/config";
 import { useResources, useComponents, callReducer, useSettingsMap, useAgents, useAgentMounts } from "@/hooks/useSpacetimeDB";
 import AddServerModal from "./AddServerModal";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
+import type { ConversationMessage } from "@/hooks/useAgentDiscovery";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
 
 
@@ -139,6 +140,25 @@ interface WizardProgress {
   agentDiscoveryState: DiscoveryState | null;
   selectedEnv: string;
   timestamp: number;
+  // Discovery tab
+  discoveryLayers: DiscoveryLayer[];
+  securityObs: SecurityObservation[];
+  manifestName: string;
+  conversationMessages: Array<{ id: string; type: string; content: string; toolName?: string; timestamp: number }>;
+  // Review tab
+  draftComponents: DraftComponent[];
+  parentSystem: string;
+  newSystemName: string;
+  reviewExpanded: string[];
+  // Environment tab
+  monitoringEnabled: boolean;
+  monitoringInterval: number;
+  monitorChecks: Record<string, boolean>;
+  // Scripts tab
+  scriptSelections: Record<string, boolean>;
+  scriptLevel: number;
+  generatedScripts: string[];
+  scriptPreview: string;
 }
 
 export default function DiscoverStackWizard({ environments, onComplete, onCancel }: DiscoverStackWizardProps) {
@@ -208,37 +228,42 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
   }, [stdbComponents]);
 
   // Step 2: Discovery
-  const [discoveryLayers, setDiscoveryLayers] = useState<DiscoveryLayer[]>([]);
+  const [discoveryLayers, setDiscoveryLayers] = useState<DiscoveryLayer[]>(() => savedProgress?.discoveryLayers || []);
   const [discoveryProgress, setDiscoveryProgress] = useState<Record<string, "pending" | "running" | "done" | "error">>({});
   const [discoveryRunning, setDiscoveryRunning] = useState(false);
   const [discoveryError, setDiscoveryError] = useState("");
-  const [securityObs, setSecurityObs] = useState<SecurityObservation[]>([]);
-  const [manifestName, setManifestName] = useState("");
+  const [securityObs, setSecurityObs] = useState<SecurityObservation[]>(() => savedProgress?.securityObs || []);
+  const [manifestName, setManifestName] = useState(() => savedProgress?.manifestName || "");
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>(() =>
+    (savedProgress?.conversationMessages as ConversationMessage[] | undefined) || []
+  );
 
   // Step 3: Review + Component creation
-  const [reviewExpanded, setReviewExpanded] = useState<Set<string>>(new Set(["application", "security"]));
-  const [draftComponents, setDraftComponents] = useState<DraftComponent[]>([]);
-  const [parentSystem, setParentSystem] = useState<string>("none");
-  const [newSystemName, setNewSystemName] = useState("");
+  const [reviewExpanded, setReviewExpanded] = useState<Set<string>>(() =>
+    savedProgress?.reviewExpanded ? new Set(savedProgress.reviewExpanded) : new Set(["application", "security"])
+  );
+  const [draftComponents, setDraftComponents] = useState<DraftComponent[]>(() => savedProgress?.draftComponents || []);
+  const [parentSystem, setParentSystem] = useState<string>(() => savedProgress?.parentSystem || "none");
+  const [newSystemName, setNewSystemName] = useState(() => savedProgress?.newSystemName || "");
   const existingSystems: Component[] = stdbComponents
     .filter(c => c.componentType === "system")
     .map(c => ({ id: c.id, name: c.name, display_name: c.displayName, component_type: c.componentType, parent_id: c.parentId || null, is_active: c.isActive }));
   const [creatingComponents, setCreatingComponents] = useState(false);
 
   // Step 4: Environment & Monitoring
-  const [selectedEnv, setSelectedEnv] = useState("");
-  const [monitoringEnabled, setMonitoringEnabled] = useState(true);
-  const [monitoringInterval, setMonitoringInterval] = useState(60);
-  const [monitorChecks, setMonitorChecks] = useState<Record<string, boolean>>({});
+  const [selectedEnv, setSelectedEnv] = useState(() => savedProgress?.selectedEnv || "");
+  const [monitoringEnabled, setMonitoringEnabled] = useState(() => savedProgress?.monitoringEnabled ?? true);
+  const [monitoringInterval, setMonitoringInterval] = useState(() => savedProgress?.monitoringInterval ?? 60);
+  const [monitorChecks, setMonitorChecks] = useState<Record<string, boolean>>(() => savedProgress?.monitorChecks || {});
 
   // Agent discovery fallback flag
   const [agentDiscoveryState, setAgentDiscoveryState] = useState<DiscoveryState | null>(() => savedProgress?.agentDiscoveryState || null);
 
   // Step 5: Scripts
-  const [scriptSelections, setScriptSelections] = useState<Record<string, boolean>>({});
-  const [scriptLevel, setScriptLevel] = useState(0);
-  const [generatedScripts, setGeneratedScripts] = useState<string[]>([]);
-  const [scriptPreview, setScriptPreview] = useState("");
+  const [scriptSelections, setScriptSelections] = useState<Record<string, boolean>>(() => savedProgress?.scriptSelections || {});
+  const [scriptLevel, setScriptLevel] = useState(() => savedProgress?.scriptLevel ?? 0);
+  const [generatedScripts, setGeneratedScripts] = useState<string[]>(() => savedProgress?.generatedScripts || []);
+  const [scriptPreview, setScriptPreview] = useState(() => savedProgress?.scriptPreview || "");
   const [generating, setGenerating] = useState(false);
 
   const selectedServer = servers.find(s => s.id === selectedServerId);
@@ -254,6 +279,31 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       agentDiscoveryState,
       selectedEnv,
       timestamp: Date.now(),
+      // Discovery tab
+      discoveryLayers,
+      securityObs,
+      manifestName,
+      conversationMessages: conversationMessages.map(m => ({
+        id: m.id,
+        type: m.type,
+        content: m.content.slice(0, 2000), // cap message size
+        toolName: m.toolName,
+        timestamp: m.timestamp,
+      })),
+      // Review tab
+      draftComponents,
+      parentSystem,
+      newSystemName,
+      reviewExpanded: Array.from(reviewExpanded),
+      // Environment tab
+      monitoringEnabled,
+      monitoringInterval,
+      monitorChecks,
+      // Scripts tab
+      scriptSelections,
+      scriptLevel,
+      generatedScripts,
+      scriptPreview: scriptPreview.slice(0, 5000), // cap preview size
       ...overrides,
     };
     callReducer(conn => conn.reducers.setSetting({
@@ -261,7 +311,11 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       value: JSON.stringify(progress),
       keyType: "string",
     }));
-  }, [step, selectedAgentId, selectedRepoId, selectedServerId, selectedRepoUrl, agentDiscoveryState, selectedEnv]);
+  }, [step, selectedAgentId, selectedRepoId, selectedServerId, selectedRepoUrl, agentDiscoveryState, selectedEnv,
+      discoveryLayers, securityObs, manifestName, conversationMessages,
+      draftComponents, parentSystem, newSystemName, reviewExpanded,
+      monitoringEnabled, monitoringInterval, monitorChecks,
+      scriptSelections, scriptLevel, generatedScripts, scriptPreview]);
 
   const clearProgress = useCallback(() => {
     callReducer(conn => conn.reducers.setSetting({
@@ -277,6 +331,27 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       saveProgress();
     }
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save when discovery completes with findings
+  useEffect(() => {
+    if (step === "discovery" && agentDiscoveryState && Object.keys(agentDiscoveryState.findings || {}).length > 0) {
+      saveProgress();
+    }
+  }, [agentDiscoveryState]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save when draft components are toggled in review
+  useEffect(() => {
+    if (step === "review" && draftComponents.length > 0) {
+      saveProgress();
+    }
+  }, [draftComponents]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save when scripts are generated
+  useEffect(() => {
+    if (step === "scripts" && generatedScripts.length > 0) {
+      saveProgress();
+    }
+  }, [generatedScripts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Discovery is now handled by AgentDiscoveryView in step 2
 
@@ -712,6 +787,10 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
             goNext();
           }}
           onCancel={onCancel}
+          onStateChange={(state, msgs) => {
+            if (state) setAgentDiscoveryState(state);
+            if (msgs) setConversationMessages(msgs);
+          }}
         />
       )}
 
