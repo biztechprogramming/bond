@@ -80,25 +80,30 @@ def handle_adaptive_budget(
     max_iterations = loop_state.max_iterations
 
     if not llm_message.tool_calls:
-        loop_state.adaptive_budget = min(max_iterations, 2)
-        logger.info("Phase 2A: simple Q&A, budget=%d", loop_state.adaptive_budget)
+        # Simple Q&A — minimal budget (at least 2)
+        loop_state.adaptive_budget = max(2, int(max_iterations * 0.08))
+        logger.info("Phase 2A: simple Q&A, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
     else:
         first_tool_names = [tc.function.name for tc in llm_message.tool_calls]
         has_edits = any(t in ("file_edit", "file_write") for t in first_tool_names)
         has_plan = any(t == "work_plan" for t in first_tool_names)
         has_reads = any(t in ("file_read", "shell_grep", "search_memory") for t in first_tool_names)
         if has_plan and len(first_tool_names) >= 5:
-            loop_state.adaptive_budget = min(max_iterations, 25)
-            logger.info("Phase 2A: complex multi-file, budget=%d", loop_state.adaptive_budget)
+            # Complex multi-file — full budget
+            loop_state.adaptive_budget = max_iterations
+            logger.info("Phase 2A: complex multi-file, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
         elif has_edits:
-            loop_state.adaptive_budget = min(max_iterations, 20)
-            logger.info("Phase 2A: implementation, budget=%d", loop_state.adaptive_budget)
+            # Implementation — 80% of budget
+            loop_state.adaptive_budget = max(20, int(max_iterations * 0.8))
+            logger.info("Phase 2A: implementation, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
         elif has_reads and not has_edits:
-            loop_state.adaptive_budget = min(max_iterations, 10)
-            logger.info("Phase 2A: analysis, budget=%d", loop_state.adaptive_budget)
+            # Analysis — 40% of budget
+            loop_state.adaptive_budget = max(10, int(max_iterations * 0.4))
+            logger.info("Phase 2A: analysis, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
         else:
-            loop_state.adaptive_budget = min(max_iterations, 8)
-            logger.info("Phase 2A: file lookup, budget=%d", loop_state.adaptive_budget)
+            # File lookup — 30% of budget
+            loop_state.adaptive_budget = max(8, int(max_iterations * 0.3))
+            logger.info("Phase 2A: file lookup, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
 
     cost.tracking["iteration_budget"] = loop_state.adaptive_budget
 
