@@ -59,7 +59,7 @@ def _detect_content_shape(content: str, tool_name: str = "") -> str:
     """Detect content shape: 'log', 'code', 'json', 'plain'."""
     if is_log_shaped(content):
         return "log"
-    if tool_name in ("file_read", "file_open", "file_view"):
+    if tool_name == "file_read":
         return "code"
     stripped = content.strip()
     if stripped.startswith(("{", "[")) and (stripped.endswith("}") or stripped.endswith("]")):

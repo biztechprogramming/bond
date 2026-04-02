@@ -573,3 +573,24 @@ async def handle_file_smart_edit(
         "after_edit": after_edit,
         **result,
     }
+
+
+# ---------------------------------------------------------------------------
+# Redundant-read tracker
+# ---------------------------------------------------------------------------
+_read_counts: dict[str, int] = {}
+
+
+def track_file_read(path: str) -> None:
+    """Track a file read and log warning on redundant reads."""
+    _read_counts[path] = _read_counts.get(path, 0) + 1
+    count = _read_counts[path]
+    if count == 3:
+        logger.warning("Redundant read: %s read %d times this session", path, count)
+    elif count > 3 and count % 5 == 0:
+        logger.warning("Redundant read: %s read %d times this session", path, count)
+
+
+def reset_read_tracker() -> None:
+    """Reset read tracker (call at session start)."""
+    _read_counts.clear()
