@@ -1027,13 +1027,13 @@ def compute_adaptive_budget(plan: dict, max_iterations: int) -> int | None:
     delegate = plan.get("delegate_to_coding_agent", False)
 
     if delegate:
-        return min(max_iterations, 5)
-    elif complexity == "simple":
-        return min(max_iterations, 3)
-    elif complexity == "moderate":
-        return min(max_iterations, 12)
-    elif complexity == "complex":
         return min(max_iterations, 20)
+    elif complexity == "simple":
+        return min(max_iterations, 12)
+    elif complexity == "moderate":
+        return min(max_iterations, 48)
+    elif complexity == "complex":
+        return min(max_iterations, 80)
 
     return None
 

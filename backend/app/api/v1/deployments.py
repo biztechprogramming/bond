@@ -116,7 +116,7 @@ class DeploymentAgentCreate(BaseModel):
     model: str = "claude-haiku-4-5-20251001"   # cheaper model for deployment tasks
     utility_model: str = "claude-haiku-4-5-20251001"
     sandbox_image: str | None = None
-    max_iterations: int = 30
+    max_iterations: int = 120
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

@@ -81,7 +81,7 @@ def handle_adaptive_budget(
 
     if not llm_message.tool_calls:
         # Simple Q&A — minimal budget (at least 2)
-        loop_state.adaptive_budget = max(2, int(max_iterations * 0.08))
+        loop_state.adaptive_budget = max(8, int(max_iterations * 0.08))
         logger.info("Phase 2A: simple Q&A, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
     else:
         first_tool_names = [tc.function.name for tc in llm_message.tool_calls]
@@ -94,15 +94,15 @@ def handle_adaptive_budget(
             logger.info("Phase 2A: complex multi-file, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
         elif has_edits:
             # Implementation — 80% of budget
-            loop_state.adaptive_budget = max(20, int(max_iterations * 0.8))
+            loop_state.adaptive_budget = max(80, int(max_iterations * 0.8))
             logger.info("Phase 2A: implementation, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
         elif has_reads and not has_edits:
             # Analysis — 40% of budget
-            loop_state.adaptive_budget = max(10, int(max_iterations * 0.4))
+            loop_state.adaptive_budget = max(40, int(max_iterations * 0.4))
             logger.info("Phase 2A: analysis, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
         else:
             # File lookup — 30% of budget
-            loop_state.adaptive_budget = max(8, int(max_iterations * 0.3))
+            loop_state.adaptive_budget = max(32, int(max_iterations * 0.3))
             logger.info("Phase 2A: file lookup, budget=%d (max=%d)", loop_state.adaptive_budget, max_iterations)
 
     cost.tracking["iteration_budget"] = loop_state.adaptive_budget
@@ -118,7 +118,7 @@ def handle_budget_escalation(
     """Handle approaching-budget logic. Returns True if loop should break."""
     from backend.app.agent.tool_selection import compact_tool_schema
 
-    NON_CODING_WARN_THRESHOLD = 15
+    NON_CODING_WARN_THRESHOLD = 60
     if loop_state.is_coding_task:
         effective_threshold = int(loop_state.adaptive_budget * 0.8)
         effective_budget = loop_state.adaptive_budget

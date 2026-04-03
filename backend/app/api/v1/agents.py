@@ -44,7 +44,7 @@ class AgentCreate(BaseModel):
     utility_model: str = "claude-sonnet-4-6"
     sandbox_image: str | None = None
     tools: list[str] = []
-    max_iterations: int = 25
+    max_iterations: int = 100
     auto_rag: bool = True
     auto_rag_limit: int = 5
     workspace_mounts: list[WorkspaceMount] = []
@@ -125,7 +125,7 @@ async def _get_agent_by_id(agent_id: str) -> dict:
         "utility_model": row["utility_model"] or "claude-sonnet-4-6",
         "tools": tools,
         "sandbox_image": row["sandbox_image"],
-        "max_iterations": int(row["max_iterations"] or 10),
+        "max_iterations": int(row["max_iterations"] or 40),
         "auto_rag": bool(row.get("auto_rag", True)),
         "auto_rag_limit": int(row.get("auto_rag_limit", 5)),
         "is_active": bool(row["is_active"]),
@@ -206,7 +206,7 @@ async def list_agents():
             "utility_model": row["utility_model"] or "claude-sonnet-4-6",
             "tools": tools,
             "sandbox_image": row["sandbox_image"],
-            "max_iterations": int(row["max_iterations"] or 10),
+            "max_iterations": int(row["max_iterations"] or 40),
             "is_active": bool(row["is_active"]),
             "is_default": bool(row["is_default"]),
             "workspace_mounts": workspace_mounts,
