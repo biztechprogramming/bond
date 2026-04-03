@@ -227,14 +227,8 @@ async def _lifespan(application: FastAPI):
         except Exception:
             pass
 
-    # Kill any active coding agent sub-processes
-    try:
-        from backend.app.agent.tools.coding_agent import kill_all_coding_agents
-        killed = await kill_all_coding_agents()
-        if killed:
-            logger.info("Killed %d active coding agent(s) on shutdown", killed)
-    except Exception:
-        pass
+    # Coding agents are independent processes — they survive Bond restarts.
+    # Do NOT kill them on shutdown.
 
     await _shutdown()
 
