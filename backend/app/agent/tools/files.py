@@ -1,8 +1,10 @@
 """File read/write tools with workspace allowlist enforcement.
 
 When a sandbox image is configured, file operations route through
-docker exec on the sandbox container. Otherwise, they operate on
-the host filesystem with workspace allowlist enforcement.
+a persistent helper process in the sandbox container (Phase 2).
+If the helper is unavailable, falls back to individual docker exec
+calls. Host-mode operations use direct filesystem access with
+workspace allowlist enforcement.
 """
 
 from __future__ import annotations
@@ -17,6 +19,12 @@ from .native import _extract_outline
 from .file_buffer import _manager as _file_buffer_manager, track_file_read
 
 logger = logging.getLogger("bond.agent.tools.files")
+
+
+def _get_helper_manager():
+    """Lazy import to avoid circular dependencies."""
+    from backend.app.sandbox.helper_protocol import get_helper_manager
+    return get_helper_manager()
 
 
 def _resolve_and_check(path_str: str, allowed_dirs: list[str]) -> Path | None:
@@ -65,7 +73,37 @@ async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
 
 
 async def _multi_read_sandbox(paths: list[str], container_id: str) -> dict:
-    """Read multiple files from a sandbox container concurrently."""
+    """Read multiple files from a sandbox container.
+
+    Tries the persistent helper (batch call) first. Falls back to
+    concurrent docker exec calls if the helper is unavailable.
+    """
+    # Try helper batch read first
+    helper_mgr = _get_helper_manager()
+    batch_calls = [
+        {"method": "file_read", "params": {"path": p}}
+        for p in paths
+    ]
+    batch_results = await helper_mgr.batch(container_id, batch_calls)
+    if batch_results is not None:
+        results = {}
+        for p, resp in zip(paths, batch_results):
+            if "error" in resp:
+                results[p] = {"error": resp["error"].get("message", str(resp["error"]))}
+            elif "result" in resp:
+                r = resp["result"]
+                results[p] = {
+                    "content": r.get("content", ""),
+                    "total_lines": r.get("total_lines", 0),
+                    "size": r.get("size", 0),
+                }
+            else:
+                results[p] = {"error": "Unexpected helper response"}
+        return {"results": results}
+
+    # Fallback: individual docker exec calls
+    logger.debug("Helper unavailable, falling back to docker exec for multi-read")
+
     async def read_one(p: str) -> tuple[str, dict]:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -113,6 +151,68 @@ async def _multi_read_host(paths: list[str], allowed_dirs: list[str]) -> dict:
     return {"results": dict(results)}
 
 
+async def _read_single_sandbox(
+    path_str: str,
+    container_id: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Read a single file from sandbox via helper process, with docker exec fallback."""
+    helper_mgr = _get_helper_manager()
+
+    # Build helper params
+    helper_params: dict[str, Any] = {"path": path_str}
+    line_start = arguments.get("line_start")
+    line_end = arguments.get("line_end")
+    if line_start is not None:
+        helper_params["line_start"] = line_start
+    if line_end is not None:
+        helper_params["line_end"] = line_end
+
+    # Try helper first
+    response = await helper_mgr.call(container_id, "file_read", helper_params)
+    if response is not None:
+        if "error" in response:
+            err = response["error"]
+            msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            return {"error": msg}
+        if "result" in response:
+            r = response["result"]
+            result: dict[str, Any] = {
+                "content": r.get("content", ""),
+                "path": path_str,
+                "size": r.get("size", 0),
+            }
+            if "total_lines" in r:
+                result["total_lines"] = r["total_lines"]
+            if r.get("line_start"):
+                result["line_start"] = r["line_start"]
+            if r.get("line_end"):
+                result["line_end"] = r["line_end"]
+            if r.get("truncated"):
+                result["truncated"] = True
+            return result
+
+    # Fallback: docker exec cat
+    logger.debug("Helper unavailable, falling back to docker exec for single read")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", container_id, "cat", path_str,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    except asyncio.TimeoutError:
+        return {"error": "Timed out reading file"}
+
+    if proc.returncode == 0:
+        content = stdout.decode("utf-8", errors="replace")
+        if len(content) > 100_000:
+            content = content[:100_000] + "\n... [truncated at 100KB]"
+        return {"content": content, "path": path_str, "size": len(stdout)}
+    else:
+        return {"error": stderr.decode("utf-8", errors="replace").strip() or "File not found or not readable"}
+
+
 async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
@@ -137,26 +237,10 @@ async def handle_file_read(
 
     path_str = arguments.get("path", "")
 
-    # Sandbox mode: read via docker exec cat
+    # Sandbox mode: read via persistent helper or docker exec cat
     container_id = await _get_sandbox_container(context)
     if container_id:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "exec", container_id, "cat", path_str,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except asyncio.TimeoutError:
-            return {"error": "Timed out reading file"}
-
-        if proc.returncode == 0:
-            content = stdout.decode("utf-8", errors="replace")
-            if len(content) > 100_000:
-                content = content[:100_000] + "\n... [truncated at 100KB]"
-            return {"content": content, "path": path_str, "size": len(stdout)}
-        else:
-            return {"error": stderr.decode("utf-8", errors="replace").strip() or "File not found or not readable"}
+        return await _read_single_sandbox(path_str, container_id, arguments)
 
     # Host mode: direct filesystem access with allowlist
     allowed_dirs = context.get("workspace_dirs", [])

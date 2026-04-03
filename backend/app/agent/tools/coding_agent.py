@@ -511,7 +511,7 @@ class CodingAgentSession:
 
         buffer = ""
         last_flush = time.monotonic()
-        is_stream_json = self.agent_type == "claude"  # claude uses stream-json
+        is_stream_json = False  # PTY output is plain text, not stream-json  # claude uses stream-json
         line_buffer = ""  # accumulates partial lines for stream-json parsing
 
         try:

@@ -187,9 +187,9 @@ class TestWorkerContainerCreation:
 
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec, \
              patch.object(Path, "exists", return_value=True), \
-             patch("backend.app.sandbox.manager.detect_workspace_type",
+             patch("backend.app.sandbox.adapters.detect_workspace_type",
                    new_callable=AsyncMock, return_value={"case": 4, "needs_prompt": True}), \
-             patch("backend.app.sandbox.manager.generate_clone_plan",
+             patch("backend.app.sandbox.adapters.generate_clone_plan",
                    new_callable=AsyncMock) as mock_plan:
             from backend.app.sandbox.workspace_cloner import ClonePlan
             mock_plan.return_value = ClonePlan(case=4, direct_mount=True)
@@ -259,7 +259,7 @@ class TestConfigGeneration:
         manager = SandboxManager()
         agent = _make_agent()
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path):
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path):
             path = manager._write_agent_config(agent)
             assert path.exists()
             data = json.loads(path.read_text())
@@ -273,7 +273,7 @@ class TestConfigGeneration:
         manager = SandboxManager()
         agent = _make_agent()
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path):
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path):
             path = manager._write_agent_config(agent)
             file_stat = os.stat(path)
             # Check owner read/write only
@@ -283,7 +283,7 @@ class TestConfigGeneration:
         manager = SandboxManager()
         agent = _make_agent()
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path):
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path):
             manager._write_agent_config(agent)
             config_dir = tmp_path / "data" / "agent-configs"
             dir_stat = os.stat(config_dir)
@@ -294,7 +294,7 @@ class TestConfigGeneration:
         manager = SandboxManager()
         agent = _make_agent()
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path):
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path):
             path = manager._write_agent_config(agent)
             assert path.exists()
 
@@ -309,7 +309,7 @@ class TestConfigGeneration:
         manager = SandboxManager()
         agent = _make_agent()
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path), \
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path), \
              patch("socket.socket") as mock_socket_cls, \
              patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
 
@@ -451,7 +451,7 @@ class TestEnsureRunning:
         manager = SandboxManager()
         agent = _make_agent()
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path), \
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path), \
              patch("socket.socket") as mock_socket_cls, \
              patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec, \
              patch.object(manager, "_wait_for_health", new_callable=AsyncMock):
@@ -512,12 +512,12 @@ class TestEnsureRunning:
 
         is_running_calls = 0
 
-        async def mock_is_running(cid):
+        async def mock_is_running(cid, host_id="local"):
             nonlocal is_running_calls
             is_running_calls += 1
             return False  # Dead container
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path), \
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path), \
              patch("socket.socket") as mock_socket_cls, \
              patch.object(manager, "_is_running", side_effect=mock_is_running), \
              patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec, \
@@ -560,7 +560,7 @@ class TestEnsureRunning:
                 raise RuntimeError("unhealthy")
             # Second call (new container) succeeds
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path), \
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path), \
              patch("socket.socket") as mock_socket_cls, \
              patch.object(manager, "_is_running", new_callable=AsyncMock, return_value=True), \
              patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec, \
@@ -595,11 +595,12 @@ class TestEnsureRunning:
             await asyncio.sleep(0.01)
             return f"container{creation_count:03d}", [], None
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path), \
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path), \
              patch("socket.socket") as mock_socket_cls, \
              patch.object(manager, "_create_worker_container", side_effect=counting_create), \
              patch.object(manager, "_wait_for_health", new_callable=AsyncMock), \
              patch.object(manager, "_is_running", new_callable=AsyncMock, return_value=True), \
+             patch.object(manager, "_recover_existing_container", new_callable=AsyncMock, return_value=None), \
              patch.object(manager, "_write_agent_config", return_value=Path("/tmp/cfg.json")):
 
             mock_sock = MagicMock()
@@ -625,7 +626,7 @@ class TestEnsureRunning:
         manager = SandboxManager()
         agent = _make_agent()
 
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path), \
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path), \
              patch("socket.socket") as mock_socket_cls, \
              patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
 
@@ -731,7 +732,7 @@ class TestCleanupLifecycle:
         manager._agent_locks[key] = asyncio.Lock()
 
         # Create a config file to be cleaned up
-        with patch("backend.app.sandbox.manager._PROJECT_ROOT", tmp_path):
+        with patch("backend.app.sandbox.adapters._PROJECT_ROOT", tmp_path):
             config_dir = tmp_path / "data" / "agent-configs"
             config_dir.mkdir(parents=True)
             config_file = config_dir / "agent-abc123.json"
@@ -798,7 +799,7 @@ class TestObservability:
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
             mock_exec.return_value = _mock_proc(stdout=b"container123abc\n")
 
-            with caplog.at_level("INFO", logger="bond.sandbox.manager"):
+            with caplog.at_level("INFO", logger="bond.sandbox.adapters"):
                 cid, _, _dep_script = await manager._create_worker_container(
                     agent, "bond-sandbox-agent-abc123", 18800, config_path,
                 )
