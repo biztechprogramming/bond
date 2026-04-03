@@ -64,11 +64,77 @@ async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
         return None
 
 
+async def _multi_read_sandbox(paths: list[str], container_id: str) -> dict:
+    """Read multiple files from a sandbox container concurrently."""
+    async def read_one(p: str) -> tuple[str, dict]:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", container_id, "cat", p,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode == 0:
+                content = stdout.decode("utf-8", errors="replace")
+                lines = content.split("\n")
+                total_lines = len(lines)
+                if total_lines > 500 or len(content) > 100_000:
+                    content = content[:100_000] + "\n... [truncated at 100KB]"
+                return p, {"content": content, "total_lines": total_lines, "size": len(stdout)}
+            return p, {"error": stderr.decode("utf-8", errors="replace").strip()}
+        except asyncio.TimeoutError:
+            return p, {"error": "Timed out reading file"}
+
+    results = await asyncio.gather(*[read_one(p) for p in paths])
+    return {"results": dict(results)}
+
+
+async def _multi_read_host(paths: list[str], allowed_dirs: list[str]) -> dict:
+    """Read multiple files from host filesystem concurrently."""
+    async def read_one(p: str) -> tuple[str, dict]:
+        resolved = _resolve_and_check(p, allowed_dirs)
+        if resolved is None:
+            return p, {"error": f"Path '{p}' is outside allowed workspace directories."}
+        try:
+            if not resolved.exists():
+                return p, {"error": f"File not found: {p}"}
+            if not resolved.is_file():
+                return p, {"error": f"Not a file: {p}"}
+            raw_content = resolved.read_text(encoding="utf-8", errors="replace")
+            all_lines = raw_content.splitlines()
+            total_lines = len(all_lines)
+            if total_lines > 500 or len(raw_content) > 100_000:
+                raw_content = raw_content[:100_000] + "\n... [truncated at 100KB]"
+            return p, {"content": raw_content, "total_lines": total_lines, "size": len(raw_content)}
+        except Exception as e:
+            return p, {"error": f"Failed to read file: {e}"}
+
+    results = await asyncio.gather(*[read_one(p) for p in paths])
+    return {"results": dict(results)}
+
+
 async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Read a file from an allowed workspace directory."""
+    # Multi-file mode
+    paths_list = arguments.get("paths")
+    if paths_list and isinstance(paths_list, list):
+        if len(paths_list) > 10:
+            return {"error": "Maximum 10 paths allowed in multi-file mode."}
+        if arguments.get("line_start") or arguments.get("line_end") or arguments.get("outline"):
+            return {"error": "line_start, line_end, and outline are not supported in multi-file mode."}
+
+        container_id = await _get_sandbox_container(context)
+        if container_id:
+            return await _multi_read_sandbox(paths_list, container_id)
+
+        allowed_dirs = context.get("workspace_dirs", [])
+        if not allowed_dirs:
+            return {"error": "No workspace directories configured for this agent."}
+        return await _multi_read_host(paths_list, allowed_dirs)
+
     path_str = arguments.get("path", "")
 
     # Sandbox mode: read via docker exec cat
