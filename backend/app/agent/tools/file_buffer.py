@@ -592,5 +592,8 @@ def track_file_read(path: str) -> None:
 
 
 def reset_read_tracker() -> None:
-    """Reset read tracker (call at session start)."""
+    """Reset read tracker and mtime dedup state (call at session start)."""
     _read_counts.clear()
+    # Also reset mtime-based dedup state (Phase 3a)
+    from .read_state import reset_read_state
+    reset_read_state()
