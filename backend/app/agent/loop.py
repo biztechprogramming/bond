@@ -168,8 +168,8 @@ async def agent_turn(
 
     # Auto-inject shell utility tools — always available, read-only
     _SHELL_UTILITY_TOOLS = [
-        "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree",
+        "shell_find", "shell_ls", "file_search", "git_info",
+        "shell_wc", "shell_tree",
     ]
     for _util_tool in _SHELL_UTILITY_TOOLS:
         if _util_tool not in agent_tools:
