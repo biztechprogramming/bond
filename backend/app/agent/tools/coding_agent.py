@@ -222,12 +222,10 @@ class CodingAgentProcess:
         agent_type: str,
         task: str,
         working_directory: str,
-        timeout_minutes: int = 30,
     ):
         self.agent_type = agent_type
         self.task = task
         self.working_directory = working_directory
-        self.timeout = timeout_minutes * 60
         self.process: asyncio.subprocess.Process | None = None
         self.start_time: float = 0
         self._killed = False
@@ -274,8 +272,8 @@ class CodingAgentProcess:
                     logger.info("Created minimal %s", claude_json)
 
         logger.info(
-            "Spawning %s in %s (timeout=%ds)",
-            self.agent_type, self.working_directory, self.timeout,
+            "Spawning %s in %s (no timeout)",
+            self.agent_type, self.working_directory,
         )
 
         self.start_time = time.monotonic()
@@ -325,16 +323,10 @@ class CodingAgentProcess:
         return self.process is not None and self.process.returncode is None
 
     async def wait(self) -> int:
+        """Wait indefinitely for the process to finish (no timeout)."""
         if not self.process:
             return -1
-        try:
-            return await asyncio.wait_for(
-                self.process.wait(), timeout=self.timeout
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Coding agent timed out after %ds", self.timeout)
-            await self.kill()
-            return -1
+        return await self.process.wait()
 
     async def kill(self) -> None:
         if self.process and not self._killed:
@@ -720,7 +712,6 @@ async def handle_coding_agent(
     working_dir = arguments.get("working_directory", "")
     agent_type = arguments.get("agent_type", "claude")
     branch = arguments.get("branch")
-    timeout_minutes = arguments.get("timeout_minutes", 30)
     agent_id = context.get("agent_id", "default")
     conversation_id = context.get("conversation_id", "")
 
@@ -754,11 +745,9 @@ async def handle_coding_agent(
     if dir_error:
         return {"error": dir_error}
 
-    # Kill any existing session for this agent
-    if agent_id in _active_sessions:
-        logger.info("Killing existing coding agent for %s", agent_id)
-        await _active_sessions[agent_id].stop()
-        _active_sessions.pop(agent_id, None)
+    # Generate a unique session key so multiple agents can run concurrently
+    import uuid as _uuid
+    session_key = f"{agent_id}-{_uuid.uuid4().hex[:8]}"
 
     # Capture git baseline before making changes
     baseline = await _git_head(working_dir)
@@ -779,7 +768,7 @@ async def handle_coding_agent(
         logger.info("Checked out branch %s in %s", branch, working_dir)
 
     # Create and start the process
-    cap = CodingAgentProcess(agent_type, task, working_dir, timeout_minutes)
+    cap = CodingAgentProcess(agent_type, task, working_dir)
 
     if resolved_api_key and env_var:
         os.environ[env_var] = resolved_api_key
@@ -814,13 +803,13 @@ async def handle_coding_agent(
         log_to_file=log_to_file,
         stream_output=stream_output,
     )
-    _active_sessions[agent_id] = session
+    _active_sessions[session_key] = session
     session.start_monitor()
 
     logger.info(
-        "Coding agent started: agent_id=%s type=%s baseline=%s dir=%s "
+        "Coding agent started: session_key=%s type=%s baseline=%s dir=%s "
         "log_to_file=%s stream_output=%s",
-        agent_id, agent_type, baseline[:8], working_dir,
+        session_key, agent_type, baseline[:8], working_dir,
         log_to_file, stream_output,
     )
 
@@ -891,9 +880,9 @@ async def kill_coding_agent(agent_id: str) -> bool:
 
 
 async def kill_all_coding_agents() -> int:
-    """Kill all active coding agents. Called on shutdown."""
-    count = 0
-    for agent_id in list(_active_sessions.keys()):
-        await kill_coding_agent(agent_id)
-        count += 1
-    return count
+    """Return the number of active coding agents. No longer kills on shutdown.
+
+    Coding agents are independent processes that should survive Bond restarts.
+    This function is kept for API compatibility but is now a no-op.
+    """
+    return len(_active_sessions)
