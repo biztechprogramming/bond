@@ -6,7 +6,7 @@ import tempfile
 
 import pytest
 
-from app.agent.tools.file_buffer import (
+from backend.app.agent.tools.file_buffer import (
     FileBuffer,
     _find_line,
     _normalize_ws,

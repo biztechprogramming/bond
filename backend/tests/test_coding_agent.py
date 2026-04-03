@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from backend.app.agent.tools.coding_agent import (
     AGENT_COMMANDS,
     CodingAgentProcess,
-    _active_processes,
+    _active_sessions,
     _validate_working_directory,
     handle_coding_agent,
     kill_all_coding_agents,
@@ -44,10 +44,10 @@ def tmp_workspace(tmp_path: Path) -> str:
 
 @pytest.fixture(autouse=True)
 def _cleanup_active_processes():
-    """Ensure active processes dict is clean between tests."""
-    _active_processes.clear()
+    """Ensure active sessions dict is clean between tests."""
+    _active_sessions.clear()
     yield
-    _active_processes.clear()
+    _active_sessions.clear()
 
 
 # ---------------------------------------------------------------------------
