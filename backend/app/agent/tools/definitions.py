@@ -135,7 +135,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "code_execute",
-            "description": "Execute code in a sandboxed environment. Supports Python and shell scripts. PREFER shell_find, file_search, shell_ls, git_info, file_read, shell_wc, or shell_tree for read-only operations — they are cheaper and faster. Use code_execute only for mutations (install, build, test) or multi-step scripts.",
+            "description": "Execute code in a sandboxed environment. Supports Python and shell scripts. PREFER file_list, file_search, git_info, file_read for read-only operations — they are cheaper and faster. Use code_execute only for mutations (install, build, test) or multi-step scripts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -727,7 +727,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "file_search",
-            "description": "Search file contents for a specific text/regex pattern. For finding FILES (not content), use project_search instead. Use file_search when you need exact pattern matching with line numbers, context lines, or per-file match counts. Auto-excludes .venv, node_modules, __pycache__, .git.",
+            "description": "Search file contents for a specific text/regex pattern, or perform project-level file discovery. For content search, provide pattern. For project-level search (finding files by name/path/topic), use mode='project' with query. Auto-excludes .venv, node_modules, __pycache__, .git.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -763,8 +763,32 @@ TOOL_DEFINITIONS: list[dict] = [
                         "type": "integer",
                         "description": "Max matches per file.",
                     },
+                    "query": {
+                        "type": "string",
+                        "description": "Project search query (for mode='project').",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Search mode: content (grep) or project (file discovery).",
+                        "enum": ["content", "project"],
+                        "default": "content",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max results (project mode).",
+                        "default": 30,
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "File type filter (project mode): f=file, d=directory.",
+                        "enum": ["f", "d"],
+                    },
                 },
-                "required": ["pattern"],
+                "required": [],
+                "oneOf": [
+                    {"required": ["pattern"]},
+                    {"required": ["query"]},
+                ],
             },
         },
     },
@@ -861,6 +885,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "function": {
             "name": "project_search",
             "description": (
+                "(Deprecated: use file_search with mode='project' instead) "
                 "Smart project search: finds files by searching EVERY word in the query independently "
                 "across filenames, directory paths (any depth), and file contents — all in one call. "
                 "Returns path, file size, and last-modified date for each match (no content preview). "
@@ -902,6 +927,72 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": ["query", "include"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_list",
+            "description": "Unified directory exploration: list contents, find files, show tree structure, or count lines. Replaces shell_ls, shell_find, shell_tree, and shell_wc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory path.",
+                        "default": ".",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Operation mode.",
+                        "enum": ["list", "find", "tree", "count"],
+                        "default": "list",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Glob pattern (find mode).",
+                    },
+                    "regex": {
+                        "type": "string",
+                        "description": "Regex pattern (find mode).",
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "File type filter: f=file, d=directory, l=symlink.",
+                        "enum": ["f", "d", "l"],
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Max directory depth.",
+                    },
+                    "exclude": {
+                        "type": "array",
+                        "description": "Dirs to exclude (find mode).",
+                        "items": {"type": "string"},
+                    },
+                    "long": {
+                        "type": "boolean",
+                        "description": "Detailed listing (list mode).",
+                        "default": False,
+                    },
+                    "all": {
+                        "type": "boolean",
+                        "description": "Include hidden files (list mode).",
+                        "default": False,
+                    },
+                    "dirs_only": {
+                        "type": "boolean",
+                        "description": "Dirs only (tree mode).",
+                        "default": False,
+                    },
+                    "wc_mode": {
+                        "type": "string",
+                        "description": "Count mode.",
+                        "enum": ["lines", "words", "chars"],
+                        "default": "lines",
+                    },
+                },
             },
         },
     },
@@ -1456,14 +1547,17 @@ class ShellLs(ToolCall):
     all: bool = Field(default=False, description="Include hidden files.")
 
 class FileSearch(ToolCall):
-    """Search for text patterns in files."""
-    pattern: str = Field(description="Text or regex pattern.")
+    """Search for text patterns in files or perform project-level file discovery."""
+    pattern: Optional[str] = Field(None, description="Text or regex pattern (content mode).")
     path: str = Field(default=".", description="File or directory to search.")
     recursive: bool = Field(default=True, description="Search recursively.")
     include: Optional[str] = Field(None, description="File pattern filter.")
     ignore_case: bool = Field(default=False, description="Case-insensitive.")
     context_lines: int = Field(default=0, description="Context lines around matches.")
     max_count: Optional[int] = Field(None, description="Max matches per file.")
+    query: Optional[str] = Field(None, description="Project search query.")
+    mode: Literal["content", "project"] = Field(default="content", description="Search mode.")
+    max_results: Optional[int] = Field(None, description="Max results (project mode).")
 
 class GitInfo(ToolCall):
     """Read-only git operations."""
@@ -1503,6 +1597,20 @@ class ShellTree(ToolCall):
     max_depth: int = Field(default=3, description="Max depth.")
     dirs_only: bool = Field(default=False, description="Dirs only.")
 
+class FileList(ToolCall):
+    """Unified directory exploration."""
+    path: str = Field(default=".", description="Directory path.")
+    mode: Literal["list", "find", "tree", "count"] = Field(default="list", description="Operation mode.")
+    name: Optional[str] = Field(None, description="Glob pattern (find mode).")
+    regex: Optional[str] = Field(None, description="Regex pattern (find mode).")
+    type: Optional[Literal["f", "d", "l"]] = Field(None, description="File type filter.")
+    max_depth: Optional[int] = Field(None, description="Max directory depth.")
+    exclude: Optional[List[str]] = Field(None, description="Dirs to exclude.")
+    long: bool = Field(default=False, description="Detailed listing (list mode).")
+    all: bool = Field(default=False, description="Include hidden (list mode).")
+    dirs_only: bool = Field(default=False, description="Dirs only (tree mode).")
+    wc_mode: Literal["lines", "words", "chars"] = Field(default="lines", description="Count mode.")
+
 
 # Mapping for Instructor
 INSTRUCTOR_TOOL_MAP = {
@@ -1530,6 +1638,7 @@ INSTRUCTOR_TOOL_MAP = {
     "git_info": GitInfo,
     "shell_wc": ShellWc,
     "shell_tree": ShellTree,
+    "file_list": FileList,
     "coding_agent": CodingAgent,
     "host_exec": HostExec,
     "ctx_search": CtxSearch,
