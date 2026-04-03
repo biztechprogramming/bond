@@ -54,6 +54,7 @@ async def build_agent_context(
     sliding window, progressive decay, and compression.
     """
     import os
+    from backend.app.agent.context_compression import compress_file_results
     from backend.app.agent.context_decay import apply_progressive_decay
     from backend.app.agent.context_pipeline import (
         COMPRESSION_THRESHOLD,
@@ -289,6 +290,12 @@ async def build_agent_context(
             history, conversation_id, config, utility_kwargs or {},
             agent_db=agent_db,
         )
+
+    # --- Iteration-Aware File Result Compression (Design Doc 098, Phase 6) ---
+    if windowed_history:
+        # Estimate current iteration from message count (tool-call pairs)
+        _tool_count = sum(1 for m in windowed_history if m.get("role") == "tool")
+        windowed_history = compress_file_results(windowed_history, _tool_count)
 
     # --- Progressive Decay ---
     if windowed_history:
