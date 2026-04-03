@@ -65,14 +65,14 @@ class LoopState:
 
     # Phase 2A: Adaptive iteration budget
     adaptive_budget_set: bool = False
-    adaptive_budget: int = 25
+    adaptive_budget: int = 100
 
     # Phase 2B: Early termination for read-only tasks
     has_made_consequential_call: bool = False
 
     # General counters
     tool_calls_made: int = 0
-    max_iterations: int = 25
+    max_iterations: int = 100
 
     # Tool-call density warning
     _tool_density_warned: bool = False
