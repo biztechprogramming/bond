@@ -95,7 +95,7 @@ def test_deferred_injections_come_after_tool_results():
 
 def test_orphaned_tool_calls_get_stub_results():
     """When the inner loop breaks early, remaining tool_use IDs get stubs."""
-    tc1 = _make_tool_call("tc_A", "shell_grep", {"pattern": "foo"})
+    tc1 = _make_tool_call("tc_A", "file_search", {"pattern": "foo"})
     tc2 = _make_tool_call("tc_B", "file_read", {"path": "bar.py"})
     tc3 = _make_tool_call("tc_C", "shell_ls", {"path": "."})
 

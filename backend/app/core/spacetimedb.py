@@ -21,6 +21,9 @@ def _resolve_token() -> str:
     """Read SpacetimeDB token from environment or ~/.config/spacetime/cli.toml."""
     token = os.environ.get("SPACETIMEDB_TOKEN")
     if token:
+        # Strip surrounding quotes — common .env loading pitfall where
+        # SPACETIMEDB_TOKEN="eyJ..." includes the literal '"' characters.
+        token = token.strip('"').strip("'")
         return token
 
     cli_config = Path.home() / ".config" / "spacetime" / "cli.toml"

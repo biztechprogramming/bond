@@ -135,7 +135,7 @@ TOOL_DEFINITIONS: list[dict] = [
         "type": "function",
         "function": {
             "name": "code_execute",
-            "description": "Execute code in a sandboxed environment. Supports Python and shell scripts. PREFER shell_find, shell_grep, shell_ls, git_info, shell_head, shell_wc, or shell_tree for read-only operations — they are cheaper and faster. Use code_execute only for mutations (install, build, test) or multi-step scripts.",
+            "description": "Execute code in a sandboxed environment. Supports Python and shell scripts. PREFER shell_find, file_search, shell_ls, git_info, file_read, shell_wc, or shell_tree for read-only operations — they are cheaper and faster. Use code_execute only for mutations (install, build, test) or multi-step scripts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -726,8 +726,8 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "shell_grep",
-            "description": "Search file contents for a specific text/regex pattern. For finding FILES (not content), use project_search instead. Use shell_grep when you need exact pattern matching with line numbers, context lines, or per-file match counts. Auto-excludes .venv, node_modules, __pycache__, .git.",
+            "name": "file_search",
+            "description": "Search file contents for a specific text/regex pattern. For finding FILES (not content), use project_search instead. Use file_search when you need exact pattern matching with line numbers, context lines, or per-file match counts. Auto-excludes .venv, node_modules, __pycache__, .git.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -832,33 +832,6 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "shell_head",
-            "description": "View the first or last N lines of a file. Use file_read with line_start/line_end for mid-file ranges.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path.",
-                    },
-                    "lines": {
-                        "type": "integer",
-                        "description": "Number of lines to show.",
-                        "default": 20,
-                    },
-                    "from_end": {
-                        "type": "boolean",
-                        "description": "If true, show last N lines (tail). If false, show first N lines (head).",
-                        "default": False,
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "shell_tree",
             "description": "Show directory tree structure. Auto-excludes .venv, node_modules, __pycache__, .git.",
             "parameters": {
@@ -892,8 +865,8 @@ TOOL_DEFINITIONS: list[dict] = [
                 "across filenames, directory paths (any depth), and file contents — all in one call. "
                 "Returns path, file size, and last-modified date for each match (no content preview). "
                 "Use ONLY when you do NOT already have the exact file path. If you have a path, use "
-                "file_read or shell_head directly — never search first. "
-                "To peek at multiple results, pass their paths to batch_head. Example: "
+                "file_read directly — never search first. "
+                "Example: "
                 "project_search(query='inspection defect entry blazor') finds files matching ANY of "
                 "those words in their name, parent directories, or contents."
             ),
@@ -929,89 +902,6 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": ["query", "include"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "batch_head",
-            "description": (
-                "Peek at the first N lines of multiple files in one call. "
-                "Use after project_search to quickly inspect several candidate files "
-                "without making one tool call per file. Returns content and total line count for each file."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "files": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Array of file paths to read the head of (max 20).",
-                    },
-                    "lines": {
-                        "type": "integer",
-                        "description": "Number of lines to read from each file (default: 40, max: 200).",
-                        "default": 40,
-                    },
-                },
-                "required": ["files"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shell_tail",
-            "description": (
-                "Read the last N lines of a file. Complement to shell_head. "
-                "Great for log files, build output, recent changes. "
-                "Also returns total line count."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file.",
-                    },
-                    "lines": {
-                        "type": "integer",
-                        "description": "Number of lines from the end (default: 50, max: 500).",
-                        "default": 50,
-                    },
-                },
-                "required": ["path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "shell_sed",
-            "description": (
-                "Extract line ranges or transform text with sed. "
-                "Use 'lines' for quick range extraction (e.g. '50,100' for lines 50-100). "
-                "Use 'expression' for pattern-based extraction (e.g. '/BEGIN/,/END/p'). "
-                "Best tool for reading a specific section of a large file."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file.",
-                    },
-                    "lines": {
-                        "type": "string",
-                        "description": "Line range shorthand, e.g. '50,100' to extract lines 50-100.",
-                    },
-                    "expression": {
-                        "type": "string",
-                        "description": "Full sed expression, e.g. '/pattern_start/,/pattern_end/p'.",
-                    },
-                },
-                "required": ["path"],
             },
         },
     },
@@ -1565,7 +1455,7 @@ class ShellLs(ToolCall):
     long: bool = Field(default=False, description="Detailed listing.")
     all: bool = Field(default=False, description="Include hidden files.")
 
-class ShellGrep(ToolCall):
+class FileSearch(ToolCall):
     """Search for text patterns in files."""
     pattern: str = Field(description="Text or regex pattern.")
     path: str = Field(default=".", description="File or directory to search.")
@@ -1587,12 +1477,6 @@ class ShellWc(ToolCall):
     """Count lines, words, or characters."""
     path: str = Field(description="File path.")
     mode: Literal["lines", "words", "chars"] = Field(default="lines")
-
-class ShellHead(ToolCall):
-    """View first or last N lines of a file."""
-    path: str = Field(description="File path.")
-    lines: int = Field(default=20, description="Lines to show.")
-    from_end: bool = Field(default=False, description="Tail mode.")
 
 class CodingAgent(ToolCall):
     """Spawn a coding sub-agent to perform complex coding tasks."""
@@ -1642,10 +1526,9 @@ INSTRUCTOR_TOOL_MAP = {
     "load_context": LoadContext,
     "shell_find": ShellFind,
     "shell_ls": ShellLs,
-    "shell_grep": ShellGrep,
+    "file_search": FileSearch,
     "git_info": GitInfo,
     "shell_wc": ShellWc,
-    "shell_head": ShellHead,
     "shell_tree": ShellTree,
     "coding_agent": CodingAgent,
     "host_exec": HostExec,

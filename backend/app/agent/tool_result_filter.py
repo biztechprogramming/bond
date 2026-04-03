@@ -31,9 +31,8 @@ SKIP_TOOLS = frozenset({
     # Shell utility tools — always small and structured (Phase 1C)
     "shell_find",
     "shell_ls",
-    "shell_grep",
+    "file_search",
     "shell_tree",
-    "shell_head",
     "shell_wc",
     "git_info",
     "project_search",
@@ -281,8 +280,8 @@ def rule_based_prune(tool_name: str, tool_args: dict, result: dict) -> dict | No
         if len(json.dumps(result)) < 2000:
             return result  # already structured, filter can't improve
 
-    # Rule 5: shell_grep — cap at 30 matches (Phase 1C)
-    if tool_name == "shell_grep":
+    # Rule 5: file_search — cap at 30 matches (Phase 1C)
+    if tool_name == "file_search":
         output = result.get("output", result.get("stdout", result.get("content", "")))
         if isinstance(output, str):
             lines = output.splitlines()

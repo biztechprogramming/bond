@@ -42,7 +42,7 @@ def test_cyclical_detection_triggers():
     detected = False
     for _ in range(3):
         _, _ = detect_loop("file_read", {"path": f"/workspace/a.py"}, ls)
-        detected, msg = detect_loop("shell_grep", {"pattern": "foo"}, ls)
+        detected, msg = detect_loop("file_search", {"pattern": "foo"}, ls)
     assert detected
     assert "cyclical loop" in msg.lower() or "cyclical" in msg.lower()
 
@@ -52,7 +52,7 @@ def test_no_cyclical_detection_for_varied_pattern():
     ls = _make_loop_state()
     calls = [
         ("file_read", {"path": "/a.py"}),
-        ("shell_grep", {"pattern": "foo"}),
+        ("file_search", {"pattern": "foo"}),
         ("file_read", {"path": "/b.py"}),
         ("shell_ls", {"path": "/workspace"}),
     ]

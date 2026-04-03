@@ -162,7 +162,7 @@ class TestContextStore:
         assert results == [] or isinstance(results, list)
 
     def test_search_result_format(self, store):
-        store.index("Test content here", "shell_grep", {"pattern": "test"}, turn_number=3)
+        store.index("Test content here", "file_search", {"pattern": "test"}, turn_number=3)
         results = store.search(["test content"])
         if results:
             r = results[0]
@@ -170,7 +170,7 @@ class TestContextStore:
             assert "content" in r
             assert "source_tool" in r
             assert "turn_number" in r
-            assert r["source_tool"] == "shell_grep"
+            assert r["source_tool"] == "file_search"
             assert r["turn_number"] == 3
 
     def test_search_limit(self, store):

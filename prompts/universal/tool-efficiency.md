@@ -9,7 +9,7 @@ If the user's message is conversational (greetings, thanks, simple questions, sm
 - Stop exploring when you have enough information to act. Don't read every file — read what you need.
 
 ### Finding Files: ALWAYS Use project_search
-**RULE: When looking for a file, document, or code reference, use `project_search`. Do NOT use `shell_find` or `shell_grep` for discovery.**
+**RULE: When looking for a file, document, or code reference, use `project_search`. Do NOT use `shell_find` or `file_search` for discovery.**
 
 `project_search` tries multiple strategies in ONE call: filename matching (with zero-padding), content search, and path matching. It finds things that `shell_find` misses because `shell_find` only matches exact globs.
 
@@ -19,7 +19,7 @@ If the user's message is conversational (greetings, thanks, simple questions, sm
 - `project_search(query="manifest yaml")` → finds manifest files across the project
 
 **When to use shell_find instead:** Only when you already know the exact glob pattern (e.g. `shell_find(name="*.py", path="src/")`).
-**When to use shell_grep instead:** Only when searching for a specific text pattern inside files with line numbers.
+**When to use file_search instead:** Only when searching for a specific text pattern inside files with line numbers.
 
 ### Discovery Phase (First Turn)
 For any non-trivial task, your **first tool-call turn** must batch all available discovery calls together. Emit these in a single response so they execute in parallel:

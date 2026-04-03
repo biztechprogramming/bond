@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from "react";
 import type { ChatMessage, AgentStatus } from "@/lib/types";
 import { toolIcon } from "@/lib/theme";
+import MarkdownMessage from "@/components/shared/MarkdownMessage";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -213,14 +214,18 @@ export default function ChatPanel({
             <div style={s.chatMsgRole}>
               {msg.role === "user" && msg.content.startsWith("[System:") ? "System" : msg.role === "user" ? "You" : msg.role === "assistant" ? (msg.agentName || selectedAgentName || "Agent") : "System"}
             </div>
-            <div style={{...s.chatMsgContent, ...(msg.role === "user" && msg.content.startsWith("[System:") ? { color: "#8888a0", fontSize: "0.85rem", fontStyle: "italic" } : {})}}>{msg.content}</div>
+            {msg.role === "assistant" ? (
+              <div style={s.chatMsgContent}><MarkdownMessage content={msg.content} /></div>
+            ) : (
+              <div style={{...s.chatMsgContent, whiteSpace: "pre-wrap", ...(msg.role === "user" && msg.content.startsWith("[System:") ? { color: "#8888a0", fontSize: "0.85rem", fontStyle: "italic" } : {})}}>{msg.content}</div>
+            )}
           </div>
         ))}
         {(loading || streamingContent) && (
           <div style={s.chatMsg}>
             <div style={s.chatMsgRole}>{selectedAgentName || currentAgentName}</div>
             <div style={{ ...s.chatMsgContent, color: streamingContent ? "#e0e0e8" : "#8888a0" }}>
-              {streamingContent || (
+              {streamingContent ? <MarkdownMessage content={streamingContent} /> : (
                 agentStatus === "tool_calling" ? "Using tools..." :
                 agentStatus === "responding" ? "Responding..." :
                 agentStatus === "stopping" ? "Stopping..." :
@@ -491,7 +496,6 @@ const compactStyles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
   },
   chatMsgContent: {
-    whiteSpace: "pre-wrap" as const,
     lineHeight: 1.5,
     fontSize: "0.85rem",
   },
@@ -577,7 +581,6 @@ const fullStyles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
   },
   chatMsgContent: {
-    whiteSpace: "pre-wrap" as const,
     lineHeight: 1.6,
   },
   chatInputArea: {

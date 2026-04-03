@@ -1,7 +1,7 @@
 ## File Operations
 
 ### Reading Files
-- **Always use `file_read`**, never `code_execute` with `cat`/`head`/`tail`, never `shell_head`.
+- **Always use `file_read`**, never `code_execute` with `cat`/`head`/`tail`, never `file_read`.
 - **`file_read` is the ONLY reading tool.** It handles full reads, head (line_start=1, line_end=N), tail (line_start=-N), mid-file ranges, and outline mode. You never need another tool to read a file.
 - **If you have the exact path, call `file_read` directly.** Do not search, ls, find, or wc first. One tool call.
 - **Start with outline mode** (`outline: true`) on any file you haven't seen before. This gives you function/class signatures with line numbers so you can target your reads.
