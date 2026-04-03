@@ -27,7 +27,7 @@ class LoopState:
     NAME_ONLY_THRESHOLD: int = 5
     NAME_ONLY_EXEMPT_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
         "file_read", "file_search", "shell_ls", "shell_find",
-        "shell_wc", "shell_tree", "git_info", "project_search",
+        "shell_wc", "shell_tree", "git_info", "project_search", "file_list",
     }))
     recent_tool_names: list[str] = field(default_factory=list)
 
@@ -52,7 +52,7 @@ class LoopState:
         "file_read", "search_memory",
         "web_search", "web_read", "work_plan",
         "shell_find", "shell_ls", "file_search", "git_info",
-        "shell_wc", "shell_tree", "project_search",
+        "shell_wc", "shell_tree", "project_search", "file_list",
     }))
     CONSEQUENTIAL_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
         "file_write", "file_edit", "code_execute", "respond", "memory_save",

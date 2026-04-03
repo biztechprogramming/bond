@@ -19,13 +19,12 @@ ALWAYS_INCLUDE = {"respond", "say"}
 # Filesystem toolkit (8 tools) — always included as a group in coding/file contexts.
 # ~1,200 tokens total. Cheaper than one wasted iteration.
 FILESYSTEM_TOOLKIT = frozenset({
-    "file_read", "file_smart_edit", "project_search", "file_search",
+    "file_read", "file_smart_edit", "project_search", "file_search", "file_list",
 })
 
 # Additional shell utilities — included only when keyword-matched.
 SHELL_UTILITY_TOOLS = frozenset({
-    "git_info", "shell_find", "shell_tree", "shell_wc",
-    "shell_awk", "shell_diff", "shell_jq", "shell_ls",
+    "git_info", "shell_awk", "shell_diff", "shell_jq",
 })
 
 # Maximum *non-utility* tools to send per turn
@@ -93,6 +92,12 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "shell_tree": [
         "tree", "directory structure", "project structure", "folder structure",
         "show structure",
+    ],
+    "file_list": [
+        "find", "locate", "glob", "find -name", "-type f", "-type d",
+        "ls ", "list directory", "directory contents", "what's in the folder",
+        "tree", "directory structure", "project structure", "folder structure", "show structure",
+        "count lines", "how many lines", "line count", "word count", "wc ",
     ],
     "load_context": [
         "implement", "build", "create", "fix", "refactor", "change",
@@ -206,7 +211,7 @@ CODING_SIGNAL_TOOLS = frozenset({
     "file_read", "file_write", "file_edit",
     "file_smart_edit",
     "project_search", "file_search", "shell_find",
-    "code_execute",
+    "code_execute", "file_list",
 })
 
 
@@ -338,7 +343,7 @@ def select_tools(
         coding_tools
         | FILESYSTEM_TOOLKIT
         | SHELL_UTILITY_TOOLS
-        | {"project_search", "shell_find", "file_search", "shell_ls"}
+        | {"project_search", "shell_find", "file_search", "shell_ls", "file_list"}
     )
     if filesystem_trigger & selected:
         selected.update(FILESYSTEM_TOOLKIT & set(enabled_tools))
@@ -423,6 +428,9 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
     ),
     "shell_wc": (
         " ONLY when you specifically need a line/word count, not as a pre-read step."
+    ),
+    "file_list": (
+        " Unified directory exploration. mode=list (ls), find, tree, or count (wc)."
     ),
     "git_info": (
         " For git status/log/diff/branch/show. NOT as a pre-read verification step."
