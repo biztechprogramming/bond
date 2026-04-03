@@ -900,6 +900,17 @@ async def _run_agent_loop(
         _pre_gather_result and _pre_gather_result.delegate_to_coding_agent
     )
 
+    # ── 5b. Explicit delegation detection ──────────────────────────
+    # When the user explicitly asks to delegate to a coding agent mid-conversation,
+    # detect this and force immediate delegation instead of burning iterations.
+    _explicit_delegation = False
+    if "coding_agent" in agent_tools and history:
+        from backend.app.agent.delegation_detect import detect_explicit_delegation
+        _explicit_delegation = detect_explicit_delegation(user_message)
+        if _explicit_delegation:
+            loop.is_coding_task = True
+            logger.info("Explicit delegation request detected: %r", user_message[:100])
+
     # Reset per-turn budgets
     from backend.app.agent.tools.native import reset_load_context_budget
     reset_load_context_budget()
@@ -909,6 +920,83 @@ async def _run_agent_loop(
         await _skill_tracker.flush()
         await outcome.record(loop.tool_calls_made, cost.tracking)
         cost.emit_summary(_langfuse_meta)
+
+    # ── 5c. Immediate delegation for explicit requests ──
+    # If the user explicitly asked to delegate and there's conversation history
+    # to build context from, skip the loop entirely and spawn the coding agent.
+    if _explicit_delegation and history:
+        logger.info("Executing immediate delegation to coding agent")
+        try:
+            from backend.app.agent.pre_gather import build_handoff_context
+            from backend.app.agent.tools.coding_agent import handle_coding_agent
+
+            handoff_ctx = build_handoff_context(messages)
+
+            # Extract the original user request from earlier in the conversation
+            _original_request = ""
+            for msg in (history or []):
+                content = msg.get("content", "")
+                if (msg.get("role") == "user"
+                        and isinstance(content, str)
+                        and not content.startswith("SYSTEM:")
+                        and len(content) > 20):
+                    _original_request = content[:2000]
+                    break
+
+            # Determine working directory
+            _working_dir = os.environ.get("WORKSPACE_DIR", "/workspace")
+            for msg in (history or []):
+                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                    for tc in msg["tool_calls"]:
+                        fn = tc.get("function", {})
+                        try:
+                            args = json.loads(fn.get("arguments", "{}"))
+                        except (json.JSONDecodeError, TypeError):
+                            args = {}
+                        if "working_directory" in args:
+                            _working_dir = args["working_directory"]
+                        elif "path" in args and "/" in args["path"]:
+                            # Infer workspace from file paths
+                            pass
+
+            _handoff_task = (
+                f"Complete this task that the user wants delegated to a coding agent.\n\n"
+                f"## Original User Request\n{_original_request}\n\n"
+                f"## User's Delegation Request\n{user_message}\n\n"
+                f"## Files Already Read\n{handoff_ctx['files_read']}\n\n"
+                f"## Changes Already Made\n{handoff_ctx['edits_made']}\n\n"
+                f"## Instructions\n"
+                f"The user explicitly asked to delegate this to a coding agent. "
+                f"Use the context above as your starting point. Complete the task, "
+                f"commit, and push your changes."
+            )
+
+            _ca_result = await handle_coding_agent(
+                {
+                    "task": _handoff_task,
+                    "working_directory": _working_dir,
+                    "agent_type": "claude",
+                    "timeout_minutes": 30,
+                },
+                tool_context,
+            )
+
+            if not _ca_result.get("error"):
+                logger.info("Immediate delegation to coding_agent succeeded: %s", _ca_result.get("status"))
+                await _finish()
+                return (
+                    f"Done — I've delegated the task to a coding agent that's now running "
+                    f"in the background. It has the full context from our conversation. "
+                    f"You can monitor its progress in the UI.",
+                    0,
+                )
+            else:
+                logger.error("Immediate delegation failed: %s", _ca_result.get("error"))
+                # Fall through to normal loop
+                _explicit_delegation = False
+        except Exception as e:
+            logger.error("Immediate delegation failed with exception: %s", e, exc_info=True)
+            _explicit_delegation = False
 
     # ── 6. Main loop ──
     for _iteration in range(max_iterations):
@@ -1567,7 +1655,7 @@ async def _run_agent_loop(
     _should_auto_delegate = (
         loop.is_coding_task
         and not _coding_agent_called
-        and loop.has_made_consequential_call
+        and (loop.has_made_consequential_call or _explicit_delegation)
         and "coding_agent" in agent_tools
     )
 

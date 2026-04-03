@@ -73,10 +73,7 @@ def build_registry() -> ToolRegistry:
     from .subordinate import handle_call_subordinate
     from .skills import handle_skills
     from .work_plan import handle_work_plan
-    from .file_buffer import (
-        handle_file_open, handle_file_view, handle_file_search, handle_file_replace,
-        handle_file_smart_edit,
-    )
+    from .file_buffer import handle_file_smart_edit
     from .shell_utils import (
         handle_batch_head, handle_shell_find, handle_shell_ls, handle_shell_grep,
         handle_git_info, handle_shell_wc, handle_shell_head, handle_shell_tail,
@@ -117,10 +114,6 @@ def build_registry() -> ToolRegistry:
     registry.register("shell_tree", handle_shell_tree)
     registry.register("project_search", handle_project_search)
     registry.register("batch_head", handle_batch_head)
-    registry.register("file_open", handle_file_open)
-    registry.register("file_view", handle_file_view)
-    registry.register("file_search", handle_file_search)
-    registry.register("file_replace", handle_file_replace)
     registry.register("file_smart_edit", handle_file_smart_edit)
     registry.register("shell_tail", handle_shell_tail)
     registry.register("shell_sed", handle_shell_sed)

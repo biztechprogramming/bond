@@ -28,13 +28,7 @@ def build_native_registry() -> ToolRegistry:
         handle_search_memory,
         handle_parallel_orchestrate,
     )
-    from .file_buffer import (
-        handle_file_open,
-        handle_file_view,
-        handle_file_search,
-        handle_file_replace,
-        handle_file_smart_edit,
-    )
+    from .file_buffer import handle_file_smart_edit
     from .shell_utils import (
         handle_batch_head,
         handle_git_info,
@@ -90,10 +84,6 @@ def build_native_registry() -> ToolRegistry:
     registry.register("shell_tree", handle_shell_tree)
     registry.register("project_search", handle_project_search)
     registry.register("batch_head", handle_batch_head)
-    registry.register("file_open", handle_file_open)
-    registry.register("file_view", handle_file_view)
-    registry.register("file_search", handle_file_search)
-    registry.register("file_replace", handle_file_replace)
     registry.register("file_smart_edit", handle_file_smart_edit)
     registry.register("shell_tail", handle_shell_tail)
     registry.register("shell_sed", handle_shell_sed)
