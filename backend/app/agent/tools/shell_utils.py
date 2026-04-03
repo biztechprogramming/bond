@@ -934,3 +934,90 @@ async def handle_shell_jq(
         "stderr": result["stderr"],
         "exit_code": result["exit_code"],
     }
+
+
+# ---------------------------------------------------------------------------
+# file_list — unified directory exploration (Design Doc 098)
+# ---------------------------------------------------------------------------
+
+
+async def handle_file_list(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Unified directory exploration: list, find, tree, or count.
+
+    Delegates to the appropriate shell utility handler based on ``mode``.
+    """
+    mode = arguments.get("mode", "list")
+
+    if mode == "find":
+        find_args: dict[str, Any] = {}
+        for key in ("path", "name", "regex", "type", "max_depth", "exclude"):
+            if key in arguments:
+                find_args[key] = arguments[key]
+        return await handle_shell_find(find_args, context)
+
+    if mode == "tree":
+        tree_args: dict[str, Any] = {}
+        for key in ("path", "max_depth", "dirs_only"):
+            if key in arguments:
+                tree_args[key] = arguments[key]
+        # Map type filter to dirs_only for convenience
+        if arguments.get("type") == "d" and "dirs_only" not in arguments:
+            tree_args["dirs_only"] = True
+        return await handle_shell_tree(tree_args, context)
+
+    if mode == "count":
+        wc_args: dict[str, Any] = {"path": arguments.get("path", ".")}
+        if "wc_mode" in arguments:
+            wc_args["mode"] = arguments["wc_mode"]
+        return await handle_shell_wc(wc_args, context)
+
+    # Default: mode == "list"
+    ls_args: dict[str, Any] = {}
+    for key in ("path", "long", "all"):
+        if key in arguments:
+            ls_args[key] = arguments[key]
+    return await handle_shell_ls(ls_args, context)
+
+
+# ---------------------------------------------------------------------------
+# file_search unified — content + project search (Design Doc 098)
+# ---------------------------------------------------------------------------
+
+
+async def handle_file_search_unified(
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Unified file search: content grep or project-level discovery.
+
+    Delegates to handle_shell_grep (content mode) or handle_project_search
+    (project mode) based on ``mode`` parameter or presence of ``pattern``/``query``.
+    """
+    mode = arguments.get("mode")
+
+    # Auto-detect mode from provided parameters
+    if mode is None:
+        if arguments.get("pattern"):
+            mode = "content"
+        elif arguments.get("query"):
+            mode = "project"
+        else:
+            mode = "content"
+
+    if mode == "project":
+        proj_args: dict[str, Any] = {}
+        for key in ("query", "path", "type", "include", "max_results"):
+            if key in arguments:
+                proj_args[key] = arguments[key]
+        return await handle_project_search(proj_args, context)
+
+    # Default: content mode → shell grep
+    grep_args: dict[str, Any] = {}
+    for key in ("pattern", "path", "recursive", "include", "ignore_case",
+                "context_lines", "max_count"):
+        if key in arguments:
+            grep_args[key] = arguments[key]
+    return await handle_shell_grep(grep_args, context)

@@ -40,6 +40,8 @@ def build_native_registry() -> ToolRegistry:
         handle_shell_ls,
         handle_shell_tree,
         handle_shell_wc,
+        handle_file_list,
+        handle_file_search_unified,
     )
     from .coding_agent import handle_coding_agent
     from .db_discover import handle_db_discover
@@ -71,13 +73,26 @@ def build_native_registry() -> ToolRegistry:
     registry.register("db_discover", handle_db_discover)
 
     # Shell utility tools (info-gathering, routed to utility model)
-    registry.register("shell_find", handle_shell_find)
-    registry.register("shell_ls", handle_shell_ls)
-    registry.register("file_search", handle_shell_grep)
+    import functools
+
+    def _make_deprecated(old_name: str, new_name: str, handler):
+        @functools.wraps(handler)
+        async def wrapper(arguments, context):
+            import logging
+            logging.getLogger("bond.agent.tools.native_registry").warning(
+                "Deprecated tool '%s' called. Use '%s' instead.", old_name, new_name,
+            )
+            return await handler(arguments, context)
+        return wrapper
+
+    registry.register("file_list", handle_file_list)
+    registry.register("file_search", handle_file_search_unified)
+    registry.register("shell_find", _make_deprecated("shell_find", "file_list", handle_shell_find))
+    registry.register("shell_ls", _make_deprecated("shell_ls", "file_list", handle_shell_ls))
     registry.register("git_info", handle_git_info)
-    registry.register("shell_wc", handle_shell_wc)
-    registry.register("shell_tree", handle_shell_tree)
-    registry.register("project_search", handle_project_search)
+    registry.register("shell_wc", _make_deprecated("shell_wc", "file_list", handle_shell_wc))
+    registry.register("shell_tree", _make_deprecated("shell_tree", "file_list", handle_shell_tree))
+    registry.register("project_search", _make_deprecated("project_search", "file_search", handle_project_search))
     registry.register("file_smart_edit", handle_file_smart_edit)
     registry.register("shell_diff", handle_shell_diff)
     registry.register("shell_awk", handle_shell_awk)
