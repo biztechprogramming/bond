@@ -1,4 +1,9 @@
-"""SandboxManager — Docker container lifecycle and code execution."""
+"""SandboxManager — Docker container lifecycle and code execution.
+
+Refactored to use ContainerHostAdapter abstraction (Design Doc 089).
+Delegates container operations to LocalContainerAdapter or RemoteContainerAdapter
+based on HostRegistry placement decisions.
+"""
 
 from __future__ import annotations
 
@@ -8,13 +13,24 @@ import json
 import logging
 import os
 import shutil
-import socket
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from backend.app.sandbox.adapters import (
+    AgentContainerConfig,
+    ContainerInfo,
+    LocalContainerAdapter,
+    ResourceLimits,
+    _PROJECT_ROOT,
+    _PORT_RANGE_END,
+    _PORT_RANGE_START,
+    _WORKER_INTERNAL_PORT,
+)
+from backend.app.sandbox.host_registry import HostRegistry, LocalHost, RemoteHost
+from backend.app.sandbox.tunnel_manager import TunnelManager
 from backend.app.sandbox.workspace_cloner import (
     cleanup_workspace_clones,
     detect_workspace_type,
@@ -25,124 +41,83 @@ from backend.app.sandbox.workspace_cloner import (
 
 logger = logging.getLogger("bond.sandbox.manager")
 
-# Port range for containerized worker agents (design doc §15.1)
-_PORT_RANGE_START = 18791
-_PORT_RANGE_END = 18890
-
-# Internal port the worker always listens on inside the container
-_WORKER_INTERNAL_PORT = 18791
-
-# Project root: sandbox/manager.py -> backend/app/sandbox -> backend/app -> backend -> project root
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
 
 class SandboxManager:
-    """Manages persistent Docker containers for agent code execution."""
+    """Manages persistent Docker containers for agent code execution.
+
+    Uses HostRegistry for placement decisions and ContainerHostAdapter
+    for container lifecycle operations on local or remote hosts.
+    """
 
     def __init__(self) -> None:
         self._containers: dict[str, dict[str, Any]] = {}
-        # Port tracking: agent_key -> allocated host port
-        # Safe without locks — single-threaded asyncio event loop
-        self._port_map: dict[str, int] = {}
-        # Per-agent locks to prevent concurrent ensure_running() races
         self._agent_locks: dict[str, asyncio.Lock] = {}
 
-    # ------------------------------------------------------------------
-    # Port allocation (Task 5)
-    # ------------------------------------------------------------------
+        # Load config for remote hosts
+        from backend.app.config import load_bond_json
+        config = load_bond_json()
+
+        # Host registry and adapters (Design Doc 089)
+        self._registry = HostRegistry(config)
+        self._tunnel_manager = TunnelManager()
+        self._local_adapter = LocalContainerAdapter()
+        self._remote_adapters: dict[str, Any] = {}  # host_id -> RemoteContainerAdapter
+
+    # -- Adapter resolution --
+
+    def _get_adapter(self, host: RemoteHost | LocalHost) -> Any:
+        """Get the appropriate adapter for a host."""
+        if isinstance(host, LocalHost) or host.id == "local":
+            return self._local_adapter
+
+        if host.id not in self._remote_adapters:
+            from backend.app.sandbox.remote_adapter import RemoteContainerAdapter
+            self._remote_adapters[host.id] = RemoteContainerAdapter(
+                host, self._tunnel_manager
+            )
+        return self._remote_adapters[host.id]
+
+    def _adapter_for_container(self, container_info: dict) -> Any:
+        """Get adapter for an existing tracked container."""
+        host_id = container_info.get("host_id", "local")
+        host = self._registry.get_host(host_id)
+        if host is None:
+            return self._local_adapter
+        return self._get_adapter(host)
+
+    # -- Port allocation (delegated to local adapter for backward compat) --
+
+    @property
+    def _port_map(self) -> dict[str, int]:
+        """Backward compat: expose local adapter's port map."""
+        return self._local_adapter._port_map
+
+    @_port_map.setter
+    def _port_map(self, value: dict[str, int]) -> None:
+        self._local_adapter._port_map = value
 
     def _allocate_port(self, agent_key: str) -> int:
-        """Allocate an unused host port. Raises RuntimeError if range exhausted."""
-        # If this agent already has a port, return it
-        if agent_key in self._port_map:
-            return self._port_map[agent_key]
-
-        used_ports = set(self._port_map.values())
-
-        for port in range(_PORT_RANGE_START, _PORT_RANGE_END + 1):
-            if port in used_ports:
-                continue
-            # Verify port is actually free on the host
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                if s.connect_ex(("localhost", port)) != 0:
-                    # Port is free
-                    self._port_map[agent_key] = port
-                    return port
-            # Port in use by non-Bond process, skip
-
-        running = len(self._port_map)
-        raise RuntimeError(
-            f"No available ports in range {_PORT_RANGE_START}\u2013{_PORT_RANGE_END}. "
-            f"{running} agents running."
-        )
+        return self._local_adapter._allocate_port(agent_key)
 
     def _release_port(self, agent_key: str) -> int | None:
-        """Release a port back to the pool. Returns the released port or None."""
-        return self._port_map.pop(agent_key, None)
+        return self._local_adapter._release_port(agent_key)
 
-    # ------------------------------------------------------------------
-    # Per-agent lock (Task 6)
-    # ------------------------------------------------------------------
+    # -- Per-agent lock --
 
     def _get_agent_lock(self, agent_key: str) -> asyncio.Lock:
         if agent_key not in self._agent_locks:
             self._agent_locks[agent_key] = asyncio.Lock()
         return self._agent_locks[agent_key]
 
-    # ------------------------------------------------------------------
-    # Agent config generation (Task 3)
-    # ------------------------------------------------------------------
+    # -- Agent config generation --
 
     def _write_agent_config(self, agent: dict) -> Path:
-        """Write agent config JSON with secure file permissions. Returns the path."""
-        agent_id = agent["id"]
-        config_dir = _PROJECT_ROOT / "data" / "agent-configs"
-        os.makedirs(str(config_dir), mode=0o700, exist_ok=True)
-
-        config_path = config_dir / f"{agent_id}.json"
-
-        # Guard: if Docker previously bind-mounted a missing source path, it
-        # creates a *directory* instead of a file.  Remove it so we can write
-        # the real config file.  (See: IsADirectoryError on startup.)
-        if config_path.is_dir():
-            shutil.rmtree(config_path)
-
-        config_data = {
-            "agent_id": agent_id,
-            "model": agent["model"],
-            "system_prompt": agent["system_prompt"],
-            "tools": agent["tools"],
-            "max_iterations": agent["max_iterations"],
-            "utility_model": agent.get("utility_model", "claude-sonnet-4-6"),
-            # prompt_fragments removed (Doc 027) — loaded from disk via manifest
-            "api_keys": agent.get("api_keys", {}),
-            "provider_aliases": agent.get("provider_aliases", {}),
-            "litellm_prefixes": agent.get("litellm_prefixes", {}),
-        }
-
-        # Use os.open with explicit mode to avoid race window between open() and chmod()
-        fd = os.open(str(config_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, json.dumps(config_data, indent=2).encode())
-        finally:
-            os.close(fd)
-
-        return config_path
+        return self._local_adapter._write_agent_config(agent)
 
     def _delete_agent_config(self, agent_id: str) -> None:
-        """Delete the config file (or stale directory) for an agent, if it exists."""
-        config_path = _PROJECT_ROOT / "data" / "agent-configs" / f"{agent_id}.json"
-        try:
-            if config_path.is_dir():
-                shutil.rmtree(config_path)
-            else:
-                config_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        self._local_adapter._delete_agent_config(agent_id)
 
-    # ------------------------------------------------------------------
-    # Health wait (Task 4)
-    # ------------------------------------------------------------------
+    # -- Health wait --
 
     async def _wait_for_health(
         self,
@@ -160,10 +135,9 @@ class SandboxManager:
             while True:
                 elapsed = time.monotonic() - start
                 if elapsed >= timeout:
-                    # Capture docker logs for diagnostics
                     logs = await self._capture_container_logs(container_id)
                     logger.error(
-                        "Health check timeout for agent %s after %.1fs \u2014 container logs:\n%s",
+                        "Health check timeout for agent %s after %.1fs — container logs:\n%s",
                         agent_id, elapsed, logs,
                     )
                     raise RuntimeError(
@@ -184,12 +158,7 @@ class SandboxManager:
                         last_error = f"Unexpected health response: {data}"
                     else:
                         last_error = f"HTTP {resp.status_code}"
-                        logger.warning(
-                            "Unexpected HTTP %d from worker health for agent %s, retrying",
-                            resp.status_code, agent_id,
-                        )
                 except httpx.ConnectError:
-                    # Expected during startup, just retry
                     last_error = "Connection refused"
                 except httpx.HTTPError as exc:
                     last_error = str(exc)
@@ -199,48 +168,13 @@ class SandboxManager:
     async def _recover_existing_container(
         self, key: str, agent_id: str,
     ) -> dict[str, Any] | None:
-        """Check if a container with this name exists in Docker and recover it.
-
-        Handles backend restarts where in-memory tracking is lost but the
-        container is still running.
-        """
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "inspect", "-f",
-            "{{.State.Running}} {{(index (index .NetworkSettings.Ports \"18791/tcp\") 0).HostPort}}",
-            key,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            return None  # No such container
-
-        parts = stdout.decode().strip().split()
-        if len(parts) < 2:
+        """Check if a container exists in Docker and recover it."""
+        result = await self._local_adapter.recover_existing_container(key, agent_id)
+        if result is None:
             return None
 
-        is_running = parts[0].lower() == "true"
-        host_port = int(parts[1])
-
-        if not is_running:
-            # Container exists but stopped — remove it
-            logger.info("Found stopped container %s, removing", key)
-            await asyncio.create_subprocess_exec(
-                "docker", "rm", "-f", key,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            return None
-
-        # Container is running — recover tracking
-        worker_url = f"http://localhost:{host_port}"
-        cid_proc = await asyncio.create_subprocess_exec(
-            "docker", "inspect", "-f", "{{.Id}}", key,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        cid_out, _ = await cid_proc.communicate()
-        container_id = cid_out.decode().strip()[:12]
+        worker_url = result["worker_url"]
+        container_id = result["container_id"]
 
         try:
             await self._wait_for_health(worker_url, agent_id, container_id, timeout=5.0)
@@ -253,24 +187,20 @@ class SandboxManager:
             )
             return None
 
-        # Restore tracking (include mounts/config so next ensure_running()
-        # doesn't falsely detect "mounts changed" and destroy the container)
-        self._port_map[key] = host_port
         self._containers[key] = {
             "container_id": container_id,
             "worker_url": worker_url,
-            "worker_port": host_port,
+            "worker_port": self._local_adapter._port_map.get(key),
+            "host_id": "local",
             "last_used": time.time(),
-            # Populated by caller after recovery — see ensure_running()
         }
         logger.info(
-            "Recovered running container %s for agent %s (port=%d)",
-            container_id, agent_id, host_port,
+            "Recovered running container %s for agent %s",
+            container_id, agent_id,
         )
         return {"worker_url": worker_url, "container_id": container_id}
 
     async def _capture_container_logs(self, container_id: str, tail: int = 50) -> str:
-        """Capture recent docker logs from a container."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "docker", "logs", container_id, "--tail", str(tail),
@@ -283,7 +213,7 @@ class SandboxManager:
             return "<failed to capture logs>"
 
     # ------------------------------------------------------------------
-    # ensure_running — new high-level API (Task 6, 8)
+    # ensure_running — host-aware (Design Doc 089 §7.1)
     # ------------------------------------------------------------------
 
     async def ensure_running(self, agent: dict) -> dict[str, Any]:
@@ -298,17 +228,13 @@ class SandboxManager:
         lock = self._get_agent_lock(key)
 
         async with lock:
-            # Normalize current mounts for comparison.
-            # Coerce None → '' in mount dicts so None/empty-string differences
-            # from the database don't cause spurious "mounts changed" rebuilds.
+            # Normalize current mounts for comparison
             current_mounts = sorted(
                 [repr({k: (v if v is not None else '') for k, v in m.items()})
                  for m in agent.get("workspace_mounts", [])],
             )
 
-            # Config fingerprint: detect model/utility_model/api_key changes so we
-            # recreate the container instead of serving stale config.
-            # Hash API keys so key rotations trigger recreation without logging secrets.
+            # Config fingerprint
             api_keys_hash = hashlib.sha256(
                 json.dumps(sorted(agent.get("api_keys", {}).items()), separators=(",", ":")).encode()
             ).hexdigest()[:16]
@@ -316,17 +242,15 @@ class SandboxManager:
                 f"{agent.get('model', '')}|{agent.get('utility_model', '')}|{api_keys_hash}"
             )
 
-            # Check if container already running + healthy (Task 8)
-            # First check in-memory tracking
+            # Check if already running + healthy
             if key in self._containers:
                 info = self._containers[key]
                 cid = info["container_id"]
                 worker_url = info.get("worker_url", "")
                 tracked_mounts = info.get("mounts", [])
                 tracked_config = info.get("config_fingerprint", "")
+                host_id = info.get("host_id", "local")
 
-                # If mounts or model config changed, destroy and recreate
-                # Keep clones — they'll be refreshed (not re-cloned) by the new container
                 if tracked_mounts != current_mounts:
                     logger.info("Agent %s mounts changed, recreating worker container %s", agent_id, key)
                     await self.destroy_agent_container(agent_id, keep_clones=True)
@@ -336,7 +260,7 @@ class SandboxManager:
                         agent_id, tracked_config, current_config_fingerprint, key,
                     )
                     await self.destroy_agent_container(agent_id, keep_clones=True)
-                elif await self._is_running(cid):
+                elif await self._is_running(cid, host_id):
                     try:
                         await self._wait_for_health(worker_url, agent_id, cid, timeout=5.0)
                         self._containers[key]["last_used"] = time.time()
@@ -353,50 +277,82 @@ class SandboxManager:
                         cid, agent_id,
                     )
                     await self.destroy_agent_container(agent_id, keep_clones=True)
-                # Fall through to create new container
             else:
-                # Not in memory — check Docker directly (e.g., after backend restart)
+                # Not in memory — check Docker directly (after backend restart)
                 existing = await self._recover_existing_container(key, agent_id)
                 if existing:
-                    # Store mounts + config fingerprint so future ensure_running()
-                    # calls don't falsely detect changes and destroy the container
                     if key in self._containers:
                         self._containers[key]["mounts"] = current_mounts
                         self._containers[key]["config_fingerprint"] = current_config_fingerprint
                     return existing
 
-            # Create new worker container
+            # Determine placement (Design Doc 089 §3.2)
+            host = await self._registry.get_placement(agent)
+            adapter = self._get_adapter(host)
+
+            # Build host-path-independent config
+            container_config = self._build_container_config(agent)
+
+            # Create container on target host
             config_path: Path | None = None
             port: int | None = None
             try:
-                port = self._allocate_port(key)
-                config_path = self._write_agent_config(agent)
+                if isinstance(host, LocalHost) or host.id == "local":
+                    # Local path: use _create_worker_container (preserves test compat)
+                    port = self._allocate_port(key)
+                    config_path = self._write_agent_config(agent)
 
-                container_id, clone_info, dep_script = await self._create_worker_container(
-                    agent, key, port, config_path,
-                )
-                worker_url = f"http://localhost:{port}"
+                    container_id, clone_info, dep_script = await self._create_worker_container(
+                        agent, key, port, config_path,
+                    )
+                    worker_url = f"http://localhost:{port}"
 
-                self._containers[key] = {
-                    "container_id": container_id,
-                    "worker_url": worker_url,
-                    "worker_port": port,
-                    "config_path": str(config_path),
-                    "last_used": time.time(),
-                    "mounts": current_mounts,
-                    "config_fingerprint": current_config_fingerprint,
-                    "clone_info": clone_info,
-                    "dep_install_script": dep_script,
-                    "deps_installed": False,
+                    self._containers[key] = {
+                        "container_id": container_id,
+                        "worker_url": worker_url,
+                        "worker_port": port,
+                        "host_id": "local",
+                        "last_used": time.time(),
+                        "mounts": current_mounts,
+                        "config_fingerprint": current_config_fingerprint,
+                        "clone_info": clone_info,
+                        "dep_install_script": dep_script,
+                        "deps_installed": False,
+                    }
+
+                    await self._wait_for_health(worker_url, agent_id, container_id)
+
+                    self._registry.increment_running("local")
+                    return {"worker_url": worker_url, "container_id": container_id}
+                else:
+                    # Remote path
+                    container_info = await adapter.create_container(agent, key, container_config)
+
+                    self._containers[key] = {
+                        "container_id": container_info.container_id,
+                        "worker_url": container_info.worker_url,
+                        "host_id": container_info.host_id,
+                        "last_used": time.time(),
+                        "mounts": current_mounts,
+                        "config_fingerprint": current_config_fingerprint,
+                        "clone_info": [],
+                        "dep_install_script": None,
+                        "deps_installed": False,
+                    }
+
+                    await self._wait_for_health(
+                        container_info.worker_url, agent_id, container_info.container_id
+                    )
+
+                # Update registry running count
+                self._registry.increment_running(container_info.host_id)
+
+                return {
+                    "worker_url": container_info.worker_url,
+                    "container_id": container_info.container_id,
                 }
 
-                # Wait for health
-                await self._wait_for_health(worker_url, agent_id, container_id)
-
-                return {"worker_url": worker_url, "container_id": container_id}
-
             except Exception:
-                # Clean up partial state on failure
                 logger.error(
                     "Failed to create container for agent %s: %s",
                     agent_id, str(asyncio.current_task()),
@@ -404,21 +360,51 @@ class SandboxManager:
                 if key in self._containers:
                     del self._containers[key]
                 self._release_port(key)
-                if config_path:
-                    self._delete_agent_config(agent_id)
+                self._delete_agent_config(agent_id)
                 raise
+
+    def _build_container_config(self, agent: dict) -> AgentContainerConfig:
+        """Build a host-path-independent container config."""
+        agent_id = agent["id"]
+
+        # Read shared memory snapshot for remote hosts
+        shared_snapshot = None
+        shared_dir = _PROJECT_ROOT / "data" / "shared" / "shared.db"
+        if shared_dir.exists():
+            try:
+                shared_snapshot = shared_dir.read_bytes()
+            except Exception:
+                pass
+
+        return AgentContainerConfig(
+            agent_id=agent_id,
+            sandbox_image=agent.get("sandbox_image", "bond-agent-worker"),
+            repo_url=agent.get("repo_url"),
+            repo_branch=agent.get("repo_branch", "main"),
+            env_vars=agent.get("env_vars", {}),
+            agent_config_json=json.dumps({
+                "agent_id": agent_id,
+                "model": agent["model"],
+                "system_prompt": agent["system_prompt"],
+                "tools": agent["tools"],
+                "max_iterations": agent["max_iterations"],
+                "utility_model": agent.get("utility_model", "claude-sonnet-4-6"),
+                "api_keys": agent.get("api_keys", {}),
+                "provider_aliases": agent.get("provider_aliases", {}),
+                "litellm_prefixes": agent.get("litellm_prefixes", {}),
+            }),
+            shared_memory_snapshot=shared_snapshot,
+            resource_limits=ResourceLimits(
+                memory_mb=agent.get("memory_mb", 2048),
+                cpus=agent.get("cpus", 2.0),
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Lazy dependency installation
     # ------------------------------------------------------------------
 
     async def ensure_deps_installed(self, agent_key_or_id: str) -> dict:
-        """Install workspace dependencies if not already done.
-
-        Looks up the container by key suffix (agent_id) or exact key.
-        Returns {"installed": bool, "output": str}.
-        """
-        # Find matching container tracking entry
         key = None
         for k in self._containers:
             if k == agent_key_or_id or k.endswith(agent_key_or_id):
@@ -455,7 +441,7 @@ class SandboxManager:
             return {"installed": False, "output": output}
 
     # ------------------------------------------------------------------
-    # Shared credential mounts for Claude Code + SSH
+    # Shared credential mounts (backward compat)
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -463,359 +449,7 @@ class SandboxManager:
         cmd: list[str],
         workspace_mounts: list[dict] | None = None,
     ) -> None:
-        """Append Claude Code credential and SSH mounts to a docker run command.
-
-        Used by both _create_worker_container and get_or_create_container so
-        all container types get consistent access to host credentials.
-        """
-        # Claude Code config (~/.claude.json) — session/startup metadata
-        claude_json = Path.home() / ".claude.json"
-        if claude_json.exists():
-            cmd.extend(["-v", f"{claude_json}:/home/bond-agent/.claude.json:ro"])
-
-        # Claude Code credentials (~/.claude/.credentials.json) — OAuth tokens
-        # Mounted read-write: Claude Code needs to write back refreshed tokens
-        # (OAuth access tokens expire frequently and the CLI auto-refreshes them)
-        claude_credentials = Path.home() / ".claude" / ".credentials.json"
-        if claude_credentials.exists():
-            cmd.extend(["-v", f"{claude_credentials}:/home/bond-agent/.claude/.credentials.json:rw"])
-
-        # Claude Code settings (~/.claude/settings.json) — user preferences
-        claude_settings = Path.home() / ".claude" / "settings.json"
-        if claude_settings.exists():
-            cmd.extend(["-v", f"{claude_settings}:/home/bond-agent/.claude/settings.json:ro"])
-
-        # SSH keys (only if ~/.ssh exists and not already covered by a workspace mount)
-        ssh_dir = Path.home() / ".ssh"
-        workspace_targets = {m.get("container_path", "") for m in (workspace_mounts or [])}
-        if ssh_dir.exists() and "/tmp/.ssh" not in workspace_targets:
-            cmd.extend(["-v", f"{ssh_dir}:/tmp/.ssh:ro"])
-
-    # ------------------------------------------------------------------
-    # Shared retry helper for docker run
-    # ------------------------------------------------------------------
-
-    async def _docker_run_with_conflict_retry(
-        self,
-        cmd: list[str],
-        container_name: str,
-        agent_id: str,
-        max_retries: int = 5,
-    ) -> bytes:
-        """Run a docker command with exponential backoff retry on Conflict errors.
-
-        Returns the stdout bytes on success. Raises RuntimeError on failure.
-        """
-        last_err_msg = ""
-        stdout = b""
-        for attempt in range(max_retries + 1):
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await proc.communicate()
-
-            if proc.returncode == 0:
-                return stdout
-
-            last_err_msg = stderr.decode()
-
-            if "Conflict" in last_err_msg and attempt < max_retries:
-                backoff = 2 ** attempt  # 1s, 2s, 4s, 8s, 16s
-                logger.warning(
-                    "Container name conflict for agent %s (attempt %d/%d), "
-                    "removing stale container %s and retrying in %ds",
-                    agent_id, attempt + 1, max_retries, container_name, backoff,
-                )
-                rm_proc = await asyncio.create_subprocess_exec(
-                    "docker", "rm", "-f", container_name,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await rm_proc.communicate()
-                await asyncio.sleep(backoff)
-                continue
-
-            # Non-conflict error or retries exhausted
-            break
-
-        logger.error("Failed to create container for agent %s: %s", agent_id, last_err_msg)
-        raise RuntimeError(f"Failed to create container for agent {agent_id}: {last_err_msg}")
-
-    # ------------------------------------------------------------------
-    # Worker container creation (Tasks 1, 2)
-    # ------------------------------------------------------------------
-
-    async def _create_worker_container(
-        self,
-        agent: dict,
-        key: str,
-        port: int,
-        config_path: Path,
-    ) -> str:
-        """Create a Docker container running the agent worker."""
-        agent_id = agent["id"]
-        sandbox_image = agent["sandbox_image"]
-
-        # Remove any stale container with the same name (must await completion)
-        rm_proc = await asyncio.create_subprocess_exec(
-            "docker", "rm", "-f", key,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await rm_proc.communicate()
-
-        cmd = [
-            "docker", "run", "-d",
-            "--name", key,
-            "--network", "bond-network",
-            "--memory", "2048m",
-            "--cpus", "2",
-        ]
-
-        # Port mapping: host_port -> internal worker port
-        cmd.extend(["-p", f"{port}:{_WORKER_INTERNAL_PORT}"])
-
-        # PYTHONPATH so worker can import backend.app.worker
-        cmd.extend(["-e", "PYTHONPATH=/bond"])
-
-        # Bond API URL so tools (e.g. work_plan) can call host API
-        cmd.extend(["-e", "BOND_API_URL=http://host.docker.internal:18790"])
-        cmd.extend(["--add-host", "host.docker.internal:host-gateway"])
-
-        # --- Forward all .env vars via --env-file ---
-        # The backend is started with `set -a && . ./.env && set +a` so all
-        # .env vars are in os.environ.  Pass the file directly to Docker so
-        # agent containers always pick up the latest values without needing
-        # per-variable forwarding.
-        _env_file = _PROJECT_ROOT / ".env"
-        if _env_file.is_file():
-            cmd.extend(["--env-file", str(_env_file)])
-
-        # SpacetimeDB URL — pass through from host environment (fallback if
-        # not in .env)
-        stdb_url = os.environ.get("BOND_SPACETIMEDB_URL", "")
-        if stdb_url:
-            cmd.extend(["-e", f"BOND_SPACETIMEDB_URL={stdb_url}"])
-
-        # --- Agent identity & repo env vars ---
-        cmd.extend(["-e", f"AGENT_NAME=bond-agent-{agent_id}"])
-        cmd.extend(["-e", f"AGENT_EMAIL=agent-{agent_id}@bond.internal"])
-        cmd.extend(["-e", "BOND_REPO_URL=git@github.com:biztechprogramming/bond.git"])
-
-        # Inject API keys from agent config into container environment.
-        # Keys arrive as provider IDs (e.g. "anthropic") from the provider_api_keys table.
-        # Claude Code and other CLIs read them as env vars (e.g. ANTHROPIC_API_KEY).
-        api_keys = agent.get("api_keys", {})
-        for provider_id, key_value in api_keys.items():
-            if key_value:
-                env_var = f"{provider_id.upper()}_API_KEY"
-                cmd.extend(["-e", f"{env_var}={key_value}"])
-
-        # Inject GITHUB_TOKEN from vault if available
-        try:
-            from backend.app.core.vault import get_vault
-            vault = get_vault()
-            github_token = vault.get("github.token")
-            if github_token:
-                cmd.extend(["-e", f"GITHUB_TOKEN={github_token}"])
-        except Exception:
-            pass
-
-        # REMOVED: SpacetimeDB token injection (2026-03-12)
-        # Agents must NOT have direct SpacetimeDB access.
-
-        # Issue a broker token for MCP proxy access (Design Doc 054)
-        try:
-            from backend.app.config import get_settings
-            settings = get_settings()
-            gateway_url = os.environ.get(
-                "BOND_GATEWAY_URL",
-                f"{settings.gateway_scheme}://{settings.gateway_host}:{settings.gateway_port}",
-            )
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(
-                    f"{gateway_url}/api/v1/broker/token/issue",
-                    json={"agent_id": agent_id, "ttl": 86400},
-                )
-                if resp.status_code == 200:
-                    agent_token = resp.json().get("token", "")
-                    if agent_token:
-                        cmd.extend(["-e", f"BOND_AGENT_TOKEN={agent_token}"])
-                        logger.info("Injected broker token for agent %s", agent_id)
-                else:
-                    logger.warning("Failed to get broker token: %d %s", resp.status_code, resp.text)
-        except Exception as e:
-            logger.warning("Could not issue broker token for agent %s: %s", agent_id, e)
-
-        # --- Mounts (Task 2) ---
-
-        project_root = _PROJECT_ROOT
-        agent_name = agent.get("name", "")
-        is_deploy_agent = agent_name.startswith("deploy-")
-
-        if is_deploy_agent:
-            # Deploy agents get the host repo mounted read-only at /bond.
-            # deploy-entrypoint.sh requires /bond/.git to exist — it does
-            # NOT clone. See design doc 039 §4.4.
-            cmd.extend(["-v", f"{project_root}:/bond:ro"])
-            logger.info("Agent %s is a deploy agent — mounting host repo at /bond:ro", agent_id)
-        else:
-            # Regular agents get a named volume for cloning (read-write)
-            bond_volume = f"bond-clone-{agent_id}"
-            await asyncio.create_subprocess_exec(
-                "docker", "volume", "create", bond_volume,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            cmd.extend(["-v", f"{bond_volume}:/bond:rw"])
-
-        # Workspace mounts — clone for concurrency (Design Doc 057)
-        # Parallel cloning: detect all → plan all → execute all in parallel → mount all
-        workspace_mounts = agent.get("workspace_mounts", [])
-        clone_info: list[dict] = []
-        dep_install_script: str | None = None
-        logger.info("Agent %s workspace_mounts: %s", agent_id, workspace_mounts)
-        if workspace_mounts:
-            # Parse mount configs
-            mount_configs = []
-            for mount in workspace_mounts:
-                host_path = os.path.expanduser(mount.get("host_path", ""))
-                mount_name = mount.get("mount_name", "workspace")
-                container_path = mount.get("container_path") or f"/workspace/{mount_name}"
-                readonly = mount.get("readonly", False)
-                mount_configs.append((host_path, mount_name, container_path, readonly))
-
-            # Phase 1: Detect workspace types in parallel
-            rw_mounts = [(i, hp, mn) for i, (hp, mn, _cp, ro) in enumerate(mount_configs) if not ro]
-            detections: dict[int, dict] = {}
-            if rw_mounts:
-                detect_results = await asyncio.gather(
-                    *[detect_workspace_type(hp) for _, hp, _ in rw_mounts],
-                    return_exceptions=True,
-                )
-                for (idx, _hp, _mn), result in zip(rw_mounts, detect_results):
-                    if not isinstance(result, Exception):
-                        detections[idx] = result
-
-            # Phase 2: Generate clone plans
-            plans: dict[int, object] = {}
-            plan_coros = []
-            plan_indices = []
-            for idx, detection in detections.items():
-                hp, mn, _cp, _ro = mount_configs[idx]
-                plan_coros.append(generate_clone_plan(hp, agent_id, mn, detection))
-                plan_indices.append(idx)
-            if plan_coros:
-                plan_results = await asyncio.gather(*plan_coros, return_exceptions=True)
-                for idx, result in zip(plan_indices, plan_results):
-                    if not isinstance(result, Exception):
-                        plans[idx] = result
-
-            # Phase 3: Execute all clone plans in parallel
-            exec_coros = []
-            exec_indices = []
-            for idx, plan in plans.items():
-                if not plan.direct_mount:
-                    exec_coros.append(execute_clone_plan(plan))
-                    exec_indices.append(idx)
-            if exec_coros:
-                exec_results = await asyncio.gather(*exec_coros, return_exceptions=True)
-                for idx, result in zip(exec_indices, exec_results):
-                    if isinstance(result, Exception):
-                        hp = mount_configs[idx][0]
-                        raise RuntimeError(
-                            f"Workspace clone failed for {hp} — refusing to start container "
-                            f"with wrong mount. Fix the clone source or remove the workspace mount. "
-                            f"Original error: {result}"
-                        )
-
-            # Phase 4: Build mount commands with resolved paths
-            for i, (host_path, mount_name, container_path, readonly) in enumerate(mount_configs):
-                effective_host_path = host_path
-                if i in plans and not plans[i].direct_mount:
-                    plan = plans[i]
-                    if plan.clone_base:
-                        effective_host_path = plan.clone_base
-                    clone_info.append({
-                        "mount_name": mount_name,
-                        "original_path": host_path,
-                        "clone_path": effective_host_path,
-                        "case": plan.case,
-                    })
-                    logger.info(
-                        "Agent %s: cloned workspace %s (case %d) -> %s",
-                        agent_id, host_path, plan.case, effective_host_path,
-                    )
-                    # Generate dep install script from the first cloned workspace
-                    if dep_install_script is None:
-                        dep_install_script = generate_dep_install_script(effective_host_path)
-                elif i in detections and i in plans and plans[i].direct_mount:
-                    logger.info(
-                        "Agent %s: direct mount for %s (case %d, needs prompt)",
-                        agent_id, host_path, detections[i]["case"],
-                    )
-
-                mount_str = f"{effective_host_path}:{container_path}"
-                if readonly:
-                    mount_str += ":ro"
-                logger.info("Agent %s mounting: %s", agent_id, mount_str)
-                cmd.extend(["-v", mount_str])
-        else:
-            logger.warning("Agent %s has NO workspace mounts configured!", agent_id)
-
-        # Agent data: bind mount (host-accessible, persists across restarts)
-        agent_data_dir = self._agent_data_dir(agent_id)
-        os.makedirs(str(agent_data_dir), exist_ok=True)
-        cmd.extend(["-v", f"{agent_data_dir}:/data:rw"])
-
-        # Shared memory (read-only)
-        shared_dir = project_root / "data" / "shared"
-        os.makedirs(str(shared_dir), exist_ok=True)
-        cmd.extend(["-v", f"{shared_dir}:/data/shared:ro"])
-
-        # Skills DB (shared between gateway and all agent containers)
-        skills_db = project_root / "data" / "skills.db"
-        if skills_db.exists():
-            cmd.extend(["-v", f"{skills_db}:/data/skills.db:rw"])
-
-        # Claude Code credentials + SSH keys (shared helper)
-        self._append_credential_mounts(cmd, workspace_mounts)
-
-        # Agent config file (read-only, mount specific file)
-        cmd.extend(["-v", f"{config_path}:/config/agent.json:ro"])
-
-        # Vault data (credentials.enc + .vault_key) for API key access (read-only)
-        # BOND_HOME defaults to ~/.bond — vault files live in BOND_HOME/data/
-        from backend.app.config import get_settings
-        bond_home = Path(get_settings().bond_home)
-        vault_data_dir = bond_home / "data"
-        if vault_data_dir.exists():
-            cmd.extend(["-v", f"{vault_data_dir}:/bond-home/data:rw"])
-
-        # --- Entrypoint (Task 1) ---
-        # Image uses /agent-entrypoint.sh as ENTRYPOINT which handles
-        # git clone/pull then execs worker. We pass worker args as CMD.
-        cmd.extend([
-            sandbox_image,
-            "--port", str(_WORKER_INTERNAL_PORT),
-            "--data-dir", "/data",
-            "--config", "/config/agent.json",
-        ])
-
-        stdout = await self._docker_run_with_conflict_retry(cmd, key, agent_id)
-        container_id = stdout.decode().strip()[:12]
-        logger.info(
-            "Created worker container %s for agent %s (port=%d, image=%s)",
-            container_id, agent_id, port, sandbox_image,
-        )
-
-        return container_id, clone_info, dep_install_script
-
-    def _agent_data_dir(self, agent_id: str) -> Path:
-        """Return the host-side data directory for an agent."""
-        return _PROJECT_ROOT / "data" / "agents" / agent_id
+        LocalContainerAdapter._append_credential_mounts(cmd, workspace_mounts)
 
     # ------------------------------------------------------------------
     # Host-mode container (backward compat — Task 7)
@@ -828,10 +462,6 @@ class SandboxManager:
         workspace_mounts: list[dict[str, str]] | None = None,
         agent_name: str = "agent",
     ) -> str:
-        """Find a running container for the agent or create a new one.
-
-        Returns the container ID. Uses sleep infinity entrypoint (host mode).
-        """
         slug = agent_name.lower().replace(" ", "-")
         key = f"bond-{slug}-{agent_id}"
         lock = self._get_agent_lock(key)
@@ -849,13 +479,11 @@ class SandboxManager:
         agent_name: str,
         key: str,
     ) -> str:
-        # Normalize current mounts for comparison (coerce None → '')
         current_mounts = sorted(
             [repr({k: (v if v is not None else '') for k, v in m.items()})
              for m in (workspace_mounts or [])],
         )
 
-        # Check if already tracked and running
         if key in self._containers:
             cid = self._containers[key]["container_id"]
             tracked_mounts = self._containers[key].get("mounts", [])
@@ -863,7 +491,6 @@ class SandboxManager:
                 if tracked_mounts == current_mounts:
                     self._containers[key]["last_used"] = time.time()
                     return cid
-                # Mounts changed — tear down and recreate
                 logger.info("Agent %s mounts changed, recreating container %s", agent_id, key)
                 rm_proc = await asyncio.create_subprocess_exec(
                     "docker", "rm", "-f", cid,
@@ -873,63 +500,17 @@ class SandboxManager:
                 await rm_proc.communicate()
             del self._containers[key]
 
-        # Check if a container already exists with this name (from a previous run)
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "ps", "-aq", "--filter", f"name={key}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        container_id = await self._local_adapter.get_or_create_host_container(
+            agent_id, sandbox_image, workspace_mounts, agent_name
         )
-        stdout, _ = await proc.communicate()
-        existing_id = stdout.decode().strip()
 
-        if existing_id:
-            # Remove stale container so we recreate with current mounts
-            logger.info("Removing stale container %s (%s) to recreate with current mounts", key, existing_id)
-            rm_proc = await asyncio.create_subprocess_exec(
-                "docker", "rm", "-f", existing_id,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await rm_proc.communicate()
-
-        # Create new container
-        cmd = [
-            "docker", "run", "-d",
-            "--name", key,
-            "--network", "bond-network",
-            "--memory", "2048m",
-            "--cpus", "2",
-        ]
-
-        # Add workspace mounts
-        if workspace_mounts:
-            for mount in workspace_mounts:
-                host_path = os.path.expanduser(mount.get("host_path", ""))
-                mount_name = mount.get("mount_name", "workspace")
-                container_path = mount.get("container_path") or f"/workspace/{mount_name}"
-                readonly = mount.get("readonly", False)
-                mount_str = f"{host_path}:{container_path}"
-                if readonly:
-                    mount_str += ":ro"
-                cmd.extend(["-v", mount_str])
-
-        # Claude Code credentials + SSH keys (shared helper)
-        self._append_credential_mounts(cmd, workspace_mounts)
-
-        cmd.extend([sandbox_image, "sleep", "infinity"])
-
-        stdout = await self._docker_run_with_conflict_retry(cmd, key, agent_id)
-        container_id = stdout.decode().strip()[:12]
         self._containers[key] = {
             "container_id": container_id,
+            "host_id": "local",
             "last_used": time.time(),
             "mounts": current_mounts,
         }
         logger.info("Created sandbox container %s for agent %s", container_id, agent_id)
-
-        # Post-creation: copy SSH keys from /tmp/.ssh if mounted
-        await self._setup_ssh(container_id)
-
         return container_id
 
     async def execute(
@@ -966,28 +547,18 @@ class SandboxManager:
             return {"error": f"Execution timed out after {timeout}s", "exit_code": -1}
 
     # ------------------------------------------------------------------
-    # Cleanup lifecycle (Task 9)
+    # Cleanup lifecycle
     # ------------------------------------------------------------------
 
     async def destroy_agent_container(
         self, agent_id: str, *, keep_clones: bool = False,
     ) -> bool:
-        """Destroy the sandbox container for an agent.
-
-        Releases port, deletes config file, removes tracking.
-        Docker volume persists by design (agent data survives restarts).
-        If *keep_clones* is True, workspace clones are preserved (useful
-        when the container will be immediately recreated with the same mounts).
-        Returns True if a container was destroyed.
-        """
-        # Find the container key — could be any name, but ends with agent_id
         key = None
         for k in list(self._containers.keys()):
             if k.endswith(agent_id):
                 key = k
                 break
 
-        # If not tracked, find by docker filter (pattern: bond-*-{agent_id})
         if not key:
             proc = await asyncio.create_subprocess_exec(
                 "docker", "ps", "-a", "--format", "{{.Names}}",
@@ -1003,49 +574,49 @@ class SandboxManager:
                     break
 
         if not key:
-            key = f"bond-agent-{agent_id}"  # fallback for cleanup attempt
+            key = f"bond-agent-{agent_id}"
 
-        # Release allocated port
+        # Get host_id before removing tracking
+        host_id = "local"
+        if key in self._containers:
+            host_id = self._containers[key].get("host_id", "local")
+
+        # Release port and delete config
         released_port = self._release_port(key)
-
-        # Delete config file
         self._delete_agent_config(agent_id)
 
-        # Remove from tracking
         if key in self._containers:
             del self._containers[key]
 
-        # Remove per-agent lock
         self._agent_locks.pop(key, None)
 
-        # Clean up workspace clones (skip if container will be immediately recreated)
         if not keep_clones:
             try:
                 await cleanup_workspace_clones(agent_id)
             except Exception as e:
                 logger.warning("Failed to clean up workspace clones for agent %s: %s", agent_id, e)
 
-        # Find and destroy the Docker container
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "rm", "-f", key,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-
-        if proc.returncode == 0:
-            port_info = f" (port {released_port} released)" if released_port else ""
-            logger.info(
-                "Destroyed container for agent %s%s",
-                agent_id, port_info,
+        # Destroy via adapter
+        if host_id != "local":
+            adapter = self._adapter_for_container({"host_id": host_id})
+            result = await adapter.destroy_container(key)
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "rm", "-f", key,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            return True
+            _, stderr = await proc.communicate()
+            result = proc.returncode == 0
 
-        # No container existed — that's fine
-        return False
+        if result:
+            self._registry.decrement_running(host_id)
+            port_info = f" (port {released_port} released)" if released_port else ""
+            logger.info("Destroyed container for agent %s%s", agent_id, port_info)
+
+        return result
 
     async def cleanup_idle(self, max_idle_seconds: int = 3600) -> int:
-        """Stop containers idle for longer than max_idle_seconds. Returns count stopped."""
         now = time.time()
         to_remove = []
         for key, info in self._containers.items():
@@ -1055,8 +626,6 @@ class SandboxManager:
         released_ports = []
         for key in to_remove:
             cid = self._containers[key]["container_id"]
-            # Extract agent_id from key
-            # Key format: bond-{name}-{agent_id} — agent_id is a 26-char ULID at the end
             agent_id = key[-26:]
 
             await asyncio.create_subprocess_exec(
@@ -1070,12 +639,14 @@ class SandboxManager:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            # Release port and delete config
             port = self._release_port(key)
             if port:
                 released_ports.append(str(port))
             self._delete_agent_config(agent_id)
             self._agent_locks.pop(key, None)
+
+            host_id = self._containers[key].get("host_id", "local")
+            self._registry.decrement_running(host_id)
 
             del self._containers[key]
 
@@ -1089,57 +660,64 @@ class SandboxManager:
         return len(to_remove)
 
     async def destroy_agent_data(self, agent_id: str) -> None:
-        """Permanently delete agent data — removes data directory and config.
-
-        Called when an agent is deleted (not just stopped). Data is gone.
-        """
         import shutil
 
-        # Ensure container is destroyed first
         await self.destroy_agent_container(agent_id)
 
-        # Remove the agent data directory
-        agent_data_dir = self._agent_data_dir(agent_id)
+        agent_data_dir = _PROJECT_ROOT / "data" / "agents" / agent_id
         try:
             shutil.rmtree(str(agent_data_dir))
             logger.info("Removed data directory for agent %s: %s", agent_id, agent_data_dir)
         except FileNotFoundError:
             pass
         except OSError as e:
-            logger.warning(
-                "Failed to remove data directory for agent %s: %s",
-                agent_id, e,
-            )
+            logger.warning("Failed to remove data directory for agent %s: %s", agent_id, e)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _setup_ssh(self, container_id: str) -> None:
-        """Copy SSH keys from /tmp/.ssh mount into the container user's home."""
-        # Check if /tmp/.ssh exists in the container
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "exec", "-u", "root", container_id,
-            "sh", "-c",
-            "if [ -d /tmp/.ssh ]; then "
-            "  USER_HOME=$(getent passwd $(docker inspect --format '{{.Config.User}}' 2>/dev/null || echo node) | cut -d: -f6 || echo /home/node); "
-            "  mkdir -p $USER_HOME/.ssh /root/.ssh; "
-            "  cp -r /tmp/.ssh/* /root/.ssh/ 2>/dev/null; "
-            "  cp -r /tmp/.ssh/* $USER_HOME/.ssh/ 2>/dev/null; "
-            "  chmod 700 /root/.ssh $USER_HOME/.ssh 2>/dev/null; "
-            "  chmod 600 /root/.ssh/* $USER_HOME/.ssh/* 2>/dev/null; "
-            "  chown -R $(stat -c '%u:%g' $USER_HOME) $USER_HOME/.ssh 2>/dev/null; "
-            "  echo ssh_setup_done; "
-            "fi",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if b"ssh_setup_done" in stdout:
-            logger.info("SSH keys configured in container %s", container_id)
+    async def _create_worker_container(
+        self,
+        agent: dict,
+        key: str,
+        port: int,
+        config_path: Path,
+    ) -> tuple:
+        """Legacy wrapper: delegates to LocalContainerAdapter.create_container().
 
-    async def _is_running(self, container_id: str) -> bool:
-        """Check if a container is currently running."""
+        Returns (container_id, clone_info, dep_install_script) to match old signature.
+        """
+        # Ensure the port is allocated in the local adapter
+        self._local_adapter._port_map[key] = port
+        config = self._build_container_config(agent)
+        result = await self._local_adapter.create_container(agent, key, config)
+        if isinstance(result, tuple):
+            container_info, clone_info, dep_script = result
+        else:
+            container_info = result
+            clone_info = []
+            dep_script = None
+        return container_info.container_id, clone_info, dep_script
+
+    async def _docker_run_with_conflict_retry(
+        self,
+        cmd: list[str],
+        container_name: str,
+        agent_id: str,
+        max_retries: int = 5,
+    ) -> bytes:
+        """Legacy wrapper for backward compatibility."""
+        return await self._local_adapter._docker_run_with_conflict_retry(
+            cmd, container_name, agent_id, max_retries
+        )
+
+    async def _is_running(self, container_id: str, host_id: str = "local") -> bool:
+        """Check if a container is running (local or remote)."""
+        if host_id != "local":
+            adapter = self._adapter_for_container({"host_id": host_id})
+            return await adapter.is_running(container_id)
+
         proc = await asyncio.create_subprocess_exec(
             "docker", "inspect", "-f", "{{.State.Running}}", container_id,
             stdout=asyncio.subprocess.PIPE,
@@ -1147,6 +725,31 @@ class SandboxManager:
         )
         stdout, _ = await proc.communicate()
         return stdout.decode().strip().lower() == "true"
+
+    def _agent_data_dir(self, agent_id: str) -> Path:
+        return _PROJECT_ROOT / "data" / "agents" / agent_id
+
+    # ------------------------------------------------------------------
+    # Remote host management helpers
+    # ------------------------------------------------------------------
+
+    async def start_tunnel_health_checks(self) -> None:
+        """Start background tunnel health monitoring."""
+        self._tunnel_manager.start_health_check_loop(self._registry)
+
+    async def recover_remote_state(self) -> None:
+        """On startup, recover running containers from all remote hosts."""
+        results = await self._tunnel_manager.recover_after_restart(self._registry)
+        for host_id, containers in results.items():
+            for c in containers:
+                logger.info("Recovered remote container %s on %s", c.get("name"), host_id)
+
+    async def shutdown(self) -> None:
+        """Clean shutdown: close tunnels and adapters."""
+        await self._tunnel_manager.close_all()
+        for adapter in self._remote_adapters.values():
+            if hasattr(adapter, "close"):
+                await adapter.close()
 
 
 # Singleton instance

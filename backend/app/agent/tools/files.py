@@ -1,8 +1,10 @@
 """File read/write tools with workspace allowlist enforcement.
 
 When a sandbox image is configured, file operations route through
-docker exec on the sandbox container. Otherwise, they operate on
-the host filesystem with workspace allowlist enforcement.
+a persistent helper process in the sandbox container (Phase 2).
+If the helper is unavailable, falls back to individual docker exec
+calls. Host-mode operations use direct filesystem access with
+workspace allowlist enforcement.
 """
 
 from __future__ import annotations
@@ -17,6 +19,12 @@ from .native import _extract_outline
 from .file_buffer import _manager as _file_buffer_manager, track_file_read
 
 logger = logging.getLogger("bond.agent.tools.files")
+
+
+def _get_helper_manager():
+    """Lazy import to avoid circular dependencies."""
+    from backend.app.sandbox.helper_protocol import get_helper_manager
+    return get_helper_manager()
 
 
 def _resolve_and_check(path_str: str, allowed_dirs: list[str]) -> Path | None:
@@ -64,33 +72,175 @@ async def _get_sandbox_container(context: dict[str, Any]) -> str | None:
         return None
 
 
+async def _multi_read_sandbox(paths: list[str], container_id: str) -> dict:
+    """Read multiple files from a sandbox container.
+
+    Tries the persistent helper (batch call) first. Falls back to
+    concurrent docker exec calls if the helper is unavailable.
+    """
+    # Try helper batch read first
+    helper_mgr = _get_helper_manager()
+    batch_calls = [
+        {"method": "file_read", "params": {"path": p}}
+        for p in paths
+    ]
+    batch_results = await helper_mgr.batch(container_id, batch_calls)
+    if batch_results is not None:
+        results = {}
+        for p, resp in zip(paths, batch_results):
+            if "error" in resp:
+                results[p] = {"error": resp["error"].get("message", str(resp["error"]))}
+            elif "result" in resp:
+                r = resp["result"]
+                results[p] = {
+                    "content": r.get("content", ""),
+                    "total_lines": r.get("total_lines", 0),
+                    "size": r.get("size", 0),
+                }
+            else:
+                results[p] = {"error": "Unexpected helper response"}
+        return {"results": results}
+
+    # Fallback: individual docker exec calls
+    logger.debug("Helper unavailable, falling back to docker exec for multi-read")
+
+    async def read_one(p: str) -> tuple[str, dict]:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", container_id, "cat", p,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode == 0:
+                content = stdout.decode("utf-8", errors="replace")
+                lines = content.split("\n")
+                total_lines = len(lines)
+                if total_lines > 500 or len(content) > 100_000:
+                    content = content[:100_000] + "\n... [truncated at 100KB]"
+                return p, {"content": content, "total_lines": total_lines, "size": len(stdout)}
+            return p, {"error": stderr.decode("utf-8", errors="replace").strip()}
+        except asyncio.TimeoutError:
+            return p, {"error": "Timed out reading file"}
+
+    results = await asyncio.gather(*[read_one(p) for p in paths])
+    return {"results": dict(results)}
+
+
+async def _multi_read_host(paths: list[str], allowed_dirs: list[str]) -> dict:
+    """Read multiple files from host filesystem concurrently."""
+    async def read_one(p: str) -> tuple[str, dict]:
+        resolved = _resolve_and_check(p, allowed_dirs)
+        if resolved is None:
+            return p, {"error": f"Path '{p}' is outside allowed workspace directories."}
+        try:
+            if not resolved.exists():
+                return p, {"error": f"File not found: {p}"}
+            if not resolved.is_file():
+                return p, {"error": f"Not a file: {p}"}
+            raw_content = resolved.read_text(encoding="utf-8", errors="replace")
+            all_lines = raw_content.splitlines()
+            total_lines = len(all_lines)
+            if total_lines > 500 or len(raw_content) > 100_000:
+                raw_content = raw_content[:100_000] + "\n... [truncated at 100KB]"
+            return p, {"content": raw_content, "total_lines": total_lines, "size": len(raw_content)}
+        except Exception as e:
+            return p, {"error": f"Failed to read file: {e}"}
+
+    results = await asyncio.gather(*[read_one(p) for p in paths])
+    return {"results": dict(results)}
+
+
+async def _read_single_sandbox(
+    path_str: str,
+    container_id: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Read a single file from sandbox via helper process, with docker exec fallback."""
+    helper_mgr = _get_helper_manager()
+
+    # Build helper params
+    helper_params: dict[str, Any] = {"path": path_str}
+    line_start = arguments.get("line_start")
+    line_end = arguments.get("line_end")
+    if line_start is not None:
+        helper_params["line_start"] = line_start
+    if line_end is not None:
+        helper_params["line_end"] = line_end
+
+    # Try helper first
+    response = await helper_mgr.call(container_id, "file_read", helper_params)
+    if response is not None:
+        if "error" in response:
+            err = response["error"]
+            msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            return {"error": msg}
+        if "result" in response:
+            r = response["result"]
+            result: dict[str, Any] = {
+                "content": r.get("content", ""),
+                "path": path_str,
+                "size": r.get("size", 0),
+            }
+            if "total_lines" in r:
+                result["total_lines"] = r["total_lines"]
+            if r.get("line_start"):
+                result["line_start"] = r["line_start"]
+            if r.get("line_end"):
+                result["line_end"] = r["line_end"]
+            if r.get("truncated"):
+                result["truncated"] = True
+            return result
+
+    # Fallback: docker exec cat
+    logger.debug("Helper unavailable, falling back to docker exec for single read")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", container_id, "cat", path_str,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    except asyncio.TimeoutError:
+        return {"error": "Timed out reading file"}
+
+    if proc.returncode == 0:
+        content = stdout.decode("utf-8", errors="replace")
+        if len(content) > 100_000:
+            content = content[:100_000] + "\n... [truncated at 100KB]"
+        return {"content": content, "path": path_str, "size": len(stdout)}
+    else:
+        return {"error": stderr.decode("utf-8", errors="replace").strip() or "File not found or not readable"}
+
+
 async def handle_file_read(
     arguments: dict[str, Any],
     context: dict[str, Any],
 ) -> dict[str, Any]:
     """Read a file from an allowed workspace directory."""
+    # Multi-file mode
+    paths_list = arguments.get("paths")
+    if paths_list and isinstance(paths_list, list):
+        if len(paths_list) > 10:
+            return {"error": "Maximum 10 paths allowed in multi-file mode."}
+        if arguments.get("line_start") or arguments.get("line_end") or arguments.get("outline"):
+            return {"error": "line_start, line_end, and outline are not supported in multi-file mode."}
+
+        container_id = await _get_sandbox_container(context)
+        if container_id:
+            return await _multi_read_sandbox(paths_list, container_id)
+
+        allowed_dirs = context.get("workspace_dirs", [])
+        if not allowed_dirs:
+            return {"error": "No workspace directories configured for this agent."}
+        return await _multi_read_host(paths_list, allowed_dirs)
+
     path_str = arguments.get("path", "")
 
-    # Sandbox mode: read via docker exec cat
+    # Sandbox mode: read via persistent helper or docker exec cat
     container_id = await _get_sandbox_container(context)
     if container_id:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "exec", container_id, "cat", path_str,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except asyncio.TimeoutError:
-            return {"error": "Timed out reading file"}
-
-        if proc.returncode == 0:
-            content = stdout.decode("utf-8", errors="replace")
-            if len(content) > 100_000:
-                content = content[:100_000] + "\n... [truncated at 100KB]"
-            return {"content": content, "path": path_str, "size": len(stdout)}
-        else:
-            return {"error": stderr.decode("utf-8", errors="replace").strip() or "File not found or not readable"}
+        return await _read_single_sandbox(path_str, container_id, arguments)
 
     # Host mode: direct filesystem access with allowlist
     allowed_dirs = context.get("workspace_dirs", [])
