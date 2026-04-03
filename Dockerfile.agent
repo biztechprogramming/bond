@@ -62,7 +62,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-# Claude Code
+# Claude Code — pinned to 2.1.83; newer versions have a recurring --print hang bug
+# (see https://github.com/anthropics/claude-code/issues/38516)
+ENV DISABLE_AUTOUPDATER=1
 RUN npm install -g @anthropic-ai/claude-code@2.1.83
 
 # OpenAI Codex CLI

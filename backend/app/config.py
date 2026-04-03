@@ -75,6 +75,11 @@ class Settings(BaseModel):
     opensandbox_server_url: str = "http://localhost:8090"
     opensandbox_api_key: str = ""
 
+    # Remote container hosts (Design Doc 089)
+    # Placement strategy: "least-loaded" or "round-robin"
+    placement_strategy: str = "least-loaded"
+    placement_prefer_local: bool = True
+
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
     """Recursively merge overlay into base."""

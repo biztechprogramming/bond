@@ -348,18 +348,19 @@ def detect_loop(
             )
 
     # 2. Name-only repetition (same tool, different args — catches wrapper tools)
-    if len(loop_state.recent_tool_names) >= loop_state.NAME_ONLY_THRESHOLD:
-        last_n_names = loop_state.recent_tool_names[-loop_state.NAME_ONLY_THRESHOLD:]
-        if all(n == last_n_names[0] for n in last_n_names):
-            logger.warning(
-                "Name-only repetition detected: %s called %d times with varying args",
-                tool_name, loop_state.NAME_ONLY_THRESHOLD,
-            )
-            return True, (
-                f"SYSTEM: You have called '{tool_name}' {loop_state.NAME_ONLY_THRESHOLD} times "
-                f"with different arguments but getting the same kind of results. "
-                f"STOP. Report your findings to the user and ask how to proceed."
-            )
+    if tool_name not in loop_state.NAME_ONLY_EXEMPT_TOOLS:
+        if len(loop_state.recent_tool_names) >= loop_state.NAME_ONLY_THRESHOLD:
+            last_n_names = loop_state.recent_tool_names[-loop_state.NAME_ONLY_THRESHOLD:]
+            if all(n == last_n_names[0] for n in last_n_names):
+                logger.warning(
+                    "Name-only repetition detected: %s called %d times with varying args",
+                    tool_name, loop_state.NAME_ONLY_THRESHOLD,
+                )
+                return True, (
+                    f"SYSTEM: You have called '{tool_name}' {loop_state.NAME_ONLY_THRESHOLD} times "
+                    f"with different arguments but getting the same kind of results. "
+                    f"STOP. Report your findings to the user and ask how to proceed."
+                )
 
     # 3. Cyclical repetition
     if len(loop_state.recent_tool_calls) >= loop_state.CYCLE_MIN_PERIOD * loop_state.CYCLE_REPEATS:

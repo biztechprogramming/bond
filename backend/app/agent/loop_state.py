@@ -24,14 +24,19 @@ class LoopState:
     recent_tool_calls: list[tuple[str, str]] = field(default_factory=list)
 
     # Name-only repetition detection (catches varied args for same tool)
-    NAME_ONLY_THRESHOLD: int = 3
+    NAME_ONLY_THRESHOLD: int = 5
+    NAME_ONLY_EXEMPT_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
+        "file_read", "shell_grep", "shell_ls", "shell_find", "shell_head",
+        "shell_tail", "shell_wc", "shell_tree", "git_info", "project_search",
+        "batch_head", "shell_sed",
+    }))
     recent_tool_names: list[str] = field(default_factory=list)
 
     # Cyclical loop detection
     CYCLE_WINDOW: int = 30
     CYCLE_MIN_PERIOD: int = 2
     CYCLE_MAX_PERIOD: int = 8
-    CYCLE_REPEATS: int = 2
+    CYCLE_REPEATS: int = 3
     loop_intervention_count: int = 0
     LOOP_MAX_INTERVENTIONS: int = 2
 
