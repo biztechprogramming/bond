@@ -40,7 +40,7 @@ async def _load_default_agent(db: AsyncSession) -> dict[str, Any]:
         "model": "anthropic/claude-sonnet-4-20250514",
         "sandbox_image": None,
         "tools": '["respond","search_memory","memory_save","memory_update"]',
-        "max_iterations": 20,
+        "max_iterations": 80,
         "auto_rag": 1,
         "auto_rag_limit": 5,
         "workspace_mounts": [],
@@ -103,7 +103,7 @@ async def _load_agent_by_id(db: AsyncSession, agent_id: str) -> dict[str, Any]:
         "model": "anthropic/claude-sonnet-4-20250514",
         "sandbox_image": None,
         "tools": '["respond","search_memory","memory_save","memory_update"]',
-        "max_iterations": 20,
+        "max_iterations": 80,
         "auto_rag": 1,
         "auto_rag_limit": 5,
         "workspace_mounts": [],
@@ -175,7 +175,7 @@ async def agent_turn(
         if _util_tool not in agent_tools:
             agent_tools.append(_util_tool)
 
-    max_iterations = agent.get("max_iterations", 25)
+    max_iterations = agent.get("max_iterations", 100)
     effective_prompt = system_prompt or agent.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
 
     # Auto-RAG: inject relevant memories
