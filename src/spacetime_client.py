@@ -31,6 +31,9 @@ def _resolve_spacetimedb_token() -> str:
     """Resolve the SpacetimeDB token from env var or ~/.config/spacetime/cli.toml."""
     token = os.environ.get("SPACETIMEDB_TOKEN", "")
     if token:
+        # Strip surrounding quotes — common .env loading pitfall where
+        # SPACETIMEDB_TOKEN="eyJ..." includes the literal '"' characters.
+        token = token.strip('"').strip("'")
         return token
     # Fallback: read from CLI config (matches gateway/src/config/index.ts)
     try:
