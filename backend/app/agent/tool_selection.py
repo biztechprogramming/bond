@@ -163,6 +163,8 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "delegate coding", "implement this", "build this feature",
         "multi-file", "refactor the", "complex change", "across multiple files",
         "write the code", "coding task", "have an agent", "let an agent",
+        "delegate this", "delegate to", "hand off", "hand this off",
+        "send to a coding", "pass to a coding", "give to a coding",
     ],
     "deploy_action": [
         "deploy", "deployment", "rollback", "promote", "health check",
