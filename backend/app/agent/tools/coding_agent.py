@@ -53,8 +53,8 @@ OUTPUT_FLUSH_INTERVAL = 2.0
 AGENT_COMMANDS: dict[str, dict[str, Any]] = {
     "claude": {
         "binary": "claude",
-        "args": ["--dangerously-skip-permissions", "--print", "--output-format", "stream-json"],
-        "needs_pty": False,
+        "args": ["--dangerously-skip-permissions", "--print"],
+        "needs_pty": True,
     },
     "codex": {
         "binary": "codex",

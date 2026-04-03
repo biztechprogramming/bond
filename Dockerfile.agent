@@ -63,7 +63,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     rm -rf /var/lib/apt/lists/*
 
 # Claude Code
-RUN npm install -g @anthropic-ai/claude-code@latest
+RUN npm install -g @anthropic-ai/claude-code@2.1.83
 
 # OpenAI Codex CLI
 RUN npm install -g @openai/codex@latest
