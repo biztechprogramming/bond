@@ -19,6 +19,10 @@ const SCHEDULE_PATH = join(BACKUP_DIR, "schedule.json");
 // Active timer handles so we can cancel on reschedule
 const activeTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
+// Node.js setTimeout uses a 32-bit signed int internally.
+// Delays exceeding this overflow to 1ms, causing tight loops.
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 /**
  * Load schedule from disk, creating default if missing.
  */
@@ -164,6 +168,19 @@ function scheduleTier(tier: string, cfg: TierConfig, schedule: BackupSchedule, c
   const delayMs = msUntilNextRun(tier, cfg, schedule.timezone);
   const delayMin = Math.round(delayMs / 60000);
   console.log(`[backup-scheduler] ${tier} next run in ${delayMin} minutes`);
+
+  // If delayMs exceeds the 32-bit limit, sleep for MAX_TIMEOUT_MS then
+  // re-evaluate (the remaining time will be shorter next iteration).
+  if (delayMs > MAX_TIMEOUT_MS) {
+    const timer = setTimeout(() => {
+      const freshSchedule = loadSchedule();
+      const freshCfg = freshSchedule.tiers[tier];
+      if (freshCfg) scheduleTier(tier, freshCfg, freshSchedule, config);
+    }, MAX_TIMEOUT_MS);
+    timer.unref();
+    activeTimers.set(tier, timer);
+    return;
+  }
 
   const timer = setTimeout(async () => {
     console.log(`[backup-scheduler] Running scheduled ${tier} backup`);
