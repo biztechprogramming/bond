@@ -16,7 +16,6 @@ from backend.app.agent.tools.shell_utils import (
     handle_git_info,
     handle_shell_find,
     handle_shell_grep,
-    handle_shell_head,
     handle_shell_ls,
     handle_shell_tree,
     handle_shell_wc,
@@ -321,53 +320,6 @@ class TestShellWc:
 
 
 # ---------------------------------------------------------------------------
-# shell_head
-# ---------------------------------------------------------------------------
-
-class TestShellHead:
-    def test_head_default(self, workspace):
-        async def _run():
-            result = await handle_shell_head(
-                {"path": str(workspace / "src" / "main.py")},
-                CTX,
-            )
-            assert result["exit_code"] == 0
-            assert "def main" in result["stdout"]
-
-        asyncio.run(_run())
-
-    def test_head_limited(self, workspace):
-        async def _run():
-            result = await handle_shell_head(
-                {"path": str(workspace / "src" / "main.py"), "lines": 2},
-                CTX,
-            )
-            assert result["exit_code"] == 0
-            lines = result["stdout"].strip().split("\n")
-            assert len(lines) == 2
-
-        asyncio.run(_run())
-
-    def test_tail(self, workspace):
-        async def _run():
-            result = await handle_shell_head(
-                {"path": str(workspace / "src" / "main.py"), "lines": 2, "from_end": True},
-                CTX,
-            )
-            assert result["exit_code"] == 0
-            assert "main()" in result["stdout"]
-
-        asyncio.run(_run())
-
-    def test_head_missing_path(self):
-        async def _run():
-            result = await handle_shell_head({"path": ""}, CTX)
-            assert "error" in result
-
-        asyncio.run(_run())
-
-
-# ---------------------------------------------------------------------------
 # shell_tree
 # ---------------------------------------------------------------------------
 
@@ -423,11 +375,10 @@ class TestToolSelection:
 
         enabled = [
             "respond", "code_execute", "file_read", "file_write", "file_edit",
-            "shell_find", "shell_ls", "shell_grep", "git_info", "shell_head",
-            "shell_tree", "shell_wc", "load_context",
+            "shell_find", "shell_ls", "file_search", "git_info", "shell_tree", "shell_wc", "load_context",
         ]
 
-        result = select_tools("find all Python test files", enabled)
+        result = select_tools("find -name '*.py' test files", enabled)
         assert "shell_find" in result
 
     def test_grep_keyword_selects_shell_grep(self):
@@ -435,20 +386,18 @@ class TestToolSelection:
 
         enabled = [
             "respond", "code_execute", "file_read", "file_write", "file_edit",
-            "shell_find", "shell_ls", "shell_grep", "git_info", "shell_head",
-            "shell_tree", "shell_wc", "load_context",
+            "shell_find", "shell_ls", "file_search", "git_info", "shell_tree", "shell_wc", "load_context",
         ]
 
         result = select_tools("grep for langfuse in the backend", enabled)
-        assert "shell_grep" in result
+        assert "file_search" in result
 
     def test_git_keyword_selects_git_info(self):
         from backend.app.agent.tool_selection import select_tools
 
         enabled = [
             "respond", "code_execute", "file_read", "file_write", "file_edit",
-            "shell_find", "shell_ls", "shell_grep", "git_info", "shell_head",
-            "shell_tree", "shell_wc", "load_context",
+            "shell_find", "shell_ls", "file_search", "git_info", "shell_tree", "shell_wc", "load_context",
         ]
 
         result = select_tools("git status and recent commits", enabled)
@@ -459,14 +408,13 @@ class TestToolSelection:
 
         enabled = [
             "respond", "code_execute", "file_read", "file_write", "file_edit",
-            "shell_find", "shell_ls", "shell_grep", "git_info", "shell_head",
-            "shell_tree", "shell_wc", "load_context",
+            "shell_find", "shell_ls", "file_search", "git_info", "shell_tree", "shell_wc", "load_context",
         ]
 
         result = select_tools("implement the new feature and write tests", enabled)
         # Coding tasks should include at least some shell utils
-        shell_utils_in_result = {"shell_find", "shell_ls", "shell_grep", "git_info",
-                                  "shell_head", "shell_tree"} & set(result)
+        shell_utils_in_result = {"shell_find", "shell_ls", "file_search", "git_info",
+                                  "shell_tree"} & set(result)
         assert len(shell_utils_in_result) > 0, f"No shell utils in {result}"
 
 
@@ -484,12 +432,12 @@ class TestInfoGathering:
         info_gathering = frozenset({
             "file_read", "search_memory",
             "web_search", "web_read", "work_plan",
-            "shell_find", "shell_ls", "shell_grep", "git_info",
-            "shell_wc", "shell_head", "shell_tree",
+            "shell_find", "shell_ls", "file_search", "git_info",
+            "shell_wc", "shell_tree",
         })
 
-        shell_utils = {"shell_find", "shell_ls", "shell_grep", "git_info",
-                       "shell_wc", "shell_head", "shell_tree"}
+        shell_utils = {"shell_find", "shell_ls", "file_search", "git_info",
+                       "shell_wc", "shell_tree"}
 
         assert shell_utils.issubset(info_gathering)
 
@@ -498,8 +446,8 @@ class TestInfoGathering:
         info_gathering = frozenset({
             "file_read", "search_memory",
             "web_search", "web_read", "work_plan",
-            "shell_find", "shell_ls", "shell_grep", "git_info",
-            "shell_wc", "shell_head", "shell_tree",
+            "shell_find", "shell_ls", "file_search", "git_info",
+            "shell_wc", "shell_tree",
         })
 
         assert "code_execute" not in info_gathering

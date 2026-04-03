@@ -87,7 +87,7 @@ def handle_adaptive_budget(
         first_tool_names = [tc.function.name for tc in llm_message.tool_calls]
         has_edits = any(t in ("file_edit", "file_write") for t in first_tool_names)
         has_plan = any(t == "work_plan" for t in first_tool_names)
-        has_reads = any(t in ("file_read", "shell_grep", "search_memory") for t in first_tool_names)
+        has_reads = any(t in ("file_read", "file_search", "search_memory") for t in first_tool_names)
         if has_plan and len(first_tool_names) >= 5:
             # Complex multi-file — full budget
             loop_state.adaptive_budget = max_iterations

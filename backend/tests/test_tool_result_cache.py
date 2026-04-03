@@ -53,8 +53,8 @@ def test_cache_hit_after_store(cache, sample_file):
 
 
 def test_non_cacheable_tool_ignored(cache):
-    cache.store("shell_grep", {"pattern": "foo"}, "result", turn=1)
-    result = cache.check("shell_grep", {"pattern": "foo"}, turn=2)
+    cache.store("file_search", {"pattern": "foo"}, "result", turn=1)
+    result = cache.check("file_search", {"pattern": "foo"}, turn=2)
     assert result is None
 
 

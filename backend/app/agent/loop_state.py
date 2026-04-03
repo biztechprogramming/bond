@@ -26,9 +26,8 @@ class LoopState:
     # Name-only repetition detection (catches varied args for same tool)
     NAME_ONLY_THRESHOLD: int = 5
     NAME_ONLY_EXEMPT_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
-        "file_read", "shell_grep", "shell_ls", "shell_find", "shell_head",
-        "shell_tail", "shell_wc", "shell_tree", "git_info", "project_search",
-        "batch_head", "shell_sed",
+        "file_read", "file_search", "shell_ls", "shell_find",
+        "shell_wc", "shell_tree", "git_info", "project_search",
     }))
     recent_tool_names: list[str] = field(default_factory=list)
 
@@ -52,8 +51,8 @@ class LoopState:
     INFO_GATHERING_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
         "file_read", "search_memory",
         "web_search", "web_read", "work_plan",
-        "shell_find", "shell_ls", "shell_grep", "git_info",
-        "shell_wc", "shell_head", "shell_tree", "project_search",
+        "shell_find", "shell_ls", "file_search", "git_info",
+        "shell_wc", "shell_tree", "project_search",
     }))
     CONSEQUENTIAL_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
         "file_write", "file_edit", "code_execute", "respond", "memory_save",

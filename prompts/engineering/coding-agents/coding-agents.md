@@ -28,7 +28,7 @@ Ask yourself: *"Do I already know the fix?"*
 | Simple 1-3 file edit, you know exactly what to write | **MUST do it yourself** with `file_edit` — no agent |
 | You can describe the fix in one sentence | **MUST do it yourself** — spawning an agent for a known fix is wasteful |
 | Error message points to a specific line and you know the fix | **MUST do it yourself** — the answer is already in the error |
-| Just need to read/understand code | Use `file_read` / `shell_grep` |
+| Just need to read/understand code | Use `file_read` / `file_search` |
 | Single command (build, test, install) | Use `code_execute` |
 
 ### Delegate early or fix it yourself — never both

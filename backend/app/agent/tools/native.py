@@ -20,6 +20,13 @@ import aiosqlite
 from ulid import ULID
 
 from .file_buffer import _manager as _file_buffer_manager, track_file_read
+from .read_state import (
+    get_read_state,
+    estimate_tokens,
+    truncate_to_tokens,
+    MAX_PRE_READ_BYTES,
+    MAX_POST_READ_TOKENS,
+)
 
 logger = logging.getLogger("bond.agent.tools.native")
 
@@ -150,12 +157,44 @@ async def handle_file_read(
         return {"error": f"Not a file: {path_str}"}
 
     try:
+        line_start = arguments.get("line_start")
+        line_end = arguments.get("line_end")
+        outline_mode = arguments.get("outline", False)
+        file_stat = path.stat()
+        file_mtime = file_stat.st_mtime
+        file_size = file_stat.st_size
+
+        # Phase 3a: mtime dedup — return stub if file unchanged
+        rs = get_read_state()
+        if not outline_mode:
+            prev = rs.check(str(path), file_mtime, line_start, line_end)
+            if prev is not None:
+                return {
+                    "path": str(path),
+                    "status": "unchanged",
+                    "note": f"File has not changed since last read ({prev.token_count} tokens saved)",
+                    "total_lines": prev.line_end or 0,
+                }
+
+        # Phase 3b: byte gate — reject oversized files before reading
+        # Skip when line range or outline is requested
+        if not outline_mode and line_start is None and line_end is None:
+            if file_size > MAX_PRE_READ_BYTES:
+                return {
+                    "error": (
+                        f"File is {file_size:,} bytes (limit {MAX_PRE_READ_BYTES:,}). "
+                        "Use line_start/line_end for specific sections, or outline mode."
+                    ),
+                    "path": str(path),
+                    "size": file_size,
+                }
+
         raw_content = path.read_text(errors="replace")
         all_lines = raw_content.splitlines()
         total_lines = len(all_lines)
 
         # Outline mode
-        if arguments.get("outline"):
+        if outline_mode:
             outline = _extract_outline(raw_content, path.suffix.lower())
             return {
                 "path": str(path),
@@ -165,9 +204,6 @@ async def handle_file_read(
             }
 
         # Line-range mode
-        line_start = arguments.get("line_start")
-        line_end = arguments.get("line_end")
-
         if line_start is not None or line_end is not None:
             start = (line_start or 1) - 1  # convert to 0-indexed
             end = line_end if line_end is not None else total_lines
@@ -181,6 +217,25 @@ async def handle_file_read(
 
             selected = all_lines[start:end]
             content = "\n".join(selected)
+
+            # Phase 3b: token gate on line-range result
+            token_count = estimate_tokens(content)
+            if token_count > MAX_POST_READ_TOKENS:
+                content = truncate_to_tokens(content, MAX_POST_READ_TOKENS)
+                rs.record(str(path), file_mtime, line_start, line_end, estimate_tokens(content))
+                return {
+                    "content": content,
+                    "path": str(path),
+                    "line_start": start + 1,
+                    "line_end": end,
+                    "total_lines": total_lines,
+                    "truncated": True,
+                    "total_tokens": token_count,
+                    "returned_tokens": MAX_POST_READ_TOKENS,
+                    "hint": "File exceeds token budget. Use line_start/line_end for specific sections.",
+                }
+
+            rs.record(str(path), file_mtime, line_start, line_end, token_count)
             return {
                 "content": content,
                 "path": str(path),
@@ -210,6 +265,22 @@ async def handle_file_read(
                 ),
             }
 
+        # Phase 3b: token gate on full file content
+        token_count = estimate_tokens(raw_content)
+        if token_count > MAX_POST_READ_TOKENS:
+            truncated = truncate_to_tokens(raw_content, MAX_POST_READ_TOKENS)
+            rs.record(str(path), file_mtime, None, None, estimate_tokens(truncated))
+            return {
+                "content": truncated,
+                "path": str(path),
+                "total_lines": total_lines,
+                "truncated": True,
+                "total_tokens": token_count,
+                "returned_tokens": MAX_POST_READ_TOKENS,
+                "hint": "File exceeds token budget. Use line_start/line_end for specific sections.",
+            }
+
+        rs.record(str(path), file_mtime, None, None, token_count)
         return {"content": raw_content, "path": str(path), "size": len(raw_content), "total_lines": total_lines}
     except Exception as e:
         return {"error": f"Failed to read {path_str}: {e}"}
@@ -231,6 +302,7 @@ async def handle_file_write(
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(file_content)
+        get_read_state().invalidate(str(path))
         return {"status": "written", "path": str(path), "bytes": len(file_content)}
     except Exception as e:
         return {"error": f"Failed to write {path_str}: {e}"}
@@ -272,6 +344,7 @@ async def handle_file_edit(
             content = content.replace(old_text, new_text, 1)
 
         path.write_text(content)
+        get_read_state().invalidate(str(path))
         return {"status": "edited", "path": str(path), "edits_applied": len(edits)}
     except Exception as e:
         return {"error": f"Failed to edit {path_str}: {e}"}

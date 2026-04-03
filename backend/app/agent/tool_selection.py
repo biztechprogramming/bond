@@ -19,8 +19,7 @@ ALWAYS_INCLUDE = {"respond", "say"}
 # Filesystem toolkit (8 tools) — always included as a group in coding/file contexts.
 # ~1,200 tokens total. Cheaper than one wasted iteration.
 FILESYSTEM_TOOLKIT = frozenset({
-    "file_read", "file_smart_edit", "project_search", "shell_grep",
-    "batch_head", "shell_sed", "shell_head", "shell_tail",
+    "file_read", "file_smart_edit", "project_search", "file_search",
 })
 
 # Additional shell utilities — included only when keyword-matched.
@@ -68,7 +67,7 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "ls ", "list directory", "directory contents",
         "what's in the folder",
     ],
-    "shell_grep": [
+    "file_search": [
         "grep", "search for", "find text", "where is", "pattern",
         "look for", "occurrences", "references to",
     ],
@@ -78,17 +77,6 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     ],
     "shell_wc": [
         "count lines", "how many lines", "line count", "word count", "wc ",
-    ],
-    "shell_head": [
-        "head of", "first lines", "beginning of", "top of",
-    ],
-    "shell_tail": [
-        "tail", "last lines", "end of", "bottom of", "log file",
-        "recent output", "latest lines",
-    ],
-    "shell_sed": [
-        "sed ", "extract lines", "line range", "lines from",
-        "section of", "extract section",
     ],
     "shell_diff": [
         "diff", "compare", "difference between", "what changed",
@@ -101,9 +89,6 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
     "shell_jq": [
         "jq ", "json query", "parse json", "json file",
         "package.json", "tsconfig",
-    ],
-    "batch_head": [
-        "peek at", "preview files", "batch read", "multiple files",
     ],
     "shell_tree": [
         "tree", "directory structure", "project structure", "folder structure",
@@ -220,8 +205,8 @@ DELEGATION_THRESHOLD = 8
 CODING_SIGNAL_TOOLS = frozenset({
     "file_read", "file_write", "file_edit",
     "file_smart_edit",
-    "project_search", "shell_grep", "shell_find", "shell_sed",
-    "code_execute", "batch_head",
+    "project_search", "file_search", "shell_find",
+    "code_execute",
 })
 
 
@@ -274,7 +259,7 @@ def select_tools(
     if agent_name and agent_name.startswith("deploy-"):
         DEPLOY_AGENT_ALWAYS = {
             "deploy_action", "deployment_query", "file_bug_ticket",
-            "file_read", "project_search", "shell_grep", "shell_ls",
+            "file_read", "project_search", "file_search", "shell_ls",
             "code_execute", "web_search", "web_read",
             "search_memory", "memory_save", "work_plan",
         }
@@ -353,7 +338,7 @@ def select_tools(
         coding_tools
         | FILESYSTEM_TOOLKIT
         | SHELL_UTILITY_TOOLS
-        | {"project_search", "shell_find", "shell_grep", "shell_ls"}
+        | {"project_search", "shell_find", "file_search", "shell_ls"}
     )
     if filesystem_trigger & selected:
         selected.update(FILESYSTEM_TOOLKIT & set(enabled_tools))
@@ -427,13 +412,6 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
     "shell_ls": (
         " ONLY to explore an unknown directory. Never to verify a known path."
     ),
-    "shell_tail": (
-        " Read the end of a file. Great for logs, build output, recent changes."
-    ),
-    "shell_sed": (
-        " Extract line ranges from large files. Use lines='50,100' for lines 50-100."
-        " Best tool when you know the line numbers."
-    ),
     "shell_diff": (
         " Compare two files. Use to see what changed between versions."
     ),
@@ -442,9 +420,6 @@ TOOL_ROUTING_HINTS: dict[str, str] = {
     ),
     "shell_jq": (
         " Query JSON files. Extract keys, filter arrays, reshape data."
-    ),
-    "batch_head": (
-        " Peek at first N lines of multiple files in one call. Use after project_search."
     ),
     "shell_wc": (
         " ONLY when you specifically need a line/word count, not as a pre-read step."
