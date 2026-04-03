@@ -53,7 +53,7 @@ OUTPUT_FLUSH_INTERVAL = 2.0
 AGENT_COMMANDS: dict[str, dict[str, Any]] = {
     "claude": {
         "binary": "claude",
-        "args": ["--dangerously-skip-permissions", "--print"],
+        "args": ["--dangerously-skip-permissions", "--print", "--output-format", "stream-json"],
         "needs_pty": False,
     },
     "codex": {
@@ -430,6 +430,76 @@ class CodingAgentSession:
                 pass
             self._log_file_handle = None
 
+    @staticmethod
+    def _extract_human_text(line: str) -> str | None:
+        """Extract human-readable text from a stream-json line.
+
+        Claude CLI ``--output-format stream-json`` emits one JSON object per
+        line.  We parse the interesting ones and return a readable string,
+        or ``None`` if the line should be skipped.
+        """
+        line = line.strip()
+        if not line:
+            return None
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            # Not JSON — pass through as-is (shouldn't happen)
+            return line + "\n" if line else None
+
+        msg_type = obj.get("type", "")
+
+        # Assistant text messages
+        if msg_type == "assistant":
+            # Full message block — extract text content
+            message = obj.get("message", {})
+            parts = []
+            for block in message.get("content", []):
+                if block.get("type") == "text":
+                    parts.append(block["text"])
+                elif block.get("type") == "tool_use":
+                    name = block.get("name", "tool")
+                    inp = block.get("input", {})
+                    # Compact summary so the log stays readable
+                    if isinstance(inp, dict):
+                        summary = ", ".join(
+                            f"{k}={repr(v)[:80]}" for k, v in list(inp.items())[:4]
+                        )
+                    else:
+                        summary = repr(inp)[:200]
+                    parts.append(f"[tool_use: {name}({summary})]")
+            if parts:
+                return "\n".join(parts) + "\n"
+            return None
+
+        # Content block delta (streaming partial text)
+        if msg_type == "content_block_delta":
+            delta = obj.get("delta", {})
+            if delta.get("type") == "text_delta":
+                return delta.get("text", "")
+            return None
+
+        # Tool results
+        if msg_type == "result":
+            # Final result message — extract text
+            parts = []
+            for block in obj.get("content", obj.get("message", {}).get("content", [])):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block["text"])
+            if parts:
+                return "\n--- result ---\n" + "\n".join(parts) + "\n"
+            return None
+
+        # System / status messages
+        if msg_type == "system":
+            text = obj.get("message", obj.get("text", ""))
+            if text:
+                return f"[system] {text}\n"
+            return None
+
+        # Skip everything else (ping, metadata, etc.)
+        return None
+
     async def _read_output(self) -> None:
         """Background task: read sub-agent stdout and dispatch to file / event queue."""
         reader = self.process.output_reader
@@ -441,6 +511,8 @@ class CodingAgentSession:
 
         buffer = ""
         last_flush = time.monotonic()
+        is_stream_json = self.agent_type == "claude"  # claude uses stream-json
+        line_buffer = ""  # accumulates partial lines for stream-json parsing
 
         try:
             while True:
@@ -456,12 +528,27 @@ class CodingAgentSession:
 
                 if not chunk:
                     # EOF — process has closed its stdout
+                    # Process any remaining line_buffer
+                    if is_stream_json and line_buffer:
+                        extracted = self._extract_human_text(line_buffer)
+                        if extracted:
+                            buffer += extracted
                     if buffer:
                         await self._emit_output(buffer)
                     break
 
                 text = chunk.decode("utf-8", errors="replace")
-                buffer += text
+
+                if is_stream_json:
+                    # Parse line-delimited JSON and extract readable text
+                    line_buffer += text
+                    while "\n" in line_buffer:
+                        line, line_buffer = line_buffer.split("\n", 1)
+                        extracted = self._extract_human_text(line)
+                        if extracted:
+                            buffer += extracted
+                else:
+                    buffer += text
 
                 # Flush if buffer is big enough or enough time has passed
                 now = time.monotonic()
