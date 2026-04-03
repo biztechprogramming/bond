@@ -80,7 +80,7 @@ class TestIsCodeFile:
         assert _is_code_file("file_read", {"file_path": "app/index.tsx"}) is True
 
     def test_yaml_file(self):
-        assert _is_code_file("file_open", {"path": "config.yaml"}) is True
+        assert _is_code_file("file_read", {"path": "config.yaml"}) is True
 
     def test_non_file_tool(self):
         assert _is_code_file("code_execute", {"path": "main.py"}) is False

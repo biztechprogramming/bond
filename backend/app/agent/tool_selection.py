@@ -16,18 +16,17 @@ logger = logging.getLogger(__name__)
 # Always included regardless of heuristics
 ALWAYS_INCLUDE = {"respond", "say"}
 
-# Filesystem toolkit — always included as a group in coding/file contexts.
-# ~2,000 tokens total. Cheaper than one wasted iteration.
+# Filesystem toolkit (8 tools) — always included as a group in coding/file contexts.
+# ~1,200 tokens total. Cheaper than one wasted iteration.
 FILESYSTEM_TOOLKIT = frozenset({
-    "file_read", "project_search", "shell_grep", "shell_sed",
-    "shell_head", "shell_tail", "shell_awk", "shell_diff",
-    "shell_jq", "batch_head", "shell_ls",
-    "file_open", "file_view", "file_search", "file_replace", "file_smart_edit",
+    "file_read", "file_smart_edit", "project_search", "shell_grep",
+    "batch_head", "shell_sed", "shell_head", "shell_tail",
 })
 
 # Additional shell utilities — included only when keyword-matched.
 SHELL_UTILITY_TOOLS = frozenset({
     "git_info", "shell_find", "shell_tree", "shell_wc",
+    "shell_awk", "shell_diff", "shell_jq", "shell_ls",
 })
 
 # Maximum *non-utility* tools to send per turn
@@ -164,6 +163,8 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "delegate coding", "implement this", "build this feature",
         "multi-file", "refactor the", "complex change", "across multiple files",
         "write the code", "coding task", "have an agent", "let an agent",
+        "delegate this", "delegate to", "hand off", "hand this off",
+        "send to a coding", "pass to a coding", "give to a coding",
     ],
     "deploy_action": [
         "deploy", "deployment", "rollback", "promote", "health check",
@@ -217,8 +218,8 @@ DELEGATION_THRESHOLD = 8
 
 # Tools that signal "coding work" when used in recent history
 CODING_SIGNAL_TOOLS = frozenset({
-    "file_read", "file_write", "file_edit", "file_view", "file_replace",
-    "file_smart_edit", "file_search", "file_open",
+    "file_read", "file_write", "file_edit",
+    "file_smart_edit",
     "project_search", "shell_grep", "shell_find", "shell_sed",
     "code_execute", "batch_head",
 })

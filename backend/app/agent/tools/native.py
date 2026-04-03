@@ -19,6 +19,8 @@ from typing import Any
 import aiosqlite
 from ulid import ULID
 
+from .file_buffer import _manager as _file_buffer_manager, track_file_read
+
 logger = logging.getLogger("bond.agent.tools.native")
 
 # Max bytes returned by file_read (10 KB — keeps tool results lean for context window)
@@ -141,6 +143,7 @@ async def handle_file_read(
         return {"error": "path or paths is required"}
 
     path = _resolve_path(path_str)
+    track_file_read(str(path))
     if not path.exists():
         return {"error": f"File not found: {path_str}"}
     if not path.is_file():
@@ -186,11 +189,28 @@ async def handle_file_read(
                 "total_lines": total_lines,
             }
 
-        # Full file mode
-        content = raw_content
-        if len(content) > _MAX_READ_BYTES:
-            content = content[:_MAX_READ_BYTES] + f"\n\n[Content truncated at {_MAX_READ_BYTES // 1000} KB — use line_start/line_end to read specific sections]"
-        return {"content": content, "path": str(path), "size": len(content), "total_lines": total_lines}
+        # Full file mode — auto-buffer large files
+        if total_lines > 500 or len(raw_content) > _MAX_READ_BYTES:
+            logger.info("file_read auto-buffered %s (%d lines)", path, total_lines)
+            buf = _file_buffer_manager.get_or_open(str(path))
+            first_lines = buf.view(1, 50)
+            last_start = max(1, total_lines - 19)
+            last_lines = buf.view(last_start, total_lines)
+            outline = _extract_outline(raw_content, path.suffix.lower())
+            return {
+                "path": str(path),
+                "total_lines": total_lines,
+                "size": len(raw_content),
+                "first_50_lines": first_lines,
+                "last_20_lines": last_lines,
+                "outline": outline,
+                "hint": (
+                    "File auto-buffered (>500 lines). Use line_start/line_end to "
+                    "read specific sections, or file_smart_edit for search+edit."
+                ),
+            }
+
+        return {"content": raw_content, "path": str(path), "size": len(raw_content), "total_lines": total_lines}
     except Exception as e:
         return {"error": f"Failed to read {path_str}: {e}"}
 

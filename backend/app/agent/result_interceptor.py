@@ -37,7 +37,7 @@ CODE_EXTENSIONS: frozenset[str] = frozenset({
 
 def _is_code_file(tool_name: str, tool_args: dict) -> bool:
     """Check if the tool result is from a code file based on extension."""
-    if tool_name not in ("file_read", "file_open", "file_view"):
+    if tool_name != "file_read":
         return False
     path = tool_args.get("path", tool_args.get("file_path", ""))
     if not path:

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .native import _extract_outline
+from .file_buffer import _manager as _file_buffer_manager, track_file_read
 
 logger = logging.getLogger("bond.agent.tools.files")
 
@@ -100,6 +101,7 @@ async def handle_file_read(
     if resolved is None:
         return {"error": f"Path '{path_str}' is outside allowed workspace directories."}
 
+    track_file_read(str(resolved))
     try:
         if not resolved.exists():
             return {"error": f"File not found: {path_str}"}
@@ -144,11 +146,28 @@ async def handle_file_read(
                 "total_lines": total_lines,
             }
 
-        # Full file mode
-        content = raw_content
-        if len(content) > 100_000:
-            content = content[:100_000] + "\n... [truncated at 100KB]"
-        return {"content": content, "path": str(resolved), "size": resolved.stat().st_size, "total_lines": total_lines}
+        # Full file mode — auto-buffer large files
+        if total_lines > 500 or len(raw_content) > 100_000:
+            logger.info("file_read auto-buffered %s (%d lines)", resolved, total_lines)
+            buf = _file_buffer_manager.get_or_open(str(resolved))
+            first_lines = buf.view(1, 50)
+            last_start = max(1, total_lines - 19)
+            last_lines = buf.view(last_start, total_lines)
+            outline = _extract_outline(raw_content, resolved.suffix.lower())
+            return {
+                "path": str(resolved),
+                "total_lines": total_lines,
+                "size": len(raw_content),
+                "first_50_lines": first_lines,
+                "last_20_lines": last_lines,
+                "outline": outline,
+                "hint": (
+                    "File auto-buffered (>500 lines). Use line_start/line_end to "
+                    "read specific sections, or file_smart_edit for search+edit."
+                ),
+            }
+
+        return {"content": raw_content, "path": str(resolved), "size": resolved.stat().st_size, "total_lines": total_lines}
     except Exception as e:
         return {"error": f"Failed to read file: {e}"}
 
