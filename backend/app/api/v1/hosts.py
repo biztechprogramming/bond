@@ -21,6 +21,36 @@ from backend.app.services.container_host_service import ContainerHostService
 
 logger = logging.getLogger("bond.api.hosts")
 
+
+def _resolve_ssh_key(host: dict) -> tuple[str | None, bool]:
+    """Resolve SSH key for a host, returning (path, needs_cleanup).
+
+    If the host has a stored/decrypted SSH key, writes it to a temp file.
+    Otherwise, probes common system SSH key locations.
+    Returns (key_path, True) if a temp file was created, (key_path, False) otherwise.
+    """
+    import tempfile, os
+    from pathlib import Path
+
+    ssh_key = host.get("ssh_key_decrypted", "")
+    if ssh_key:
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+        tmp.write(ssh_key)
+        tmp.close()
+        os.chmod(tmp.name, 0o600)
+        return tmp.name, True
+
+    # Probe system SSH keys
+    for candidate in (
+        "/root/.ssh/id_ed25519",
+        "/root/.ssh/id_rsa",
+        "/root/.ssh/id_ecdsa",
+    ):
+        if Path(candidate).is_file():
+            return candidate, False
+
+    return None, False
+
 router = APIRouter(prefix="/hosts", tags=["hosts"])
 
 _service = ContainerHostService()
@@ -307,20 +337,11 @@ async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)):
     if not host or host_id == "local":
         raise HTTPException(404, f"Remote host '{host_id}' not found")
 
-    ssh_key = host.get("ssh_key_decrypted", "")
-
     async def _stream():
-        import tempfile, os
+        import os
 
-        tmp_path: str | None = None
+        ssh_key_path, needs_cleanup = _resolve_ssh_key(host)
         try:
-            if ssh_key:
-                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
-                tmp.write(ssh_key)
-                tmp.close()
-                os.chmod(tmp.name, 0o600)
-                tmp_path = tmp.name
-
             from backend.app.services.daemon_installer import DaemonInstaller
             installer = DaemonInstaller()
             auth_token = ""
@@ -330,7 +351,7 @@ async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)):
                 host=host["host"],
                 port=host.get("port", 22),
                 user=host.get("user", "bond"),
-                ssh_key_path=tmp_path,
+                ssh_key_path=ssh_key_path,
                 daemon_port=host.get("daemon_port", 8990),
             ):
                 if event.get("status") == "done":
@@ -339,8 +360,8 @@ async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)):
                 yield f"data: {json.dumps(event)}\n\n"
 
         finally:
-            if tmp_path:
-                os.unlink(tmp_path)
+            if needs_cleanup and ssh_key_path:
+                os.unlink(ssh_key_path)
 
         # Store auth token in DB if install succeeded
         if success and auth_token:
@@ -369,30 +390,20 @@ async def uninstall_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> 
     if not host or host_id == "local":
         raise HTTPException(404, f"Remote host '{host_id}' not found")
 
-    ssh_key = host.get("ssh_key_decrypted", "")
-
-    # If SSH key is configured, write it to a temp file; otherwise use system defaults (~/.ssh)
-    import tempfile, os
-    tmp_path: str | None = None
+    import os
+    ssh_key_path, needs_cleanup = _resolve_ssh_key(host)
     try:
-        if ssh_key:
-            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
-            tmp.write(ssh_key)
-            tmp.close()
-            os.chmod(tmp.name, 0o600)
-            tmp_path = tmp.name
-
         from backend.app.services.daemon_installer import DaemonInstaller
         installer = DaemonInstaller()
         result = await installer.uninstall(
             host=host["host"],
             port=host.get("port", 22),
             user=host.get("user", "bond"),
-            ssh_key_path=tmp_path,
+            ssh_key_path=ssh_key_path,
         )
     finally:
-        if tmp_path:
-            os.unlink(tmp_path)
+        if needs_cleanup and ssh_key_path:
+            os.unlink(ssh_key_path)
 
     # Clear auth token
     if result.get("success"):
@@ -412,29 +423,19 @@ async def daemon_status(host_id: str, db: AsyncSession = Depends(get_db)) -> dic
     if not host or host_id == "local":
         raise HTTPException(404, f"Remote host '{host_id}' not found")
 
-    ssh_key = host.get("ssh_key_decrypted", "")
-
-    # If SSH key is configured, write it to a temp file; otherwise use system defaults (~/.ssh)
-    import tempfile, os
-    tmp_path: str | None = None
+    import os
+    ssh_key_path, needs_cleanup = _resolve_ssh_key(host)
     try:
-        if ssh_key:
-            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
-            tmp.write(ssh_key)
-            tmp.close()
-            os.chmod(tmp.name, 0o600)
-            tmp_path = tmp.name
-
         from backend.app.services.daemon_installer import DaemonInstaller
         installer = DaemonInstaller()
         result = await installer.check_status(
             host=host["host"],
             port=host.get("port", 22),
             user=host.get("user", "bond"),
-            ssh_key_path=tmp_path,
+            ssh_key_path=ssh_key_path,
         )
     finally:
-        if tmp_path:
-            os.unlink(tmp_path)
+        if needs_cleanup and ssh_key_path:
+            os.unlink(ssh_key_path)
 
     return result

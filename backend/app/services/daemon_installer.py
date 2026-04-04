@@ -21,6 +21,19 @@ _REMOTE_DAEMON_PATH = f"{_REMOTE_INSTALL_DIR}/bond_host_daemon.py"
 _REMOTE_REQUIREMENTS_PATH = f"{_REMOTE_INSTALL_DIR}/requirements-daemon.txt"
 _SERVICE_NAME = "bond-host-daemon"
 
+_SSH_CONNECTION_ERRORS = ("Permission denied", "Connection refused", "No route to host",
+                          "Connection timed out", "Could not resolve hostname",
+                          "Network is unreachable", "Connection reset")
+
+
+def _check_ssh_error(stderr: str) -> str | None:
+    """If stderr indicates an SSH connection failure, return a user-friendly message."""
+    for pattern in _SSH_CONNECTION_ERRORS:
+        if pattern.lower() in stderr.lower():
+            return f"SSH connection failed: {stderr.strip()}"
+    return None
+
+
 _SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
 Description=Bond Host Daemon
@@ -40,6 +53,21 @@ WantedBy=multi-user.target
 
 
 
+def _resolve_ssh_key_path(ssh_key_path: str | None) -> str | None:
+    """Resolve an SSH key path, probing system defaults if none provided."""
+    if ssh_key_path:
+        return ssh_key_path
+    # Probe common system SSH key locations
+    for candidate in (
+        "/root/.ssh/id_ed25519",
+        "/root/.ssh/id_rsa",
+        "/root/.ssh/id_ecdsa",
+    ):
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
 async def _run_ssh_command(
     host: str,
     port: int,
@@ -50,17 +78,18 @@ async def _run_ssh_command(
 ) -> tuple[int, str, str]:
     """Run a command on a remote host via SSH.
 
-    If ssh_key_path is None or empty, SSH will use the default keys
-    from ~/.ssh (id_rsa, id_ed25519, etc.).
+    If ssh_key_path is None or empty, probes for system SSH keys at
+    common locations (/root/.ssh/id_ed25519, id_rsa, id_ecdsa).
     """
+    resolved_key = _resolve_ssh_key_path(ssh_key_path)
     args = [
         "ssh",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=10",
     ]
-    if ssh_key_path:
-        args.extend(["-i", ssh_key_path])
+    if resolved_key:
+        args.extend(["-i", resolved_key])
     args.extend([
         "-p", str(port),
         f"{user}@{host}",
@@ -91,17 +120,18 @@ async def _scp_file(
 ) -> bool:
     """Copy a file to a remote host via SCP.
 
-    If ssh_key_path is None or empty, SCP will use the default keys
-    from ~/.ssh (id_rsa, id_ed25519, etc.).
+    If ssh_key_path is None or empty, probes for system SSH keys at
+    common locations (/root/.ssh/id_ed25519, id_rsa, id_ecdsa).
     """
+    resolved_key = _resolve_ssh_key_path(ssh_key_path)
     args = [
         "scp",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=10",
     ]
-    if ssh_key_path:
-        args.extend(["-i", ssh_key_path])
+    if resolved_key:
+        args.extend(["-i", resolved_key])
     args.extend([
         "-P", str(port),
         str(local_path),
@@ -152,6 +182,10 @@ class DaemonInstaller:
             result["docker"] = True
             result["docker_version"] = stdout.strip()
         else:
+            ssh_err = _check_ssh_error(stderr)
+            if ssh_err:
+                result["errors"].append(ssh_err)
+                return result  # No point continuing if SSH itself failed
             result["errors"].append(f"Docker not found: {stderr.strip()}")
 
         # Check Docker is running
@@ -177,7 +211,11 @@ class DaemonInstaller:
             else:
                 result["errors"].append(f"Python 3.10+ required, found {version}")
         else:
-            result["errors"].append(f"Python3 not found: {stderr.strip()}")
+            ssh_err = _check_ssh_error(stderr)
+            if ssh_err:
+                result["errors"].append(ssh_err)
+            else:
+                result["errors"].append(f"Python3 not found: {stderr.strip()}")
 
         return result
 
@@ -299,23 +337,33 @@ class DaemonInstaller:
         yield _evt("prerequisites", "running", f"Checking prerequisites on {host}...")
 
         prereqs = await self.check_prerequisites(host, port, user, ssh_key_path)
-        if prereqs["docker"]:
-            yield _evt("prerequisites", "ok", f"Docker: {prereqs['docker_version']}")
-        else:
-            for e in prereqs["errors"]:
-                if "docker" in e.lower() or "Docker" in e:
-                    yield _evt("prerequisites", "error", e)
 
-        if prereqs["python"]:
-            yield _evt("prerequisites", "ok", f"Python: {prereqs['python_version']}")
+        # Check if the errors are actually SSH connection failures
+        ssh_errors = [e for e in prereqs["errors"] if e.startswith("SSH connection failed")]
+        if ssh_errors:
+            for e in ssh_errors:
+                yield _evt("prerequisites", "error", e)
+            yield _evt("done", "done", "Installation failed: cannot connect to host",
+                        success=False, auth_token="", errors=ssh_errors)
         else:
-            for e in prereqs["errors"]:
-                if "python" in e.lower() or "Python" in e:
-                    yield _evt("prerequisites", "error", e)
+            if prereqs["docker"]:
+                yield _evt("prerequisites", "ok", f"Docker: {prereqs['docker_version']}")
+            else:
+                for e in prereqs["errors"]:
+                    if "docker" in e.lower() or "Docker" in e:
+                        yield _evt("prerequisites", "error", e)
 
-        if not prereqs["docker"] or not prereqs["python"]:
-            yield _evt("done", "done", "Installation failed: prerequisites not met",
-                        success=False, auth_token="", errors=prereqs["errors"])
+            if prereqs["python"]:
+                yield _evt("prerequisites", "ok", f"Python: {prereqs['python_version']}")
+            else:
+                for e in prereqs["errors"]:
+                    if "python" in e.lower() or "Python" in e:
+                        yield _evt("prerequisites", "error", e)
+
+        if ssh_errors or not prereqs["docker"] or not prereqs["python"]:
+            if not ssh_errors:
+                yield _evt("done", "done", "Installation failed: prerequisites not met",
+                            success=False, auth_token="", errors=prereqs["errors"])
             return
 
         # 2. Create install directory
