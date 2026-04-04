@@ -41,19 +41,14 @@ export default function ContainerHostsTab() {
   const [installLog, setInstallLog] = useState<{ hostId: string; lines: { type?: string; step: string; status: string; message: string }[]; done: boolean; success: boolean } | null>(null);
   const installLogRef = React.useRef<HTMLDivElement>(null);
   const installSectionRef = useRef<HTMLElement>(null);
-  const scrollToBottom = () => requestAnimationFrame(() => installLogRef.current?.scrollTo({ top: installLogRef.current.scrollHeight, behavior: "smooth" }));
-
-  // Auto-scroll terminal content on every log update
-  useEffect(() => { scrollToBottom(); }, [installLog]);
-
-  // Scroll the parent content area to reveal the install section when it first appears
+  // Scroll the parent content area to show the bottom of the install section on every log update
   useEffect(() => {
     if (installLog && installSectionRef.current) {
       requestAnimationFrame(() => {
-        installSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        installSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
       });
     }
-  }, [installLog?.hostId]);
+  }, [installLog]);
 
   const fetchHosts = useCallback(async () => {
     try {
@@ -366,9 +361,7 @@ export default function ContainerHostsTab() {
               fontFamily: "monospace",
               fontSize: "0.82rem",
               lineHeight: 1.7,
-              maxHeight: "calc(100vh - 300px)",
               minHeight: 200,
-              overflowY: "auto",
               color: "#b0b0c0",
               userSelect: "text",
               cursor: "text",

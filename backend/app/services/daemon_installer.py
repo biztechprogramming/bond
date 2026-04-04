@@ -432,14 +432,30 @@ class DaemonInstaller:
         if rc == 0:
             yield _evt("create_dir", "ok", f"Directory {_REMOTE_INSTALL_DIR} already exists and is writable")
         else:
+            # Distinguish: directory exists but not writable vs directory missing
+            exist_cmd = f"test -d {_REMOTE_INSTALL_DIR}"
+            rc_exist, _, stderr_exist, display_exist = await _run_ssh_command(
+                host, port, user, ssh_key_path, exist_cmd,
+            )
+            yield {"type": "command", "message": display_exist}
+            if rc_exist == 0:
+                # Directory exists but is not writable by this user
+                msg = (
+                    f"Directory {_REMOTE_INSTALL_DIR} exists but is not writable by {user}. "
+                    f"Run: sudo chown {user}:{user} {_REMOTE_INSTALL_DIR}"
+                )
+                yield _evt("create_dir", "error", msg)
+                yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+                return
+            # Directory does not exist — try sudo mkdir
             mkdir_cmd = f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}"
-            rc, _, stderr, display_cmd = await _run_ssh_command(
+            rc_mk, _, stderr_mk, display_cmd = await _run_ssh_command(
                 host, port, user, ssh_key_path, mkdir_cmd,
             )
             yield {"type": "command", "message": display_cmd}
-            if rc != 0:
-                sudo_msg = _check_sudo_error(rc, stderr, mkdir_cmd, user, host)
-                msg = sudo_msg or f"Failed to create install dir: {stderr.strip()}"
+            if rc_mk != 0:
+                sudo_msg = _check_sudo_error(rc_mk, stderr_mk, mkdir_cmd, user, host)
+                msg = sudo_msg or f"Failed to create install dir: {stderr_mk.strip()}"
                 yield _evt("create_dir", "error", msg)
                 yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
                 return
