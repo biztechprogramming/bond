@@ -204,22 +204,28 @@ export default function SettingsPage() {
 
   return (
     <div style={s.container}>
+      <style>{`
+        .settings-tab-bar::-webkit-scrollbar { display: none; }
+      `}</style>
       <header style={s.header}>
         <a href="/" style={s.backLink}>&larr; Chat</a>
         <h1 style={s.title}>Settings</h1>
       </header>
 
       {/* Tab bar */}
-      <div style={s.tabBar}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            style={activeTab === tab.id ? { ...s.tab, ...s.tabActive } : s.tab}
-            onClick={() => switchTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div style={s.tabBarWrapper}>
+        <div className="settings-tab-bar" style={s.tabBar}>
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              style={activeTab === tab.id ? { ...s.tab, ...s.tabActive } : s.tab}
+              onClick={() => switchTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div style={s.tabBarFade} aria-hidden />
       </div>
 
       {/* Tab content */}
@@ -450,11 +456,13 @@ const s: Record<string, React.CSSProperties> = {
   header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
-  tabBar: { display: "flex", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", padding: "0 24px" },
+  tabBarWrapper: { position: "relative" as const, borderBottomWidth: "1px", borderBottomStyle: "solid" as const, borderBottomColor: "#1e1e2e" },
+  tabBar: { display: "flex", padding: "0 24px", overflowX: "auto" as const, scrollbarWidth: "none" as const, msOverflowStyle: "none" as const, WebkitOverflowScrolling: "touch" as const, flexWrap: "nowrap" as const },
+  tabBarFade: { position: "absolute" as const, top: 0, right: 0, bottom: 0, width: "40px", background: "linear-gradient(to right, transparent, #0a0a12)", pointerEvents: "none" as const },
   tab: {
     background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderBottomWidth: "2px", borderBottomStyle: "solid" as const, borderBottomColor: "transparent",
     color: "#8888a0", padding: "12px 20px", fontSize: "0.9rem", fontWeight: 500,
-    cursor: "pointer", transition: "color 0.2s, border-color 0.2s",
+    cursor: "pointer", transition: "color 0.2s, border-color 0.2s", whiteSpace: "nowrap" as const, flexShrink: 0,
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
   content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0 },
