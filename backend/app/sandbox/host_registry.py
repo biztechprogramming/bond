@@ -31,6 +31,7 @@ class RemoteHost:
     labels: list[str] = field(default_factory=list)
     enabled: bool = True
     status: Literal["active", "draining", "offline"] = "active"
+    auth_token: str = ""
     # Runtime state
     running_count: int = 0
     last_health_check: str | None = None
@@ -113,6 +114,16 @@ class HostRegistry:
                         continue
 
                     labels = json.loads(row.get("labels", "[]")) if isinstance(row.get("labels"), str) else row.get("labels", [])
+                    # Decrypt auth_token if present
+                    auth_token = ""
+                    raw_token = row.get("auth_token", "")
+                    if raw_token:
+                        try:
+                            from backend.app.core.crypto import decrypt_value
+                            auth_token = decrypt_value(raw_token)
+                        except Exception:
+                            logger.warning("Failed to decrypt auth_token for host %s", row["id"])
+
                     host = RemoteHost(
                         id=row["id"],
                         name=row["name"],
@@ -125,6 +136,7 @@ class HostRegistry:
                         labels=labels,
                         enabled=bool(row.get("enabled", 1)),
                         status=row.get("status", "active"),
+                        auth_token=auth_token,
                         running_count=running_counts.get(row["id"], 0),
                     )
                     new_hosts[host.id] = host
