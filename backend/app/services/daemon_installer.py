@@ -75,11 +75,13 @@ async def _run_ssh_command(
     ssh_key_path: str | None,
     command: str,
     timeout: float = 30.0,
-) -> tuple[int, str, str]:
+) -> tuple[int, str, str, str]:
     """Run a command on a remote host via SSH.
 
     If ssh_key_path is None or empty, probes for system SSH keys at
     common locations (/root/.ssh/id_ed25519, id_rsa, id_ecdsa).
+
+    Returns (returncode, stdout, stderr, display_command).
     """
     resolved_key = _resolve_ssh_key_path(ssh_key_path)
     args = [
@@ -95,6 +97,16 @@ async def _run_ssh_command(
         f"{user}@{host}",
         command,
     ])
+
+    # Build a human-readable command for display
+    display_parts = ["ssh"]
+    if resolved_key:
+        display_parts.extend(["-i", resolved_key])
+    if port != 22:
+        display_parts.extend(["-p", str(port)])
+    display_parts.append(f'{user}@{host} "{command}"')
+    display_cmd = " ".join(display_parts)
+
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -105,8 +117,8 @@ async def _run_ssh_command(
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()
-        return -1, "", "SSH command timed out"
-    return proc.returncode or 0, stdout.decode(), stderr.decode()
+        return -1, "", "SSH command timed out", display_cmd
+    return proc.returncode or 0, stdout.decode(), stderr.decode(), display_cmd
 
 
 async def _scp_file(
@@ -117,11 +129,13 @@ async def _scp_file(
     local_path: str | Path,
     remote_path: str,
     timeout: float = 30.0,
-) -> bool:
+) -> tuple[bool, str]:
     """Copy a file to a remote host via SCP.
 
     If ssh_key_path is None or empty, probes for system SSH keys at
     common locations (/root/.ssh/id_ed25519, id_rsa, id_ecdsa).
+
+    Returns (success, display_command).
     """
     resolved_key = _resolve_ssh_key_path(ssh_key_path)
     args = [
@@ -137,6 +151,16 @@ async def _scp_file(
         str(local_path),
         f"{user}@{host}:{remote_path}",
     ])
+
+    # Build a human-readable command for display
+    display_parts = ["scp"]
+    if resolved_key:
+        display_parts.extend(["-i", resolved_key])
+    if port != 22:
+        display_parts.extend(["-P", str(port)])
+    display_parts.extend([str(Path(local_path).name), f"{user}@{host}:{remote_path}"])
+    display_cmd = " ".join(display_parts)
+
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -148,11 +172,11 @@ async def _scp_file(
         proc.kill()
         await proc.communicate()
         logger.error("SCP timed out copying %s to %s:%s", local_path, host, remote_path)
-        return False
+        return False, display_cmd
     if proc.returncode != 0:
         logger.error("SCP failed: %s", stderr.decode())
-        return False
-    return True
+        return False, display_cmd
+    return True, display_cmd
 
 
 class DaemonInstaller:
@@ -175,7 +199,7 @@ class DaemonInstaller:
         }
 
         # Check Docker
-        rc, stdout, stderr = await _run_ssh_command(
+        rc, stdout, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path, "docker --version"
         )
         if rc == 0:
@@ -190,7 +214,7 @@ class DaemonInstaller:
 
         # Check Docker is running
         if result["docker"]:
-            rc, _, stderr = await _run_ssh_command(
+            rc, _, stderr, _ = await _run_ssh_command(
                 host, port, user, ssh_key_path, "docker info --format '{{.ServerVersion}}'"
             )
             if rc != 0:
@@ -198,7 +222,7 @@ class DaemonInstaller:
                 result["errors"].append(f"Docker not running: {stderr.strip()}")
 
         # Check Python 3.10+
-        rc, stdout, stderr = await _run_ssh_command(
+        rc, stdout, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             "python3 -c \"import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')\"",
         )
@@ -239,7 +263,7 @@ class DaemonInstaller:
             return {"success": False, "auth_token": "", "errors": prereqs["errors"]}
 
         # 2. Create install directory
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"sudo mkdir -p {_REMOTE_INSTALL_DIR} && sudo chown {user}:{user} {_REMOTE_INSTALL_DIR}",
         )
@@ -248,23 +272,25 @@ class DaemonInstaller:
             return {"success": False, "auth_token": "", "errors": errors}
 
         # 3. Copy daemon files
-        if not await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH):
+        ok, _ = await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH)
+        if not ok:
             errors.append("Failed to copy bond_host_daemon.py")
             return {"success": False, "auth_token": "", "errors": errors}
 
-        if not await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH):
+        ok, _ = await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH)
+        if not ok:
             errors.append("Failed to copy requirements-daemon.txt")
             return {"success": False, "auth_token": "", "errors": errors}
 
         # 4. Install Python dependencies
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"pip install -r {_REMOTE_REQUIREMENTS_PATH}",
             timeout=120.0,
         )
         if rc != 0:
             # Try pip3
-            rc, _, stderr = await _run_ssh_command(
+            rc, _, stderr, _ = await _run_ssh_command(
                 host, port, user, ssh_key_path,
                 f"pip3 install -r {_REMOTE_REQUIREMENTS_PATH}",
                 timeout=120.0,
@@ -283,7 +309,7 @@ class DaemonInstaller:
 
         # Write systemd unit via SSH (escape for shell)
         escaped = unit_content.replace("'", "'\\''")
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"echo '{escaped}' | sudo tee /etc/systemd/system/{_SERVICE_NAME}.service > /dev/null",
         )
@@ -292,7 +318,7 @@ class DaemonInstaller:
             return {"success": False, "auth_token": "", "errors": errors}
 
         # 6. Enable and start service
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"sudo systemctl daemon-reload && sudo systemctl enable {_SERVICE_NAME} && sudo systemctl start {_SERVICE_NAME}",
         )
@@ -303,7 +329,7 @@ class DaemonInstaller:
         # 7. Wait for health check
         for attempt in range(10):
             await asyncio.sleep(1)
-            rc, stdout, _ = await _run_ssh_command(
+            rc, stdout, _, _ = await _run_ssh_command(
                 host, port, user, ssh_key_path,
                 f"curl -sf http://localhost:{daemon_port}/health",
             )
@@ -332,6 +358,11 @@ class DaemonInstaller:
 
         def _evt(step: str, status: str, message: str, **extra: Any) -> dict[str, Any]:
             return {"step": step, "status": status, "message": message, **extra}
+
+        # Resolve SSH key once so we can show it in the info line
+        resolved_key = _resolve_ssh_key_path(ssh_key_path)
+        key_display = resolved_key or "system default"
+        yield {"type": "info", "message": f"Connecting as {user}@{host} via SSH key {key_display}"}
 
         # 1. Check prerequisites
         yield _evt("prerequisites", "running", f"Checking prerequisites on {host}...")
@@ -368,10 +399,11 @@ class DaemonInstaller:
 
         # 2. Create install directory
         yield _evt("mkdir", "running", f"Creating {_REMOTE_INSTALL_DIR}...")
-        rc, _, stderr = await _run_ssh_command(
-            host, port, user, ssh_key_path,
-            f"sudo mkdir -p {_REMOTE_INSTALL_DIR} && sudo chown {user}:{user} {_REMOTE_INSTALL_DIR}",
+        mkdir_cmd = f"sudo mkdir -p {_REMOTE_INSTALL_DIR} && sudo chown {user}:{user} {_REMOTE_INSTALL_DIR}"
+        rc, _, stderr, display_cmd = await _run_ssh_command(
+            host, port, user, ssh_key_path, mkdir_cmd,
         )
+        yield {"type": "command", "message": display_cmd}
         if rc != 0:
             msg = f"Failed to create install dir: {stderr.strip()}"
             yield _evt("mkdir", "error", msg)
@@ -381,7 +413,9 @@ class DaemonInstaller:
 
         # 3. Copy daemon files
         yield _evt("copy", "running", "Copying bond_host_daemon.py...")
-        if not await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH):
+        scp_ok, scp_cmd = await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH)
+        yield {"type": "command", "message": scp_cmd}
+        if not scp_ok:
             msg = "Failed to copy bond_host_daemon.py"
             yield _evt("copy", "error", msg)
             yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
@@ -389,7 +423,9 @@ class DaemonInstaller:
         yield _evt("copy", "ok", "Copied bond_host_daemon.py")
 
         yield _evt("copy", "running", "Copying requirements-daemon.txt...")
-        if not await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH):
+        scp_ok, scp_cmd = await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH)
+        yield {"type": "command", "message": scp_cmd}
+        if not scp_ok:
             msg = "Failed to copy requirements-daemon.txt"
             yield _evt("copy", "error", msg)
             yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
@@ -398,18 +434,20 @@ class DaemonInstaller:
 
         # 4. Install Python dependencies
         yield _evt("deps", "running", "Installing Python dependencies (this may take a minute)...")
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, display_cmd = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"pip install -r {_REMOTE_REQUIREMENTS_PATH}",
             timeout=120.0,
         )
+        yield {"type": "command", "message": display_cmd}
         if rc != 0:
             yield _evt("deps", "running", "Retrying with pip3...")
-            rc, _, stderr = await _run_ssh_command(
+            rc, _, stderr, display_cmd = await _run_ssh_command(
                 host, port, user, ssh_key_path,
                 f"pip3 install -r {_REMOTE_REQUIREMENTS_PATH}",
                 timeout=120.0,
             )
+            yield {"type": "command", "message": display_cmd}
             if rc != 0:
                 msg = f"Failed to install dependencies: {stderr.strip()}"
                 yield _evt("deps", "error", msg)
@@ -426,10 +464,11 @@ class DaemonInstaller:
             auth_token=auth_token,
         )
         escaped = unit_content.replace("'", "'\\''")
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, display_cmd = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"echo '{escaped}' | sudo tee /etc/systemd/system/{_SERVICE_NAME}.service > /dev/null",
         )
+        yield {"type": "command", "message": display_cmd}
         if rc != 0:
             msg = f"Failed to write systemd unit: {stderr.strip()}"
             yield _evt("systemd", "error", msg)
@@ -439,10 +478,11 @@ class DaemonInstaller:
 
         # 6. Enable and start service
         yield _evt("start", "running", "Starting bond-host-daemon service...")
-        rc, _, stderr = await _run_ssh_command(
-            host, port, user, ssh_key_path,
-            f"sudo systemctl daemon-reload && sudo systemctl enable {_SERVICE_NAME} && sudo systemctl start {_SERVICE_NAME}",
+        start_cmd = f"sudo systemctl daemon-reload && sudo systemctl enable {_SERVICE_NAME} && sudo systemctl start {_SERVICE_NAME}"
+        rc, _, stderr, display_cmd = await _run_ssh_command(
+            host, port, user, ssh_key_path, start_cmd,
         )
+        yield {"type": "command", "message": display_cmd}
         if rc != 0:
             msg = f"Failed to start service: {stderr.strip()}"
             yield _evt("start", "error", msg)
@@ -454,10 +494,12 @@ class DaemonInstaller:
         yield _evt("health", "running", "Waiting for health check...")
         for attempt in range(10):
             await asyncio.sleep(1)
-            rc, stdout, _ = await _run_ssh_command(
+            rc, stdout, _, display_cmd = await _run_ssh_command(
                 host, port, user, ssh_key_path,
                 f"curl -sf http://localhost:{daemon_port}/health",
             )
+            if attempt == 0:
+                yield {"type": "command", "message": display_cmd}
             if rc == 0 and ("healthy" in stdout.lower() or "daemon_version" in stdout.lower()):
                 yield _evt("health", "ok", f"Health check passed (attempt {attempt + 1})")
                 yield _evt("done", "done", "Daemon installed successfully",
@@ -481,7 +523,7 @@ class DaemonInstaller:
         errors: list[str] = []
 
         # Stop and disable service
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"sudo systemctl stop {_SERVICE_NAME} 2>/dev/null; "
             f"sudo systemctl disable {_SERVICE_NAME} 2>/dev/null; "
@@ -492,7 +534,7 @@ class DaemonInstaller:
             errors.append(f"Service removal warning: {stderr.strip()}")
 
         # Remove installed files
-        rc, _, stderr = await _run_ssh_command(
+        rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"rm -rf {_REMOTE_INSTALL_DIR}",
         )
@@ -511,7 +553,7 @@ class DaemonInstaller:
         """Check if bond-host-daemon is running on a remote host."""
         result: dict[str, Any] = {"running": False, "version": "", "uptime": ""}
 
-        rc, stdout, _ = await _run_ssh_command(
+        rc, stdout, _, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"systemctl is-active {_SERVICE_NAME}",
         )
@@ -519,7 +561,7 @@ class DaemonInstaller:
             result["running"] = True
 
         # Get uptime
-        rc, stdout, _ = await _run_ssh_command(
+        rc, stdout, _, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
             f"systemctl show {_SERVICE_NAME} --property=ActiveEnterTimestamp --value",
         )

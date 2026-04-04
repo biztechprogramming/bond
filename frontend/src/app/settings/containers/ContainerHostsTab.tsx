@@ -38,7 +38,7 @@ export default function ContainerHostsTab() {
   const [editingHost, setEditingHost] = useState<ContainerHost | null>(null);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installResults, setInstallResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
-  const [installLog, setInstallLog] = useState<{ hostId: string; lines: { step: string; status: string; message: string }[]; done: boolean; success: boolean } | null>(null);
+  const [installLog, setInstallLog] = useState<{ hostId: string; lines: { type?: string; step: string; status: string; message: string }[]; done: boolean; success: boolean } | null>(null);
   const installLogRef = React.useRef<HTMLDivElement>(null);
 
   const fetchHosts = useCallback(async () => {
@@ -123,7 +123,9 @@ export default function ContainerHostsTab() {
           if (!line) continue;
           try {
             const evt = JSON.parse(line);
-            if (evt.status === "done") {
+            if (evt.type === "command" || evt.type === "info") {
+              setInstallLog(prev => prev ? { ...prev, lines: [...prev.lines, { type: evt.type, step: "", status: "", message: evt.message }] } : prev);
+            } else if (evt.status === "done") {
               setInstallLog(prev => prev ? { ...prev, done: true, success: !!evt.success, lines: [...prev.lines, { step: evt.step, status: evt.success ? "ok" : "error", message: evt.message }] } : prev);
               if (evt.success) fetchHosts();
             } else {
@@ -354,14 +356,32 @@ export default function ContainerHostsTab() {
               maxHeight: 320,
               overflowY: "auto",
               color: "#b0b0c0",
+              userSelect: "text",
+              cursor: "text",
             }}
           >
-            {installLog.lines.map((l, i) => (
-              <div key={i} style={{ color: l.status === "error" ? "#ff6c8a" : l.status === "ok" ? "#6cffa0" : "#b0b0c0" }}>
-                <span style={{ color: "#5a5a6e", marginRight: 8 }}>{l.status === "running" ? "⟳" : l.status === "ok" ? "✓" : "✗"}</span>
-                {l.message}
-              </div>
-            ))}
+            {installLog.lines.map((l, i) => {
+              if (l.type === "info") {
+                return (
+                  <div key={i} style={{ color: "#6c8aff" }}>
+                    <span style={{ marginRight: 8 }}>→</span>{l.message}
+                  </div>
+                );
+              }
+              if (l.type === "command") {
+                return (
+                  <div key={i} style={{ color: "#8888a0" }}>
+                    <span style={{ marginRight: 8 }}>$</span>{l.message}
+                  </div>
+                );
+              }
+              return (
+                <div key={i} style={{ color: l.status === "error" ? "#ff6c8a" : l.status === "ok" ? "#6cffa0" : "#b0b0c0" }}>
+                  <span style={{ color: "#5a5a6e", marginRight: 8 }}>{l.status === "running" ? "⟳" : l.status === "ok" ? "✓" : "✗"}</span>
+                  {l.message}
+                </div>
+              );
+            })}
             {!installLog.done && (
               <div style={{ color: "#5a5a6e" }}>
                 <span style={{ animation: "pulse 1s infinite" }}>▍</span>
