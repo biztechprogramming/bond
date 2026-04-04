@@ -36,7 +36,7 @@ export default function AddContainerHostModal({ onComplete, onCancel }: AddConta
           host,
           port: parseInt(port),
           user,
-          ssh_key: sshKey,
+          ssh_key: sshKey || null,
           daemon_port: parseInt(daemonPort),
           max_agents: parseInt(maxAgents),
           memory_mb: parseInt(memoryMb),
@@ -115,8 +115,9 @@ export default function AddContainerHostModal({ onComplete, onCancel }: AddConta
           </div>
 
           <div style={ms.field}>
-            <label style={ms.label}>SSH Key (paste private key or leave blank for default)</label>
-            <textarea style={{ ...ms.input, minHeight: 80, fontFamily: "monospace", fontSize: "0.8rem" }} value={sshKey} onChange={e => setSshKey(e.target.value)} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+            <label style={ms.label}>SSH Key <span style={{ fontWeight: "normal", color: "#888" }}>(optional)</span></label>
+            <textarea style={{ ...ms.input, minHeight: 80, fontFamily: "monospace", fontSize: "0.8rem" }} value={sshKey} onChange={e => setSshKey(e.target.value)} placeholder="Leave blank to use keys from ~/.ssh (id_rsa, id_ed25519, etc.)" />
+            <p style={{ margin: "4px 0 0", fontSize: "0.75rem", color: "#888" }}>If your SSH keys are already configured on this machine, you can leave this blank.</p>
           </div>
 
           <div style={ms.row}>

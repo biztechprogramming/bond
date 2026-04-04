@@ -39,25 +39,33 @@ WantedBy=multi-user.target
 """
 
 
+
 async def _run_ssh_command(
     host: str,
     port: int,
     user: str,
-    ssh_key_path: str,
+    ssh_key_path: str | None,
     command: str,
     timeout: float = 30.0,
 ) -> tuple[int, str, str]:
-    """Run a command on a remote host via SSH."""
+    """Run a command on a remote host via SSH.
+
+    If ssh_key_path is None or empty, SSH will use the default keys
+    from ~/.ssh (id_rsa, id_ed25519, etc.).
+    """
     args = [
         "ssh",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=10",
-        "-i", ssh_key_path,
+    ]
+    if ssh_key_path:
+        args.extend(["-i", ssh_key_path])
+    args.extend([
         "-p", str(port),
         f"{user}@{host}",
         command,
-    ]
+    ])
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -76,22 +84,29 @@ async def _scp_file(
     host: str,
     port: int,
     user: str,
-    ssh_key_path: str,
+    ssh_key_path: str | None,
     local_path: str | Path,
     remote_path: str,
     timeout: float = 30.0,
 ) -> bool:
-    """Copy a file to a remote host via SCP."""
+    """Copy a file to a remote host via SCP.
+
+    If ssh_key_path is None or empty, SCP will use the default keys
+    from ~/.ssh (id_rsa, id_ed25519, etc.).
+    """
     args = [
         "scp",
         "-o", "StrictHostKeyChecking=accept-new",
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=10",
-        "-i", ssh_key_path,
+    ]
+    if ssh_key_path:
+        args.extend(["-i", ssh_key_path])
+    args.extend([
         "-P", str(port),
         str(local_path),
         f"{user}@{host}:{remote_path}",
-    ]
+    ])
     proc = await asyncio.create_subprocess_exec(
         *args,
         stdout=asyncio.subprocess.PIPE,
@@ -118,7 +133,7 @@ class DaemonInstaller:
         host: str,
         port: int,
         user: str,
-        ssh_key_path: str,
+        ssh_key_path: str | None,
     ) -> dict[str, Any]:
         """Check that Docker and Python 3.10+ are available on the remote host."""
         result: dict[str, Any] = {
@@ -171,7 +186,7 @@ class DaemonInstaller:
         host: str,
         port: int,
         user: str,
-        ssh_key_path: str,
+        ssh_key_path: str | None,
         daemon_port: int = 9100,
     ) -> dict[str, Any]:
         """Install bond-host-daemon on a remote host.
@@ -267,7 +282,7 @@ class DaemonInstaller:
         host: str,
         port: int,
         user: str,
-        ssh_key_path: str,
+        ssh_key_path: str | None,
     ) -> dict[str, Any]:
         """Stop and remove bond-host-daemon from a remote host."""
         errors: list[str] = []
@@ -298,7 +313,7 @@ class DaemonInstaller:
         host: str,
         port: int,
         user: str,
-        ssh_key_path: str,
+        ssh_key_path: str | None,
     ) -> dict[str, Any]:
         """Check if bond-host-daemon is running on a remote host."""
         result: dict[str, Any] = {"running": False, "version": "", "uptime": ""}
