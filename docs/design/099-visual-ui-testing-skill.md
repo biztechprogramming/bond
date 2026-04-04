@@ -433,6 +433,12 @@ Faster start but larger image and stale if dependencies change.
 4. Test inside the container: can all three services start and connect to test SpacetimeDB?
 5. Verify Playwright can connect to the in-container frontend
 
+### Phase 4b: Test SpacetimeDB UI Controls (Week 2)
+
+1. Backend API (`backend/app/api/v1/test_spacetimedb.py`) — endpoints for status, start/stop (SSE streaming), connectivity testing, and settings management
+2. Frontend component (`frontend/src/app/settings/deployment/TestSpacetimeDB.tsx`) — card in the Deployment tab with host/port/module settings, start/stop buttons, streaming log output, and connectivity test buttons
+3. Wired into `DeploymentTab.tsx` — visible on dashboard and agent-settings views
+
 ### Phase 5: Skill + Prompt Integration (Week 3)
 
 1. Write `skills/visual-ui-test/SKILL.md`

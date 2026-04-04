@@ -30,6 +30,7 @@ from backend.app.api.v1.skills import router as skills_router
 from backend.app.api.v1.optimization import router as optimization_router
 from backend.app.api.v1.llm import router as llm_router
 from backend.app.api.v1.hosts import router as hosts_router
+from backend.app.api.v1.test_spacetimedb import router as test_spacetimedb_router
 
 
 @asynccontextmanager
@@ -128,3 +129,4 @@ app.include_router(skills_router, prefix="/api/v1")
 app.include_router(optimization_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
 app.include_router(hosts_router, prefix="/api/v1")
+app.include_router(test_spacetimedb_router, prefix="/api/v1")
