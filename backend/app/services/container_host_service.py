@@ -156,6 +156,8 @@ class ContainerHostService:
         d["is_local"] = bool(d.get("is_local", 0))
         # Track whether daemon auth token exists (daemon installed)
         d["has_auth_token"] = bool(d.get("auth_token"))
+        # Remove raw auth_token — only expose the boolean has_auth_token
+        d.pop("auth_token", None)
         # Decrypt SSH key for internal use but don't expose raw key in API
         ssh_key = d.get("ssh_key_encrypted")
         if ssh_key:

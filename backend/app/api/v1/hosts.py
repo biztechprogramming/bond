@@ -242,12 +242,26 @@ async def test_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
             await registry.refresh()
             reg_host = registry.get_host(host_id)
         if not reg_host:
-            return {
-                "ssh": {
-                    "status": "error",
-                    "error": f"Host '{host_id}' not found in registry after refresh. Is it enabled?",
-                }
-            }
+            # Bypass registry: build a temporary RemoteHost from DB data for testing
+            from backend.app.sandbox.host_registry import RemoteHost
+            import json as _json
+            labels = host.get("labels", [])
+            if isinstance(labels, str):
+                labels = _json.loads(labels)
+            reg_host = RemoteHost(
+                id=host["id"],
+                name=host["name"],
+                host=host["host"],
+                port=host.get("port", 22),
+                user=host.get("user", "bond"),
+                ssh_key=host.get("ssh_key_decrypted", ""),
+                daemon_port=host.get("daemon_port", 8990),
+                max_agents=host.get("max_agents", 4),
+                labels=labels,
+                enabled=host.get("enabled", True),
+            )
+            reason = "disabled" if not host.get("enabled", True) else "not yet loaded"
+            logger.info("Host '%s' not in registry (%s), using temporary RemoteHost for test", host_id, reason)
 
         tunnel = await tunnel_manager.ensure_tunnel(reg_host)
         results["ssh"] = {"status": "ok"}
