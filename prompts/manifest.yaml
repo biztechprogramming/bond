@@ -477,3 +477,7 @@ security/secrets/secrets.md:
     - "secret management"
     - "API key storage"
     - "environment variables for secrets"
+
+frontend/visual-verification.md:
+  tier: 2
+  phase: implementing
