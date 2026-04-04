@@ -275,15 +275,20 @@ class DaemonInstaller:
         if not prereqs["docker"] or not prereqs["python"]:
             return {"success": False, "auth_token": "", "errors": prereqs["errors"]}
 
-        # 2. Create install directory
-        rc, _, stderr, _ = await _run_ssh_command(
+        # 2. Create install directory (skip if already exists and writable)
+        rc, _, _, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
-            f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}",
+            f"test -d {_REMOTE_INSTALL_DIR} && test -w {_REMOTE_INSTALL_DIR}",
         )
         if rc != 0:
-            sudo_msg = _check_sudo_error(rc, stderr, f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}", user, host)
-            errors.append(sudo_msg or f"Failed to create install dir: {stderr.strip()}")
-            return {"success": False, "auth_token": "", "errors": errors}
+            rc, _, stderr, _ = await _run_ssh_command(
+                host, port, user, ssh_key_path,
+                f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}",
+            )
+            if rc != 0:
+                sudo_msg = _check_sudo_error(rc, stderr, f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}", user, host)
+                errors.append(sudo_msg or f"Failed to create install dir: {stderr.strip()}")
+                return {"success": False, "auth_token": "", "errors": errors}
 
         # 3. Copy daemon files
         ok, _ = await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH)
@@ -413,20 +418,28 @@ class DaemonInstaller:
                             success=False, auth_token="", errors=prereqs["errors"])
             return
 
-        # 2. Create install directory
-        yield _evt("mkdir", "running", f"Creating {_REMOTE_INSTALL_DIR}...")
-        mkdir_cmd = f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}"
-        rc, _, stderr, display_cmd = await _run_ssh_command(
-            host, port, user, ssh_key_path, mkdir_cmd,
+        # 2. Create install directory (skip if already exists and writable)
+        yield _evt("mkdir", "running", f"Checking {_REMOTE_INSTALL_DIR}...")
+        check_cmd = f"test -d {_REMOTE_INSTALL_DIR} && test -w {_REMOTE_INSTALL_DIR}"
+        rc, _, _, display_cmd = await _run_ssh_command(
+            host, port, user, ssh_key_path, check_cmd,
         )
         yield {"type": "command", "message": display_cmd}
-        if rc != 0:
-            sudo_msg = _check_sudo_error(rc, stderr, mkdir_cmd, user, host)
-            msg = sudo_msg or f"Failed to create install dir: {stderr.strip()}"
-            yield _evt("mkdir", "error", msg)
-            yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
-            return
-        yield _evt("mkdir", "ok", f"Created {_REMOTE_INSTALL_DIR}")
+        if rc == 0:
+            yield _evt("mkdir", "ok", f"Directory {_REMOTE_INSTALL_DIR} already exists and is writable")
+        else:
+            mkdir_cmd = f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}"
+            rc, _, stderr, display_cmd = await _run_ssh_command(
+                host, port, user, ssh_key_path, mkdir_cmd,
+            )
+            yield {"type": "command", "message": display_cmd}
+            if rc != 0:
+                sudo_msg = _check_sudo_error(rc, stderr, mkdir_cmd, user, host)
+                msg = sudo_msg or f"Failed to create install dir: {stderr.strip()}"
+                yield _evt("mkdir", "error", msg)
+                yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+                return
+            yield _evt("mkdir", "ok", f"Created {_REMOTE_INSTALL_DIR}")
 
         # 3. Copy daemon files
         yield _evt("copy", "running", "Copying bond_host_daemon.py...")

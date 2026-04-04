@@ -42,6 +42,8 @@ export default function ContainerHostsTab() {
   const installLogRef = React.useRef<HTMLDivElement>(null);
   const scrollToBottom = () => requestAnimationFrame(() => installLogRef.current?.scrollTo({ top: installLogRef.current.scrollHeight, behavior: "smooth" }));
 
+  useEffect(() => { scrollToBottom(); }, [installLog]);
+
   const fetchHosts = useCallback(async () => {
     try {
       const res = await fetch(API);
@@ -106,7 +108,6 @@ export default function ContainerHostsTab() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setInstallLog(prev => prev ? { ...prev, done: true, lines: [...prev.lines, { step: "error", status: "error", message: data.detail || "Installation failed" }] } : prev);
-        scrollToBottom();
         setInstallingId(null);
         return;
       }
@@ -133,13 +134,11 @@ export default function ContainerHostsTab() {
             } else {
               setInstallLog(prev => prev ? { ...prev, lines: [...prev.lines, { step: evt.step, status: evt.status, message: evt.message }] } : prev);
             }
-            scrollToBottom();
           } catch { /* skip malformed */ }
         }
       }
     } catch (err: any) {
       setInstallLog(prev => prev ? { ...prev, done: true, lines: [...prev.lines, { step: "error", status: "error", message: err.message }] } : prev);
-      scrollToBottom();
     }
     setInstallingId(null);
   };
