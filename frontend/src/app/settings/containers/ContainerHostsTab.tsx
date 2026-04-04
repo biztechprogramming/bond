@@ -41,14 +41,24 @@ export default function ContainerHostsTab() {
   const [installLog, setInstallLog] = useState<{ hostId: string; lines: { type?: string; step: string; status: string; message: string }[]; done: boolean; success: boolean } | null>(null);
   const installLogRef = React.useRef<HTMLDivElement>(null);
   const installSectionRef = useRef<HTMLElement>(null);
-  // Scroll the parent content area to show the bottom of the install section on every log update
+  // Auto-scroll the log div itself (not the page) on every log update
   useEffect(() => {
-    if (installLog && installSectionRef.current) {
+    if (installLog && installLogRef.current) {
       requestAnimationFrame(() => {
-        installSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+        installLogRef.current!.scrollTop = installLogRef.current!.scrollHeight;
       });
     }
   }, [installLog]);
+
+  // When install log first appears, scroll the section into view once
+  const [logScrolledIntoView, setLogScrolledIntoView] = useState(false);
+  useEffect(() => {
+    if (installLog && !logScrolledIntoView && installSectionRef.current) {
+      installSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      setLogScrolledIntoView(true);
+    }
+    if (!installLog) setLogScrolledIntoView(false);
+  }, [installLog, logScrolledIntoView]);
 
   const fetchHosts = useCallback(async () => {
     try {
@@ -367,8 +377,8 @@ export default function ContainerHostsTab() {
               fontFamily: "monospace",
               fontSize: "0.82rem",
               lineHeight: 1.7,
-              minHeight: 200,
-              maxHeight: "calc(100vh - 350px)",
+              minHeight: 120,
+              maxHeight: "min(400px, 50vh)",
               overflowY: "auto",
               color: "#b0b0c0",
               userSelect: "text",
