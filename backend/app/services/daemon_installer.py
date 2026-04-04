@@ -37,9 +37,12 @@ def _check_ssh_error(stderr: str) -> str | None:
 def _check_sudo_error(rc: int, stderr: str, command: str, user: str, host: str) -> str | None:
     """If stderr indicates sudo needs a password, return a helpful message."""
     if rc != 0 and "a password is required" in stderr.lower():
+        # Strip -n flag — the manual command runs in an interactive terminal where
+        # the user can type their password.
+        manual_cmd = command.replace("sudo -n ", "sudo ")
         return (
             f"sudo requires a password. Either configure passwordless sudo for "
-            f"{user} on {host}, or run this command manually:\n  {command}"
+            f"{user} on {host}, or run this command manually:\n  {manual_cmd}"
         )
     return None
 
