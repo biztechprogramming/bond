@@ -283,3 +283,131 @@ async def test_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
 async def validate_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Comprehensive remote host validation (Design Doc 089 §12.3)."""
     return await test_host(host_id, db)
+
+
+# ---------------------------------------------------------------------------
+# Daemon installation endpoints (Phase 2, Gap 1)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{host_id}/install-daemon")
+async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """Install bond-host-daemon on a remote host."""
+    host = await _service.get(db, host_id)
+    if not host or host_id == "local":
+        raise HTTPException(404, f"Remote host '{host_id}' not found")
+
+    ssh_key = host.get("ssh_key_decrypted", "")
+    if not ssh_key:
+        raise HTTPException(400, "Host has no SSH key configured")
+
+    # Write SSH key to temp file for the installer
+    import tempfile, os
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+    try:
+        tmp.write(ssh_key)
+        tmp.close()
+        os.chmod(tmp.name, 0o600)
+
+        from backend.app.services.daemon_installer import DaemonInstaller
+        installer = DaemonInstaller()
+        result = await installer.install(
+            host=host["host"],
+            port=host.get("port", 22),
+            user=host.get("user", "bond"),
+            ssh_key_path=tmp.name,
+            daemon_port=host.get("daemon_port", 8990),
+        )
+    finally:
+        os.unlink(tmp.name)
+
+    # Store auth token in DB if install succeeded
+    if result.get("success") and result.get("auth_token"):
+        from backend.app.core.crypto import encrypt_value
+        encrypted_token = encrypt_value(result["auth_token"])
+        from sqlalchemy import text as sql_text
+        await db.execute(
+            sql_text("UPDATE container_hosts SET auth_token = :token, updated_at = datetime('now') WHERE id = :id"),
+            {"token": encrypted_token, "id": host_id},
+        )
+        await db.commit()
+
+        # Refresh registry to pick up new token
+        registry = _get_registry()
+        if registry:
+            await registry.refresh()
+
+    return result
+
+
+@router.post("/{host_id}/uninstall-daemon")
+async def uninstall_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """Remove bond-host-daemon from a remote host."""
+    host = await _service.get(db, host_id)
+    if not host or host_id == "local":
+        raise HTTPException(404, f"Remote host '{host_id}' not found")
+
+    ssh_key = host.get("ssh_key_decrypted", "")
+    if not ssh_key:
+        raise HTTPException(400, "Host has no SSH key configured")
+
+    import tempfile, os
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+    try:
+        tmp.write(ssh_key)
+        tmp.close()
+        os.chmod(tmp.name, 0o600)
+
+        from backend.app.services.daemon_installer import DaemonInstaller
+        installer = DaemonInstaller()
+        result = await installer.uninstall(
+            host=host["host"],
+            port=host.get("port", 22),
+            user=host.get("user", "bond"),
+            ssh_key_path=tmp.name,
+        )
+    finally:
+        os.unlink(tmp.name)
+
+    # Clear auth token
+    if result.get("success"):
+        from sqlalchemy import text as sql_text
+        await db.execute(
+            sql_text("UPDATE container_hosts SET auth_token = NULL, updated_at = datetime('now') WHERE id = :id"),
+            {"id": host_id},
+        )
+        await db.commit()
+
+    return result
+
+
+@router.get("/{host_id}/daemon-status")
+async def daemon_status(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """Check if bond-host-daemon is running on a remote host."""
+    host = await _service.get(db, host_id)
+    if not host or host_id == "local":
+        raise HTTPException(404, f"Remote host '{host_id}' not found")
+
+    ssh_key = host.get("ssh_key_decrypted", "")
+    if not ssh_key:
+        raise HTTPException(400, "Host has no SSH key configured")
+
+    import tempfile, os
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+    try:
+        tmp.write(ssh_key)
+        tmp.close()
+        os.chmod(tmp.name, 0o600)
+
+        from backend.app.services.daemon_installer import DaemonInstaller
+        installer = DaemonInstaller()
+        result = await installer.check_status(
+            host=host["host"],
+            port=host.get("port", 22),
+            user=host.get("user", "bond"),
+            ssh_key_path=tmp.name,
+        )
+    finally:
+        os.unlink(tmp.name)
+
+    return result

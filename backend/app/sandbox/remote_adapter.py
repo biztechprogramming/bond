@@ -41,7 +41,8 @@ class RemoteContainerAdapter:
 
     def _auth_headers(self) -> dict[str, str]:
         """Build auth headers if the daemon requires a token."""
-        # Token could be stored in host config in the future
+        if self._host.auth_token:
+            return {"Authorization": f"Bearer {self._host.auth_token}"}
         return {}
 
     async def create_container(
