@@ -29,114 +29,165 @@ export default function EditContainerHostModal({ host: h, onComplete, onCancel }
   const [daemonPort, setDaemonPort] = useState(String(h.daemon_port));
   const [maxAgents, setMaxAgents] = useState(String(h.max_agents));
   const [memoryMb, setMemoryMb] = useState(String(h.memory_mb));
-  const [labels, setLabels] = useState(h.labels.join(", "));
+  const [labels, setLabels] = useState(h.labels?.join(", ") || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const handleSave = async () => {
-    if (!host) { setError("Host is required."); return; }
     setSaving(true);
     setError("");
     try {
-      const body: Record<string, unknown> = {
-        name: name || h.id,
-        host,
-        port: parseInt(port),
-        user,
-        daemon_port: parseInt(daemonPort),
-        max_agents: parseInt(maxAgents),
-        memory_mb: parseInt(memoryMb),
-        labels: labels ? labels.split(",").map(l => l.trim()).filter(Boolean) : [],
+      const body: Record<string, any> = {
+        name, host, port: Number(port), user,
+        daemon_port: Number(daemonPort),
+        max_agents: Number(maxAgents),
+        memory_mb: Number(memoryMb),
+        labels: labels ? labels.split(",").map(l => l.trim()) : [],
       };
-      if (sshKeyChanged) body.ssh_key = sshKey;
+      if (sshKeyChanged && sshKey) body.ssh_key = sshKey;
       const res = await fetch(`${BACKEND_API}/hosts/${h.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
+      if (res.ok) { onComplete(); }
+      else {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.detail || `HTTP ${res.status}`);
+        setError(data.detail || "Failed to update host");
       }
-      onComplete();
-    } catch (err: any) {
-      setError(err.message);
-    }
+    } catch (err: any) { setError(err.message); }
     setSaving(false);
   };
 
   return (
-    <div style={ms.overlay} onClick={onCancel}>
-      <div style={ms.modal} onClick={e => e.stopPropagation()}>
-        <div style={ms.header}>
-          <h2 style={ms.title}>Edit Host: {h.id}</h2>
-          <button style={ms.closeBtn} onClick={onCancel}>&times;</button>
+    <div className="cht-modal-overlay" onClick={onCancel}>
+      <style>{`
+        .cht-modal-overlay {
+          position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+          display: flex; align-items: center; justify-content: center;
+          z-index: 1000; padding: 16px; box-sizing: border-box;
+        }
+        .cht-modal {
+          background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px;
+          width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto;
+          display: flex; flex-direction: column;
+        }
+        .cht-modal-header {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 20px 24px; border-bottom: 1px solid #1e1e2e;
+        }
+        .cht-modal-body { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+        .cht-modal-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .cht-modal-field { display: flex; flex-direction: column; gap: 4px; }
+        .cht-modal-label { font-size: 0.85rem; color: #8888a0; font-weight: 500; }
+        .cht-modal-input {
+          background-color: #1e1e2e; border: 1px solid #2a2a3e; border-radius: 8px;
+          padding: 8px 12px; color: #e0e0e8; font-size: 0.9rem; outline: none;
+          width: 100%; box-sizing: border-box;
+        }
+        .cht-modal-textarea {
+          background-color: #1e1e2e; border: 1px solid #2a2a3e; border-radius: 8px;
+          padding: 8px 12px; color: #e0e0e8; font-size: 0.85rem; font-family: monospace;
+          outline: none; width: 100%; box-sizing: border-box; resize: vertical; min-height: 80px;
+        }
+        .cht-modal-footer {
+          display: flex; justify-content: flex-end; gap: 8px;
+          padding: 16px 24px; border-top: 1px solid #1e1e2e; flex-wrap: wrap;
+        }
+        @media (max-width: 768px) {
+          .cht-modal-body { padding: 16px; }
+          .cht-modal-header { padding: 16px; }
+          .cht-modal-footer { padding: 12px 16px; }
+          .cht-modal-row { grid-template-columns: 1fr; }
+        }
+      `}</style>
+      <div className="cht-modal" onClick={e => e.stopPropagation()}>
+        <div className="cht-modal-header">
+          <h2 style={{ fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e8", margin: 0 }}>Edit Host: {h.name}</h2>
+          <button style={{ background: "none", border: "none", color: "#5a5a6e", fontSize: "1.5rem", cursor: "pointer" }} onClick={onCancel}>&times;</button>
         </div>
 
-        <div style={ms.body}>
-          <div style={ms.row}>
-            <div style={ms.field}>
-              <label style={ms.label}>Display Name</label>
-              <input style={ms.input} value={name} onChange={e => setName(e.target.value)} />
+        <div className="cht-modal-body">
+          <div className="cht-modal-row">
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">Display Name</label>
+              <input className="cht-modal-input" value={name} onChange={e => setName(e.target.value)} />
+            </div>
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">Host</label>
+              <input className="cht-modal-input" value={host} onChange={e => setHost(e.target.value)} />
             </div>
           </div>
 
-          <div style={ms.row}>
-            <div style={ms.field}>
-              <label style={ms.label}>Host / IP</label>
-              <input style={ms.input} value={host} onChange={e => setHost(e.target.value)} />
+          <div className="cht-modal-row">
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">SSH Port</label>
+              <input className="cht-modal-input" type="number" value={port} onChange={e => setPort(e.target.value)} />
             </div>
-            <div style={ms.field}>
-              <label style={ms.label}>SSH Port</label>
-              <input style={ms.input} type="number" value={port} onChange={e => setPort(e.target.value)} />
-            </div>
-          </div>
-
-          <div style={ms.row}>
-            <div style={ms.field}>
-              <label style={ms.label}>SSH User</label>
-              <input style={ms.input} value={user} onChange={e => setUser(e.target.value)} />
-            </div>
-            <div style={ms.field}>
-              <label style={ms.label}>Daemon Port</label>
-              <input style={ms.input} type="number" value={daemonPort} onChange={e => setDaemonPort(e.target.value)} />
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">SSH User</label>
+              <input className="cht-modal-input" value={user} onChange={e => setUser(e.target.value)} />
             </div>
           </div>
 
-          <div style={ms.field}>
-            <label style={ms.label}>SSH Key {!sshKeyChanged && "(leave unchanged)"}</label>
+          <div className="cht-modal-row">
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">Daemon Port</label>
+              <input className="cht-modal-input" type="number" value={daemonPort} onChange={e => setDaemonPort(e.target.value)} />
+            </div>
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">Max Agents</label>
+              <input className="cht-modal-input" type="number" value={maxAgents} onChange={e => setMaxAgents(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="cht-modal-row">
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">Memory (MB)</label>
+              <input className="cht-modal-input" type="number" value={memoryMb} onChange={e => setMemoryMb(e.target.value)} />
+            </div>
+            <div className="cht-modal-field">
+              <label className="cht-modal-label">Labels (comma-separated)</label>
+              <input className="cht-modal-input" value={labels} onChange={e => setLabels(e.target.value)} placeholder="gpu,high-mem" />
+            </div>
+          </div>
+
+          <div className="cht-modal-field">
+            <label className="cht-modal-label">SSH Private Key</label>
             {!sshKeyChanged ? (
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input style={{ ...ms.input, flex: 1 }} value="••••••••" disabled />
-                <button style={ms.replaceBtn} onClick={() => setSshKeyChanged(true)}>Replace</button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ color: "#5a5a6e", fontSize: "0.9rem" }}>••••••••</span>
+                <button
+                  style={{ background: "none", border: "1px solid #2a2a3e", borderRadius: 6, padding: "6px 12px", color: "#8888a0", cursor: "pointer", fontSize: "0.8rem", whiteSpace: "nowrap" }}
+                  onClick={() => setSshKeyChanged(true)}
+                >
+                  Replace
+                </button>
               </div>
             ) : (
-              <textarea style={{ ...ms.input, minHeight: 80, fontFamily: "monospace", fontSize: "0.8rem" }} value={sshKey} onChange={e => setSshKey(e.target.value)} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+              <textarea className="cht-modal-textarea" value={sshKey} onChange={e => setSshKey(e.target.value)} placeholder="Paste new SSH private key..." />
             )}
           </div>
 
-          <div style={ms.row}>
-            <div style={ms.field}>
-              <label style={ms.label}>Max Agents</label>
-              <input style={ms.input} type="number" value={maxAgents} onChange={e => setMaxAgents(e.target.value)} />
+          {error && (
+            <div style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #5a2a2e", color: "#ff6c8a", fontSize: "0.85rem" }}>
+              {error}
             </div>
-            <div style={ms.field}>
-              <label style={ms.label}>Memory (MB, 0 = unlimited)</label>
-              <input style={ms.input} type="number" value={memoryMb} onChange={e => setMemoryMb(e.target.value)} />
-            </div>
-          </div>
-
-          <div style={ms.field}>
-            <label style={ms.label}>Labels (comma-separated)</label>
-            <input style={ms.input} value={labels} onChange={e => setLabels(e.target.value)} placeholder="gpu, high-memory" />
-          </div>
-
-          {error && <div style={ms.error}>{error}</div>}
+          )}
         </div>
 
-        <div style={ms.footer}>
-          <button style={ms.cancelBtn} onClick={onCancel}>Cancel</button>
-          <button style={{ ...ms.saveBtn, opacity: saving ? 0.6 : 1 }} onClick={handleSave} disabled={saving}>
+        <div className="cht-modal-footer">
+          <button
+            style={{ background: "none", border: "1px solid #2a2a3e", borderRadius: 8, padding: "8px 16px", color: "#8888a0", cursor: "pointer", fontSize: "0.9rem" }}
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            style={{ backgroundColor: "#6c8aff", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", cursor: "pointer", fontSize: "0.9rem", fontWeight: 600, opacity: saving ? 0.6 : 1 }}
+            onClick={handleSave}
+            disabled={saving}
+          >
             {saving ? "Saving..." : "Save Changes"}
           </button>
         </div>
@@ -144,21 +195,3 @@ export default function EditContainerHostModal({ host: h, onComplete, onCancel }
     </div>
   );
 }
-
-const ms: Record<string, React.CSSProperties> = {
-  overlay: { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
-  modal: { backgroundColor: "#12121a", borderRadius: 12, border: "1px solid #1e1e2e", width: "100%", maxWidth: 620, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden" },
-  header: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px", borderBottom: "1px solid #1e1e2e" },
-  title: { margin: 0, fontSize: "1.1rem", fontWeight: 600, color: "#e0e0e8" },
-  closeBtn: { background: "none", border: "none", color: "#8888a0", fontSize: "1.5rem", cursor: "pointer", padding: "0 4px" },
-  body: { padding: "20px 24px", overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 12 },
-  row: { display: "flex", gap: 12 },
-  field: { flex: 1, display: "flex", flexDirection: "column", gap: 4 },
-  label: { fontSize: "0.8rem", color: "#8888a0", fontWeight: 500 },
-  input: { backgroundColor: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: 8, padding: "8px 12px", color: "#e0e0e8", fontSize: "0.9rem", outline: "none", width: "100%", boxSizing: "border-box" },
-  error: { padding: "8px 12px", borderRadius: 8, border: "1px solid #5a2a2e", color: "#ff6c8a", fontSize: "0.85rem" },
-  footer: { display: "flex", justifyContent: "flex-end", gap: 8, padding: "16px 24px", borderTop: "1px solid #1e1e2e" },
-  cancelBtn: { background: "none", border: "1px solid #2a2a3e", borderRadius: 8, padding: "8px 16px", color: "#8888a0", cursor: "pointer", fontSize: "0.9rem" },
-  saveBtn: { backgroundColor: "#6c8aff", border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", cursor: "pointer", fontSize: "0.9rem", fontWeight: 600 },
-  replaceBtn: { background: "none", border: "1px solid #2a2a3e", borderRadius: 6, padding: "6px 12px", color: "#8888a0", cursor: "pointer", fontSize: "0.8rem", whiteSpace: "nowrap" },
-};
