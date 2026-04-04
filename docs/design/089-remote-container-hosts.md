@@ -1187,27 +1187,427 @@ Concrete walkthroughs of failure scenarios, describing what happens automaticall
 6. Implement startup recovery (container reconciliation, credential cleanup)
 7. Test with manual SSH tunnel
 
+### Phase 2.5: Settings-Driven Configuration
+
+**Goal:** Move all container host configuration from environment variables and `bond.json` into the database-backed settings UI, so users never touch config files or set env vars.
+
+**Motivation:** Environment variables are hostile to non-technical users and invisible in the UI. A user should be able to add a remote server, configure container defaults, and adjust placement strategy entirely from the Bond settings page — no terminal, no JSON editing, no restarts.
+
+#### 2.5.1 Database Schema
+
+**New table: `container_hosts`**
+
+```sql
+CREATE TABLE container_hosts (
+    id              TEXT PRIMARY KEY,           -- e.g. "server-closet", auto-generated UUID if not provided
+    name            TEXT NOT NULL,              -- human-readable: "Home Server"
+    host            TEXT NOT NULL,              -- hostname or IP: "192.168.1.100"
+    port            INTEGER NOT NULL DEFAULT 22,
+    user            TEXT NOT NULL DEFAULT 'bond',
+    ssh_key         TEXT,                       -- encrypted at rest via SettingsService crypto
+    daemon_port     INTEGER NOT NULL DEFAULT 18795,
+    max_agents      INTEGER NOT NULL DEFAULT 4,
+    memory_mb       INTEGER,                   -- total available memory (NULL = auto-detect via daemon)
+    labels          TEXT NOT NULL DEFAULT '[]', -- JSON array: ["gpu", "high-memory"]
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    status          TEXT NOT NULL DEFAULT 'active', -- active | draining | offline
+    is_local        INTEGER NOT NULL DEFAULT 0,     -- 1 for the implicit local host
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Seed the local host row on first migration
+INSERT OR IGNORE INTO container_hosts (id, name, host, port, user, max_agents, is_local)
+VALUES ('local', 'This Machine', 'localhost', 0, '', 4, 1);
+```
+
+**New settings keys (in existing `settings` table):**
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `container.default_image` | string | `bond-agent-worker:latest` | Default Docker image for agent containers |
+| `container.memory_limit_mb` | integer | `4096` | Default per-container memory limit |
+| `container.cpu_limit` | float | `2.0` | Default per-container CPU limit (cores) |
+| `container.startup_commands` | JSON | `[]` | Commands to run after container health check |
+| `container.extra_packages` | JSON | `[]` | apt packages to install on container start |
+| `container.placement_strategy` | enum | `least-loaded` | Placement algorithm: `least-loaded`, `round-robin`, `manual` |
+| `container.prefer_local` | boolean | `true` | Prefer local host when it has capacity |
+| `container.queue_timeout_seconds` | integer | `300` | How long to wait when all hosts are full |
+| `container.ssh_key_default` | string (encrypted) | `~/.ssh/id_ed25519` | Default SSH key for remote hosts |
+
+#### 2.5.2 Backend API
+
+**Extend `hosts.py` router** — the existing CRUD endpoints already exist but need to be wired to the database instead of `HostRegistry._load_from_config()`:
+
+```python
+# PATCH: hosts.py — replace in-memory HostRegistry with DB-backed queries
+
+@router.get("/hosts")
+async def list_hosts(db: AsyncSession = Depends(get_db)) -> list[HostResponse]:
+    """List all container hosts from database."""
+    rows = await db.execute(text("SELECT * FROM container_hosts ORDER BY is_local DESC, name"))
+    hosts = rows.mappings().all()
+    # Enrich with live status from running containers
+    for h in hosts:
+        h["running_agents"] = await _count_running(h["id"])
+        h["memory_used_mb"] = await _memory_used(h["id"])
+    return hosts
+
+@router.post("/hosts")
+async def add_host(body: HostCreate, db: AsyncSession = Depends(get_db)) -> HostResponse:
+    """Add a new remote container host."""
+    host_id = body.id or str(uuid4())
+    encrypted_key = encrypt_value(body.ssh_key) if body.ssh_key else None
+    await db.execute(text("""
+        INSERT INTO container_hosts (id, name, host, port, user, ssh_key, daemon_port,
+                                     max_agents, memory_mb, labels, enabled)
+        VALUES (:id, :name, :host, :port, :user, :ssh_key, :daemon_port,
+                :max_agents, :memory_mb, :labels, :enabled)
+    """), {
+        "id": host_id, "name": body.name, "host": body.host, "port": body.port,
+        "user": body.user, "ssh_key": encrypted_key, "daemon_port": body.daemon_port,
+        "max_agents": body.max_agents, "memory_mb": body.memory_mb,
+        "labels": json.dumps(body.labels or []), "enabled": body.enabled,
+    })
+    await db.commit()
+    return await get_host(host_id, db)
+
+@router.post("/hosts/{host_id}/test")
+async def test_host_connection(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """Test SSH connectivity and daemon health for a host."""
+    host = await _get_host_row(host_id, db)
+    ssh_key = decrypt_value(host["ssh_key"]) if host["ssh_key"] else None
+    results = {
+        "ssh": await _test_ssh(host["host"], host["port"], host["user"], ssh_key),
+        "daemon": await _test_daemon(host["host"], host["daemon_port"], ssh_key),
+        "docker": await _test_docker_remote(host["host"], host["user"], ssh_key),
+        "memory_available_mb": await _probe_memory(host["host"], host["user"], ssh_key),
+    }
+    return {"host_id": host_id, "results": results, "all_passed": all(r["ok"] for r in results.values())}
+```
+
+**New container settings endpoints** — extend `settings.py`:
+
+```python
+# Container-specific settings with validation
+
+CONTAINER_SETTINGS_SCHEMA = {
+    "container.default_image":        {"type": "string",  "default": "bond-agent-worker:latest"},
+    "container.memory_limit_mb":      {"type": "integer", "default": 4096, "min": 512, "max": 65536},
+    "container.cpu_limit":            {"type": "float",   "default": 2.0,  "min": 0.5, "max": 32.0},
+    "container.startup_commands":     {"type": "json",    "default": "[]"},
+    "container.extra_packages":       {"type": "json",    "default": "[]"},
+    "container.placement_strategy":   {"type": "enum",    "default": "least-loaded",
+                                       "values": ["least-loaded", "round-robin", "manual"]},
+    "container.prefer_local":         {"type": "boolean", "default": "true"},
+    "container.queue_timeout_seconds":{"type": "integer", "default": 300, "min": 30, "max": 3600},
+    "container.ssh_key_default":      {"type": "string",  "default": "~/.ssh/id_ed25519", "encrypted": True},
+}
+
+@router.get("/settings/container")
+async def get_container_settings(db: AsyncSession = Depends(get_db)) -> dict:
+    """Get all container-related settings with defaults applied."""
+    svc = _service()
+    result = {}
+    for key, schema in CONTAINER_SETTINGS_SCHEMA.items():
+        stored = await svc.get(key)
+        value = stored.get("value") if stored.get("value") else schema["default"]
+        result[key.replace("container.", "")] = value
+    return result
+
+@router.put("/settings/container")
+async def update_container_settings(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
+    """Bulk-update container settings with validation."""
+    svc = _service()
+    for short_key, value in body.items():
+        full_key = f"container.{short_key}"
+        if full_key not in CONTAINER_SETTINGS_SCHEMA:
+            raise HTTPException(400, f"Unknown container setting: {short_key}")
+        _validate_setting(full_key, value, CONTAINER_SETTINGS_SCHEMA[full_key])
+        await svc.upsert(full_key, str(value))
+    return await get_container_settings(db)
+```
+
+#### 2.5.3 HostRegistry Migration
+
+Refactor `HostRegistry` to load from the database instead of `bond.json`:
+
+```python
+class HostRegistry:
+    """Database-backed host registry with placement logic."""
+
+    def __init__(self, db_path: str):
+        self._db_path = db_path
+        self._cache: dict[str, RemoteHost] = {}
+        self._cache_ttl = 30  # seconds
+        self._last_refresh = 0
+
+    async def refresh(self):
+        """Reload hosts from database."""
+        async with aiosqlite.connect(self._db_path) as db:
+            rows = await db.execute_fetchall(
+                "SELECT * FROM container_hosts WHERE enabled = 1"
+            )
+            self._cache = {r["id"]: RemoteHost(**r) for r in rows}
+            self._last_refresh = time.monotonic()
+
+    async def get_placement(self, agent: dict) -> RemoteHost:
+        """Select a host using the configured placement strategy."""
+        if time.monotonic() - self._last_refresh > self._cache_ttl:
+            await self.refresh()
+
+        strategy = await self._get_setting("container.placement_strategy")
+        prefer_local = await self._get_setting("container.prefer_local")
+
+        candidates = [h for h in self._cache.values()
+                      if h.enabled and h.status == "active"
+                      and h.running_count < h.max_agents
+                      and self._has_memory(h, agent)]
+
+        if not candidates:
+            return None  # Triggers placement queue
+
+        if prefer_local == "true":
+            local = next((h for h in candidates if h.is_local), None)
+            if local:
+                return local
+
+        if strategy == "least-loaded":
+            return min(candidates, key=lambda h: h.running_count / h.max_agents)
+        elif strategy == "round-robin":
+            return self._next_round_robin(candidates)
+        else:  # manual — should not reach here
+            return candidates[0]
+
+    def _has_memory(self, host: RemoteHost, agent: dict) -> bool:
+        """Check if host has enough memory for another container."""
+        if not host.memory_mb:
+            return True  # No memory tracking, trust max_agents
+        memory_limit = int(self._get_setting_sync("container.memory_limit_mb") or 4096)
+        used = host.running_count * memory_limit
+        return (host.memory_mb - used) >= memory_limit
+```
+
+#### 2.5.4 Frontend: Container Hosts Settings Tab
+
+Add a new **"Container Hosts"** section in the settings UI at `frontend/src/app/settings/containers/`:
+
+**ContainerHostsTab.tsx** — Main tab with two sub-sections:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Container Hosts                                                     │
+│                                                                      │
+│  ┌─ Container Defaults ──────────────────────────────────────────┐  │
+│  │  Docker Image:    [bond-agent-worker:latest    ▼]             │  │
+│  │  Memory Limit:    [4096] MB                                   │  │
+│  │  CPU Limit:       [2.0] cores                                 │  │
+│  │  Placement:       [Least Loaded ▼]  ☑ Prefer local host      │  │
+│  │  Queue Timeout:   [300] seconds                               │  │
+│  │                                                               │  │
+│  │  Startup Commands:                                            │  │
+│  │  ┌──────────────────────────────────────────────────────┐     │  │
+│  │  │ pip install numpy pandas                             │     │  │
+│  │  │ apt-get install -y ffmpeg                            │     │  │
+│  │  └──────────────────────────────────────────────────────┘     │  │
+│  │                                           [Save Defaults]     │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+│  ┌─ Hosts ───────────────────────────────────────────────────────┐  │
+│  │                                                               │  │
+│  │  ● This Machine (local)                    4/4 agents  ██░░  │  │
+│  │    Status: active | Memory: 16 GB | 2 agents running          │  │
+│  │                                                    [Edit]     │  │
+│  │                                                               │  │
+│  │  ● Home Server (192.168.1.100)             8/8 agents  ████  │  │
+│  │    Status: active | Memory: 64 GB | 5 agents running          │  │
+│  │    Labels: high-memory, gpu                                   │  │
+│  │                                      [Test] [Edit] [Remove]  │  │
+│  │                                                               │  │
+│  │  ○ Cloud VM (worker1.example.com)          4/4 agents  ░░░░  │  │
+│  │    Status: offline | Last seen: 2 min ago                     │  │
+│  │                                      [Test] [Edit] [Remove]  │  │
+│  │                                                               │  │
+│  │                                          [+ Add Remote Host]  │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**AddHostModal.tsx** — Guided form for adding a remote host:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Add Remote Host                                     │
+│                                                      │
+│  Name:          [________________________]           │
+│  Hostname/IP:   [________________________]           │
+│  SSH Port:      [22____]                             │
+│  SSH User:      [bond__]                             │
+│  SSH Key:       [~/.ssh/id_ed25519] [Browse]         │
+│  Daemon Port:   [18795_]                             │
+│  Max Agents:    [4_____]                             │
+│  Memory (MB):   [______] (leave blank to auto-detect)│
+│  Labels:        [gpu, high-memory___________]        │
+│                                                      │
+│  ┌─ Connection Test ──────────────────────────────┐  │
+│  │  ✓ SSH connection          OK (240ms)          │  │
+│  │  ✓ Daemon reachable        OK (180ms)          │  │
+│  │  ✓ Docker available        OK                  │  │
+│  │  ✓ Memory detected         64,512 MB           │  │
+│  └────────────────────────────────────────────────┘  │
+│                                                      │
+│                    [Cancel]  [Test Connection]  [Add] │
+└─────────────────────────────────────────────────────┘
+```
+
+#### 2.5.5 Environment Variable Migration
+
+On first startup after this phase, auto-import existing configuration:
+
+```python
+async def migrate_env_to_settings(db: AsyncSession):
+    """One-time migration: import env vars and bond.json into database settings."""
+
+    # Import container env vars
+    ENV_TO_SETTINGS = {
+        "BOND_SANDBOX_IMAGE":      "container.default_image",
+        "BOND_MEMORY_LIMIT":       "container.memory_limit_mb",
+        "BOND_CPU_LIMIT":          "container.cpu_limit",
+        "BOND_PLACEMENT_STRATEGY": "container.placement_strategy",
+    }
+    svc = SettingsService()
+    for env_key, settings_key in ENV_TO_SETTINGS.items():
+        val = os.environ.get(env_key)
+        if val:
+            existing = await svc.get(settings_key)
+            if not existing.get("value"):
+                await svc.upsert(settings_key, val)
+                logger.info(f"Migrated {env_key} → {settings_key}")
+
+    # Import bond.json remote_hosts into container_hosts table
+    bond_json = _load_bond_json()
+    if bond_json and "remote_hosts" in bond_json:
+        for host in bond_json["remote_hosts"]:
+            existing = await db.execute(
+                text("SELECT id FROM container_hosts WHERE id = :id"),
+                {"id": host["id"]}
+            )
+            if not existing.fetchone():
+                await db.execute(text("""
+                    INSERT INTO container_hosts (id, name, host, port, user, ssh_key,
+                        daemon_port, max_agents, labels, enabled)
+                    VALUES (:id, :name, :host, :port, :user, :ssh_key,
+                        :daemon_port, :max_agents, :labels, :enabled)
+                """), {
+                    **host,
+                    "ssh_key": encrypt_value(host.get("ssh_key", "")),
+                    "labels": json.dumps(host.get("labels", [])),
+                    "enabled": 1 if host.get("enabled", True) else 0,
+                })
+                logger.info(f"Migrated bond.json host '{host['id']}' to database")
+        await db.commit()
+
+    # Mark migration as complete
+    await svc.upsert("container.migrated_from_env", "true")
+```
+
+**Env var overrides still work** for CI/automation:
+```python
+def get_container_setting(key: str, db_value: str) -> str:
+    """Env var takes precedence over DB value (for CI/Docker compose)."""
+    env_key = "BOND_" + key.replace(".", "_").upper()
+    return os.environ.get(env_key, db_value)
+```
+
+When an env var override is active, the UI shows a warning banner:
+> ⚠️ Some container settings are overridden by environment variables. Changes in the UI will not take effect until the env vars are removed.
+
+#### 2.5.6 Memory-Aware Placement
+
+The placement algorithm now considers actual memory, not just agent count:
+
+```python
+async def get_placement(self, agent: dict) -> RemoteHost | None:
+    """Select a host with enough memory for a new container."""
+    memory_limit = int(await self._get_setting("container.memory_limit_mb") or 4096)
+
+    candidates = []
+    for host in self._cache.values():
+        if not host.enabled or host.status != "active":
+            continue
+        if host.running_count >= host.max_agents:
+            continue
+
+        # Memory check: if host reports total memory, verify headroom
+        if host.memory_mb:
+            used_mb = host.running_count * memory_limit
+            available_mb = host.memory_mb - used_mb
+            if available_mb < memory_limit:
+                continue  # Not enough memory for another container
+
+        candidates.append(host)
+
+    if not candidates:
+        return None  # All hosts full → placement queue
+
+    # Apply strategy
+    strategy = await self._get_setting("container.placement_strategy")
+    if strategy == "least-loaded":
+        return min(candidates, key=lambda h: h.running_count / max(h.max_agents, 1))
+    elif strategy == "round-robin":
+        return self._next_round_robin(candidates)
+    return candidates[0]
+```
+
+The daemon's `/health` endpoint reports real-time memory:
+```json
+{
+  "status": "ok",
+  "memory_total_mb": 65536,
+  "memory_available_mb": 42000,
+  "containers_running": 3,
+  "max_agents": 8
+}
+```
+
+The UI reflects this: each host card shows a memory bar and agent count.
+
+#### 2.5.7 Implementation Tasks
+
+| ID | Task | Size |
+|----|------|------|
+| S1 | Migration: `container_hosts` table + seed local host row | S |
+| S2 | Migration: new `container.*` settings keys with defaults | S |
+| S3 | Backend: DB-backed `HostRegistry` replacing `bond.json` loader | M |
+| S4 | Backend: Container settings CRUD endpoints with validation | M |
+| S5 | Backend: Extend hosts API to read/write `container_hosts` table | M |
+| S6 | Backend: Env var → DB migration script (`migrate_env_to_settings`) | S |
+| S7 | Backend: Env var override logic with precedence | S |
+| S8 | Frontend: `ContainerHostsTab` with defaults form + hosts list | L |
+| S9 | Frontend: `AddHostModal` with connection testing | M |
+| S10 | Frontend: Env var override warning banner | S |
+| S11 | Backend: Memory-aware placement in `HostRegistry.get_placement()` | M |
+| S12 | Tests: DB-backed registry, settings CRUD, migration, placement | M |
+
+#### 2.5.8 Acceptance Criteria
+
+1. A user can add, edit, and remove remote hosts entirely from the settings UI
+2. Container defaults (image, memory, CPU, placement strategy) are configurable in the UI
+3. No environment variables or `bond.json` editing is required for any container configuration
+4. Existing `bond.json` and env var configurations are auto-migrated on first boot
+5. Env var overrides still work for CI/automation, with a visible warning in the UI
+6. Placement algorithm considers both `max_agents` and available memory
+7. The local host appears as an always-present, non-removable entry in the hosts list
+8. SSH keys are encrypted at rest in the database
+9. Connection test button validates SSH, daemon, and Docker availability before saving
+
 ### Phase 3: Remote Container Adapter
 1. Implement `RemoteContainerAdapter` with SSH tunnel management via `TunnelManager`
 2. Implement SSH multiplexing via `ControlMaster`
-3. Implement `HostRegistry` with config loading from `bond.json` (database-backed in Phase 6)
+3. Implement `HostRegistry` with ~~config loading from `bond.json`~~ database-backed host loading (Phase 2.5)
 4. Implement full placement algorithm (label filtering, host affinity, capacity exhaustion → queue)
 5. Wire into `SandboxManager`
-
-### Phase 4: SSE Proxying & Connectivity
-1. Implement SSH port forwarding for worker SSE streams
-2. Ensure gateway can connect to remote workers transparently
-3. Implement tunnel health monitoring and reconnection (`TunnelManager.health_check_loop`)
-4. Implement gateway failure recovery (`recover_after_restart`)
-5. Implement split-brain prevention (fencing protocol, unique branch names)
-6. Test end-to-end: issue → remote container → agent works → results pushed
-
-### Phase 5: UI & UX
-1. Add "Remote Hosts" section to settings UI
-2. Show host status (online/draining/offline, resource usage, running agents)
-3. Allow manual agent-to-host assignment
-4. Show which host each agent is running on in the agent list
-5. Display "remote copy" indicator when agent is running on a remote host
 6. Show placement queue status for queued agents
 
 ### Phase 6: Hardening
@@ -1215,7 +1615,7 @@ Concrete walkthroughs of failure scenarios, describing what happens automaticall
 2. Automatic image distribution (push to registry, remote pulls)
 3. Credential rotation and tmpfs cleanup (ephemeral keys, periodic reaper)
 4. Observability: daemon metrics endpoint, structured logging, trace ID propagation
-5. Database-backed host registry for dynamic management
+5. ~~Database-backed host registry for dynamic management~~ *(moved to Phase 2.5)*
 6. Graceful host draining
 7. Daemon version compatibility checks
 8. Monitoring and alerting for remote host connectivity
@@ -1233,24 +1633,6 @@ A smooth onboarding experience is critical for adoption. The CLI provides a guid
 ```bash
 # Interactive guided setup
 $ bond remote add
-? Host ID: server-closet
-? Display name: Home Server
-? SSH host: 192.168.1.100
-? SSH port [22]: 22
-? SSH user [bond]: bond
-
-Generating dedicated SSH key pair for this host...
-  Created: ~/.ssh/bond_server_closet_ed25519
-
-Copying public key to remote host (ssh-copy-id)...
-  ✓ Key installed on 192.168.1.100
-
-Installing bond-host-daemon on remote host...
-  Using Doc 044 broker infrastructure for installation.
-  ✓ Daemon installed and started (systemd service: bond-host-daemon)
-
-Running connectivity checks...
-  ✓ SSH connection: OK
   ✓ Daemon reachable: OK (v0.1.0, API v1)
   ✓ Docker available: OK (Docker 24.0.7)
   ✓ Disk space: 142 GB available
@@ -1453,3 +1835,6 @@ VPN mesh that makes all machines appear on the same network.
 11. No split-brain: at most one active agent per task after network partition recovery <!-- From IMPROVEMENTS §3.1 -->
 12. `bond remote add` onboarding flow completes in under 5 minutes for a prepared host <!-- From REVIEW §5.1 -->
 13. Agent logs are accessible via `GET /api/agents/{id}/logs` regardless of host <!-- From REVIEW §4.1 -->
+14. All container host configuration is manageable from the settings UI without env vars or config files <!-- From Phase 2.5 -->
+15. Placement algorithm considers available memory per host, not just agent count <!-- From Phase 2.5 -->
+16. Existing env var and `bond.json` configurations are auto-migrated to database on upgrade <!-- From Phase 2.5 -->
