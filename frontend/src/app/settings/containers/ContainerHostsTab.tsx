@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { BACKEND_API } from "@/lib/config";
 import AddContainerHostModal from "./AddContainerHostModal";
+import EditContainerHostModal from "./EditContainerHostModal";
 
 const API = `${BACKEND_API}/hosts`;
 
@@ -35,6 +36,9 @@ export default function ContainerHostsTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, string>>({});
+  const [editingHost, setEditingHost] = useState<ContainerHost | null>(null);
+  const [installingId, setInstallingId] = useState<string | null>(null);
+  const [installResults, setInstallResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
   const fetchHosts = useCallback(async () => {
     try {
@@ -89,6 +93,24 @@ export default function ContainerHostsTab() {
       setTestResults(prev => ({ ...prev, [id]: err.message }));
     }
     setTestingId(null);
+  };
+
+  const handleInstallDaemon = async (id: string) => {
+    setInstallingId(id);
+    setInstallResults(prev => { const next = { ...prev }; delete next[id]; return next; });
+    try {
+      const res = await fetch(`${API}/${id}/install-daemon`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInstallResults(prev => ({ ...prev, [id]: { ok: true, msg: "Daemon installed" } }));
+        fetchHosts();
+      } else {
+        setInstallResults(prev => ({ ...prev, [id]: { ok: false, msg: data.detail || `HTTP ${res.status}` } }));
+      }
+    } catch (err: any) {
+      setInstallResults(prev => ({ ...prev, [id]: { ok: false, msg: err.message } }));
+    }
+    setInstallingId(null);
   };
 
   const statusColor = (s: string) => s === "active" ? "#6cffa0" : s === "draining" ? "#ffcc44" : "#ff6c8a";
@@ -177,15 +199,23 @@ export default function ContainerHostsTab() {
               <span style={{ flex: 1, color: "#8888a0", fontSize: "0.85rem" }}>
                 {h.memory_mb > 0 ? `${h.memory_mb} MB` : "—"}
               </span>
-              <span style={{ flex: 2, display: "flex", justifyContent: "flex-end", gap: 6 }}>
+              <span style={{ flex: 2, display: "flex", justifyContent: "flex-end", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 {!h.is_local && (
                   <>
+                    <button style={s.smallBtn} onClick={() => setEditingHost(h)}>Edit</button>
                     <button
                       style={{ ...s.smallBtn, opacity: testingId === h.id ? 0.6 : 1 }}
                       onClick={() => handleTestHost(h.id)}
                       disabled={testingId === h.id}
                     >
                       {testingId === h.id ? "..." : "Test"}
+                    </button>
+                    <button
+                      style={{ ...s.smallBtn, opacity: installingId === h.id ? 0.6 : 1 }}
+                      onClick={() => handleInstallDaemon(h.id)}
+                      disabled={installingId === h.id}
+                    >
+                      {installingId === h.id ? "Installing..." : "Install Daemon"}
                     </button>
                     <button style={{ ...s.smallBtn, color: "#ff6c8a" }} onClick={() => handleDeleteHost(h.id)}>
                       Delete
@@ -195,6 +225,11 @@ export default function ContainerHostsTab() {
                 {testResults[h.id] && (
                   <span style={{ fontSize: "0.75rem", color: testResults[h.id] === "Connected" ? "#6cffa0" : "#ff6c8a", alignSelf: "center" }}>
                     {testResults[h.id]}
+                  </span>
+                )}
+                {installResults[h.id] && (
+                  <span style={{ fontSize: "0.75rem", color: installResults[h.id].ok ? "#6cffa0" : "#ff6c8a", alignSelf: "center" }}>
+                    {installResults[h.id].msg}
                   </span>
                 )}
               </span>
@@ -212,6 +247,14 @@ export default function ContainerHostsTab() {
         <AddContainerHostModal
           onComplete={() => { setShowAdd(false); fetchHosts(); }}
           onCancel={() => setShowAdd(false)}
+        />
+      )}
+
+      {editingHost && (
+        <EditContainerHostModal
+          host={editingHost}
+          onComplete={() => { setEditingHost(null); fetchHosts(); }}
+          onCancel={() => setEditingHost(null)}
         />
       )}
     </>
