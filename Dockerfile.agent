@@ -70,6 +70,16 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.83
 # OpenAI Codex CLI
 RUN npm install -g @openai/codex@latest
 
+# pnpm — needed by frontend and gateway (Design Doc 099 §7.2)
+RUN npm install -g pnpm
+
+# ---------------------------------------------------------------------------
+# Playwright + Chromium for visual UI testing (Design Doc 099 §7.1)
+# ---------------------------------------------------------------------------
+RUN pip install --no-cache-dir playwright==1.49.0 && \
+    playwright install chromium && \
+    playwright install-deps chromium
+
 # Pi — uncomment when publicly available
 # RUN npm install -g @anthropic-ai/pi@latest || true
 
