@@ -47,3 +47,6 @@ SOUL.md
 TOOLS.md
 USER.md
 workspace-state.json
+gateway/data/whatsapp-auth/*.json
+gateway/data/integrations.json
+gateway/data/channels.json
