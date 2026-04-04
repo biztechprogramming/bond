@@ -140,6 +140,12 @@ export default function ContainerHostsTab() {
             } else {
               setInstallLog(prev => prev ? { ...prev, lines: [...prev.lines, { step: evt.step, status: evt.status, message: evt.message }] } : prev);
             }
+            // Auto-scroll log pane to bottom
+            requestAnimationFrame(() => {
+              if (installLogRef.current) {
+                installLogRef.current.scrollTop = installLogRef.current.scrollHeight;
+              }
+            });
           } catch { /* skip malformed */ }
         }
       }
@@ -362,6 +368,8 @@ export default function ContainerHostsTab() {
               fontSize: "0.82rem",
               lineHeight: 1.7,
               minHeight: 200,
+              maxHeight: "calc(100vh - 350px)",
+              overflowY: "auto",
               color: "#b0b0c0",
               userSelect: "text",
               cursor: "text",
