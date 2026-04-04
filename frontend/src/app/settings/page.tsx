@@ -206,8 +206,13 @@ export default function SettingsPage() {
     <div style={s.container}>
       <style>{`
         .settings-tab-bar::-webkit-scrollbar { display: none; }
+        @media (max-width: 768px) {
+          .settings-content-area { padding: 12px !important; gap: 16px !important; }
+          .settings-header { padding: 12px 16px !important; }
+          .settings-section { padding: 16px !important; }
+        }
       `}</style>
-      <header style={s.header}>
+      <header className="settings-header" style={s.header}>
         <a href="/" style={s.backLink}>&larr; Chat</a>
         <h1 style={s.title}>Settings</h1>
       </header>
@@ -229,7 +234,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Tab content */}
-      <div style={s.content}>
+      <div className="settings-content-area" style={s.content}>
         {activeTab === "agents" && <AgentsTab />}
 
         {activeTab === "containers" && <ContainerHostsTab />}
@@ -452,11 +457,11 @@ export default function SettingsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%" },
-  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
+  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%", overflow: "hidden" },
+  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", flexShrink: 0 },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
-  tabBarWrapper: { position: "relative" as const, borderBottomWidth: "1px", borderBottomStyle: "solid" as const, borderBottomColor: "#1e1e2e" },
+  tabBarWrapper: { position: "relative" as const, borderBottomWidth: "1px", borderBottomStyle: "solid" as const, borderBottomColor: "#1e1e2e", flexShrink: 0 },
   tabBar: { display: "flex", padding: "0 24px", overflowX: "auto" as const, scrollbarWidth: "none" as const, msOverflowStyle: "none" as const, WebkitOverflowScrolling: "touch" as const, flexWrap: "nowrap" as const },
   tabBarFade: { position: "absolute" as const, top: 0, right: 0, bottom: 0, width: "40px", background: "linear-gradient(to right, transparent, #0a0a12)", pointerEvents: "none" as const },
   tab: {
@@ -465,7 +470,7 @@ const s: Record<string, React.CSSProperties> = {
     cursor: "pointer", transition: "color 0.2s, border-color 0.2s", whiteSpace: "nowrap" as const, flexShrink: 0,
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
-  content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0 },
+  content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0, WebkitOverflowScrolling: "touch" as any },
   section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
   sectionTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 20px 0" },
   field: { marginBottom: "16px" },
