@@ -9,7 +9,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -298,55 +301,66 @@ async def validate_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dic
 # ---------------------------------------------------------------------------
 
 @router.post("/{host_id}/install-daemon")
-async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    """Install bond-host-daemon on a remote host."""
+async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)):
+    """Install bond-host-daemon on a remote host (SSE stream)."""
     host = await _service.get(db, host_id)
     if not host or host_id == "local":
         raise HTTPException(404, f"Remote host '{host_id}' not found")
 
     ssh_key = host.get("ssh_key_decrypted", "")
 
-    # If SSH key is configured, write it to a temp file; otherwise use system defaults (~/.ssh)
-    import tempfile, os
-    tmp_path: str | None = None
-    try:
-        if ssh_key:
-            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
-            tmp.write(ssh_key)
-            tmp.close()
-            os.chmod(tmp.name, 0o600)
-            tmp_path = tmp.name
+    async def _stream():
+        import tempfile, os
 
-        from backend.app.services.daemon_installer import DaemonInstaller
-        installer = DaemonInstaller()
-        result = await installer.install(
-            host=host["host"],
-            port=host.get("port", 22),
-            user=host.get("user", "bond"),
-            ssh_key_path=tmp_path,
-            daemon_port=host.get("daemon_port", 8990),
-        )
-    finally:
-        if tmp_path:
-            os.unlink(tmp_path)
+        tmp_path: str | None = None
+        try:
+            if ssh_key:
+                tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+                tmp.write(ssh_key)
+                tmp.close()
+                os.chmod(tmp.name, 0o600)
+                tmp_path = tmp.name
 
-    # Store auth token in DB if install succeeded
-    if result.get("success") and result.get("auth_token"):
-        from backend.app.core.crypto import encrypt_value
-        encrypted_token = encrypt_value(result["auth_token"])
-        from sqlalchemy import text as sql_text
-        await db.execute(
-            sql_text("UPDATE container_hosts SET auth_token = :token, updated_at = datetime('now') WHERE id = :id"),
-            {"token": encrypted_token, "id": host_id},
-        )
-        await db.commit()
+            from backend.app.services.daemon_installer import DaemonInstaller
+            installer = DaemonInstaller()
+            auth_token = ""
+            success = False
 
-        # Refresh registry to pick up new token
-        registry = _get_registry()
-        if registry:
-            await registry.refresh()
+            async for event in installer.install_stream(
+                host=host["host"],
+                port=host.get("port", 22),
+                user=host.get("user", "bond"),
+                ssh_key_path=tmp_path,
+                daemon_port=host.get("daemon_port", 8990),
+            ):
+                if event.get("status") == "done":
+                    auth_token = event.get("auth_token", "")
+                    success = event.get("success", False)
+                yield f"data: {json.dumps(event)}\n\n"
 
-    return result
+        finally:
+            if tmp_path:
+                os.unlink(tmp_path)
+
+        # Store auth token in DB if install succeeded
+        if success and auth_token:
+            try:
+                from backend.app.core.crypto import encrypt_value
+                encrypted_token = encrypt_value(auth_token)
+                from sqlalchemy import text as sql_text
+                await db.execute(
+                    sql_text("UPDATE container_hosts SET auth_token = :token, updated_at = datetime('now') WHERE id = :id"),
+                    {"token": encrypted_token, "id": host_id},
+                )
+                await db.commit()
+
+                registry = _get_registry()
+                if registry:
+                    await registry.refresh()
+            except Exception as e:
+                logger.error("Failed to save auth token for %s: %s", host_id, e)
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
 
 @router.post("/{host_id}/uninstall-daemon")
 async def uninstall_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:

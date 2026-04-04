@@ -9,7 +9,7 @@ import asyncio
 import logging
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
 logger = logging.getLogger("bond.services.daemon_installer")
 
@@ -276,6 +276,151 @@ class DaemonInstaller:
         # Service started but health check didn't pass
         errors.append("Service started but health check did not pass within 10 seconds")
         return {"success": True, "auth_token": auth_token, "errors": errors}
+
+    async def install_stream(
+        self,
+        host: str,
+        port: int,
+        user: str,
+        ssh_key_path: str | None,
+        daemon_port: int = 9100,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Install bond-host-daemon, yielding progress events as dicts.
+
+        Each yielded dict has: {step, status, message}
+        where status is 'running', 'ok', 'error', or 'done'.
+        The final event with status='done' includes {success, auth_token, errors}.
+        """
+
+        def _evt(step: str, status: str, message: str, **extra: Any) -> dict[str, Any]:
+            return {"step": step, "status": status, "message": message, **extra}
+
+        # 1. Check prerequisites
+        yield _evt("prerequisites", "running", f"Checking prerequisites on {host}...")
+
+        prereqs = await self.check_prerequisites(host, port, user, ssh_key_path)
+        if prereqs["docker"]:
+            yield _evt("prerequisites", "ok", f"Docker: {prereqs['docker_version']}")
+        else:
+            for e in prereqs["errors"]:
+                if "docker" in e.lower() or "Docker" in e:
+                    yield _evt("prerequisites", "error", e)
+
+        if prereqs["python"]:
+            yield _evt("prerequisites", "ok", f"Python: {prereqs['python_version']}")
+        else:
+            for e in prereqs["errors"]:
+                if "python" in e.lower() or "Python" in e:
+                    yield _evt("prerequisites", "error", e)
+
+        if not prereqs["docker"] or not prereqs["python"]:
+            yield _evt("done", "done", "Installation failed: prerequisites not met",
+                        success=False, auth_token="", errors=prereqs["errors"])
+            return
+
+        # 2. Create install directory
+        yield _evt("mkdir", "running", f"Creating {_REMOTE_INSTALL_DIR}...")
+        rc, _, stderr = await _run_ssh_command(
+            host, port, user, ssh_key_path,
+            f"sudo mkdir -p {_REMOTE_INSTALL_DIR} && sudo chown {user}:{user} {_REMOTE_INSTALL_DIR}",
+        )
+        if rc != 0:
+            msg = f"Failed to create install dir: {stderr.strip()}"
+            yield _evt("mkdir", "error", msg)
+            yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+            return
+        yield _evt("mkdir", "ok", f"Created {_REMOTE_INSTALL_DIR}")
+
+        # 3. Copy daemon files
+        yield _evt("copy", "running", "Copying bond_host_daemon.py...")
+        if not await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH):
+            msg = "Failed to copy bond_host_daemon.py"
+            yield _evt("copy", "error", msg)
+            yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+            return
+        yield _evt("copy", "ok", "Copied bond_host_daemon.py")
+
+        yield _evt("copy", "running", "Copying requirements-daemon.txt...")
+        if not await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH):
+            msg = "Failed to copy requirements-daemon.txt"
+            yield _evt("copy", "error", msg)
+            yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+            return
+        yield _evt("copy", "ok", "Copied requirements-daemon.txt")
+
+        # 4. Install Python dependencies
+        yield _evt("deps", "running", "Installing Python dependencies (this may take a minute)...")
+        rc, _, stderr = await _run_ssh_command(
+            host, port, user, ssh_key_path,
+            f"pip install -r {_REMOTE_REQUIREMENTS_PATH}",
+            timeout=120.0,
+        )
+        if rc != 0:
+            yield _evt("deps", "running", "Retrying with pip3...")
+            rc, _, stderr = await _run_ssh_command(
+                host, port, user, ssh_key_path,
+                f"pip3 install -r {_REMOTE_REQUIREMENTS_PATH}",
+                timeout=120.0,
+            )
+            if rc != 0:
+                msg = f"Failed to install dependencies: {stderr.strip()}"
+                yield _evt("deps", "error", msg)
+                yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+                return
+        yield _evt("deps", "ok", "Dependencies installed")
+
+        # 5. Generate auth token and install systemd service
+        yield _evt("systemd", "running", "Configuring systemd service...")
+        auth_token = secrets.token_urlsafe(32)
+        unit_content = _SYSTEMD_UNIT_TEMPLATE.format(
+            daemon_path=_REMOTE_DAEMON_PATH,
+            daemon_port=daemon_port,
+            auth_token=auth_token,
+        )
+        escaped = unit_content.replace("'", "'\\''")
+        rc, _, stderr = await _run_ssh_command(
+            host, port, user, ssh_key_path,
+            f"echo '{escaped}' | sudo tee /etc/systemd/system/{_SERVICE_NAME}.service > /dev/null",
+        )
+        if rc != 0:
+            msg = f"Failed to write systemd unit: {stderr.strip()}"
+            yield _evt("systemd", "error", msg)
+            yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+            return
+        yield _evt("systemd", "ok", "Systemd unit installed")
+
+        # 6. Enable and start service
+        yield _evt("start", "running", "Starting bond-host-daemon service...")
+        rc, _, stderr = await _run_ssh_command(
+            host, port, user, ssh_key_path,
+            f"sudo systemctl daemon-reload && sudo systemctl enable {_SERVICE_NAME} && sudo systemctl start {_SERVICE_NAME}",
+        )
+        if rc != 0:
+            msg = f"Failed to start service: {stderr.strip()}"
+            yield _evt("start", "error", msg)
+            yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+            return
+        yield _evt("start", "ok", "Service started")
+
+        # 7. Wait for health check
+        yield _evt("health", "running", "Waiting for health check...")
+        for attempt in range(10):
+            await asyncio.sleep(1)
+            rc, stdout, _ = await _run_ssh_command(
+                host, port, user, ssh_key_path,
+                f"curl -sf http://localhost:{daemon_port}/health",
+            )
+            if rc == 0 and ("healthy" in stdout.lower() or "daemon_version" in stdout.lower()):
+                yield _evt("health", "ok", f"Health check passed (attempt {attempt + 1})")
+                yield _evt("done", "done", "Daemon installed successfully",
+                            success=True, auth_token=auth_token, errors=[])
+                return
+            yield _evt("health", "running", f"Health check attempt {attempt + 1}/10...")
+
+        errors = ["Service started but health check did not pass within 10 seconds"]
+        yield _evt("health", "error", errors[0])
+        yield _evt("done", "done", "Daemon installed (health check warning)",
+                    success=True, auth_token=auth_token, errors=errors)
 
     async def uninstall(
         self,
