@@ -34,6 +34,16 @@ def _check_ssh_error(stderr: str) -> str | None:
     return None
 
 
+def _check_sudo_error(rc: int, stderr: str, command: str, user: str, host: str) -> str | None:
+    """If stderr indicates sudo needs a password, return a helpful message."""
+    if rc != 0 and "a password is required" in stderr.lower():
+        return (
+            f"sudo requires a password. Either configure passwordless sudo for "
+            f"{user} on {host}, or run this command manually:\n  {command}"
+        )
+    return None
+
+
 _SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
 Description=Bond Host Daemon
@@ -265,10 +275,11 @@ class DaemonInstaller:
         # 2. Create install directory
         rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
-            f"sudo mkdir -p {_REMOTE_INSTALL_DIR} && sudo chown {user}:{user} {_REMOTE_INSTALL_DIR}",
+            f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}",
         )
         if rc != 0:
-            errors.append(f"Failed to create install dir: {stderr.strip()}")
+            sudo_msg = _check_sudo_error(rc, stderr, f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}", user, host)
+            errors.append(sudo_msg or f"Failed to create install dir: {stderr.strip()}")
             return {"success": False, "auth_token": "", "errors": errors}
 
         # 3. Copy daemon files
@@ -311,19 +322,21 @@ class DaemonInstaller:
         escaped = unit_content.replace("'", "'\\''")
         rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
-            f"echo '{escaped}' | sudo tee /etc/systemd/system/{_SERVICE_NAME}.service > /dev/null",
+            f"echo '{escaped}' | sudo -n tee /etc/systemd/system/{_SERVICE_NAME}.service > /dev/null",
         )
         if rc != 0:
-            errors.append(f"Failed to write systemd unit: {stderr.strip()}")
+            sudo_msg = _check_sudo_error(rc, stderr, f"sudo -n tee /etc/systemd/system/{_SERVICE_NAME}.service", user, host)
+            errors.append(sudo_msg or f"Failed to write systemd unit: {stderr.strip()}")
             return {"success": False, "auth_token": "", "errors": errors}
 
         # 6. Enable and start service
         rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
-            f"sudo systemctl daemon-reload && sudo systemctl enable {_SERVICE_NAME} && sudo systemctl start {_SERVICE_NAME}",
+            f"sudo -n systemctl daemon-reload && sudo -n systemctl enable {_SERVICE_NAME} && sudo -n systemctl start {_SERVICE_NAME}",
         )
         if rc != 0:
-            errors.append(f"Failed to start service: {stderr.strip()}")
+            sudo_msg = _check_sudo_error(rc, stderr, f"sudo -n systemctl daemon-reload && sudo -n systemctl enable {_SERVICE_NAME} && sudo -n systemctl start {_SERVICE_NAME}", user, host)
+            errors.append(sudo_msg or f"Failed to start service: {stderr.strip()}")
             return {"success": False, "auth_token": "", "errors": errors}
 
         # 7. Wait for health check
@@ -399,13 +412,14 @@ class DaemonInstaller:
 
         # 2. Create install directory
         yield _evt("mkdir", "running", f"Creating {_REMOTE_INSTALL_DIR}...")
-        mkdir_cmd = f"sudo mkdir -p {_REMOTE_INSTALL_DIR} && sudo chown {user}:{user} {_REMOTE_INSTALL_DIR}"
+        mkdir_cmd = f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}"
         rc, _, stderr, display_cmd = await _run_ssh_command(
             host, port, user, ssh_key_path, mkdir_cmd,
         )
         yield {"type": "command", "message": display_cmd}
         if rc != 0:
-            msg = f"Failed to create install dir: {stderr.strip()}"
+            sudo_msg = _check_sudo_error(rc, stderr, mkdir_cmd, user, host)
+            msg = sudo_msg or f"Failed to create install dir: {stderr.strip()}"
             yield _evt("mkdir", "error", msg)
             yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
             return
@@ -466,11 +480,12 @@ class DaemonInstaller:
         escaped = unit_content.replace("'", "'\\''")
         rc, _, stderr, display_cmd = await _run_ssh_command(
             host, port, user, ssh_key_path,
-            f"echo '{escaped}' | sudo tee /etc/systemd/system/{_SERVICE_NAME}.service > /dev/null",
+            f"echo '{escaped}' | sudo -n tee /etc/systemd/system/{_SERVICE_NAME}.service > /dev/null",
         )
         yield {"type": "command", "message": display_cmd}
         if rc != 0:
-            msg = f"Failed to write systemd unit: {stderr.strip()}"
+            sudo_msg = _check_sudo_error(rc, stderr, f"sudo -n tee /etc/systemd/system/{_SERVICE_NAME}.service", user, host)
+            msg = sudo_msg or f"Failed to write systemd unit: {stderr.strip()}"
             yield _evt("systemd", "error", msg)
             yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
             return
@@ -478,13 +493,14 @@ class DaemonInstaller:
 
         # 6. Enable and start service
         yield _evt("start", "running", "Starting bond-host-daemon service...")
-        start_cmd = f"sudo systemctl daemon-reload && sudo systemctl enable {_SERVICE_NAME} && sudo systemctl start {_SERVICE_NAME}"
+        start_cmd = f"sudo -n systemctl daemon-reload && sudo -n systemctl enable {_SERVICE_NAME} && sudo -n systemctl start {_SERVICE_NAME}"
         rc, _, stderr, display_cmd = await _run_ssh_command(
             host, port, user, ssh_key_path, start_cmd,
         )
         yield {"type": "command", "message": display_cmd}
         if rc != 0:
-            msg = f"Failed to start service: {stderr.strip()}"
+            sudo_msg = _check_sudo_error(rc, stderr, start_cmd, user, host)
+            msg = sudo_msg or f"Failed to start service: {stderr.strip()}"
             yield _evt("start", "error", msg)
             yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
             return
@@ -525,10 +541,10 @@ class DaemonInstaller:
         # Stop and disable service
         rc, _, stderr, _ = await _run_ssh_command(
             host, port, user, ssh_key_path,
-            f"sudo systemctl stop {_SERVICE_NAME} 2>/dev/null; "
-            f"sudo systemctl disable {_SERVICE_NAME} 2>/dev/null; "
-            f"sudo rm -f /etc/systemd/system/{_SERVICE_NAME}.service; "
-            f"sudo systemctl daemon-reload",
+            f"sudo -n systemctl stop {_SERVICE_NAME} 2>/dev/null; "
+            f"sudo -n systemctl disable {_SERVICE_NAME} 2>/dev/null; "
+            f"sudo -n rm -f /etc/systemd/system/{_SERVICE_NAME}.service; "
+            f"sudo -n systemctl daemon-reload",
         )
         if rc != 0:
             errors.append(f"Service removal warning: {stderr.strip()}")

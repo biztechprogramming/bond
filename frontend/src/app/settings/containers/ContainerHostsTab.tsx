@@ -40,6 +40,7 @@ export default function ContainerHostsTab() {
   const [installResults, setInstallResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [installLog, setInstallLog] = useState<{ hostId: string; lines: { type?: string; step: string; status: string; message: string }[]; done: boolean; success: boolean } | null>(null);
   const installLogRef = React.useRef<HTMLDivElement>(null);
+  const scrollToBottom = () => requestAnimationFrame(() => installLogRef.current?.scrollTo({ top: installLogRef.current.scrollHeight, behavior: "smooth" }));
 
   const fetchHosts = useCallback(async () => {
     try {
@@ -105,6 +106,7 @@ export default function ContainerHostsTab() {
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setInstallLog(prev => prev ? { ...prev, done: true, lines: [...prev.lines, { step: "error", status: "error", message: data.detail || "Installation failed" }] } : prev);
+        scrollToBottom();
         setInstallingId(null);
         return;
       }
@@ -131,12 +133,13 @@ export default function ContainerHostsTab() {
             } else {
               setInstallLog(prev => prev ? { ...prev, lines: [...prev.lines, { step: evt.step, status: evt.status, message: evt.message }] } : prev);
             }
-            setTimeout(() => installLogRef.current?.scrollTo(0, installLogRef.current.scrollHeight), 0);
+            scrollToBottom();
           } catch { /* skip malformed */ }
         }
       }
     } catch (err: any) {
       setInstallLog(prev => prev ? { ...prev, done: true, lines: [...prev.lines, { step: "error", status: "error", message: err.message }] } : prev);
+      scrollToBottom();
     }
     setInstallingId(null);
   };
@@ -353,7 +356,7 @@ export default function ContainerHostsTab() {
               fontFamily: "monospace",
               fontSize: "0.82rem",
               lineHeight: 1.7,
-              maxHeight: 320,
+              maxHeight: 480,
               overflowY: "auto",
               color: "#b0b0c0",
               userSelect: "text",
