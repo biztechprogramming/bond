@@ -142,13 +142,13 @@ async def _scp_file(
     local_path: str | Path,
     remote_path: str,
     timeout: float = 30.0,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, str]:
     """Copy a file to a remote host via SCP.
 
     If ssh_key_path is None or empty, probes for system SSH keys at
     common locations (/root/.ssh/id_ed25519, id_rsa, id_ecdsa).
 
-    Returns (success, display_command).
+    Returns (success, display_command, error_message).
     """
     resolved_key = _resolve_ssh_key_path(ssh_key_path)
     args = [
@@ -184,12 +184,16 @@ async def _scp_file(
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()
-        logger.error("SCP timed out copying %s to %s:%s", local_path, host, remote_path)
-        return False, display_cmd
+        err_msg = f"SCP timed out after {timeout}s copying {Path(local_path).name} to {host}:{remote_path}"
+        logger.error(err_msg)
+        return False, display_cmd, err_msg
     if proc.returncode != 0:
-        logger.error("SCP failed: %s", stderr.decode())
-        return False, display_cmd
-    return True, display_cmd
+        stderr_text = stderr.decode().strip()
+        logger.error("SCP failed: %s", stderr_text)
+        ssh_err = _check_ssh_error(stderr_text)
+        err_msg = ssh_err or f"SCP failed: {stderr_text}" if stderr_text else "SCP failed (unknown error)"
+        return False, display_cmd, err_msg
+    return True, display_cmd, ""
 
 
 class DaemonInstaller:
@@ -291,12 +295,12 @@ class DaemonInstaller:
                 return {"success": False, "auth_token": "", "errors": errors}
 
         # 3. Copy daemon files
-        ok, _ = await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH)
+        ok, _, scp_err = await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH, timeout=60.0)
         if not ok:
             errors.append("Failed to copy bond_host_daemon.py")
             return {"success": False, "auth_token": "", "errors": errors}
 
-        ok, _ = await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH)
+        ok, _, scp_err = await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH, timeout=60.0)
         if not ok:
             errors.append("Failed to copy requirements-daemon.txt")
             return {"success": False, "auth_token": "", "errors": errors}
@@ -443,20 +447,20 @@ class DaemonInstaller:
 
         # 3. Copy daemon files
         yield _evt("copy", "running", "Copying bond_host_daemon.py...")
-        scp_ok, scp_cmd = await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH)
+        scp_ok, scp_cmd, scp_err = await _scp_file(host, port, user, ssh_key_path, _DAEMON_SRC, _REMOTE_DAEMON_PATH, timeout=60.0)
         yield {"type": "command", "message": scp_cmd}
         if not scp_ok:
-            msg = "Failed to copy bond_host_daemon.py"
+            msg = f"Failed to copy bond_host_daemon.py: {scp_err}"
             yield _evt("copy", "error", msg)
             yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
             return
         yield _evt("copy", "ok", "Copied bond_host_daemon.py")
 
         yield _evt("copy", "running", "Copying requirements-daemon.txt...")
-        scp_ok, scp_cmd = await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH)
+        scp_ok, scp_cmd, scp_err = await _scp_file(host, port, user, ssh_key_path, _REQUIREMENTS_SRC, _REMOTE_REQUIREMENTS_PATH, timeout=60.0)
         yield {"type": "command", "message": scp_cmd}
         if not scp_ok:
-            msg = "Failed to copy requirements-daemon.txt"
+            msg = f"Failed to copy requirements-daemon.txt: {scp_err}"
             yield _evt("copy", "error", msg)
             yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
             return

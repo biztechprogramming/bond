@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { BACKEND_API } from "@/lib/config";
 import AddContainerHostModal from "./AddContainerHostModal";
 import EditContainerHostModal from "./EditContainerHostModal";
@@ -40,9 +40,20 @@ export default function ContainerHostsTab() {
   const [installResults, setInstallResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [installLog, setInstallLog] = useState<{ hostId: string; lines: { type?: string; step: string; status: string; message: string }[]; done: boolean; success: boolean } | null>(null);
   const installLogRef = React.useRef<HTMLDivElement>(null);
+  const installSectionRef = useRef<HTMLElement>(null);
   const scrollToBottom = () => requestAnimationFrame(() => installLogRef.current?.scrollTo({ top: installLogRef.current.scrollHeight, behavior: "smooth" }));
 
+  // Auto-scroll terminal content on every log update
   useEffect(() => { scrollToBottom(); }, [installLog]);
+
+  // Scroll the parent content area to reveal the install section when it first appears
+  useEffect(() => {
+    if (installLog && installSectionRef.current) {
+      requestAnimationFrame(() => {
+        installSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [installLog?.hostId]);
 
   const fetchHosts = useCallback(async () => {
     try {
@@ -326,7 +337,7 @@ export default function ContainerHostsTab() {
       )}
 
       {installLog && (
-        <section className="cht-section" style={{ marginTop: 24 }}>
+        <section ref={installSectionRef} className="cht-section" style={{ marginTop: 24, marginBottom: 24 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <h2 style={{ fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: 0 }}>
               Install Daemon — {installLog.hostId}
