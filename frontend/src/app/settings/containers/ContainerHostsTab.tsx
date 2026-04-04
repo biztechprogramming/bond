@@ -246,13 +246,15 @@ export default function ContainerHostsTab() {
                     >
                       {testingId === h.id ? "..." : "Test"}
                     </button>
-                    <button
-                      style={{ ...smallBtn, opacity: installingId === h.id ? 0.6 : 1 }}
-                      onClick={() => handleInstallDaemon(h.id)}
-                      disabled={installingId === h.id}
-                    >
-                      {installingId === h.id ? "Installing..." : h.daemon_installed ? "Reinstall Daemon" : "Install Daemon"}
-                    </button>
+                    {!h.daemon_installed && (
+                      <button
+                        style={{ ...smallBtn, opacity: installingId === h.id ? 0.6 : 1 }}
+                        onClick={() => handleInstallDaemon(h.id)}
+                        disabled={installingId === h.id}
+                      >
+                        {installingId === h.id ? "Installing..." : "Install Daemon"}
+                      </button>
+                    )}
                     <button style={{ ...smallBtn, color: "#ff6c8a" }} onClick={() => handleDeleteHost(h.id)}>
                       Delete
                     </button>
