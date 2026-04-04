@@ -446,12 +446,15 @@ Faster start but larger image and stale if dependencies change.
 3. Add manifest entry to `prompts/manifest.yaml`
 4. Test end-to-end: give a coding agent a UI fix task and verify it uses the skill
 
-### Phase 6: Iteration & Hardening (Week 3-4)
+### Phase 6: Iteration & Hardening (Week 3-4) ✅
 
-1. Test with real UI bug fixes (terminal scroll, overflow, panel sizing)
-2. Tune screenshot timing (delay, wait-for selectors)
-3. Add common page paths to skill documentation (e.g., `/containers`, `/settings`)
-4. Consider adding `--element` flag for targeted element screenshots
+1. ✅ `--element` flag for targeted element screenshots (uses Playwright `locator.screenshot()`)
+2. ✅ `--full-page` flag for full scrollable page capture
+3. ✅ `--dark-mode` flag for `prefers-color-scheme: dark` emulation
+4. ✅ `--preset` flag with `page-presets.json` — named configs for common Bond pages (home, containers, settings, settings-deployment, terminal, chat)
+5. ✅ `compare-screenshots.py` — pixel-level diff with threshold, red-overlay diff image output
+6. ✅ Expanded SKILL.md with preset table, compare workflow, and real-world examples (terminal scroll fix, dark mode verification, layout regression check)
+7. ✅ Test coverage for all new flags and compare script
 
 ---
 

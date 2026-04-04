@@ -1,0 +1,40 @@
+{
+  "home": {
+    "path": "/",
+    "wait_for": "[data-testid='dashboard']",
+    "delay": 1500,
+    "description": "Main dashboard / home page"
+  },
+  "containers": {
+    "path": "/containers",
+    "wait_for": "[data-testid='container-list']",
+    "delay": 2000,
+    "description": "Container management panel"
+  },
+  "settings": {
+    "path": "/settings",
+    "wait_for": "form",
+    "delay": 1000,
+    "description": "Settings page"
+  },
+  "settings-deployment": {
+    "path": "/settings/deployment",
+    "wait_for": "[data-testid='deployment-tab']",
+    "delay": 1000,
+    "description": "Deployment settings with test SpacetimeDB controls"
+  },
+  "terminal": {
+    "path": "/",
+    "wait_for": "[data-testid='terminal-panel']",
+    "element": "[data-testid='terminal-panel']",
+    "delay": 2000,
+    "description": "Terminal panel (element screenshot)"
+  },
+  "chat": {
+    "path": "/",
+    "wait_for": "[data-testid='chat-panel']",
+    "element": "[data-testid='chat-panel']",
+    "delay": 1500,
+    "description": "Chat/conversation panel"
+  }
+}
