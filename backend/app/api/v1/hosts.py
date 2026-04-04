@@ -298,16 +298,17 @@ async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> di
         raise HTTPException(404, f"Remote host '{host_id}' not found")
 
     ssh_key = host.get("ssh_key_decrypted", "")
-    if not ssh_key:
-        raise HTTPException(400, "Host has no SSH key configured")
 
-    # Write SSH key to temp file for the installer
+    # If SSH key is configured, write it to a temp file; otherwise use system defaults (~/.ssh)
     import tempfile, os
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+    tmp_path: str | None = None
     try:
-        tmp.write(ssh_key)
-        tmp.close()
-        os.chmod(tmp.name, 0o600)
+        if ssh_key:
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            tmp.write(ssh_key)
+            tmp.close()
+            os.chmod(tmp.name, 0o600)
+            tmp_path = tmp.name
 
         from backend.app.services.daemon_installer import DaemonInstaller
         installer = DaemonInstaller()
@@ -315,11 +316,12 @@ async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> di
             host=host["host"],
             port=host.get("port", 22),
             user=host.get("user", "bond"),
-            ssh_key_path=tmp.name,
+            ssh_key_path=tmp_path,
             daemon_port=host.get("daemon_port", 8990),
         )
     finally:
-        os.unlink(tmp.name)
+        if tmp_path:
+            os.unlink(tmp_path)
 
     # Store auth token in DB if install succeeded
     if result.get("success") and result.get("auth_token"):

@@ -457,7 +457,7 @@ export default function SettingsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%", overflow: "hidden" },
+  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%", overflow: "hidden", boxSizing: "border-box" as const },
   header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", flexShrink: 0 },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
@@ -470,8 +470,8 @@ const s: Record<string, React.CSSProperties> = {
     cursor: "pointer", transition: "color 0.2s, border-color 0.2s", whiteSpace: "nowrap" as const, flexShrink: 0,
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
-  content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0, WebkitOverflowScrolling: "touch" as any },
-  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
+  content: { flex: 1, overflowY: "auto" as const, padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0, WebkitOverflowScrolling: "touch" as any, boxSizing: "border-box" as const },
+  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", overflow: "visible" as const, flexShrink: 0 },
   sectionTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 20px 0" },
   field: { marginBottom: "16px" },
   label: { display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500 },
