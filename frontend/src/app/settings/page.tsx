@@ -7,6 +7,7 @@ import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
 import SkillsTab from "./skills/SkillsTab";
 import OptimizationTab from "./optimization/OptimizationTab";
+import ContainerHostsTab from "./containers/ContainerHostsTab";
 import { BACKEND_API } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
@@ -15,6 +16,7 @@ const API_BASE = `${BACKEND_API}/settings`;
 
 const TABS = [
   { id: "agents", label: "Agents" },
+  { id: "containers", label: "Container Hosts" },
   { id: "deployment", label: "Deployment" },
   { id: "channels", label: "Channels" },
   { id: "prompts", label: "Prompts" },
@@ -223,6 +225,8 @@ export default function SettingsPage() {
       {/* Tab content */}
       <div style={s.content}>
         {activeTab === "agents" && <AgentsTab />}
+
+        {activeTab === "containers" && <ContainerHostsTab />}
 
         {activeTab === "deployment" && <DeploymentTab />}
 

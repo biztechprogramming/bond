@@ -5,11 +5,15 @@ Design Doc 089: Remote Container Hosts §4.1
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 logger = logging.getLogger("bond.sandbox.host_registry")
+
+_DB_CACHE_TTL = 30  # seconds
 
 
 @dataclass
@@ -55,6 +59,8 @@ class HostRegistry:
         self._strategy: str = "least-loaded"
         self._prefer_local: bool = True
         self._round_robin_idx: int = 0
+        self._cache_ts: float = 0.0
+        self._db_loaded: bool = False
         if config:
             self._load_from_config(config)
 
@@ -78,6 +84,76 @@ class HostRegistry:
         placement = config.get("placement", {})
         self._strategy = placement.get("strategy", "least-loaded")
         self._prefer_local = placement.get("prefer_local", True)
+
+    async def load_from_db(self) -> None:
+        """Load hosts from the container_hosts DB table with cache TTL."""
+        if self._db_loaded and (time.time() - self._cache_ts) < _DB_CACHE_TTL:
+            return
+
+        try:
+            from backend.app.db.session import get_session_factory
+
+            factory = get_session_factory()
+            async with factory() as db:
+                from sqlalchemy import text as sql_text
+
+                result = await db.execute(sql_text("SELECT * FROM container_hosts WHERE enabled = 1"))
+                rows = result.mappings().all()
+
+                # Preserve running counts from existing hosts
+                running_counts = {h.id: h.running_count for h in self._hosts.values()}
+                running_counts["local"] = self._local.running_count
+
+                new_hosts: dict[str, RemoteHost] = {}
+                for row in rows:
+                    row = dict(row)
+                    if row.get("is_local"):
+                        self._local.max_agents = row.get("max_agents", 100)
+                        self._local.running_count = running_counts.get("local", 0)
+                        continue
+
+                    labels = json.loads(row.get("labels", "[]")) if isinstance(row.get("labels"), str) else row.get("labels", [])
+                    host = RemoteHost(
+                        id=row["id"],
+                        name=row["name"],
+                        host=row["host"],
+                        port=row.get("port", 22),
+                        user=row.get("user", "bond"),
+                        ssh_key=row.get("ssh_key_encrypted", ""),
+                        daemon_port=row.get("daemon_port", 8990),
+                        max_agents=row.get("max_agents", 4),
+                        labels=labels,
+                        enabled=bool(row.get("enabled", 1)),
+                        status=row.get("status", "active"),
+                        running_count=running_counts.get(row["id"], 0),
+                    )
+                    new_hosts[host.id] = host
+
+                self._hosts = new_hosts
+
+                # Load placement strategy from settings
+                strat_result = await db.execute(
+                    sql_text("SELECT value FROM settings WHERE key = 'container.placement_strategy'")
+                )
+                strat_row = strat_result.fetchone()
+                if strat_row:
+                    self._strategy = strat_row[0]
+
+            self._cache_ts = time.time()
+            self._db_loaded = True
+            logger.debug("Loaded %d remote hosts from DB", len(self._hosts))
+
+        except Exception as e:
+            if not self._db_loaded:
+                logger.debug("DB not available, using config fallback: %s", e)
+            else:
+                logger.warning("Failed to refresh hosts from DB: %s", e)
+
+    async def refresh(self) -> None:
+        """Force reload from DB (bypasses cache)."""
+        self._cache_ts = 0.0
+        self._db_loaded = False
+        await self.load_from_db()
 
     @property
     def local(self) -> LocalHost:

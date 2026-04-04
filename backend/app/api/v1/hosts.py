@@ -1,6 +1,7 @@
 """Remote Hosts API — CRUD + health checks for remote container hosts.
 
 Design Doc 089: Remote Container Hosts §13
+Phase 2.5: Settings-Driven Configuration (DB-backed)
 """
 
 from __future__ import annotations
@@ -8,12 +9,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.db.session import get_db
+from backend.app.services.container_host_service import ContainerHostService
 
 logger = logging.getLogger("bond.api.hosts")
 
 router = APIRouter(prefix="/hosts", tags=["hosts"])
+
+_service = ContainerHostService()
 
 
 # ---------------------------------------------------------------------------
@@ -27,9 +34,10 @@ class HostCreate(BaseModel):
     host: str
     port: int = 22
     user: str = "bond"
-    ssh_key: str = "~/.ssh/id_ed25519"
-    daemon_port: int = 18795
+    ssh_key: str = ""
+    daemon_port: int = 8990
     max_agents: int = 4
+    memory_mb: int = 0
     labels: list[str] = []
     enabled: bool = True
 
@@ -42,6 +50,7 @@ class HostUpdate(BaseModel):
     ssh_key: str | None = None
     daemon_port: int | None = None
     max_agents: int | None = None
+    memory_mb: int | None = None
     labels: list[str] | None = None
     enabled: bool | None = None
     status: str | None = None
@@ -53,47 +62,61 @@ class HostResponse(BaseModel):
     host: str
     port: int
     user: str
-    ssh_key: str
     daemon_port: int
     max_agents: int
+    memory_mb: int = 0
     labels: list[str]
     enabled: bool
     status: str
+    is_local: bool = False
     running_count: int = 0
 
 
+class ContainerSettingsUpdate(BaseModel):
+    settings: dict[str, str]
+
+
+class ImportConfig(BaseModel):
+    remote_hosts: list[dict[str, Any]] = []
+
+
 # ---------------------------------------------------------------------------
-# Registry access
+# Helpers
 # ---------------------------------------------------------------------------
 
 
 def _get_registry():
-    """Get the HostRegistry singleton."""
-    from backend.app.sandbox.manager import get_sandbox_manager
-    return get_sandbox_manager()._registry
+    """Get the HostRegistry singleton for runtime state (running counts)."""
+    try:
+        from backend.app.sandbox.manager import get_sandbox_manager
+        return get_sandbox_manager()._registry
+    except Exception:
+        return None
 
 
-def _get_tunnel_manager():
-    """Get the TunnelManager singleton."""
-    from backend.app.sandbox.manager import get_sandbox_manager
-    return get_sandbox_manager()._tunnel_manager
+def _db_host_to_response(host: dict) -> dict:
+    """Convert a DB host dict to API response dict."""
+    registry = _get_registry()
+    running_count = 0
+    if registry:
+        reg_host = registry.get_host(host["id"])
+        if reg_host:
+            running_count = reg_host.running_count
 
-
-def _host_to_response(host) -> dict:
-    """Convert a host object to API response dict."""
     return {
-        "id": host.id,
-        "name": host.name,
-        "host": host.host,
-        "port": getattr(host, "port", 22),
-        "user": getattr(host, "user", "bond"),
-        "ssh_key": getattr(host, "ssh_key", ""),
-        "daemon_port": getattr(host, "daemon_port", 18795),
-        "max_agents": host.max_agents,
-        "labels": getattr(host, "labels", []),
-        "enabled": host.enabled,
-        "status": host.status,
-        "running_count": host.running_count,
+        "id": host["id"],
+        "name": host["name"],
+        "host": host["host"],
+        "port": host.get("port", 22),
+        "user": host.get("user", "bond"),
+        "daemon_port": host.get("daemon_port", 8990),
+        "max_agents": host.get("max_agents", 4),
+        "memory_mb": host.get("memory_mb", 0),
+        "labels": host.get("labels", []),
+        "enabled": host.get("enabled", True),
+        "status": host.get("status", "active"),
+        "is_local": host.get("is_local", False),
+        "running_count": running_count,
     }
 
 
@@ -103,78 +126,85 @@ def _host_to_response(host) -> dict:
 
 
 @router.get("")
-async def list_hosts() -> list[dict]:
+async def list_hosts(db: AsyncSession = Depends(get_db)) -> list[dict]:
     """List all configured hosts (local + remote) with status."""
-    registry = _get_registry()
-    result = []
-    for host in registry.get_all_hosts():
-        result.append(_host_to_response(host))
-    return result
+    hosts = await _service.list_all(db)
+    return [_db_host_to_response(h) for h in hosts]
 
 
 @router.post("")
-async def add_host(body: HostCreate) -> dict:
+async def add_host(body: HostCreate, db: AsyncSession = Depends(get_db)) -> dict:
     """Add a new remote host."""
-    from backend.app.sandbox.host_registry import RemoteHost
-
-    registry = _get_registry()
-
-    if registry.get_host(body.id):
+    existing = await _service.get(db, body.id)
+    if existing:
         raise HTTPException(409, f"Host '{body.id}' already exists")
 
-    host = RemoteHost(
-        id=body.id,
-        name=body.name,
-        host=body.host,
-        port=body.port,
-        user=body.user,
-        ssh_key=body.ssh_key,
-        daemon_port=body.daemon_port,
-        max_agents=body.max_agents,
-        labels=body.labels,
-        enabled=body.enabled,
-    )
-    registry.add_host(host)
+    created = await _service.create(db, body.model_dump())
     logger.info("Added remote host: %s (%s)", body.id, body.host)
-    return _host_to_response(host)
+    return _db_host_to_response(created)
 
 
 @router.put("/{host_id}")
-async def update_host(host_id: str, body: HostUpdate) -> dict:
+async def update_host(host_id: str, body: HostUpdate, db: AsyncSession = Depends(get_db)) -> dict:
     """Update a remote host configuration."""
-    registry = _get_registry()
-
     if host_id == "local":
-        raise HTTPException(400, "Cannot modify the local host")
+        # Allow limited updates to local host (max_agents, enabled)
+        allowed = {"max_agents", "enabled", "status"}
+        updates = body.model_dump(exclude_none=True)
+        disallowed = set(updates.keys()) - allowed
+        if disallowed:
+            raise HTTPException(400, f"Cannot modify these fields on local host: {disallowed}")
 
     updates = body.model_dump(exclude_none=True)
-    host = registry.update_host(host_id, updates)
-    if not host:
+    updated = await _service.update(db, host_id, updates)
+    if not updated:
         raise HTTPException(404, f"Host '{host_id}' not found")
 
-    logger.info("Updated remote host: %s", host_id)
-    return _host_to_response(host)
+    logger.info("Updated host: %s", host_id)
+    return _db_host_to_response(updated)
 
 
 @router.delete("/{host_id}")
-async def remove_host(host_id: str) -> dict:
+async def remove_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Remove a remote host."""
-    registry = _get_registry()
-
     if host_id == "local":
         raise HTTPException(400, "Cannot remove the local host")
 
-    if not registry.remove_host(host_id):
+    if not await _service.delete(db, host_id):
         raise HTTPException(404, f"Host '{host_id}' not found")
 
     logger.info("Removed remote host: %s", host_id)
     return {"status": "removed", "id": host_id}
 
 
+@router.get("/settings")
+async def get_container_settings(db: AsyncSession = Depends(get_db)) -> dict:
+    """Get all container.* settings."""
+    return await _service.get_container_settings(db)
+
+
+@router.put("/settings")
+async def update_container_settings(
+    body: ContainerSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Update container.* settings."""
+    return await _service.update_container_settings(db, body.settings)
+
+
+@router.post("/import")
+async def import_hosts(body: ImportConfig, db: AsyncSession = Depends(get_db)) -> dict:
+    """One-time import from bond.json / env vars."""
+    imported = await _service.import_from_config(db, body.model_dump())
+    return {"imported": len(imported), "hosts": [_db_host_to_response(h) for h in imported]}
+
+
 @router.get("/{host_id}/health")
-async def host_health(host_id: str) -> dict:
+async def host_health(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Detailed health check for a specific host."""
-    registry = _get_registry()
+    host = await _service.get(db, host_id)
+    if not host:
+        raise HTTPException(404, f"Host '{host_id}' not found")
 
     if host_id == "local":
         from backend.app.sandbox.adapters import LocalContainerAdapter
@@ -187,43 +217,45 @@ async def host_health(host_id: str) -> dict:
             "max_agents": status.max_agents,
         }
 
-    host = registry.get_host(host_id)
-    if not host:
-        raise HTTPException(404, f"Host '{host_id}' not found")
-
-    tunnel_manager = _get_tunnel_manager()
+    # Remote host — test via SSH tunnel + daemon
     try:
-        tunnel = await tunnel_manager.ensure_tunnel(host)
+        from backend.app.sandbox.manager import get_sandbox_manager
+        tunnel_manager = get_sandbox_manager()._tunnel_manager
+        registry = get_sandbox_manager()._registry
+        reg_host = registry.get_host(host_id)
+        if not reg_host:
+            return {"host_id": host_id, "online": False, "error": "Host not in registry"}
+
+        tunnel = await tunnel_manager.ensure_tunnel(reg_host)
         import httpx
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{tunnel.local_url}/health")
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        return {
-            "host_id": host_id,
-            "online": False,
-            "error": str(e),
-        }
+        return {"host_id": host_id, "online": False, "error": str(e)}
 
 
 @router.post("/{host_id}/test")
-async def test_host(host_id: str) -> dict:
+async def test_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Test SSH connectivity to a remote host."""
-    registry = _get_registry()
-    host = registry.get_host(host_id)
+    host = await _service.get(db, host_id)
     if not host or host_id == "local":
-        raise HTTPException(404, f"Host '{host_id}' not found")
+        raise HTTPException(404, f"Remote host '{host_id}' not found")
 
     results = {}
 
-    # Test SSH
-    tunnel_manager = _get_tunnel_manager()
     try:
-        tunnel = await tunnel_manager.ensure_tunnel(host)
+        from backend.app.sandbox.manager import get_sandbox_manager
+        tunnel_manager = get_sandbox_manager()._tunnel_manager
+        registry = get_sandbox_manager()._registry
+        reg_host = registry.get_host(host_id)
+        if not reg_host:
+            return {"ssh": {"status": "error", "error": "Host not loaded in registry"}}
+
+        tunnel = await tunnel_manager.ensure_tunnel(reg_host)
         results["ssh"] = {"status": "ok"}
 
-        # Test daemon
         import httpx
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{tunnel.local_url}/health")
@@ -241,7 +273,6 @@ async def test_host(host_id: str) -> dict:
                 }
             else:
                 results["daemon"] = {"status": "error", "http_status": resp.status_code}
-
     except Exception as e:
         results["ssh"] = {"status": "error", "error": str(e)}
 
@@ -249,8 +280,6 @@ async def test_host(host_id: str) -> dict:
 
 
 @router.post("/{host_id}/validate")
-async def validate_host(host_id: str) -> dict:
+async def validate_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Comprehensive remote host validation (Design Doc 089 §12.3)."""
-    # Alias to test for now — full validation with docker/git/disk checks
-    # will be added when the CLI onboarding flow is built
-    return await test_host(host_id)
+    return await test_host(host_id, db)
