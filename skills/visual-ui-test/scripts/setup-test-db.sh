@@ -1,23 +1,27 @@
 #!/bin/bash
 set -euo pipefail
 
-# setup-test-db.sh — Copy the test fixture DB to a temp location for runtime use.
-# Idempotent: safe to run multiple times.
+# setup-test-db.sh — Verify SpacetimeDB connectivity from inside the agent container.
+# The test SpacetimeDB instance runs on the HOST (set up by setup-test-spacetimedb.sh).
+# This script just confirms the container can reach it.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+STDB_HOST="${BOND_TEST_STDB_HOST:-host.docker.internal}"
+STDB_PORT="${BOND_TEST_STDB_PORT:-18797}"
+STDB_URL="http://${STDB_HOST}:${STDB_PORT}"
 
-SOURCE_DB="$PROJECT_ROOT/data/test-fixtures/bond-test.db"
-TARGET_DIR="/tmp/visual-ui-test"
-TARGET_DB="$TARGET_DIR/bond-test.db"
+echo "Checking SpacetimeDB connectivity at ${STDB_URL}..."
 
-if [ ! -f "$SOURCE_DB" ]; then
-    echo "ERROR: Source database not found: $SOURCE_DB" >&2
-    exit 1
-fi
-
-mkdir -p "$TARGET_DIR"
-cp "$SOURCE_DB" "$TARGET_DB"
-
-export BOND_DATABASE_PATH="$TARGET_DB"
-echo "BOND_DATABASE_PATH=$TARGET_DB"
+for i in $(seq 1 15); do
+    if curl -sf "${STDB_URL}/v1/health" > /dev/null 2>&1; then
+        echo "SpacetimeDB is reachable at ${STDB_URL}"
+        echo "BOND_SPACETIMEDB_URL=${STDB_URL}"
+        exit 0
+    fi
+    if [ "$i" -eq 15 ]; then
+        echo "ERROR: Cannot reach SpacetimeDB at ${STDB_URL}" >&2
+        echo "Ensure the host has run: skills/visual-ui-test/scripts/setup-test-spacetimedb.sh" >&2
+        echo "And that BOND_TEST_STDB_HOST is set correctly for this container." >&2
+        exit 1
+    fi
+    sleep 2
+done

@@ -42,7 +42,7 @@ The prompt system (`prompts/manifest.yaml`) has no guidance requiring visual ver
 ## 2. Design Principles
 
 1. **See what you ship.** No UI change should be committed without a screenshot proving it works.
-2. **Copy-on-write test data.** The dev environment needs realistic data, but tests must never corrupt the source snapshot.
+2. **Isolated test data.** The dev environment uses a separate SpacetimeDB instance (port 18797) so tests never touch production data (port 18787).
 3. **Minimal sandbox changes.** Add only what's necessary to `Dockerfile.agent` — Playwright + Chromium, nothing more.
 4. **Self-contained skill.** The skill must handle the full lifecycle: start services → navigate → screenshot → analyze → iterate.
 5. **Progressive disclosure.** The SKILL.md stays concise; scripts handle the complexity.
@@ -55,44 +55,52 @@ The prompt system (`prompts/manifest.yaml`) has no guidance requiring visual ver
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Agent Container (Dockerfile.agent)                     │
+│  HOST MACHINE                                           │
 │                                                         │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │ Coding   │───▶│ visual-ui-   │───▶│ Playwright   │  │
-│  │ Agent    │    │ test skill   │    │ (Chromium)   │  │
-│  │ (Claude) │◀───│              │◀───│              │  │
-│  └──────────┘    └──────┬───────┘    └──────┬───────┘  │
-│                         │                    │          │
-│  ┌──────────────────────┴────────────────────┘          │
+│  ┌──────────────────────────────┐                       │
+│  │ SpacetimeDB (test)           │                       │
+│  │ bond-test-spacetimedb :18797 │                       │
+│  │ Data: ~/.bond/spacetimedb-test│                      │
+│  └──────────────┬───────────────┘                       │
+│                 │ (port 18797)                           │
+├─────────────────┼───────────────────────────────────────┤
+│  Agent Container│(Dockerfile.agent)                     │
+│                 │                                        │
+│  ┌──────────┐  │ ┌──────────────┐    ┌──────────────┐  │
+│  │ Coding   │──┼▶│ visual-ui-   │───▶│ Playwright   │  │
+│  │ Agent    │  │ │ test skill   │    │ (Chromium)   │  │
+│  │ (Claude) │◀─┼─│              │◀───│              │  │
+│  └──────────┘  │ └──────┬───────┘    └──────┬───────┘  │
+│                │        │                    │          │
+│  ┌─────────────┴────────┴────────────────────┘          │
 │  │                                                      │
 │  │  ┌───────────┐  ┌───────────┐  ┌───────────┐       │
 │  │  │ Frontend  │  │ Backend   │  │ Gateway   │       │
 │  │  │ :18788    │  │ :18790    │  │ :18789    │       │
-│  │  └───────────┘  └───────────┘  └───────────┘       │
-│  │                                                      │
-│  │  ┌──────────────────────┐                            │
-│  │  │ bond-test.db (copy)  │                            │
-│  │  └──────────────────────┘                            │
-│  │                                                      │
+│  │  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘       │
+│  │        └───────────────┴──────────────┘              │
+│  │              All connect to SpacetimeDB              │
+│  │              via BOND_TEST_STDB_HOST:18797           │
 │  └──────────────────────────────────────────────────────│
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Key decision: Run everything inside the container.** The agent container already has Python and Node.js. Rather than trying to reach `host.docker.internal`, the skill starts its own frontend/backend/gateway stack inside the container. This avoids:
-- Network connectivity issues between container and host
-- Port conflicts with a running production instance
-- Dependency on the host having the dev environment running
+**Key decision: SpacetimeDB runs on the host, services run in the container.** The agent container cannot run Docker-in-Docker, so the test SpacetimeDB instance must be started on the host machine before the container runs. The container's services connect to it via `BOND_TEST_STDB_HOST` (defaults to `host.docker.internal`). This avoids:
+- Port conflicts with the production SpacetimeDB on port 18787
+- Docker-in-Docker complexity inside the agent sandbox
+- The container needing to know the host's actual hostname
 
 ### 3.2 Component Responsibilities
 
 | Component | Role | Location |
 |-----------|------|----------|
 | `SKILL.md` | Skill instructions for the agent | `skills/visual-ui-test/SKILL.md` |
-| `start-dev-env.sh` | Start frontend + backend + gateway in background | `skills/visual-ui-test/scripts/start-dev-env.sh` |
+| `start-dev-env.sh` | Start frontend + backend + gateway, connect to test SpacetimeDB | `skills/visual-ui-test/scripts/start-dev-env.sh` |
 | `take-screenshot.py` | Playwright script: navigate + screenshot | `skills/visual-ui-test/scripts/take-screenshot.py` |
-| `setup-test-db.sh` | Copy test DB snapshot, scrub secrets | `skills/visual-ui-test/scripts/setup-test-db.sh` |
-| `stop-dev-env.sh` | Teardown background services | `skills/visual-ui-test/scripts/stop-dev-env.sh` |
-| `bond-test.db` | Scrubbed snapshot of production data | `data/test-fixtures/bond-test.db` |
+| `setup-test-db.sh` | Verify SpacetimeDB connectivity from inside the container | `skills/visual-ui-test/scripts/setup-test-db.sh` |
+| `stop-dev-env.sh` | Teardown background services (not SpacetimeDB) | `skills/visual-ui-test/scripts/stop-dev-env.sh` |
+| `setup-test-spacetimedb.sh` | **Host-side**: start test SpacetimeDB, publish module, seed data | `skills/visual-ui-test/scripts/setup-test-spacetimedb.sh` |
+| `teardown-test-spacetimedb.sh` | **Host-side**: stop and remove test SpacetimeDB container | `skills/visual-ui-test/scripts/teardown-test-spacetimedb.sh` |
 | Prompt fragment | "MUST verify UI changes visually" | `prompts/frontend/visual-verification.md` |
 
 ### 3.3 Screenshot Workflow
@@ -206,7 +214,7 @@ will be cleaned up when the container stops.
 2. Always take both before AND after screenshots for comparison.
 3. If the screenshot shows unexpected results, investigate — don't just retry the same fix.
 4. Screenshots are saved to `/tmp/screenshots/`. Read them using the file read tool.
-5. The dev environment uses a test database copy — changes to data don't persist.
+5. The dev environment uses a test SpacetimeDB instance (port 18797) — separate from production (port 18787).
 ```
 
 ### 4.2 Script Specifications
@@ -251,138 +259,70 @@ if __name__ == "__main__":
     main()
 ```
 
-#### `start-dev-env.sh`
+#### `start-dev-env.sh` (container-side)
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+Accepts `BOND_TEST_STDB_HOST` (default: `host.docker.internal`) and `BOND_TEST_STDB_PORT` (default: `18797`). Health-checks SpacetimeDB, then starts backend, gateway, and frontend with SpacetimeDB env vars configured. Sets `BOND_SPACETIMEDB_URL`, `NEXT_PUBLIC_STDB_HOST`, `NEXT_PUBLIC_STDB_PORT` for each service. See `skills/visual-ui-test/scripts/start-dev-env.sh` for full implementation.
 
-SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROJECT_ROOT="$(cd "$SKILL_DIR/../.." && pwd)"
-SCREENSHOTS_DIR="/tmp/screenshots"
-PID_DIR="/tmp/visual-ui-test"
+#### `setup-test-db.sh` (container-side)
 
-mkdir -p "$SCREENSHOTS_DIR" "$PID_DIR"
+Verifies that the test SpacetimeDB instance is reachable from inside the container at `$BOND_TEST_STDB_HOST:$BOND_TEST_STDB_PORT`. Exits with error and clear instructions if not reachable.
 
-# Step 1: Set up test database
-bash "$SKILL_DIR/scripts/setup-test-db.sh"
+#### `setup-test-spacetimedb.sh` (host-side)
 
-# Step 2: Start backend
-export PYTHONPATH="$PROJECT_ROOT"
-export BOND_HOME="/tmp/visual-ui-test/bond-home"
-export BOND_DB_PATH="/tmp/visual-ui-test/bond-test.db"
-mkdir -p "$BOND_HOME/data"
+Starts a `bond-test-spacetimedb` Docker container on port 18797, publishes the `bond-core-v2` module, and seeds test data. Idempotent — safe to run multiple times. Uses `~/.bond/spacetimedb-test` for data (isolated from production).
 
-cd "$PROJECT_ROOT"
-uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 &
-echo $! > "$PID_DIR/backend.pid"
+#### `teardown-test-spacetimedb.sh` (host-side)
 
-# Step 3: Start gateway
-cd "$PROJECT_ROOT/gateway"
-pnpm dev &
-echo $! > "$PID_DIR/gateway.pid"
+Stops and removes the `bond-test-spacetimedb` container. Preserves the data volume.
 
-# Step 4: Start frontend
-cd "$PROJECT_ROOT/frontend"
-pnpm dev &
-echo $! > "$PID_DIR/frontend.pid"
+#### `stop-dev-env.sh` (container-side)
 
-# Step 5: Wait for health
-echo "Waiting for services to start..."
-for port in 18790 18789 18788; do
-  for i in $(seq 1 30); do
-    if curl -sf "http://localhost:$port" > /dev/null 2>&1; then
-      echo "Port $port is ready"
-      break
-    fi
-    sleep 2
-  done
-done
-
-echo "Dev environment is running."
-echo "  Frontend: http://localhost:18788"
-echo "  Gateway:  http://localhost:18789"
-echo "  Backend:  http://localhost:18790"
-```
-
-#### `setup-test-db.sh`
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-SNAPSHOT_SRC="${PROJECT_ROOT:-/workspace/bond}/data/test-fixtures/bond-test.db"
-WORK_COPY="/tmp/visual-ui-test/bond-test.db"
-
-if [ -f "$WORK_COPY" ]; then
-  echo "Test database already exists at $WORK_COPY, skipping copy."
-  exit 0
-fi
-
-mkdir -p "$(dirname "$WORK_COPY")"
-
-if [ ! -f "$SNAPSHOT_SRC" ]; then
-  echo "ERROR: Test fixture not found at $SNAPSHOT_SRC"
-  echo "Create it with: cp data/bond.db data/test-fixtures/bond-test.db"
-  echo "Then scrub secrets: sqlite3 data/test-fixtures/bond-test.db < skills/visual-ui-test/scripts/scrub-secrets.sql"
-  exit 1
-fi
-
-cp "$SNAPSHOT_SRC" "$WORK_COPY"
-echo "Test database copied to $WORK_COPY"
-```
-
-#### `stop-dev-env.sh`
-
-```bash
-#!/usr/bin/env bash
-PID_DIR="/tmp/visual-ui-test"
-for pidfile in "$PID_DIR"/*.pid; do
-  [ -f "$pidfile" ] && kill "$(cat "$pidfile")" 2>/dev/null && rm "$pidfile"
-done
-echo "Dev environment stopped."
-```
+Stops frontend, gateway, and backend processes. Does **not** stop the SpacetimeDB container (that's managed by the host).
 
 ---
 
-## 5. Test Database Strategy
+## 5. Test Database Strategy (SpacetimeDB)
 
-### 5.1 Snapshot Creation
+Bond's primary database is **SpacetimeDB** (not SQLite). The frontend connects to SpacetimeDB via WebSocket, the gateway uses the SpacetimeDB SDK, and the backend has a SpacetimeDB HTTP client. The SQLite database (`knowledge.db`) is only used for embeddings and is not needed for visual UI testing.
 
-Create a scrubbed copy of the production database:
+### 5.1 Test Instance Setup
+
+The test SpacetimeDB instance runs as a Docker container on the **host machine** (port 18797), separate from the production instance (port 18787).
 
 ```bash
-# One-time setup
-mkdir -p data/test-fixtures
-cp data/bond.db data/test-fixtures/bond-test.db
-sqlite3 data/test-fixtures/bond-test.db < skills/visual-ui-test/scripts/scrub-secrets.sql
+# One-time setup on the host
+bash skills/visual-ui-test/scripts/setup-test-spacetimedb.sh
 ```
 
-### 5.2 Scrubbing Script (`scrub-secrets.sql`)
+This script:
+1. Starts a `bond-test-spacetimedb` Docker container on port 18797
+2. Publishes the `bond-core-v2` module from `spacetimedb/spacetimedb/`
+3. Seeds test data via `scripts/seed-spacetimedb.sh`
 
-```sql
--- Scrub API keys and tokens
-UPDATE agents SET api_key = 'sk-test-' || hex(randomblob(16)) WHERE api_key IS NOT NULL;
-UPDATE settings SET value = 'scrubbed' WHERE key LIKE '%token%' OR key LIKE '%secret%' OR key LIKE '%key%';
+### 5.2 Environment Variables
 
--- Scrub SSH credentials
-UPDATE container_hosts SET ssh_password = NULL, ssh_key = NULL;
+| Variable | Where | Default | Purpose |
+|----------|-------|---------|---------|
+| `BOND_TEST_STDB_HOST` | Container env | `host.docker.internal` | Hostname to reach host's test SpacetimeDB |
+| `BOND_TEST_STDB_PORT` | Container env | `18797` | Port for test SpacetimeDB |
+| `BOND_SPACETIMEDB_URL` | Set by `start-dev-env.sh` | — | Full URL passed to backend/gateway |
+| `NEXT_PUBLIC_STDB_HOST` | Set by `start-dev-env.sh` | — | SpacetimeDB host for frontend WebSocket |
+| `NEXT_PUBLIC_STDB_PORT` | Set by `start-dev-env.sh` | — | SpacetimeDB port for frontend WebSocket |
 
--- Keep structure and realistic row counts, remove sensitive values
-```
+### 5.3 Data Isolation
 
-### 5.3 Copy-on-Start
+- Production SpacetimeDB: port 18787, data in `~/.bond/spacetimedb/`
+- Test SpacetimeDB: port 18797, data in `~/.bond/spacetimedb-test/`
+- The test container is named `bond-test-spacetimedb` (vs production `bond-spacetimedb`)
 
-The `setup-test-db.sh` script copies the snapshot to `/tmp/visual-ui-test/bond-test.db` on each dev environment start. The backend is configured via `BOND_DB_PATH` to use this copy. Since `/tmp` is ephemeral to the container, the snapshot is never modified.
+### 5.4 Teardown
 
-### 5.4 Maintenance
+```bash
+# Remove the test instance (preserves data volume)
+bash skills/visual-ui-test/scripts/teardown-test-spacetimedb.sh
 
-The snapshot should be refreshed when schema migrations are added. Add a CI check or Makefile target:
-
-```makefile
-data/test-fixtures/bond-test.db: data/bond.db
-	cp $< $@
-	sqlite3 $@ < skills/visual-ui-test/scripts/scrub-secrets.sql
+# To also delete test data:
+rm -rf ~/.bond/spacetimedb-test
 ```
 
 ---
@@ -484,20 +424,21 @@ Faster start but larger image and stale if dependencies change.
 2. Test standalone: start the dev environment on the host, run the script inside the container pointing at `host.docker.internal:18788`
 3. Validate screenshot output is readable by the agent's file read tool
 
-### Phase 3: Test Database (Week 2)
+### Phase 3: Test SpacetimeDB Infrastructure (Week 2)
 
-1. Create `data/test-fixtures/` directory
-2. Write `scrub-secrets.sql`
-3. Generate initial `bond-test.db` snapshot
-4. Write `setup-test-db.sh`
-5. Verify the backend can start against the test copy
+1. Write `setup-test-spacetimedb.sh` (host-side): start SpacetimeDB container on port 18797, publish module, seed data
+2. Write `teardown-test-spacetimedb.sh` (host-side): stop and remove test container
+3. Write `setup-test-db.sh` (container-side): verify SpacetimeDB connectivity
+4. Write `generate-test-db.sh` (host-side wrapper): delegates to `setup-test-spacetimedb.sh`
+5. Verify: host runs setup script, container can reach SpacetimeDB at `$BOND_TEST_STDB_HOST:18797`
 
 ### Phase 4: Dev Environment Scripts (Week 2)
 
-1. Write `start-dev-env.sh` and `stop-dev-env.sh`
-2. Test inside the container: can all three services start?
-3. Resolve any missing dependencies (uv, node_modules, etc.)
-4. Verify Playwright can connect to the in-container frontend
+1. Write `start-dev-env.sh` — accepts `BOND_TEST_STDB_HOST` env var, configures all services to use test SpacetimeDB on port 18797 (`BOND_SPACETIMEDB_URL`, `NEXT_PUBLIC_STDB_HOST`, `NEXT_PUBLIC_STDB_PORT`)
+2. Write `stop-dev-env.sh` — stops local services only (SpacetimeDB is host-managed)
+3. Health-check SpacetimeDB before starting services
+4. Test inside the container: can all three services start and connect to test SpacetimeDB?
+5. Verify Playwright can connect to the in-container frontend
 
 ### Phase 5: Skill + Prompt Integration (Week 3)
 
@@ -527,7 +468,7 @@ Faster start but larger image and stale if dependencies change.
 
 5. **Startup time.** Starting 3 services + waiting for health could take 30-60 seconds. Is this acceptable per invocation? Should the skill keep services running across multiple screenshots?
 
-6. **Database schema drift.** How to keep `bond-test.db` in sync with migrations? Could automate: `make test-db` target that rebuilds from production + scrub.
+6. **SpacetimeDB module changes.** When the SpacetimeDB module schema changes, the test instance needs to be torn down and re-created. Could automate: `teardown-test-spacetimedb.sh && setup-test-spacetimedb.sh`.
 
 7. **Concurrent agents.** If multiple coding agents run visual tests simultaneously, port conflicts will occur. Options: randomize ports, use per-agent port offsets, or enforce single-agent-at-a-time for UI work.
 
