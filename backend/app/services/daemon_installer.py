@@ -423,14 +423,14 @@ class DaemonInstaller:
             return
 
         # 2. Create install directory (skip if already exists and writable)
-        yield _evt("mkdir", "running", f"Checking {_REMOTE_INSTALL_DIR}...")
+        yield _evt("create_dir", "running", f"Checking {_REMOTE_INSTALL_DIR}...")
         check_cmd = f"test -d {_REMOTE_INSTALL_DIR} && test -w {_REMOTE_INSTALL_DIR}"
         rc, _, _, display_cmd = await _run_ssh_command(
             host, port, user, ssh_key_path, check_cmd,
         )
         yield {"type": "command", "message": display_cmd}
         if rc == 0:
-            yield _evt("mkdir", "ok", f"Directory {_REMOTE_INSTALL_DIR} already exists and is writable")
+            yield _evt("create_dir", "ok", f"Directory {_REMOTE_INSTALL_DIR} already exists and is writable")
         else:
             mkdir_cmd = f"sudo -n mkdir -p {_REMOTE_INSTALL_DIR} && sudo -n chown {user}:{user} {_REMOTE_INSTALL_DIR}"
             rc, _, stderr, display_cmd = await _run_ssh_command(
@@ -440,10 +440,10 @@ class DaemonInstaller:
             if rc != 0:
                 sudo_msg = _check_sudo_error(rc, stderr, mkdir_cmd, user, host)
                 msg = sudo_msg or f"Failed to create install dir: {stderr.strip()}"
-                yield _evt("mkdir", "error", msg)
+                yield _evt("create_dir", "error", msg)
                 yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
                 return
-            yield _evt("mkdir", "ok", f"Created {_REMOTE_INSTALL_DIR}")
+            yield _evt("create_dir", "ok", f"Created {_REMOTE_INSTALL_DIR}")
 
         # 3. Copy daemon files
         yield _evt("copy", "running", "Copying bond_host_daemon.py...")
