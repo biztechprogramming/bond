@@ -97,7 +97,6 @@ The prompt system (`prompts/manifest.yaml`) has no guidance requiring visual ver
 | `SKILL.md` | Skill instructions for the agent | `skills/visual-ui-test/SKILL.md` |
 | `start-dev-env.sh` | Start frontend + backend + gateway, connect to test SpacetimeDB | `skills/visual-ui-test/scripts/start-dev-env.sh` |
 | `take-screenshot.py` | Playwright script: navigate + screenshot | `skills/visual-ui-test/scripts/take-screenshot.py` |
-| `setup-test-db.sh` | Verify SpacetimeDB connectivity from inside the container | `skills/visual-ui-test/scripts/setup-test-db.sh` |
 | `stop-dev-env.sh` | Teardown background services (not SpacetimeDB) | `skills/visual-ui-test/scripts/stop-dev-env.sh` |
 | `setup-test-spacetimedb.sh` | **Host-side**: start test SpacetimeDB, publish module, seed data | `skills/visual-ui-test/scripts/setup-test-spacetimedb.sh` |
 | `teardown-test-spacetimedb.sh` | **Host-side**: stop and remove test SpacetimeDB container | `skills/visual-ui-test/scripts/teardown-test-spacetimedb.sh` |
@@ -263,10 +262,6 @@ if __name__ == "__main__":
 
 Accepts `BOND_TEST_STDB_HOST` (default: `host.docker.internal`) and `BOND_TEST_STDB_PORT` (default: `18797`). Health-checks SpacetimeDB, then starts backend, gateway, and frontend with SpacetimeDB env vars configured. Sets `BOND_SPACETIMEDB_URL`, `NEXT_PUBLIC_STDB_HOST`, `NEXT_PUBLIC_STDB_PORT` for each service. See `skills/visual-ui-test/scripts/start-dev-env.sh` for full implementation.
 
-#### `setup-test-db.sh` (container-side)
-
-Verifies that the test SpacetimeDB instance is reachable from inside the container at `$BOND_TEST_STDB_HOST:$BOND_TEST_STDB_PORT`. Exits with error and clear instructions if not reachable.
-
 #### `setup-test-spacetimedb.sh` (host-side)
 
 Starts a `bond-test-spacetimedb` Docker container on port 18797, publishes the `bond-core-v2` module, and seeds test data. Idempotent — safe to run multiple times. Uses `~/.bond/spacetimedb-test` for data (isolated from production).
@@ -428,9 +423,7 @@ Faster start but larger image and stale if dependencies change.
 
 1. Write `setup-test-spacetimedb.sh` (host-side): start SpacetimeDB container on port 18797, publish module, seed data
 2. Write `teardown-test-spacetimedb.sh` (host-side): stop and remove test container
-3. Write `setup-test-db.sh` (container-side): verify SpacetimeDB connectivity
-4. Write `generate-test-db.sh` (host-side wrapper): delegates to `setup-test-spacetimedb.sh`
-5. Verify: host runs setup script, container can reach SpacetimeDB at `$BOND_TEST_STDB_HOST:18797`
+3. Verify: host runs setup script, container can reach SpacetimeDB at `$BOND_TEST_STDB_HOST:18797`
 
 ### Phase 4: Dev Environment Scripts (Week 2)
 
