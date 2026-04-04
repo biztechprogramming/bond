@@ -32,9 +32,11 @@ Thumbs.db
 # Lockfiles generated on install
 gateway/pnpm-lock.yaml
 frontend/pnpm-lock.yaml
-data/
+data/*
+!data/test-fixtures/
 tests/coding-runs/
 *.db
+!data/test-fixtures/*.db
 data/agent-configs/
 *.tsbuildinfo
 
