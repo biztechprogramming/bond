@@ -251,7 +251,7 @@ export default function ContainerHostsTab() {
               </span>
               <span style={{ flex: 2, color: "#8888a0", fontFamily: "monospace", fontSize: "0.85rem" }}>
                 <span className="cht-host-label">Host</span>
-                {h.host}{h.port > 0 ? `:${h.port}` : ""}
+                {h.user || "bond"}@{h.host}{h.port > 0 ? `:${h.port}` : ""}
               </span>
               <span style={{ flex: 1 }}>
                 <span className="cht-host-label">Status</span>
