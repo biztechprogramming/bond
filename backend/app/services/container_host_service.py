@@ -154,6 +154,8 @@ class ContainerHostService:
         d["labels"] = json.loads(d.get("labels", "[]"))
         d["enabled"] = bool(d.get("enabled", 1))
         d["is_local"] = bool(d.get("is_local", 0))
+        # Track whether daemon auth token exists (daemon installed)
+        d["has_auth_token"] = bool(d.get("auth_token"))
         # Decrypt SSH key for internal use but don't expose raw key in API
         ssh_key = d.get("ssh_key_encrypted")
         if ssh_key:

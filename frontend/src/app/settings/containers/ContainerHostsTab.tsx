@@ -21,6 +21,7 @@ interface ContainerHost {
   status: string;
   is_local: boolean;
   running_count: number;
+  daemon_installed: boolean;
 }
 
 const STRATEGIES = ["least-loaded", "round-robin", "manual"];
@@ -228,6 +229,7 @@ export default function ContainerHostsTab() {
               <span style={{ flex: 1 }}>
                 <span className="cht-host-label">Status</span>
                 <span style={{ color: statusColor(h.status), fontSize: "0.85rem", fontWeight: 500 }}>{h.status}</span>
+                {!h.is_local && h.daemon_installed && <span style={{ color: "#6cffa0", fontSize: "0.7rem", marginLeft: 4 }}>daemon ✓</span>}
               </span>
               <span style={{ flex: 1, color: "#8888a0", fontSize: "0.85rem" }}>
                 <span className="cht-host-label">Agents</span>
@@ -249,7 +251,7 @@ export default function ContainerHostsTab() {
                       onClick={() => handleInstallDaemon(h.id)}
                       disabled={installingId === h.id}
                     >
-                      {installingId === h.id ? "Installing..." : "Install Daemon"}
+                      {installingId === h.id ? "Installing..." : h.daemon_installed ? "Reinstall Daemon" : "Install Daemon"}
                     </button>
                     <button style={{ ...smallBtn, color: "#ff6c8a" }} onClick={() => handleDeleteHost(h.id)}>
                       Delete

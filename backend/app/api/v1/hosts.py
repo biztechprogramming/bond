@@ -22,11 +22,9 @@ router = APIRouter(prefix="/hosts", tags=["hosts"])
 
 _service = ContainerHostService()
 
-
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
-
 
 class HostCreate(BaseModel):
     id: str
@@ -41,7 +39,6 @@ class HostCreate(BaseModel):
     labels: list[str] = []
     enabled: bool = True
 
-
 class HostUpdate(BaseModel):
     name: str | None = None
     host: str | None = None
@@ -54,7 +51,6 @@ class HostUpdate(BaseModel):
     labels: list[str] | None = None
     enabled: bool | None = None
     status: str | None = None
-
 
 class HostResponse(BaseModel):
     id: str
@@ -71,19 +67,15 @@ class HostResponse(BaseModel):
     is_local: bool = False
     running_count: int = 0
 
-
 class ContainerSettingsUpdate(BaseModel):
     settings: dict[str, str]
-
 
 class ImportConfig(BaseModel):
     remote_hosts: list[dict[str, Any]] = []
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _get_registry():
     """Get the HostRegistry singleton for runtime state (running counts)."""
@@ -92,7 +84,6 @@ def _get_registry():
         return get_sandbox_manager()._registry
     except Exception:
         return None
-
 
 def _db_host_to_response(host: dict) -> dict:
     """Convert a DB host dict to API response dict."""
@@ -117,20 +108,18 @@ def _db_host_to_response(host: dict) -> dict:
         "status": host.get("status", "active"),
         "is_local": host.get("is_local", False),
         "running_count": running_count,
+        "daemon_installed": bool(host.get("has_auth_token", False)),
     }
-
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
 
 @router.get("")
 async def list_hosts(db: AsyncSession = Depends(get_db)) -> list[dict]:
     """List all configured hosts (local + remote) with status."""
     hosts = await _service.list_all(db)
     return [_db_host_to_response(h) for h in hosts]
-
 
 @router.post("")
 async def add_host(body: HostCreate, db: AsyncSession = Depends(get_db)) -> dict:
@@ -142,7 +131,6 @@ async def add_host(body: HostCreate, db: AsyncSession = Depends(get_db)) -> dict
     created = await _service.create(db, body.model_dump())
     logger.info("Added remote host: %s (%s)", body.id, body.host)
     return _db_host_to_response(created)
-
 
 @router.put("/{host_id}")
 async def update_host(host_id: str, body: HostUpdate, db: AsyncSession = Depends(get_db)) -> dict:
@@ -163,7 +151,6 @@ async def update_host(host_id: str, body: HostUpdate, db: AsyncSession = Depends
     logger.info("Updated host: %s", host_id)
     return _db_host_to_response(updated)
 
-
 @router.delete("/{host_id}")
 async def remove_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Remove a remote host."""
@@ -176,12 +163,10 @@ async def remove_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     logger.info("Removed remote host: %s", host_id)
     return {"status": "removed", "id": host_id}
 
-
 @router.get("/settings")
 async def get_container_settings(db: AsyncSession = Depends(get_db)) -> dict:
     """Get all container.* settings."""
     return await _service.get_container_settings(db)
-
 
 @router.put("/settings")
 async def update_container_settings(
@@ -191,13 +176,11 @@ async def update_container_settings(
     """Update container.* settings."""
     return await _service.update_container_settings(db, body.settings)
 
-
 @router.post("/import")
 async def import_hosts(body: ImportConfig, db: AsyncSession = Depends(get_db)) -> dict:
     """One-time import from bond.json / env vars."""
     imported = await _service.import_from_config(db, body.model_dump())
     return {"imported": len(imported), "hosts": [_db_host_to_response(h) for h in imported]}
-
 
 @router.get("/{host_id}/health")
 async def host_health(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
@@ -235,7 +218,6 @@ async def host_health(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     except Exception as e:
         return {"host_id": host_id, "online": False, "error": str(e)}
 
-
 @router.post("/{host_id}/test")
 async def test_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Test SSH connectivity to a remote host."""
@@ -247,11 +229,25 @@ async def test_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
 
     try:
         from backend.app.sandbox.manager import get_sandbox_manager
-        tunnel_manager = get_sandbox_manager()._tunnel_manager
-        registry = get_sandbox_manager()._registry
+        manager = get_sandbox_manager()
+        tunnel_manager = manager._tunnel_manager
+        registry = manager._registry
+
+        # Ensure registry has loaded hosts from DB (picks up newly-added hosts)
+        await registry.load_from_db()
+
         reg_host = registry.get_host(host_id)
         if not reg_host:
-            return {"ssh": {"status": "error", "error": "Host not loaded in registry"}}
+            # Host exists in DB but not in registry — force a full refresh
+            await registry.refresh()
+            reg_host = registry.get_host(host_id)
+        if not reg_host:
+            return {
+                "ssh": {
+                    "status": "error",
+                    "error": f"Host '{host_id}' not found in registry after refresh. Is it enabled?",
+                }
+            }
 
         tunnel = await tunnel_manager.ensure_tunnel(reg_host)
         results["ssh"] = {"status": "ok"}
@@ -278,17 +274,14 @@ async def test_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
 
     return results
 
-
 @router.post("/{host_id}/validate")
 async def validate_host(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Comprehensive remote host validation (Design Doc 089 §12.3)."""
     return await test_host(host_id, db)
 
-
 # ---------------------------------------------------------------------------
 # Daemon installation endpoints (Phase 2, Gap 1)
 # ---------------------------------------------------------------------------
-
 
 @router.post("/{host_id}/install-daemon")
 async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
@@ -341,7 +334,6 @@ async def install_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> di
 
     return result
 
-
 @router.post("/{host_id}/uninstall-daemon")
 async def uninstall_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Remove bond-host-daemon from a remote host."""
@@ -350,15 +342,17 @@ async def uninstall_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> 
         raise HTTPException(404, f"Remote host '{host_id}' not found")
 
     ssh_key = host.get("ssh_key_decrypted", "")
-    if not ssh_key:
-        raise HTTPException(400, "Host has no SSH key configured")
 
+    # If SSH key is configured, write it to a temp file; otherwise use system defaults (~/.ssh)
     import tempfile, os
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+    tmp_path: str | None = None
     try:
-        tmp.write(ssh_key)
-        tmp.close()
-        os.chmod(tmp.name, 0o600)
+        if ssh_key:
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            tmp.write(ssh_key)
+            tmp.close()
+            os.chmod(tmp.name, 0o600)
+            tmp_path = tmp.name
 
         from backend.app.services.daemon_installer import DaemonInstaller
         installer = DaemonInstaller()
@@ -366,10 +360,11 @@ async def uninstall_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> 
             host=host["host"],
             port=host.get("port", 22),
             user=host.get("user", "bond"),
-            ssh_key_path=tmp.name,
+            ssh_key_path=tmp_path,
         )
     finally:
-        os.unlink(tmp.name)
+        if tmp_path:
+            os.unlink(tmp_path)
 
     # Clear auth token
     if result.get("success"):
@@ -382,7 +377,6 @@ async def uninstall_daemon(host_id: str, db: AsyncSession = Depends(get_db)) -> 
 
     return result
 
-
 @router.get("/{host_id}/daemon-status")
 async def daemon_status(host_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Check if bond-host-daemon is running on a remote host."""
@@ -391,15 +385,17 @@ async def daemon_status(host_id: str, db: AsyncSession = Depends(get_db)) -> dic
         raise HTTPException(404, f"Remote host '{host_id}' not found")
 
     ssh_key = host.get("ssh_key_decrypted", "")
-    if not ssh_key:
-        raise HTTPException(400, "Host has no SSH key configured")
 
+    # If SSH key is configured, write it to a temp file; otherwise use system defaults (~/.ssh)
     import tempfile, os
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+    tmp_path: str | None = None
     try:
-        tmp.write(ssh_key)
-        tmp.close()
-        os.chmod(tmp.name, 0o600)
+        if ssh_key:
+            tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            tmp.write(ssh_key)
+            tmp.close()
+            os.chmod(tmp.name, 0o600)
+            tmp_path = tmp.name
 
         from backend.app.services.daemon_installer import DaemonInstaller
         installer = DaemonInstaller()
@@ -407,9 +403,10 @@ async def daemon_status(host_id: str, db: AsyncSession = Depends(get_db)) -> dic
             host=host["host"],
             port=host.get("port", 22),
             user=host.get("user", "bond"),
-            ssh_key_path=tmp.name,
+            ssh_key_path=tmp_path,
         )
     finally:
-        os.unlink(tmp.name)
+        if tmp_path:
+            os.unlink(tmp_path)
 
     return result
