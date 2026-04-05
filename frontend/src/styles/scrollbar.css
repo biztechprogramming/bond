@@ -1,0 +1,108 @@
+/*
+ * Bond Custom Scrollbar — V4 "Gradient Glow"
+ *
+ * Auto-hides when not hovering. Blue gradient thumb with subtle edge glow.
+ * Change this ONE file to restyle all scrollbars app-wide.
+ *
+ * Uses CSS custom properties so colors can be overridden per-theme.
+ */
+
+:root {
+  --scrollbar-width: 8px;
+  --scrollbar-thumb-color: rgba(108, 138, 255, 0.5);
+  --scrollbar-thumb-hover-color: rgba(108, 138, 255, 0.7);
+  --scrollbar-thumb-gradient: linear-gradient(180deg, #4a6adf, #8ca0ff, #4a6adf);
+  --scrollbar-thumb-hover-gradient: linear-gradient(180deg, #5a7aef, #9cb0ff, #5a7aef);
+  --scrollbar-track-color: transparent;
+  --scrollbar-track-hover-color: linear-gradient(to right, transparent, rgba(30, 30, 46, 0.5));
+  --scrollbar-track-glow: 0 0 6px rgba(108, 138, 255, 0.15);
+  --scrollbar-border-radius: 4px;
+  --scrollbar-transition-duration: 0.3s;
+}
+
+/* ── Firefox ────────────────────────────────────── */
+/* Firefox only supports scrollbar-width + scrollbar-color.
+   We use thin + transparent by default, then show on hover. */
+
+*,
+*::before,
+*::after {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: var(--scrollbar-thumb-color) transparent;
+}
+
+/* ── WebKit / Blink (Chrome, Safari, Edge) ──────── */
+
+*::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+  height: var(--scrollbar-width);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track-color);
+  transition: background var(--scrollbar-transition-duration) ease;
+}
+
+*:hover::-webkit-scrollbar-track {
+  background: linear-gradient(to right, transparent, rgba(30, 30, 46, 0.5));
+  box-shadow: var(--scrollbar-track-glow);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--scrollbar-border-radius);
+  transition: background var(--scrollbar-transition-duration) ease;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-gradient);
+  box-shadow: var(--scrollbar-track-glow);
+}
+
+*:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover-gradient);
+  box-shadow: 0 0 8px rgba(108, 138, 255, 0.3);
+}
+
+/* ── Scrollbar on the <body> itself ─────────────── */
+/* Body should always show the scrollbar on hover (not require a child hover) */
+
+body::-webkit-scrollbar {
+  width: var(--scrollbar-width);
+}
+
+body::-webkit-scrollbar-track {
+  background: var(--scrollbar-track-color);
+}
+
+body:hover::-webkit-scrollbar-track {
+  background: linear-gradient(to right, transparent, rgba(30, 30, 46, 0.5));
+  box-shadow: var(--scrollbar-track-glow);
+}
+
+body::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: var(--scrollbar-border-radius);
+}
+
+body:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-gradient);
+  box-shadow: var(--scrollbar-track-glow);
+}
+
+body:hover::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover-gradient);
+  box-shadow: 0 0 8px rgba(108, 138, 255, 0.3);
+}
+
+/* ── Mobile: let OS handle scrollbar natively ───── */
+@media (pointer: coarse) {
+  * {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
