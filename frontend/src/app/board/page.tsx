@@ -18,6 +18,7 @@ import {
   type WorkItem as STDBWorkItem
 } from "@/lib/spacetimedb-client";
 import { BACKEND_API , apiFetch } from "@/lib/config";
+import ImageLightbox from "@/components/chat/ImageLightbox";
 
 const API_BASE = BACKEND_API;
 
@@ -80,6 +81,33 @@ function BoardPage() {
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+  // Image gallery state
+  const [galleryImages, setGalleryImages] = useState<{ name: string; path: string }[]>([]);
+  const [galleryLightbox, setGalleryLightbox] = useState<number | null>(null);
+  const [showGallery, setShowGallery] = useState(false);
+
+  useEffect(() => {
+    const fetchImages = async () => {
+      try {
+        const res = await apiFetch(`${API_BASE}/workspace-files/.bond/images/`);
+        if (res.ok) {
+          const data = await res.json();
+          const files = (Array.isArray(data) ? data : data.files || [])
+            .filter((f: string | { name: string }) => {
+              const name = typeof f === "string" ? f : f.name;
+              return /\.(png|jpg|jpeg|webp)$/i.test(name);
+            })
+            .map((f: string | { name: string }) => {
+              const name = typeof f === "string" ? f : f.name;
+              return { name, path: `.bond/images/${name}` };
+            });
+          setGalleryImages(files);
+        }
+      } catch { /* no images dir yet */ }
+    };
+    fetchImages();
+  }, []);
+
   const [lineage, setLineage] = useState<{
     parents: { id: string; title: string; status: string }[];
     current: { id: string; title: string; status: string } | null;
@@ -497,6 +525,61 @@ function BoardPage() {
             </div>
           )}
         </div>
+
+        {/* Image Gallery Toggle */}
+        {galleryImages.length > 0 && (
+          <div style={{ position: "absolute", top: "56px", right: "410px", zIndex: 10 }}>
+            <button
+              onClick={() => setShowGallery(!showGallery)}
+              style={{ ...s.chatToggle, fontSize: "0.78rem", padding: "4px 10px" }}
+            >
+              🖼 Images ({galleryImages.length})
+            </button>
+          </div>
+        )}
+
+        {/* Image Gallery Overlay */}
+        {showGallery && (
+          <div style={{
+            position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.8)", zIndex: 500,
+            display: "flex", flexDirection: "column", padding: "24px",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
+              <h2 style={{ color: "#e0e0e8", margin: 0 }}>Image Gallery</h2>
+              <button onClick={() => setShowGallery(false)} style={{ background: "none", border: "none", color: "#8888a0", fontSize: "1.2rem", cursor: "pointer" }}>✕</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "12px", overflow: "auto", flex: 1 }}>
+              {galleryImages.map((img, i) => (
+                <div key={img.name} onClick={() => setGalleryLightbox(i)} style={{ cursor: "pointer", borderRadius: "8px", overflow: "hidden", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e" }}>
+                  <img
+                    src={`/api/v1/workspace-files/${encodeURIComponent(img.path)}`}
+                    alt={img.name}
+                    style={{ width: "100%", height: "auto", display: "block" }}
+                  />
+                  <div style={{ padding: "6px 8px", fontSize: "0.75rem", color: "#8888a0", backgroundColor: "#12121a" }}>{img.name}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {galleryLightbox !== null && galleryImages[galleryLightbox] && (
+          <ImageLightbox
+            src={galleryImages[galleryLightbox].path}
+            prompt={galleryImages[galleryLightbox].name}
+            provider=""
+            model=""
+            size=""
+            onClose={() => setGalleryLightbox(null)}
+            onDownload={() => {
+              const img = galleryImages[galleryLightbox];
+              const a = document.createElement("a");
+              a.href = `/api/v1/workspace-files/${encodeURIComponent(img.path)}`;
+              a.download = img.name;
+              a.click();
+            }}
+            onRegenerate={() => {}}
+          />
+        )}
 
         {/* Chat Panel */}
         <div className="board-chat-panel" style={s.chatPanel}>

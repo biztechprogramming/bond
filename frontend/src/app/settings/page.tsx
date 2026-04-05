@@ -7,6 +7,7 @@ import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
 import SkillsTab from "./skills/SkillsTab";
 import OptimizationTab from "./optimization/OptimizationTab";
+import ImagesTab from "./images/ImagesTab";
 import ContainerHostsTab from "./containers/ContainerHostsTab";
 import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
@@ -20,6 +21,7 @@ const TABS = [
   { id: "deployment", label: "Deployment" },
   { id: "channels", label: "Channels" },
   { id: "prompts", label: "Prompts" },
+  { id: "images", label: "Images" },
   { id: "llm", label: "LLM" },
   { id: "embedding", label: "Embedding" },
   { id: "api-keys", label: "API Keys" },
@@ -244,6 +246,8 @@ export default function SettingsPage() {
         {activeTab === "channels" && <ChannelsTab />}
 
         {activeTab === "prompts" && <PromptsTab />}
+
+        {activeTab === "images" && <ImagesTab />}
 
         {activeTab === "llm" && (
           <section style={s.section}>
