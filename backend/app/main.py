@@ -130,7 +130,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.middleware("http")
 async def check_api_key(request: Request, call_next):
     """Require Bearer token on all routes except /api/v1/health."""
-    if request.url.path in ("/api/v1/health", "/docs", "/openapi.json"):
+    if request.method == "OPTIONS" or request.url.path in ("/api/v1/health", "/docs", "/openapi.json"):
         return await call_next(request)
     auth = request.headers.get("authorization", "")
     token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
