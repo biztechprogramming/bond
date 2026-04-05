@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface RegisteredScript {
   name: string;
@@ -55,7 +55,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${GATEWAY_API}/deployments/discovery/manifests/${manifestName}`)
+    apiFetch(`${GATEWAY_API}/deployments/discovery/manifests/${manifestName}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (!data?.layers) { setComponents([]); return; }
@@ -93,7 +93,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
     setGenerating(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/broker/deploy`, {
+      const res = await apiFetch(`${GATEWAY_API}/broker/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -120,7 +120,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
     setGenerating(true);
     setMsg("");
     try {
-      const genRes = await fetch(`${GATEWAY_API}/broker/deploy`, {
+      const genRes = await apiFetch(`${GATEWAY_API}/broker/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -137,7 +137,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
 
       const registered: RegisteredScript[] = [];
       for (const script of scripts) {
-        const regRes = await fetch(`${GATEWAY_API}/deployments/scripts`, {
+        const regRes = await apiFetch(`${GATEWAY_API}/deployments/scripts`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: script.name, description: script.description || "", content: script.content, level }),
@@ -146,7 +146,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
           registered.push({ name: script.name, description: script.description || "", content: script.content, level });
           // Link script to component if provided
           if (componentId) {
-            await fetch(`${GATEWAY_API}/deployments/components/${componentId}/scripts`, {
+            await apiFetch(`${GATEWAY_API}/deployments/components/${componentId}/scripts`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ script_name: script.name }),
@@ -156,7 +156,7 @@ export default function ScriptFromDiscoveryWizard({ manifestName, environment, o
       }
 
       if (promote && registered.length > 0) {
-        await fetch(`${GATEWAY_API}/deployments/environments/${environment}/promote`, {
+        await apiFetch(`${GATEWAY_API}/deployments/environments/${environment}/promote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ scripts: registered.map((s) => s.name) }),

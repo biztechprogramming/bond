@@ -38,8 +38,9 @@ ENV PYTHONPATH=/app
 
 EXPOSE 18788 18789 18790
 
-# Simple process manager: start backend + gateway + serve frontend
+# Simple process manager: first-run credential display, then start services
 CMD ["sh", "-c", "\
+  bash scripts/first-run.sh && \
   uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 & \
   cd gateway && pnpm start & \
   cd frontend && pnpm start & \

@@ -79,8 +79,8 @@ export default function SkillsTab() {
   const fetchData = useCallback(async () => {
     try {
       const [skillsRes, sourcesRes] = await Promise.all([
-        fetch(`${API}/`),
-        fetch(`${API}/sources`),
+        apiFetch(`${API}/`),
+        apiFetch(`${API}/sources`),
       ]);
       setSkills(await skillsRes.json());
       setSources(await sourcesRes.json());
@@ -112,7 +112,7 @@ export default function SkillsTab() {
     setExpandedId(id);
     if (!usageMap[id]) {
       try {
-        const res = await fetch(`${API}/${encodeURIComponent(id)}/usage`);
+        const res = await apiFetch(`${API}/${encodeURIComponent(id)}/usage`);
         const data = await res.json();
         setUsageMap((prev) => ({ ...prev, [id]: data }));
       } catch { /* ignore */ }
@@ -120,17 +120,17 @@ export default function SkillsTab() {
   };
 
   const pinSkill = async (skillId: string, pinned: boolean) => {
-    await fetch(`${API}/pin`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skill_id: skillId, pinned }) });
+    await apiFetch(`${API}/pin`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skill_id: skillId, pinned }) });
     setSkills((prev) => prev.map((sk) => sk.id === skillId ? { ...sk, pinned: pinned ? 1 : 0 } : sk));
   };
 
   const excludeSkill = async (skillId: string, excluded: boolean) => {
-    await fetch(`${API}/exclude`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skill_id: skillId, excluded }) });
+    await apiFetch(`${API}/exclude`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skill_id: skillId, excluded }) });
     setSkills((prev) => prev.map((sk) => sk.id === skillId ? { ...sk, excluded: excluded ? 1 : 0 } : sk));
   };
 
   const toggleSourceExclude = async (source: string, excluded: boolean) => {
-    await fetch(`${API}/exclude-source`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, excluded }) });
+    await apiFetch(`${API}/exclude-source`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source, excluded }) });
     setSkills((prev) => prev.map((sk) => sk.source === source ? { ...sk, excluded: excluded ? 1 : 0 } : sk));
   };
 
@@ -138,7 +138,7 @@ export default function SkillsTab() {
     setReindexing(true);
     setMsg("");
     try {
-      const res = await fetch(`${API}/reindex`, { method: "POST" });
+      const res = await apiFetch(`${API}/reindex`, { method: "POST" });
       const data = await res.json();
       if (data.error) setMsg(`Error: ${data.error}`);
       else { setMsg(`Reindexed ${data.indexed} skills`); await fetchData(); }

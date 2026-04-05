@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import { callReducer } from "@/hooks/useSpacetimeDB";
 
 interface AddServerModalProps {
@@ -69,7 +69,7 @@ export default function AddServerModal({ environments, onComplete, onCancel }: A
       setResourceId(rid);
 
       try {
-        const probeRes = await fetch(`${GATEWAY_API}/deployments/resources/${rid}/probe`, { method: "POST" });
+        const probeRes = await apiFetch(`${GATEWAY_API}/deployments/resources/${rid}/probe`, { method: "POST" });
         if (probeRes.ok) {
           const probeData = await probeRes.json();
           const caps = probeData.capabilities_json ? (typeof probeData.capabilities_json === "string" ? JSON.parse(probeData.capabilities_json) : probeData.capabilities_json) : probeData;

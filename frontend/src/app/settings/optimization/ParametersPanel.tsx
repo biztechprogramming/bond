@@ -57,7 +57,7 @@ export default function ParametersPanel() {
   const fetchParams = useCallback(async () => {
     try {
       setError("");
-      const res = await fetch(`${API}/params`);
+      const res = await apiFetch(`${API}/params`);
       if (!res.ok) throw new Error("Failed to load parameters");
       const data = await res.json();
       setParams(data.params || []);
@@ -75,7 +75,7 @@ export default function ParametersPanel() {
 
   const applyParam = async (key: string, value: number) => {
     try {
-      const res = await fetch(`${API}/params/${key}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) });
+      const res = await apiFetch(`${API}/params/${key}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Failed"); }
       showToast("Parameter updated");
       fetchParams();
@@ -84,7 +84,7 @@ export default function ParametersPanel() {
 
   const startExperiment = async (key: string, value: number) => {
     try {
-      const res = await fetch(`${API}/experiments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ param_key: key, proposed_value: value }) });
+      const res = await apiFetch(`${API}/experiments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ param_key: key, proposed_value: value }) });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Failed"); }
       showToast("Experiment started");
       fetchParams();
@@ -93,7 +93,7 @@ export default function ParametersPanel() {
 
   const rollback = async (key: string) => {
     try {
-      const res = await fetch(`${API}/params/${key}/rollback`, { method: "POST" });
+      const res = await apiFetch(`${API}/params/${key}/rollback`, { method: "POST" });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Failed"); }
       showToast("Rolled back");
       fetchParams();
@@ -103,7 +103,7 @@ export default function ParametersPanel() {
   const loadHistory = async (key: string) => {
     if (historyKey === key) { setHistoryKey(null); return; }
     try {
-      const res = await fetch(`${API}/params/${key}/history`);
+      const res = await apiFetch(`${API}/params/${key}/history`);
       if (res.ok) { const data = await res.json(); setHistory(data.history || []); setHistoryKey(key); }
     } catch { /* ignore */ }
   };

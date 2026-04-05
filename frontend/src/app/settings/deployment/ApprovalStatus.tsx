@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Approval {
   user_id: string;
@@ -30,7 +30,7 @@ export default function ApprovalStatus({
     setSubmitting(true);
     setError("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/promote/approve`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/promote/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ script_id: scriptId, version, environment }),

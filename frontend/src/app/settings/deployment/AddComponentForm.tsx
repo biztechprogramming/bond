@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import { useResources, useComponents, callReducer } from "@/hooks/useSpacetimeDB";
 import FolderBrowser from "./FolderBrowser";
 
@@ -62,14 +62,14 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`${GATEWAY_API}/deployments/components`)
+    apiFetch(`${GATEWAY_API}/deployments/components`)
       .then((r) => r.ok ? r.json() : [])
       .then((data: ExistingComponent[]) => {
         setSystems(Array.isArray(data) ? data.filter((c) => c.component_type === "system") : []);
       })
       .catch(() => {});
 
-    fetch(`${GATEWAY_API}/deployments/resources`)
+    apiFetch(`${GATEWAY_API}/deployments/resources`)
       .then((r) => r.ok ? r.json() : [])
       .then((data: ExistingResource[]) => {
         setResources(Array.isArray(data) ? data : []);
@@ -85,7 +85,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
     setAnalyzing(true);
 
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/browse/analyze`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/browse/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: selectedPath }),
@@ -126,7 +126,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
 
       // Create new system if requested
       if (parentId === "__new__" && newSystemName.trim()) {
-        const sysRes = await fetch(`${GATEWAY_API}/deployments/components`, {
+        const sysRes = await apiFetch(`${GATEWAY_API}/deployments/components`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -153,7 +153,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
         ...(folderPath && { source_path: folderPath }),
       };
 
-      const res = await fetch(`${GATEWAY_API}/deployments/components`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/components`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -170,7 +170,7 @@ export default function AddComponentForm({ onComplete, onCancel }: AddComponentF
         if (port) linkBody.port = Number(port);
         if (healthCheck) linkBody.health_check = healthCheck;
 
-        await fetch(`${GATEWAY_API}/deployments/components/${created.id}/resources`, {
+        await apiFetch(`${GATEWAY_API}/deployments/components/${created.id}/resources`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(linkBody),

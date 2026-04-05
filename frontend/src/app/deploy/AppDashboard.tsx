@@ -6,7 +6,7 @@ import { getComponentResources, type ComponentResourceRow } from "@/lib/spacetim
 import AppCard, { type AppInfo } from "./AppCard";
 import DeploymentRunsList from "./DeploymentRunsList";
 import type { DeploymentRun } from "./DeploymentRunsList";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   onSelectApp: (id: string) => void;
@@ -69,7 +69,7 @@ export default function AppDashboard({ onSelectApp, onNewDeploy }: Props) {
   }, [components, crMap, alerts, environments]);
 
   const handleRollback = (run: DeploymentRun) => {
-    fetch(`${GATEWAY_API}/deployments/rollback`, {
+    apiFetch(`${GATEWAY_API}/deployments/rollback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

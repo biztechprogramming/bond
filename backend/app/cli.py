@@ -18,6 +18,52 @@ def _load_providers() -> dict:
         return yaml.safe_load(f)
 
 
+def _prompt_anthropic_auth(provider_name: str) -> tuple[str, str]:
+    """Prompt for Anthropic auth method: OAuth or API key.
+
+    Returns (api_key_or_token, key_type).
+    """
+    print("\n  Authentication method:\n")
+    print("    1. OAuth (Claude Max/Pro subscription) — No per-token costs")
+    print("    2. API Key (pay-per-use from console.anthropic.com)")
+    print()
+
+    auth_choice = input("  Select [1]: ").strip() or "1"
+
+    if auth_choice == "1":
+        creds_path = Path.home() / ".claude" / ".credentials.json"
+        if creds_path.exists():
+            try:
+                creds = json.loads(creds_path.read_text())
+                oauth_data = creds.get("claudeAiOauth", {})
+                access_token = oauth_data.get("accessToken", "")
+                if access_token:
+                    print(f"  Found Claude OAuth credentials at {creds_path}")
+                    return access_token, "oauth_token"
+                else:
+                    print("  Warning: Credentials file exists but missing accessToken.")
+            except (json.JSONDecodeError, KeyError):
+                print("  Warning: Could not parse credentials file.")
+        else:
+            print(f"\n  OAuth credentials not found at {creds_path}")
+            print()
+            print("  To use OAuth, you need Claude CLI credentials:")
+            print()
+            print("    1. Install Claude CLI:  npm install -g @anthropic-ai/claude-code")
+            print("    2. Run:                 claude")
+            print("    3. Log in via browser when prompted")
+            print("    4. Re-run:              make setup")
+            print()
+
+        fallback = input("  Press Enter to use an API key instead (or Ctrl+C to abort): ").strip()
+
+    # Fall through to API key prompt
+    api_key = input(f"  {provider_name} API key: ").strip()
+    if not api_key:
+        print("  Warning: No API key provided. Set it later in settings.")
+    return api_key, "api_key"
+
+
 def setup() -> None:
     """Interactive setup wizard: pick provider, enter API key, save to vault."""
     from backend.app.config import BOND_HOME, BOND_JSON_PATH
@@ -79,16 +125,26 @@ def setup() -> None:
     # API key (skip for local providers)
     local_providers = {"ollama", "lm_studio"}
     api_key = ""
+    key_type = "api_key"
     if selected_provider not in local_providers:
-        api_key = input(f"  {provider_name} API key: ").strip()
-        if not api_key:
-            print("  Warning: No API key provided. Set it later in settings.")
+        # Anthropic: offer OAuth option
+        if selected_provider == "anthropic":
+            api_key, key_type = _prompt_anthropic_auth(provider_name)
+        else:
+            api_key = input(f"  {provider_name} API key: ").strip()
+            if not api_key:
+                print("  Warning: No API key provided. Set it later in settings.")
 
     # Save to vault
     if api_key:
         vault = Vault()
-        vault.set(f"{selected_provider.upper()}_API_KEY", api_key)
-        print("  API key saved to encrypted vault.")
+        vault_key = f"{selected_provider.upper()}_API_KEY"
+        vault.set(vault_key, api_key)
+        vault.set_key_type(vault_key, key_type)
+        if key_type == "oauth_token":
+            print("  OAuth token saved to encrypted vault.")
+        else:
+            print("  API key saved to encrypted vault.")
 
     # Write bond.json
     config = {

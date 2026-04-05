@@ -2,13 +2,36 @@
 
 from __future__ import annotations
 
+import os
+import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.app.config import get_settings
+
+
+def _resolve_api_key() -> str:
+    """Resolve Bond API key: env var > file > auto-generate."""
+    if os.environ.get("BOND_API_KEY"):
+        return os.environ["BOND_API_KEY"]
+    key_dir = Path.home() / ".bond" / "data"
+    key_path = key_dir / ".gateway_key"
+    if key_path.exists():
+        key = key_path.read_text().strip()
+        if key:
+            return key
+    key_dir.mkdir(parents=True, exist_ok=True)
+    key = secrets.token_hex(32)
+    key_path.write_text(key)
+    key_path.chmod(0o600)
+    return key
+
+
+BOND_API_KEY = _resolve_api_key()
 from backend.app.db.session import get_db, get_session_factory, init_db
 from backend.app.jobs import JobScheduler
 from backend.app.jobs.sync_models_stdb import sync_models_stdb
@@ -102,6 +125,18 @@ async def global_exception_handler(request: Request, exc: Exception):
             "path": str(request.url.path),
         },
     )
+
+
+@app.middleware("http")
+async def check_api_key(request: Request, call_next):
+    """Require Bearer token on all routes except /api/v1/health."""
+    if request.url.path in ("/api/v1/health", "/docs", "/openapi.json"):
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    if token != BOND_API_KEY:
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized — invalid or missing API key"})
+    return await call_next(request)
 
 
 @app.middleware("http")

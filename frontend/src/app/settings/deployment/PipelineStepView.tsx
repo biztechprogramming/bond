@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import StatusIndicator, { DeployStatus } from "./StatusIndicator";
 
 export interface PipelineStep {
@@ -39,7 +39,7 @@ export default function PipelineStepView({ steps: propSteps, runId }: Props) {
     let cancelled = false;
     const fetchRun = async () => {
       try {
-        const res = await fetch(`${GATEWAY_API}/deployments/pipeline-code/runs/${runId}`);
+        const res = await apiFetch(`${GATEWAY_API}/deployments/pipeline-code/runs/${runId}`);
         if (!res.ok || cancelled) return;
         const data = await res.json();
         const allSteps: PipelineStep[] = [];

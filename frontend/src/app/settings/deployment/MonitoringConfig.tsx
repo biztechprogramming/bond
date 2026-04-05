@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   environment: string;
@@ -40,7 +40,7 @@ export default function MonitoringConfig({ environment, onSave }: Props) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${GATEWAY_API}/deployments/environments/${environment}`)
+    apiFetch(`${GATEWAY_API}/deployments/environments/${environment}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data) {
@@ -66,7 +66,7 @@ export default function MonitoringConfig({ environment, onSave }: Props) {
     setSaving(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/monitoring/${environment}`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/monitoring/${environment}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),

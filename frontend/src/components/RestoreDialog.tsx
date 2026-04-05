@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Backup {
   filename: string;
@@ -37,7 +37,7 @@ export default function RestoreDialog({ onDismiss }: RestoreDialogProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${GATEWAY_API}/backups`)
+    apiFetch(`${GATEWAY_API}/backups`)
       .then((r) => r.json())
       .then((data) => {
         setBackups(data.backups || []);
@@ -55,7 +55,7 @@ export default function RestoreDialog({ onDismiss }: RestoreDialogProps) {
     setPreviewing(true);
     setError(null);
     try {
-      const res = await fetch(`${GATEWAY_API}/backups/preview`, {
+      const res = await apiFetch(`${GATEWAY_API}/backups/preview`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: backup.path }),
@@ -75,7 +75,7 @@ export default function RestoreDialog({ onDismiss }: RestoreDialogProps) {
     setRestoring(true);
     setError(null);
     try {
-      const res = await fetch(`${GATEWAY_API}/backups/restore`, {
+      const res = await apiFetch(`${GATEWAY_API}/backups/restore`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path: selectedBackup.path }),

@@ -35,7 +35,7 @@ export default function RetentionPanel() {
   const fetchRetention = useCallback(async () => {
     try {
       setError("");
-      const res = await fetch(`${API}/retention`);
+      const res = await apiFetch(`${API}/retention`);
       if (!res.ok) throw new Error("Failed to load retention data");
       const d: RetentionData = await res.json();
       setData(d);
@@ -54,7 +54,7 @@ export default function RetentionPanel() {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API}/retention`, {
+      const res = await apiFetch(`${API}/retention`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ observations_max_days: maxDays, observations_max_rows: maxRows, auto_purge_enabled: autoPurge }),

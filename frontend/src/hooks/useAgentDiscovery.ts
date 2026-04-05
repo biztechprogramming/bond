@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import type {
   ActivityItem,
   UserQuestion,
@@ -249,7 +249,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
 
     try {
       // Initiate agent discovery — get session_id
-      const initRes = await fetch(`${GATEWAY_API}/deployments/agent-discover`, {
+      const initRes = await apiFetch(`${GATEWAY_API}/deployments/agent-discover`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -369,7 +369,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
     discoveredFieldsRef.current.set(field, 1.0);
 
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/discovery/answer/${sessionRef.current}`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/discovery/answer/${sessionRef.current}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ field, value }),
@@ -394,7 +394,7 @@ export function useAgentDiscovery(): UseAgentDiscoveryReturn {
   const cancelDiscovery = useCallback(() => {
     if (abortRef.current) abortRef.current.abort();
     if (sessionRef.current) {
-      fetch(`${GATEWAY_API}/deployments/discovery/cancel/${sessionRef.current}`, {
+      apiFetch(`${GATEWAY_API}/deployments/discovery/cancel/${sessionRef.current}`, {
         method: "POST",
       }).catch(() => {});
     }

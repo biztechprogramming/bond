@@ -8,7 +8,7 @@ import ChannelsTab from "./channels/ChannelsTab";
 import SkillsTab from "./skills/SkillsTab";
 import OptimizationTab from "./optimization/OptimizationTab";
 import ContainerHostsTab from "./containers/ContainerHostsTab";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
 
@@ -101,9 +101,9 @@ export default function SettingsPage() {
   const fetchSettings = useCallback(async () => {
     try {
       const [modelsRes, currentRes, llmCurrentRes] = await Promise.all([
-        fetch(`${API_BASE}/embedding/models`),
-        fetch(`${API_BASE}/embedding/current`),
-        fetch(`${API_BASE}/llm/current`),
+        apiFetch(`${API_BASE}/embedding/models`),
+        apiFetch(`${API_BASE}/embedding/current`),
+        apiFetch(`${API_BASE}/llm/current`),
       ]);
       setModels(await modelsRes.json());
       const cur = await currentRes.json();
@@ -149,7 +149,7 @@ export default function SettingsPage() {
   const saveEmbedding = async () => {
     setSaving(true); setSaveMsg("");
     try {
-      const res = await fetch(`${API_BASE}/embedding`, {
+      const res = await apiFetch(`${API_BASE}/embedding`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: selectedModel, dimension: selectedDimension, execution_mode: selectedMode }),
       });

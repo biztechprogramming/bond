@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 const TEMPLATES: Record<string, { label: string; script: string }> = {
   blank: {
@@ -175,7 +175,7 @@ export default function ScriptRegistration({ onBack, onRegistered }: Props) {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = globalThis.setTimeout(async () => {
       try {
-        const res = await fetch(`${GATEWAY_API}/deployments/scripts/validate-syntax`, {
+        const res = await apiFetch(`${GATEWAY_API}/deployments/scripts/validate-syntax`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ script: content }),
@@ -267,7 +267,7 @@ export default function ScriptRegistration({ onBack, onRegistered }: Props) {
         files,
       };
 
-      const res = await fetch(`${GATEWAY_API}/deployments/scripts`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/scripts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -281,7 +281,7 @@ export default function ScriptRegistration({ onBack, onRegistered }: Props) {
       }
 
       if (promoteAfter) {
-        const promRes = await fetch(`${GATEWAY_API}/deployments/promote`, {
+        const promRes = await apiFetch(`${GATEWAY_API}/deployments/promote`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

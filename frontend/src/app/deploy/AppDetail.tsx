@@ -12,7 +12,7 @@ import PipelineYamlEditor from "../settings/deployment/PipelineYamlEditor";
 import ScriptRegistration from "../settings/deployment/ScriptRegistration";
 import DeploymentRunsList from "./DeploymentRunsList";
 import type { DeploymentRun } from "./DeploymentRunsList";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 type Tab = "overview" | "pipelines" | "monitoring" | "timeline" | "logs";
 
@@ -56,7 +56,7 @@ export default function AppDetail({ appId, onBack }: Props) {
   const handleRollback = async (run: DeploymentRun) => {
     setRollbackStatus("rolling back...");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/rollback`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/rollback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

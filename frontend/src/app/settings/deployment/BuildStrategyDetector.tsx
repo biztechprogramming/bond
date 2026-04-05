@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 type BuildStrategy = "auto" | "dockerfile" | "docker-compose" | "script";
 
@@ -35,7 +35,7 @@ export default function BuildStrategyDetector({ repoUrl, strategy, onDetected }:
       setError("");
       setResult(null);
       try {
-        const res = await fetch(`${GATEWAY_API}/deployments/detect-build`, {
+        const res = await apiFetch(`${GATEWAY_API}/deployments/detect-build`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ repo_url: repoUrl, branch: "main" }),

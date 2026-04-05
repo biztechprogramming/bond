@@ -4,7 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAgentsWithRelations } from "@/hooks/useSpacetimeDB";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
 import type { DiscoveryState, CompletenessReport } from "@/lib/discovery-types";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -191,7 +191,7 @@ function AllocationStep({
   useEffect(() => {
     const resourceId = plan.agentId || "";
     const appName = plan.repoPath?.split("/").pop() || "app";
-    fetch(`${GATEWAY_API}/deployments/allocations/suggest`, {
+    apiFetch(`${GATEWAY_API}/deployments/allocations/suggest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -219,7 +219,7 @@ function AllocationStep({
   const checkConflicts = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      fetch(`${GATEWAY_API}/deployments/allocations/check-conflicts`, {
+      apiFetch(`${GATEWAY_API}/deployments/allocations/check-conflicts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -431,7 +431,7 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
 
     // Save allocation before shipping
     if (allocation) {
-      fetch(`${GATEWAY_API}/deployments/allocations`, {
+      apiFetch(`${GATEWAY_API}/deployments/allocations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

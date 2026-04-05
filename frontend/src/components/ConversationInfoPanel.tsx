@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface BranchInfo {
   name: string;
@@ -48,7 +48,7 @@ export default function ConversationInfoPanel({
   const fetchStatus = useCallback(async () => {
     try {
       const params = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
-      const resp = await fetch(`${GATEWAY_API}/container/branch${params}`);
+      const resp = await apiFetch(`${GATEWAY_API}/container/branch${params}`);
       if (resp.ok) {
         const data = await resp.json();
         setStatus(data);
@@ -61,7 +61,7 @@ export default function ConversationInfoPanel({
 
   const fetchBranches = useCallback(async () => {
     try {
-      const resp = await fetch(`${GATEWAY_API}/container/branches`);
+      const resp = await apiFetch(`${GATEWAY_API}/container/branches`);
       if (resp.ok) {
         const data = await resp.json();
         setBranches(data.branches || []);
@@ -104,7 +104,7 @@ export default function ConversationInfoPanel({
     if (switching) return;
     setSwitching(true);
     try {
-      const resp = await fetch(`${GATEWAY_API}/container/branch`, {
+      const resp = await apiFetch(`${GATEWAY_API}/container/branch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ branch, ...(agentId ? { agent_id: agentId } : {}) }),

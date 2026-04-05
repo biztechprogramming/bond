@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface ReceiptPhase {
   name: string;
@@ -52,7 +52,7 @@ export default function ReceiptViewer({ environment, receiptId, scriptId, onClos
           url = `${GATEWAY_API}/deployments/receipts/${environment}/${receiptId}`;
         } else {
           // Fetch latest for environment
-          const listRes = await fetch(`${GATEWAY_API}/deployments/receipts/${environment}?limit=1`);
+          const listRes = await apiFetch(`${GATEWAY_API}/deployments/receipts/${environment}?limit=1`);
           if (!listRes.ok) throw new Error("Failed to fetch receipts");
           const list = await listRes.json();
           const items = Array.isArray(list) ? list : [];

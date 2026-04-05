@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface AlertRulesEditorProps {
   environment: string;
@@ -59,7 +59,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
 
   const fetchRules = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/alert-rules/${environment}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/alert-rules/${environment}`);
       if (res.ok) setRules(await res.json());
     } catch { /* ignore */ }
   }, [environment]);
@@ -67,7 +67,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
   useEffect(() => { fetchRules(); }, [fetchRules]);
 
   useEffect(() => {
-    fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(environment)}`)
+    apiFetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(environment)}`)
       .then(r => r.ok ? r.json() : [])
       .then(data => setComponents(Array.isArray(data) ? data : data.components || []))
       .catch(() => {});
@@ -98,7 +98,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
 
   const toggleRule = async (rule: AlertRule) => {
     try {
-      await fetch(`${GATEWAY_API}/deployments/alert-rules/${environment}/${rule.id}`, {
+      await apiFetch(`${GATEWAY_API}/deployments/alert-rules/${environment}/${rule.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...rule, enabled: !rule.enabled }),
@@ -109,7 +109,7 @@ export default function AlertRulesEditor({ environment, onBack }: AlertRulesEdit
 
   const deleteRule = async (id: string) => {
     try {
-      await fetch(`${GATEWAY_API}/deployments/alert-rules/${environment}/${id}`, { method: "DELETE" });
+      await apiFetch(`${GATEWAY_API}/deployments/alert-rules/${environment}/${id}`, { method: "DELETE" });
       await fetchRules();
     } catch { /* ignore */ }
   };

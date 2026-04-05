@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface DeploymentTimelineProps {
   environments: Array<{ name: string; display_name: string; order?: number }>;
@@ -57,7 +57,7 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
 
   const fetchReceipts = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/receipts?limit=100`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/receipts?limit=100`);
       if (res.ok) {
         const data: Receipt[] = await res.json();
         setReceipts(data);
@@ -70,7 +70,7 @@ export default function DeploymentTimeline({ environments, timeRange, filterScri
   useEffect(() => { fetchReceipts(); }, [fetchReceipts]);
 
   useEffect(() => {
-    fetch(`${GATEWAY_API}/deployments/components`)
+    apiFetch(`${GATEWAY_API}/deployments/components`)
       .then(r => r.ok ? r.json() : [])
       .then(data => setComponents(Array.isArray(data) ? data : data.components || []))
       .catch(() => {});

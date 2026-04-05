@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface ServicePort {
   service_name: string;
@@ -95,13 +95,13 @@ export default function AllocationForm({
 
   const loadOtherAllocations = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/allocations?resource_id=${encodeURIComponent(resourceId)}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/allocations?resource_id=${encodeURIComponent(resourceId)}`);
       if (res.ok) {
         const allocs = await res.json();
         const others: OtherAllocation[] = [];
         for (const a of allocs) {
           if (a.app_name === appName && a.environment_name === environmentName) continue;
-          const portsRes = await fetch(`${GATEWAY_API}/deployments/allocations/${a.id}/ports`);
+          const portsRes = await apiFetch(`${GATEWAY_API}/deployments/allocations/${a.id}/ports`);
           const ports = portsRes.ok ? await portsRes.json() : [];
           others.push({
             app_name: a.app_name,
@@ -117,7 +117,7 @@ export default function AllocationForm({
 
   const loadSuggestions = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/allocations/suggest`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/allocations/suggest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -151,7 +151,7 @@ export default function AllocationForm({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`${GATEWAY_API}/deployments/allocations/check-conflicts`, {
+        const res = await apiFetch(`${GATEWAY_API}/deployments/allocations/check-conflicts`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

@@ -71,8 +71,8 @@ export default function PromptsTab() {
   const fetchAll = useCallback(async () => {
     try {
       const [fRes, tRes] = await Promise.all([
-        fetch(`${API}/fragments`),
-        fetch(`${API}/templates`),
+        apiFetch(`${API}/fragments`),
+        apiFetch(`${API}/templates`),
       ]);
       setFragments(await fRes.json());
       setTemplates(await tRes.json());
@@ -86,7 +86,7 @@ export default function PromptsTab() {
   const openFragmentEditor = async (path: string) => {
     setFragmentLoading(true);
     try {
-      const res = await fetch(`${API}/fragments/${path}`);
+      const res = await apiFetch(`${API}/fragments/${path}`);
       if (res.ok) {
         const data = await res.json();
         setFragmentContent(data.content);
@@ -99,7 +99,7 @@ export default function PromptsTab() {
   const saveFragment = async () => {
     if (!editingFragment) return;
     try {
-      const res = await fetch(`${API}/fragments/${editingFragment}`, {
+      const res = await apiFetch(`${API}/fragments/${editingFragment}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: fragmentContent }),
@@ -113,19 +113,19 @@ export default function PromptsTab() {
   };
 
   const loadVersions = async (type: "fragments" | "templates", id: string) => {
-    const res = await fetch(`${API}/${type}/${id}/versions`);
+    const res = await apiFetch(`${API}/${type}/${id}/versions`);
     if (res.ok) { setVersions(await res.json()); setShowVersions(id); }
   };
 
   const rollback = async (type: "fragments" | "templates", id: string, version: number) => {
-    const res = await fetch(`${API}/${type}/${id}/rollback/${version}`, { method: "POST" });
+    const res = await apiFetch(`${API}/${type}/${id}/rollback/${version}`, { method: "POST" });
     if (res.ok) { showMsg(`Rolled back to v${version}`); await fetchAll(); loadVersions(type, id); }
   };
 
   const generateSystemPrompt = async () => {
     setAiGenerating(true);
     try {
-      const res = await fetch(`${API}/generate/system-prompt`, {
+      const res = await apiFetch(`${API}/generate/system-prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -143,7 +143,7 @@ export default function PromptsTab() {
   };
 
   const saveTemplate = async (tmpl: Template, changeReason: string) => {
-    const res = await fetch(`${API}/templates/${tmpl.id}`, {
+    const res = await apiFetch(`${API}/templates/${tmpl.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

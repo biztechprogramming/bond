@@ -58,7 +58,7 @@ export default function LessonsPanel() {
       setError("");
       const params = new URLSearchParams({ status, page: String(page), per_page: "50" });
       if (search) params.set("q", search);
-      const res = await fetch(`${API}/lessons?${params}`);
+      const res = await apiFetch(`${API}/lessons?${params}`);
       if (!res.ok) throw new Error("Failed to load lessons");
       setData(await res.json());
     } catch (e: unknown) {

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 const RESOURCE_TYPES = [
   { value: "local", label: "Local Machine", icon: "💻" },
@@ -57,7 +57,7 @@ export default function ResourceForm({ environments, onBack, onSaved }: Props) {
     setProbeResult(null);
 
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/resources`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/resources`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

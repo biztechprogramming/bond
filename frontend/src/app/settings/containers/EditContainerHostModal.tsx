@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API , apiFetch } from "@/lib/config";
 
 interface ContainerHost {
   id: string;
@@ -45,7 +45,7 @@ export default function EditContainerHostModal({ host: h, onComplete, onCancel }
         labels: labels ? labels.split(",").map(l => l.trim()) : [],
       };
       if (sshKeyChanged && sshKey) body.ssh_key = sshKey;
-      const res = await fetch(`${BACKEND_API}/hosts/${h.id}`, {
+      const res = await apiFetch(`${BACKEND_API}/hosts/${h.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

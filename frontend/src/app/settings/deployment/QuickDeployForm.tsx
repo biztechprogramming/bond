@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import BuildStrategyDetector from "./BuildStrategyDetector";
 import TriggerConfig from "./TriggerConfig";
 
@@ -142,7 +142,7 @@ export default function QuickDeployForm({ environments, onBack, onDeployed }: Pr
     setDeploying(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/quick-deploy`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/quick-deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildPayload()),

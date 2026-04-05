@@ -65,14 +65,14 @@ export default function ContainerHostsTab() {
 
   const fetchHosts = useCallback(async () => {
     try {
-      const res = await fetch(API);
+      const res = await apiFetch(API);
       if (res.ok) setHosts(await res.json());
     } catch { /* API not available */ }
   }, []);
 
   const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/settings`);
+      const res = await apiFetch(`${API}/settings`);
       if (res.ok) setSettings(await res.json());
     } catch { /* API not available */ }
   }, []);
@@ -85,7 +85,7 @@ export default function ContainerHostsTab() {
     setSettingsSaving(true);
     setSettingsMsg("");
     try {
-      const res = await fetch(`${API}/settings`, {
+      const res = await apiFetch(`${API}/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ settings }),
@@ -101,14 +101,14 @@ export default function ContainerHostsTab() {
 
   const handleDeleteHost = async (id: string) => {
     if (!confirm(`Remove host "${id}"?`)) return;
-    const res = await fetch(`${API}/${id}`, { method: "DELETE" });
+    const res = await apiFetch(`${API}/${id}`, { method: "DELETE" });
     if (res.ok) fetchHosts();
   };
 
   const handleTestHost = async (id: string) => {
     setTestingId(id);
     try {
-      const res = await fetch(`${API}/${id}/test`, { method: "POST" });
+      const res = await apiFetch(`${API}/${id}/test`, { method: "POST" });
       const data = await res.json();
       const ok = data.ssh?.status === "ok";
       setTestResults(prev => ({ ...prev, [id]: ok ? "Connected" : (data.ssh?.error || "Failed") }));
@@ -123,7 +123,7 @@ export default function ContainerHostsTab() {
     setInstallLog({ hostId: id, lines: [], done: false, success: false });
     setInstallResults(prev => { const n = { ...prev }; delete n[id]; return n; });
     try {
-      const res = await fetch(`${API}/${id}/install-daemon`, { method: "POST" });
+      const res = await apiFetch(`${API}/${id}/install-daemon`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setInstallLog(prev => prev ? { ...prev, done: true, lines: [...prev.lines, { step: "error", status: "error", message: data.detail || "Installation failed" }] } : prev);

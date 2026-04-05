@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API, apiFetch } from "@/lib/config";
 
 interface DirBrowserProps {
   onSelect: (path: string) => void;
@@ -20,7 +20,7 @@ export default function DirBrowser({ onSelect, onClose }: DirBrowserProps) {
     const h = hidden ?? showHiddenRef.current;
     setLoading(true);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${BACKEND_API}/agents/browse-dirs?path=${encodeURIComponent(path)}&show_hidden=${h}`
       );
       if (res.ok) {
