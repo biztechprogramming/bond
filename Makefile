@@ -29,7 +29,7 @@ gateway:
 
 # Frontend (Next.js)
 frontend:
-	cd frontend && pnpm dev
+	cd frontend && pnpm dev --hostname 0.0.0.0
 
 # First-run setup wizard
 setup:
