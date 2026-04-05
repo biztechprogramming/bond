@@ -306,21 +306,24 @@ class DaemonInstaller:
             return {"success": False, "auth_token": "", "errors": errors}
 
         # 4. Install Python dependencies
-        rc, _, stderr, _ = await _run_ssh_command(
-            host, port, user, ssh_key_path,
+        # Try python3 -m pip first (works on modern distros where pip/pip3 aren't on PATH),
+        # then fall back to pip and pip3 for older setups.
+        pip_commands = [
+            f"python3 -m pip install -r {_REMOTE_REQUIREMENTS_PATH}",
             f"pip install -r {_REMOTE_REQUIREMENTS_PATH}",
-            timeout=120.0,
-        )
-        if rc != 0:
-            # Try pip3
+            f"pip3 install -r {_REMOTE_REQUIREMENTS_PATH}",
+        ]
+        for pip_cmd in pip_commands:
             rc, _, stderr, _ = await _run_ssh_command(
                 host, port, user, ssh_key_path,
-                f"pip3 install -r {_REMOTE_REQUIREMENTS_PATH}",
+                pip_cmd,
                 timeout=120.0,
             )
-            if rc != 0:
-                errors.append(f"Failed to install dependencies: {stderr.strip()}")
-                return {"success": False, "auth_token": "", "errors": errors}
+            if rc == 0:
+                break
+        else:
+            errors.append(f"Failed to install dependencies: {stderr.strip()}")
+            return {"success": False, "auth_token": "", "errors": errors}
 
         # 5. Generate auth token and install systemd service
         auth_token = secrets.token_urlsafe(32)
@@ -484,25 +487,31 @@ class DaemonInstaller:
 
         # 4. Install Python dependencies
         yield _evt("deps", "running", "Installing Python dependencies (this may take a minute)...")
-        rc, _, stderr, display_cmd = await _run_ssh_command(
-            host, port, user, ssh_key_path,
-            f"pip install -r {_REMOTE_REQUIREMENTS_PATH}",
-            timeout=120.0,
-        )
-        yield {"type": "command", "message": display_cmd}
-        if rc != 0:
-            yield _evt("deps", "running", "Retrying with pip3...")
+        # Try python3 -m pip first (works on modern distros where pip/pip3 aren't on PATH),
+        # then fall back to pip and pip3 for older setups.
+        pip_commands = [
+            (f"python3 -m pip install -r {_REMOTE_REQUIREMENTS_PATH}", "Trying python3 -m pip..."),
+            (f"pip install -r {_REMOTE_REQUIREMENTS_PATH}", "Retrying with pip..."),
+            (f"pip3 install -r {_REMOTE_REQUIREMENTS_PATH}", "Retrying with pip3..."),
+        ]
+        deps_installed = False
+        for pip_cmd, retry_msg in pip_commands:
+            if not deps_installed and retry_msg != pip_commands[0][1]:
+                yield _evt("deps", "running", retry_msg)
             rc, _, stderr, display_cmd = await _run_ssh_command(
                 host, port, user, ssh_key_path,
-                f"pip3 install -r {_REMOTE_REQUIREMENTS_PATH}",
+                pip_cmd,
                 timeout=120.0,
             )
             yield {"type": "command", "message": display_cmd}
-            if rc != 0:
-                msg = f"Failed to install dependencies: {stderr.strip()}"
-                yield _evt("deps", "error", msg)
-                yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
-                return
+            if rc == 0:
+                deps_installed = True
+                break
+        if not deps_installed:
+            msg = f"Failed to install dependencies: {stderr.strip()}"
+            yield _evt("deps", "error", msg)
+            yield _evt("done", "done", msg, success=False, auth_token="", errors=[msg])
+            return
         yield _evt("deps", "ok", "Dependencies installed")
 
         # 5. Generate auth token and install systemd service
