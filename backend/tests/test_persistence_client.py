@@ -313,6 +313,7 @@ class TestApiMode:
 
     @pytest.mark.asyncio
     async def test_auth_header_set_when_token_present(self, monkeypatch):
+        monkeypatch.delenv("BOND_API_KEY", raising=False)
         monkeypatch.setenv("BOND_AGENT_TOKEN", "secret-token-123")
 
         client = PersistenceClient(

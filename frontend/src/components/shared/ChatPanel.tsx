@@ -2,6 +2,8 @@ import React, { useRef, useEffect } from "react";
 import type { ChatMessage, AgentStatus } from "@/lib/types";
 import { toolIcon } from "@/lib/theme";
 import MarkdownMessage from "@/components/shared/MarkdownMessage";
+import ImageGrid from "@/components/chat/ImageGrid";
+import { extractImageResults, rewriteImageSrc } from "@/lib/image-utils";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -214,9 +216,23 @@ export default function ChatPanel({
             <div style={s.chatMsgRole}>
               {msg.role === "user" && msg.content.startsWith("[System:") ? "System" : msg.role === "user" ? "You" : msg.role === "assistant" ? (msg.agentName || selectedAgentName || "Agent") : "System"}
             </div>
-            {msg.role === "assistant" ? (
-              <div style={s.chatMsgContent}><MarkdownMessage content={msg.content} /></div>
-            ) : (
+            {msg.role === "assistant" ? (() => {
+              const imageResult = extractImageResults(msg.content);
+              if (imageResult) {
+                const images = imageResult.paths.map((p) => ({
+                  src: p,
+                  prompt: imageResult.prompt,
+                  revisedPrompt: imageResult.revisedPrompt,
+                  provider: imageResult.provider,
+                  model: imageResult.model,
+                  size: imageResult.size,
+                  cost: imageResult.cost,
+                  onExpand: () => {},
+                }));
+                return <div style={s.chatMsgContent}><ImageGrid images={images} /></div>;
+              }
+              return <div style={s.chatMsgContent}><MarkdownMessage content={msg.content} /></div>;
+            })() : (
               <div style={{...s.chatMsgContent, whiteSpace: "pre-wrap", ...(msg.role === "user" && msg.content.startsWith("[System:") ? { color: "#8888a0", fontSize: "0.85rem", fontStyle: "italic" } : {})}}>{msg.content}</div>
             )}
           </div>

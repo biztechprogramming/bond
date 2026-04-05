@@ -1387,6 +1387,54 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": (
+                "Generate an image from a text prompt. Returns the file path of the "
+                "generated image saved to the workspace. Use for icons, logos, mockups, "
+                "diagrams, or any visual asset the user requests."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Detailed description of the image to generate. Be specific about style, colors, composition, and content.",
+                    },
+                    "size": {
+                        "type": "string",
+                        "enum": ["256x256", "512x512", "1024x1024", "1024x1536", "1536x1024"],
+                        "description": "Image dimensions. Default: 1024x1024",
+                    },
+                    "style": {
+                        "type": "string",
+                        "enum": ["natural", "vivid", "anime", "photographic", "digital-art", "pixel-art", "icon"],
+                        "description": "Visual style hint. Default: natural",
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["openai", "replicate", "comfyui"],
+                        "description": "Image provider to use. Default: user's configured provider.",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Specific model to use. Default: provider's default model.",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Output filename (without extension). Default: auto-generated from prompt.",
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of images to generate (1-4). Default: 1",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
 ]
 
 # Quick lookup: tool name -> short description (used by the tools listing API)
@@ -1612,6 +1660,16 @@ class FileList(ToolCall):
     wc_mode: Literal["lines", "words", "chars"] = Field(default="lines", description="Count mode.")
 
 
+class GenerateImage(ToolCall):
+    """Generate an image from a text prompt."""
+    prompt: str = Field(..., description="Detailed image description.")
+    size: str = Field(default="1024x1024", description="Image dimensions.")
+    style: str = Field(default="natural", description="Visual style hint.")
+    provider: Optional[str] = Field(default=None, description="Image provider.")
+    model: Optional[str] = Field(default=None, description="Specific model.")
+    filename: Optional[str] = Field(default=None, description="Output filename.")
+    count: int = Field(default=1, description="Number of images (1-4).")
+
 # Mapping for Instructor
 INSTRUCTOR_TOOL_MAP = {
     "respond": Respond,
@@ -1642,6 +1700,7 @@ INSTRUCTOR_TOOL_MAP = {
     "coding_agent": CodingAgent,
     "host_exec": HostExec,
     "ctx_search": CtxSearch,
+    "generate_image": GenerateImage,
 }
 
 def get_pydantic_definitions(enabled_tools: List[str]) -> List[Type[BaseModel]]:
