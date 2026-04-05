@@ -1379,7 +1379,7 @@ async def _run_agent_loop(
                         ),
                     })
                     loop.recent_tool_calls.clear()
-                    break
+                    continue
 
                 logger.info("Tool call [%d]: %s args=%s", loop.tool_calls_made, tool_name,
                             {k: (v[:80] + '...' if isinstance(v, str) and len(v) > 80 else v) for k, v in tool_args.items()})
