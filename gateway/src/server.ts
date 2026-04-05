@@ -162,7 +162,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // API key authentication middleware — skip /health and /webhooks
   app.use((req: any, res: any, next: any) => {
-    if (req.path === "/health" || req.path.startsWith("/webhooks") || req.path.startsWith("/api/v1/workspace-files")) return next();
+    if (req.path === "/health" || req.path.startsWith("/webhooks") || req.path.startsWith("/api/v1/workspace-files") || req.path.startsWith("/api/v1/broker")) return next();
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
     if (token !== config.apiKey) {
