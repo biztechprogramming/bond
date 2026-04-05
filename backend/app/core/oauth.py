@@ -212,8 +212,15 @@ async def resolve_provider_key_via_gateway(
 
     for attempt in range(1, retries + 1):
         try:
+            headers: dict[str, str] = {}
+            bond_api_key = os.environ.get("BOND_API_KEY", "")
+            if bond_api_key:
+                headers["Authorization"] = f"Bearer {bond_api_key}"
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.get(f"{url}/api/v1/provider-api-keys/{provider_id}")
+                resp = await client.get(
+                    f"{url}/api/v1/provider-api-keys/{provider_id}",
+                    headers=headers,
+                )
                 if resp.status_code == 404:
                     return None
                 resp.raise_for_status()
