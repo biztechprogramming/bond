@@ -50,11 +50,14 @@ export default function ContainerHostsTab() {
     }
   }, [installLog]);
 
-  // When install log first appears, scroll the section into view once
+  // When install log first appears, scroll the log div into view once
   const [logScrolledIntoView, setLogScrolledIntoView] = useState(false);
   useEffect(() => {
-    if (installLog && !logScrolledIntoView && installSectionRef.current) {
-      installSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (installLog && !logScrolledIntoView && installLogRef.current) {
+      // Short delay to let the log div render before scrolling
+      setTimeout(() => {
+        installLogRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 100);
       setLogScrolledIntoView(true);
     }
     if (!installLog) setLogScrolledIntoView(false);
