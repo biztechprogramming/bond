@@ -126,6 +126,10 @@ class FileBuffer:
         self.path = path
         self.lines = lines
         self.last_accessed = time.time()
+        try:
+            self.disk_mtime = os.path.getmtime(path)
+        except OSError:
+            self.disk_mtime = 0.0
 
     @property
     def total_lines(self) -> int:
@@ -264,8 +268,28 @@ class FileBufferManager:
         return self.buffers.get(abs_path)
 
     def get_or_open(self, path: str) -> FileBuffer:
-        """Get an existing buffer or open the file."""
-        buf = self.get(path)
+        """Get an existing buffer or open the file.
+
+        If the file was modified on disk since we cached it (e.g. by
+        ``file_edit`` or ``file_write``), the stale buffer is discarded
+        and the file is re-read from disk.
+        """
+        abs_path = self._resolve_path(path)
+        buf = self.buffers.get(abs_path)
+        if buf is not None:
+            # Check if the file was modified on disk since we cached it
+            try:
+                disk_mtime = os.path.getmtime(abs_path)
+            except OSError:
+                disk_mtime = 0.0
+            if disk_mtime > buf.disk_mtime:
+                # File changed on disk — drop stale buffer and re-read
+                logger.info(
+                    "File buffer stale for %s (disk mtime %.3f > buf mtime %.3f), reloading",
+                    abs_path, disk_mtime, buf.disk_mtime,
+                )
+                del self.buffers[abs_path]
+                buf = None
         if buf is None:
             buf, _ = self.open(path)
         return buf

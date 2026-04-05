@@ -555,6 +555,7 @@ async def handle_file_write(
 
         if proc.returncode == 0:
             get_read_state().invalidate(path_str)
+            _file_buffer_manager.close(path_str)
             return {"status": "written", "path": path_str, "bytes": len(content.encode("utf-8"))}
         else:
             return {"error": stderr.decode("utf-8", errors="replace").strip() or "Failed to write file"}
@@ -572,6 +573,7 @@ async def handle_file_write(
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding="utf-8")
         get_read_state().invalidate(str(resolved))
+        _file_buffer_manager.close(str(resolved))
         return {"status": "written", "path": str(resolved), "bytes": len(content.encode("utf-8"))}
     except Exception as e:
         return {"error": f"Failed to write file: {e}"}
@@ -636,6 +638,7 @@ async def handle_file_edit(
 
         if proc.returncode == 0:
             get_read_state().invalidate(path_str)
+            _file_buffer_manager.close(path_str)
             return {"status": "edited", "path": path_str, "edits_applied": len(edits)}
         else:
             return {"error": stderr.decode("utf-8", errors="replace").strip() or "Failed to write edited file"}
@@ -671,6 +674,7 @@ async def handle_file_edit(
 
         resolved.write_text(content, encoding="utf-8")
         get_read_state().invalidate(str(resolved))
+        _file_buffer_manager.close(str(resolved))
         return {"status": "edited", "path": str(resolved), "edits_applied": len(edits)}
     except Exception as e:
         return {"error": f"Failed to edit file: {e}"}
