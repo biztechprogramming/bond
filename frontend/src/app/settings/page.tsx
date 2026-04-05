@@ -7,6 +7,7 @@ import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
 import SkillsTab from "./skills/SkillsTab";
 import OptimizationTab from "./optimization/OptimizationTab";
+import ContainerHostsTab from "./containers/ContainerHostsTab";
 import { BACKEND_API } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
@@ -15,6 +16,7 @@ const API_BASE = `${BACKEND_API}/settings`;
 
 const TABS = [
   { id: "agents", label: "Agents" },
+  { id: "containers", label: "Container Hosts" },
   { id: "deployment", label: "Deployment" },
   { id: "channels", label: "Channels" },
   { id: "prompts", label: "Prompts" },
@@ -202,27 +204,40 @@ export default function SettingsPage() {
 
   return (
     <div style={s.container}>
-      <header style={s.header}>
+      <style>{`
+        .settings-tab-bar::-webkit-scrollbar { display: none; }
+        @media (max-width: 768px) {
+          .settings-content-area { padding: 12px !important; gap: 16px !important; }
+          .settings-header { padding: 12px 16px !important; }
+          .settings-section { padding: 16px !important; }
+        }
+      `}</style>
+      <header className="settings-header" style={s.header}>
         <a href="/" style={s.backLink}>&larr; Chat</a>
         <h1 style={s.title}>Settings</h1>
       </header>
 
       {/* Tab bar */}
-      <div style={s.tabBar}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            style={activeTab === tab.id ? { ...s.tab, ...s.tabActive } : s.tab}
-            onClick={() => switchTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div style={s.tabBarWrapper}>
+        <div className="settings-tab-bar" style={s.tabBar}>
+          {TABS.map((tab) => (
+            <button
+              key={tab.id}
+              style={activeTab === tab.id ? { ...s.tab, ...s.tabActive } : s.tab}
+              onClick={() => switchTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div style={s.tabBarFade} aria-hidden />
       </div>
 
       {/* Tab content */}
-      <div style={s.content}>
+      <div className="settings-content-area" style={s.content}>
         {activeTab === "agents" && <AgentsTab />}
+
+        {activeTab === "containers" && <ContainerHostsTab />}
 
         {activeTab === "deployment" && <DeploymentTab />}
 
@@ -442,19 +457,21 @@ export default function SettingsPage() {
 }
 
 const s: Record<string, React.CSSProperties> = {
-  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%" },
-  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e" },
+  container: { display: "flex", flexDirection: "column", height: "100vh", maxWidth: "1200px", margin: "0 auto", width: "100%", overflow: "hidden", boxSizing: "border-box" as const },
+  header: { display: "flex", alignItems: "center", gap: "16px", padding: "16px 24px", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", flexShrink: 0 },
   backLink: { color: "#6c8aff", textDecoration: "none", fontSize: "0.9rem" },
   title: { fontSize: "1.5rem", fontWeight: 700, margin: 0 },
-  tabBar: { display: "flex", borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e", padding: "0 24px" },
+  tabBarWrapper: { position: "relative" as const, borderBottomWidth: "1px", borderBottomStyle: "solid" as const, borderBottomColor: "#1e1e2e", flexShrink: 0 },
+  tabBar: { display: "flex", padding: "0 24px", overflowX: "auto" as const, scrollbarWidth: "none" as const, msOverflowStyle: "none" as const, WebkitOverflowScrolling: "touch" as const, flexWrap: "nowrap" as const },
+  tabBarFade: { position: "absolute" as const, top: 0, right: 0, bottom: 0, width: "40px", background: "linear-gradient(to right, transparent, #0a0a12)", pointerEvents: "none" as const },
   tab: {
     background: "none", borderWidth: 0, borderStyle: "none", borderColor: "transparent", borderBottomWidth: "2px", borderBottomStyle: "solid" as const, borderBottomColor: "transparent",
     color: "#8888a0", padding: "12px 20px", fontSize: "0.9rem", fontWeight: 500,
-    cursor: "pointer", transition: "color 0.2s, border-color 0.2s",
+    cursor: "pointer", transition: "color 0.2s, border-color 0.2s", whiteSpace: "nowrap" as const, flexShrink: 0,
   },
   tabActive: { color: "#6c8aff", borderBottomColor: "#6c8aff" },
-  content: { flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0 },
-  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e" },
+  content: { flex: 1, overflowY: "auto" as const, padding: "24px", display: "flex", flexDirection: "column", gap: "24px", minHeight: 0, WebkitOverflowScrolling: "touch" as any, boxSizing: "border-box" as const },
+  section: { backgroundColor: "#12121a", borderRadius: "12px", padding: "24px", borderWidth: "1px", borderStyle: "solid", borderColor: "#1e1e2e", overflow: "visible" as const, flexShrink: 0 },
   sectionTitle: { fontSize: "1.1rem", fontWeight: 600, color: "#6c8aff", margin: "0 0 20px 0" },
   field: { marginBottom: "16px" },
   label: { display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500 },

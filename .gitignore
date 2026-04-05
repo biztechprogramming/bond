@@ -32,9 +32,11 @@ Thumbs.db
 # Lockfiles generated on install
 gateway/pnpm-lock.yaml
 frontend/pnpm-lock.yaml
-data/
+data/*
+!data/test-fixtures/
 tests/coding-runs/
 *.db
+!data/test-fixtures/*.db
 data/agent-configs/
 *.tsbuildinfo
 
@@ -45,3 +47,6 @@ SOUL.md
 TOOLS.md
 USER.md
 workspace-state.json
+gateway/data/whatsapp-auth/*.json
+gateway/data/integrations.json
+gateway/data/channels.json

@@ -20,6 +20,7 @@ import CompareEnvironments from "./CompareEnvironments";
 import ComponentDetail from "./ComponentDetail";
 import AddComponentForm from "./AddComponentForm";
 import InfraMap from "./InfraMap";
+import TestSpacetimeDB from "./TestSpacetimeDB";
 
 interface Environment {
   name: string;
@@ -496,6 +497,9 @@ export default function DeploymentTab() {
           {view === "dashboard" && <PipelineSection environmentNames={envNames} />}
         </>
       )}
+
+      {/* Test SpacetimeDB — always visible on dashboard */}
+      {(view === "dashboard" || view === "agent-settings") && <TestSpacetimeDB />}
 
       {msg && <div style={{ fontSize: "0.85rem", color: msg.includes("error") || msg.includes("Failed") ? "#ff6c8a" : "#6cffa0" }}>{msg}</div>}
     </div>
