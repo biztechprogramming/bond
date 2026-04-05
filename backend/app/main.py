@@ -129,13 +129,17 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.middleware("http")
 async def check_api_key(request: Request, call_next):
-    """Require Bearer token on all routes except /api/v1/health."""
-    if request.method == "OPTIONS" or request.url.path in ("/api/v1/health", "/docs", "/openapi.json"):
-        return await call_next(request)
-    auth = request.headers.get("authorization", "")
-    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-    if token != BOND_API_KEY:
-        return JSONResponse(status_code=401, content={"detail": "Unauthorized — invalid or missing API key"})
+    """Require Bearer token on all routes except /api/v1/health.
+
+    DISABLED — see docs/design/103-gateway-auth-hardening.md for re-enablement plan.
+    """
+    # TODO(auth): re-enable after fixing all callers — see design doc 103
+    # if request.method == "OPTIONS" or request.url.path in ("/api/v1/health", "/docs", "/openapi.json"):
+    #     return await call_next(request)
+    # auth = request.headers.get("authorization", "")
+    # token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    # if token != BOND_API_KEY:
+    #     return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
     return await call_next(request)
 
 

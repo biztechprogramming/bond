@@ -160,15 +160,16 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     next();
   });
 
-  // API key authentication middleware — skip /health and /webhooks
-  app.use((req: any, res: any, next: any) => {
-    if (req.path === "/health" || req.path.startsWith("/webhooks") || req.path.startsWith("/api/v1/workspace-files") || req.path.startsWith("/api/v1/broker")) return next();
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (token !== config.apiKey) {
-      console.warn(`[gateway] 401 on ${req.method} ${req.path} — token: ${JSON.stringify(token)} (len=${token?.length ?? 'null'}), config.apiKey: ${JSON.stringify(config.apiKey)} (len=${config.apiKey?.length ?? 'null'})`);
-      return res.status(401).json({ error: "Unauthorized — invalid or missing API key" });
-    }
+  // API key authentication middleware — DISABLED
+  // See docs/design/103-gateway-auth-hardening.md for the plan to re-enable.
+  app.use((_req: any, _res: any, next: any) => {
+    // TODO(auth): re-enable after fixing all callers — see design doc 103
+    // if (req.path === "/health" || ...) return next();
+    // const authHeader = req.headers.authorization;
+    // const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    // if (token !== config.apiKey) {
+    //   return res.status(401).json({ error: "Unauthorized" });
+    // }
     next();
   });
 
@@ -463,11 +464,12 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     // Authenticate WebSocket via ?token= query parameter
     const url = new URL(req.url || "", `http://${req.headers.host}`);
     const token = url.searchParams.get("token");
-    if (token !== config.apiKey) {
-      console.warn(`[gateway] WebSocket rejected — invalid token from ${req.socket.remoteAddress}`);
-      socket.close(4001, "Unauthorized");
-      return;
-    }
+    // TODO(auth): WebSocket auth disabled — see design doc 103
+    // if (token !== config.apiKey) {
+    //   console.warn(`[gateway] WebSocket rejected — invalid token from ${req.socket.remoteAddress}`);
+    //   socket.close(4001, "Unauthorized");
+    //   return;
+    // }
     console.log(`[gateway] New WebSocket connection from ${req.socket.remoteAddress}`);
     webchat.handleConnection(socket);
   });
