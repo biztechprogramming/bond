@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import SpacetimeDBProvider from "@/components/SpacetimeDBProvider";
+import "@/styles/scrollbar.css";
 
 export const metadata: Metadata = {
   title: "Bond",
