@@ -174,7 +174,7 @@ export default function ContainerHostsTab() {
     <>
       <style>{`
         .cht-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .cht-section { background-color: #12121a; border-radius: 12px; padding: 24px; border: 1px solid #1e1e2e; overflow: hidden; }
+        .cht-section { background-color: #12121a; border-radius: 12px; padding: 24px; border: 1px solid #1e1e2e; overflow: visible; flex-shrink: 0; }
         .cht-input, .cht-select {
           background-color: #1e1e2e; border: 1px solid #2a2a3e; border-radius: 8px;
           padding: 10px 12px; color: #e0e0e8; font-size: 0.95rem; outline: none;
@@ -188,7 +188,7 @@ export default function ContainerHostsTab() {
         .cht-hosts-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
         @media (max-width: 768px) {
           .cht-grid { grid-template-columns: 1fr; }
-          .cht-section { padding: 16px; overflow: visible; }
+          .cht-section { padding: 16px; }
           .cht-table-header { display: none !important; }
           .cht-table-row {
             flex-direction: column;
