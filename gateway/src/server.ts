@@ -383,7 +383,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // Workspace file serving — serves generated images and other workspace files
   // (Design Doc 100, Phase 2: image rendering in chat UI)
-  app.get("/api/v1/workspace-files/:path(*)", (req: any, res: any) => {
+  app.get("/api/v1/workspace-files/*path", (req: any, res: any) => {
     const requestedPath = decodeURIComponent(req.params.path);
 
     // Security: resolve and validate the path is within allowed directories
