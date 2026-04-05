@@ -71,7 +71,7 @@ class PersistenceClient:
         gateway_url: str | None = None,
     ):
         self.agent_id = agent_id or os.environ.get("BOND_AGENT_ID", "unknown")
-        self.token = os.environ.get("BOND_AGENT_TOKEN", "")
+        self.token = os.environ.get("BOND_API_KEY", "") or os.environ.get("BOND_AGENT_TOKEN", "")
         self.gateway_url = gateway_url or _resolve_gateway_url()
 
         # Mode will be set in async init if not provided

@@ -7,6 +7,7 @@ import PromptsTab from "./prompts/PromptsTab";
 import ChannelsTab from "./channels/ChannelsTab";
 import SkillsTab from "./skills/SkillsTab";
 import OptimizationTab from "./optimization/OptimizationTab";
+import ImagesTab from "./images/ImagesTab";
 import ContainerHostsTab from "./containers/ContainerHostsTab";
 import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
@@ -20,6 +21,7 @@ const TABS = [
   { id: "deployment", label: "Deployment" },
   { id: "channels", label: "Channels" },
   { id: "prompts", label: "Prompts" },
+  { id: "images", label: "Images" },
   { id: "llm", label: "LLM" },
   { id: "embedding", label: "Embedding" },
   { id: "api-keys", label: "API Keys" },
@@ -91,6 +93,7 @@ export default function SettingsPage() {
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [googleKey, setGoogleKey] = useState("");
+  const [replicateKey, setReplicateKey] = useState("");
   const [keySaveMsg, setKeySaveMsg] = useState("");
 
   const switchTab = (tab: TabId) => {
@@ -244,6 +247,8 @@ export default function SettingsPage() {
         {activeTab === "channels" && <ChannelsTab />}
 
         {activeTab === "prompts" && <PromptsTab />}
+
+        {activeTab === "images" && <ImagesTab />}
 
         {activeTab === "llm" && (
           <section style={s.section}>
@@ -431,6 +436,22 @@ export default function SettingsPage() {
             {[
               { label: "Voyage AI", key: "embedding.api_key.voyage", state: voyageKey, set: setVoyageKey, placeholder: "Voyage API key" },
               { label: "Gemini", key: "embedding.api_key.gemini", state: geminiKey, set: setGeminiKey, placeholder: "Gemini API key" },
+            ].map(({ label, key, state, set, placeholder }) => (
+              <div key={key} style={s.field}>
+                <label style={s.label}>
+                  {label} {masked(key) && <span style={s.masked}>Current: {masked(key)}</span>}
+                </label>
+                <div style={s.keyRow}>
+                  <input type="password" style={s.input} value={state} onChange={(e) => set(e.target.value)} placeholder={placeholder} />
+                  <button style={s.button} onClick={() => saveKey(key, state, set)}>Save</button>
+                  {masked(key) && <button style={s.deleteBtn} onClick={() => deleteKey(key)}>Delete</button>}
+                </div>
+              </div>
+            ))}
+
+            <h3 style={{ color: "#e0e0e8", fontSize: "0.95rem", margin: "24px 0 12px" }}>Image Providers</h3>
+            {[
+              { label: "Replicate", key: "image.api_key.replicate", state: replicateKey, set: setReplicateKey, placeholder: "r8_..." },
             ].map(({ label, key, state, set, placeholder }) => (
               <div key={key} style={s.field}>
                 <label style={s.label}>

@@ -84,6 +84,7 @@ def build_registry() -> ToolRegistry:
     from .coding_agent import handle_coding_agent
     from .deploy_tools import handle_deploy_tool
     from .deployment_query import handle_deployment_query
+    from .image_gen import handle_generate_image
 
     registry = ToolRegistry()
     registry.register("respond", handle_respond)
@@ -133,6 +134,7 @@ def build_registry() -> ToolRegistry:
     registry.register("file_bug_ticket", lambda args, ctx: handle_deploy_tool("file_bug_ticket", args))
     # Deployment query — read-only access to deployment data via Gateway APIs
     registry.register("deployment_query", handle_deployment_query)
+    registry.register("generate_image", handle_generate_image)
 
     # Register dynamic tools from dynamic/ directory
     from ._dynamic_tools import register_dynamic_tools
