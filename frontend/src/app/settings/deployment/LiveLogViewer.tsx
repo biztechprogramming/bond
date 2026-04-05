@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   environment: string;
@@ -98,7 +98,7 @@ export default function LiveLogViewer({ environment, sources: availableSources }
     setFilingIssue(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/issues`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/issues`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ environment, fingerprint: entry.fingerprint, message: entry.message, source: entry.source, severity: entry.severity, timestamp: entry.timestamp }),

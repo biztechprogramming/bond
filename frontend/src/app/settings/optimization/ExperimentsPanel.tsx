@@ -59,7 +59,7 @@ export default function ExperimentsPanel() {
     try {
       setError("");
       const params = new URLSearchParams({ status, page: String(page), per_page: "20" });
-      const res = await fetch(`${API}/experiments?${params}`);
+      const res = await apiFetch(`${API}/experiments?${params}`);
       if (!res.ok) throw new Error("Failed to load experiments");
       setData(await res.json());
     } catch (e: unknown) {
@@ -74,7 +74,7 @@ export default function ExperimentsPanel() {
 
   const doAction = async (id: string, action: string, body?: Record<string, unknown>) => {
     try {
-      const res = await fetch(`${API}/experiments/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+      const res = await apiFetch(`${API}/experiments/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
       if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Failed"); }
       showToast(action === "conclude" ? "Experiment concluded" : "Experiment cancelled");
       fetchExperiments();

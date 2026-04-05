@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface TriggerSettings {
   webhookEnabled: boolean;
@@ -38,7 +38,7 @@ export default function TriggerConfig({ settings, onChange, scriptId, environmen
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${GATEWAY_API}/deployments/triggers`)
+    apiFetch(`${GATEWAY_API}/deployments/triggers`)
       .then((r) => r.json())
       .then((data: DeploymentTrigger[]) => {
         let filtered = data;
@@ -53,14 +53,14 @@ export default function TriggerConfig({ settings, onChange, scriptId, environmen
   const toggleTrigger = async (id: string, enabled: boolean) => {
     const action = enabled ? "enable" : "disable";
     try {
-      await fetch(`${GATEWAY_API}/deployments/triggers/${id}/${action}`, { method: "PUT" });
+      await apiFetch(`${GATEWAY_API}/deployments/triggers/${id}/${action}`, { method: "PUT" });
       setTriggers((prev) => prev.map((t) => (t.id === id ? { ...t, enabled } : t)));
     } catch { /* ignore */ }
   };
 
   const removeTrigger = async (id: string) => {
     try {
-      await fetch(`${GATEWAY_API}/deployments/triggers/${id}`, { method: "DELETE" });
+      await apiFetch(`${GATEWAY_API}/deployments/triggers/${id}`, { method: "DELETE" });
       setTriggers((prev) => prev.filter((t) => t.id !== id));
     } catch { /* ignore */ }
   };

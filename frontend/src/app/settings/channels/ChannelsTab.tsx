@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import SolidTimeCard from "./SolidTimeCard";
 
 const GATEWAY = GATEWAY_API;
@@ -34,7 +34,7 @@ export default function ChannelsTab() {
 
   const fetchChannels = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY}/channels`);
+      const res = await apiFetch(`${GATEWAY}/channels`);
       if (res.ok) setChannels(await res.json());
     } catch { /* gateway not available */ }
     setLoading(false);
@@ -50,7 +50,7 @@ export default function ChannelsTab() {
     setTelegramValidating(true);
     setTelegramError("");
     try {
-      const res = await fetch(`${GATEWAY}/channels/telegram/setup`, {
+      const res = await apiFetch(`${GATEWAY}/channels/telegram/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: telegramToken }),
@@ -59,7 +59,7 @@ export default function ChannelsTab() {
       if (!res.ok) { setTelegramError(data.error); return; }
       setTelegramBotName(`@${data.bot.username}`);
       // Auto-start
-      await fetch(`${GATEWAY}/channels/telegram/start`, { method: "POST" });
+      await apiFetch(`${GATEWAY}/channels/telegram/start`, { method: "POST" });
       await fetchChannels();
     } catch (err) {
       setTelegramError(err instanceof Error ? err.message : "Failed");
@@ -106,7 +106,7 @@ export default function ChannelsTab() {
   }, []);
 
   const disconnectChannel = async (type: string) => {
-    await fetch(`${GATEWAY}/channels/${type}`, { method: "DELETE" });
+    await apiFetch(`${GATEWAY}/channels/${type}`, { method: "DELETE" });
     setShowTelegramSetup(false);
     setShowWhatsAppSetup(false);
     setTelegramBotName("");
@@ -116,7 +116,7 @@ export default function ChannelsTab() {
 
   const forceDisconnectWhatsApp = async () => {
     eventSourceRef.current?.close();
-    await fetch(`${GATEWAY}/channels/whatsapp/disconnect`, { method: "POST" });
+    await apiFetch(`${GATEWAY}/channels/whatsapp/disconnect`, { method: "POST" });
     setShowWhatsAppSetup(false);
     setWhatsappQR("");
     setWhatsappStatus("");
@@ -124,12 +124,12 @@ export default function ChannelsTab() {
   };
 
   const stopChannel = async (type: string) => {
-    await fetch(`${GATEWAY}/channels/${type}/stop`, { method: "POST" });
+    await apiFetch(`${GATEWAY}/channels/${type}/stop`, { method: "POST" });
     await fetchChannels();
   };
 
   const startChannel = async (type: string) => {
-    await fetch(`${GATEWAY}/channels/${type}/start`, { method: "POST" });
+    await apiFetch(`${GATEWAY}/channels/${type}/start`, { method: "POST" });
     await fetchChannels();
   };
 

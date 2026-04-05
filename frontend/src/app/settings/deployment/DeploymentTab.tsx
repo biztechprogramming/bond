@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { BACKEND_API, GATEWAY_API } from "@/lib/config";
+import { BACKEND_API, GATEWAY_API , apiFetch } from "@/lib/config";
 import { useAgentsWithRelations, useAvailableModels, useSettingsMap, callReducer, type AgentWithRelations } from "@/hooks/useSpacetimeDB";
 import { getAgents } from "@/lib/spacetimedb-client";
 import SetupWizard from "./SetupWizard";
@@ -82,7 +82,7 @@ export default function DeploymentTab() {
   // REST-only fetches (sandbox images, environments)
   const fetchExceptions = useCallback(async () => {
     try {
-      const envRes = await fetch(`${GATEWAY_API}/deployments/environments`);
+      const envRes = await apiFetch(`${GATEWAY_API}/deployments/environments`);
       if (envRes.ok) {
         const envData = await envRes.json();
         if (Array.isArray(envData) && envData.length > 0) {
@@ -93,7 +93,7 @@ export default function DeploymentTab() {
     } catch { /* use defaults */ }
 
     try {
-      const imagesRes = await fetch(`${BACKEND_API}/agents/sandbox-images`);
+      const imagesRes = await apiFetch(`${BACKEND_API}/agents/sandbox-images`);
       if (imagesRes.ok) setSandboxImages(await imagesRes.json());
     } catch { /* use defaults */ }
   }, []);

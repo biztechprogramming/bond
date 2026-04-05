@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import StatusIndicator, { DeployStatus } from "./StatusIndicator";
 import ApprovalStatus from "./ApprovalStatus";
 
@@ -24,7 +24,7 @@ export default function PipelineRow({ scriptName, version, environments, onRefre
   const handlePromote = async (targetEnv: string) => {
     setPromoting(targetEnv);
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/promote`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/promote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -51,7 +51,7 @@ export default function PipelineRow({ scriptName, version, environments, onRefre
 
     setPromoting("all");
     try {
-      await fetch(`${GATEWAY_API}/deployments/promote`, {
+      await apiFetch(`${GATEWAY_API}/deployments/promote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

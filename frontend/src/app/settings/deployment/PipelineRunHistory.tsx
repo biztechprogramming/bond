@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import StatusIndicator, { DeployStatus } from "./StatusIndicator";
 import PipelineStepView, { PipelineStep } from "./PipelineStepView";
 
@@ -42,7 +42,7 @@ export default function PipelineRunHistory() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(`${GATEWAY_API}/deployments/runs?limit=20`);
+        const res = await apiFetch(`${GATEWAY_API}/deployments/runs?limit=20`);
         if (res.ok) {
           setRuns(await res.json());
         } else if (res.status === 404) {

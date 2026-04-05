@@ -182,7 +182,7 @@ Bond's local data directory:
 
 | Provider | API Key Env Var | Local? |
 |----------|----------------|--------|
-| Anthropic | `ANTHROPIC_API_KEY` | No |
+| Anthropic | `ANTHROPIC_API_KEY` or **OAuth** | No |
 | OpenAI | `OPENAI_API_KEY` | No |
 | Google (Gemini) | `GOOGLE_API_KEY` | No |
 | DeepSeek | `DEEPSEEK_API_KEY` | No |
@@ -197,6 +197,26 @@ Bond's local data directory:
 | Other (OpenAI-compatible) | `OTHER_API_KEY` | Varies |
 
 Switch providers anytime by re-running `make setup` or editing `bond.json`.
+
+### Using Anthropic OAuth (Claude Max/Pro — No Per-Token Costs)
+
+If you have a **Claude Max** or **Pro** subscription ($20–100/mo), you can use your subscription's OAuth token instead of paying per-API-call. This means **unlimited usage** (within subscription rate limits) at a flat monthly cost.
+
+**How to set it up:**
+
+1. **Install Claude CLI** (if you haven't already):
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+   Or run it once with `npx @anthropic-ai/claude-code` to trigger the OAuth flow.
+
+2. **Run `claude` once** — it opens a browser for Anthropic login and creates `~/.claude/.credentials.json`.
+
+3. **Run `make setup`** and select Anthropic. When prompted for authentication method, choose **"OAuth (Claude Max/Pro)"** instead of entering an API key.
+
+4. Bond auto-detects the credentials, refreshes tokens automatically, and injects the required headers — you don't need to manage anything.
+
+> **Note:** OAuth tokens require specific HTTP headers and a system prompt prefix for the Anthropic API. Bond handles all of this automatically via the gateway's OAuth module. Some models may have different rate limits under OAuth vs a standard API key.
 
 ---
 

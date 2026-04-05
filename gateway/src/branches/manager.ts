@@ -222,9 +222,11 @@ export class BranchManager {
    */
   async destroyContainer(backendUrl: string, agentId: string): Promise<boolean> {
     try {
+      const authHeaders: Record<string, string> = { "Content-Type": "application/json" };
+      if (process.env.BOND_API_KEY) authHeaders["Authorization"] = `Bearer ${process.env.BOND_API_KEY}`;
       const resp = await fetch(`${backendUrl}/api/v1/agent/container/destroy`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ agent_id: agentId }),
       });
       if (resp.ok) {

@@ -54,6 +54,7 @@ export interface GatewayServer {
 export function startGatewayServer(config: GatewayConfig): GatewayServer {
   const sessionManager = new SessionManager();
   const backendClient = new BackendClient(config.backendUrl);
+  backendClient.setApiKey(config.apiKey);
   const webchat = new WebChatChannel(sessionManager, backendClient);
   webchat.setConfig(config);
 
@@ -159,6 +160,17 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     next();
   });
 
+  // API key authentication middleware — skip /health and /webhooks
+  app.use((req: any, res: any, next: any) => {
+    if (req.path === "/health" || req.path.startsWith("/webhooks")) return next();
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (token !== config.apiKey) {
+      return res.status(401).json({ error: "Unauthorized — invalid or missing API key" });
+    }
+    next();
+  });
+
   // SpacetimeDB token endpoint for frontend auth
   app.get("/api/v1/spacetimedb/token", (_req: any, res: any) => {
     // Serve the CLI token so the browser can authenticate as the same identity
@@ -229,7 +241,9 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   async function resolveWorkerUrl(agentId?: string): Promise<{ workerUrl: string | null; containerId: string }> {
     if (!agentId) return { workerUrl: null, containerId: "default" };
     try {
-      const resp = await fetch(`${config.backendUrl}/api/v1/agent/resolve?agent_id=${encodeURIComponent(agentId)}`);
+      const resp = await fetch(`${config.backendUrl}/api/v1/agent/resolve?agent_id=${encodeURIComponent(agentId)}`, {
+        headers: { "Authorization": `Bearer ${config.apiKey}` },
+      });
       if (resp.ok) {
         const resolved = await resp.json();
         if (resolved.mode === "container" && resolved.worker_url) {
@@ -380,6 +394,14 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   });
 
   wss.on("connection", (socket, req) => {
+    // Authenticate WebSocket via ?token= query parameter
+    const url = new URL(req.url || "", `http://${req.headers.host}`);
+    const token = url.searchParams.get("token");
+    if (token !== config.apiKey) {
+      console.warn(`[gateway] WebSocket rejected — invalid token from ${req.socket.remoteAddress}`);
+      socket.close(4001, "Unauthorized");
+      return;
+    }
     console.log(`[gateway] New WebSocket connection from ${req.socket.remoteAddress}`);
     webchat.handleConnection(socket);
   });

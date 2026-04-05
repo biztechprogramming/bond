@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { useResources, useEnvironments, useResourceEnvironments, callReducer } from "@/hooks/useSpacetimeDB";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface InfraMapProps {
   onAddServer: () => void;
@@ -108,7 +108,7 @@ export default function InfraMap({ onAddServer }: InfraMapProps) {
   const handleProbe = async (resourceId: string) => {
     setProbingIds(prev => new Set(prev).add(resourceId));
     try {
-      await fetch(`${GATEWAY_API}/deployments/resources/${resourceId}/probe`, { method: "POST" });
+      await apiFetch(`${GATEWAY_API}/deployments/resources/${resourceId}/probe`, { method: "POST" });
     } catch { /* probe failed */ }
     setProbingIds(prev => { const next = new Set(prev); next.delete(resourceId); return next; });
   };

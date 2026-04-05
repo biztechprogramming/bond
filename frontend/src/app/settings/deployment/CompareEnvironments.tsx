@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface CompareEnvironmentsProps {
   environments: Array<{ name: string; display_name: string }>;
@@ -58,7 +58,7 @@ export default function CompareEnvironments({ environments, onBack }: CompareEnv
     if (!envA || !envB || envA === envB) { setData(null); return; }
     setLoading(true);
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/compare/${envA}/${envB}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/compare/${envA}/${envB}`);
       if (res.ok) setData(await res.json());
       else setMsg("Failed to load comparison");
     } catch { setMsg("Failed to load comparison"); }
@@ -71,8 +71,8 @@ export default function CompareEnvironments({ environments, onBack }: CompareEnv
   useEffect(() => {
     if (!envA || !envB || envA === envB) { setComponentComparisons([]); return; }
     Promise.all([
-      fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(envA)}`).then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(envB)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      apiFetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(envA)}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      apiFetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(envB)}`).then(r => r.ok ? r.json() : []).catch(() => []),
     ]).then(([aData, bData]) => {
       const compsA: Component[] = Array.isArray(aData) ? aData : aData.components || [];
       const compsB: Component[] = Array.isArray(bData) ? bData : bData.components || [];
@@ -95,7 +95,7 @@ export default function CompareEnvironments({ environments, onBack }: CompareEnv
   const promote = async () => {
     if (!confirm(`Promote all scripts from ${envA} to ${envB}?`)) return;
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/compare/${envA}/${envB}/promote`, { method: "POST" });
+      const res = await apiFetch(`${GATEWAY_API}/deployments/compare/${envA}/${envB}/promote`, { method: "POST" });
       setMsg(res.ok ? "Promotion initiated" : "Promotion failed");
       if (res.ok) await fetchComparison();
     } catch { setMsg("Promotion failed"); }

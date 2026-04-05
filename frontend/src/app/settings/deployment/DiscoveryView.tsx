@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   resourceName: string;
@@ -33,7 +33,7 @@ export default function DiscoveryView({ resourceName, onBack }: Props) {
 
   const fetchManifest = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/discovery/manifests/${resourceName}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/discovery/manifests/${resourceName}`);
       if (res.ok) setManifest(await res.json());
       else setManifest(null);
     } catch { setManifest(null); }
@@ -54,7 +54,7 @@ export default function DiscoveryView({ resourceName, onBack }: Props) {
     setDiscovering(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/discovery/manifests/${resourceName}`, { method: "POST" });
+      const res = await apiFetch(`${GATEWAY_API}/deployments/discovery/manifests/${resourceName}`, { method: "POST" });
       if (res.ok) {
         setManifest(await res.json());
         setMsg("Discovery complete.");

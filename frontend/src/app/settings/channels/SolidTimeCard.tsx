@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 const GATEWAY = GATEWAY_API;
 
@@ -25,7 +25,7 @@ export default function SolidTimeCard() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch(`${GATEWAY}/integrations/solidtime/status`);
+      const res = await apiFetch(`${GATEWAY}/integrations/solidtime/status`);
       if (res.ok) setStatus(await res.json());
     } catch {
       /* gateway unavailable */
@@ -43,7 +43,7 @@ export default function SolidTimeCard() {
     setConnecting(true);
     setError("");
     try {
-      const res = await fetch(`${GATEWAY}/integrations/solidtime/setup`, {
+      const res = await apiFetch(`${GATEWAY}/integrations/solidtime/setup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url, apiToken }),
@@ -63,7 +63,7 @@ export default function SolidTimeCard() {
   };
 
   const disconnect = async () => {
-    await fetch(`${GATEWAY}/integrations/solidtime`, { method: "DELETE" });
+    await apiFetch(`${GATEWAY}/integrations/solidtime`, { method: "DELETE" });
     setShowSetup(false);
     setApiToken("");
     await fetchStatus();

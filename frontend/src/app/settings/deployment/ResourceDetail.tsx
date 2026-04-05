@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   resourceId: string;
@@ -14,7 +14,7 @@ export default function ResourceDetail({ resourceId, onBack }: Props) {
 
   const fetchResource = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/resources/${resourceId}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/resources/${resourceId}`);
       if (res.ok) setResource(await res.json());
     } catch { /* ignore */ }
     setLoading(false);
@@ -34,7 +34,7 @@ export default function ResourceDetail({ resourceId, onBack }: Props) {
     setProbing(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/resources/${resourceId}/probe`, { method: "POST" });
+      const res = await apiFetch(`${GATEWAY_API}/deployments/resources/${resourceId}/probe`, { method: "POST" });
       if (res.ok) {
         setResource(await res.json());
         setMsg("Probe complete.");
@@ -50,7 +50,7 @@ export default function ResourceDetail({ resourceId, onBack }: Props) {
 
   const handleApply = async (rank: number) => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/resources/${resourceId}/recommendations/${rank}/apply`, { method: "POST" });
+      const res = await apiFetch(`${GATEWAY_API}/deployments/resources/${resourceId}/recommendations/${rank}/apply`, { method: "POST" });
       const data = await res.json();
       setMsg(data.message);
     } catch (err: any) {

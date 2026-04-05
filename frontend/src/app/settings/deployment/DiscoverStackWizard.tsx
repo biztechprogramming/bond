@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import { useResources, useComponents, callReducer, useSettingsMap, useAgents, useAgentMounts } from "@/hooks/useSpacetimeDB";
 import AddServerModal from "./AddServerModal";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
@@ -541,7 +541,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
     setGenerating(true);
     const selected = Object.entries(scriptSelections).filter(([, v]) => v).map(([k]) => k);
     try {
-      const res = await fetch(`${GATEWAY_API}/broker/deploy`, {
+      const res = await apiFetch(`${GATEWAY_API}/broker/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

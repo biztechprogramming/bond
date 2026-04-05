@@ -17,7 +17,7 @@ import {
   type WorkPlan as STDBWorkPlan,
   type WorkItem as STDBWorkItem
 } from "@/lib/spacetimedb-client";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API , apiFetch } from "@/lib/config";
 
 const API_BASE = BACKEND_API;
 
@@ -174,7 +174,7 @@ function BoardPage() {
   const fetchLineage = useCallback(async () => {
     if (!selectedPlanId) return;
     try {
-      const res = await fetch(`${API_BASE}/plans/${selectedPlanId}/lineage`);
+      const res = await apiFetch(`${API_BASE}/plans/${selectedPlanId}/lineage`);
       if (res.ok) setLineage(await res.json());
     } catch { /* ignore */ }
   }, [selectedPlanId]);

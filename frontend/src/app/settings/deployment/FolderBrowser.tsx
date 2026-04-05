@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface FolderBrowserProps {
   onSelect: (path: string) => void;
@@ -32,7 +32,7 @@ export default function FolderBrowser({ onSelect, onCancel }: FolderBrowserProps
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${GATEWAY_API}/deployments/browse/workspaces`)
+    apiFetch(`${GATEWAY_API}/deployments/browse/workspaces`)
       .then((r) => (r.ok ? r.json() : []))
       .then((data: WorkspaceRoot[]) => {
         setRoots(

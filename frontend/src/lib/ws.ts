@@ -3,7 +3,7 @@
  * Supports automatic reconnection with exponential backoff.
  */
 
-import { GATEWAY_WS } from "./config";
+import { GATEWAY_WS, getBondApiKey } from "./config";
 
 export type MessageHandler = (msg: GatewayMessage) => void;
 export type ConnectionHandler = (state: ConnectionState) => void;
@@ -79,9 +79,15 @@ export class GatewayWebSocket {
   connect(): void {
     this.shouldReconnect = true;
     this.setConnectionState("connecting");
-    this._connect();
-    this._setupVisibilityHandler();
+    // Fetch API key then connect
+    getBondApiKey().then((key) => {
+      this._apiKey = key;
+      this._connect();
+      this._setupVisibilityHandler();
+    });
   }
+
+  private _apiKey = "";
 
   private _connect(): void {
     if (this.reconnectTimer) {
@@ -100,8 +106,9 @@ export class GatewayWebSocket {
     }
 
     try {
+      const wsUrl = this._apiKey ? `${this.url}?token=${encodeURIComponent(this._apiKey)}` : this.url;
       console.log("[ws] Connecting to:", this.url);
-      this.ws = new WebSocket(this.url);
+      this.ws = new WebSocket(wsUrl);
     } catch (err) {
       console.error("[ws] Failed to create WebSocket:", err);
       this._scheduleReconnect();
