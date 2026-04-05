@@ -188,7 +188,7 @@ export default function ContainerHostsTab() {
         .cht-hosts-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px; }
         @media (max-width: 768px) {
           .cht-grid { grid-template-columns: 1fr; }
-          .cht-section { padding: 16px; }
+          .cht-section { padding: 16px; overflow: visible; }
           .cht-table-header { display: none !important; }
           .cht-table-row {
             flex-direction: column;
