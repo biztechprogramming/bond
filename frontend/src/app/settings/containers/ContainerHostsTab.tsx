@@ -50,11 +50,14 @@ export default function ContainerHostsTab() {
     }
   }, [installLog]);
 
-  // When install log first appears, scroll the section into view once
+  // When install log first appears, scroll the log div into view once
   const [logScrolledIntoView, setLogScrolledIntoView] = useState(false);
   useEffect(() => {
-    if (installLog && !logScrolledIntoView && installSectionRef.current) {
-      installSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (installLog && !logScrolledIntoView && installLogRef.current) {
+      // Short delay to let the log div render before scrolling
+      setTimeout(() => {
+        installLogRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 100);
       setLogScrolledIntoView(true);
     }
     if (!installLog) setLogScrolledIntoView(false);
@@ -171,7 +174,7 @@ export default function ContainerHostsTab() {
     <>
       <style>{`
         .cht-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .cht-section { background-color: #12121a; border-radius: 12px; padding: 24px; border: 1px solid #1e1e2e; overflow: hidden; }
+        .cht-section { background-color: #12121a; border-radius: 12px; padding: 24px; border: 1px solid #1e1e2e; overflow: visible; flex-shrink: 0; }
         .cht-input, .cht-select {
           background-color: #1e1e2e; border: 1px solid #2a2a3e; border-radius: 8px;
           padding: 10px 12px; color: #e0e0e8; font-size: 0.95rem; outline: none;
@@ -196,6 +199,7 @@ export default function ContainerHostsTab() {
           .cht-host-label { display: block; }
           .cht-host-actions { width: 100%; margin-top: 4px; }
           .cht-save-row { flex-direction: column; align-items: stretch; }
+          .cht-install-log { max-height: none !important; }
         }
       `}</style>
 
@@ -369,6 +373,7 @@ export default function ContainerHostsTab() {
           </div>
           <div
             ref={installLogRef}
+            className="cht-install-log"
             style={{
               backgroundColor: "#0a0a12",
               border: "1px solid #1e1e2e",
