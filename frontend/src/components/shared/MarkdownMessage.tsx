@@ -163,19 +163,33 @@ const components: Components = {
       {children}
     </td>
   ),
-  img: ({ src, alt, ...props }) => (
-    <img
-      src={src}
-      alt={alt || ""}
-      style={{
-        maxWidth: "min(100%, 420px)",
-        maxHeight: "320px",
-        borderRadius: "6px",
-        border: "1px solid rgba(255,255,255,0.1)",
-      }}
-      {...props}
-    />
-  ),
+  img: ({ src, alt, ...props }) => {
+    // Rewrite workspace image paths to gateway file-serving endpoint
+    let resolvedSrc = src || "";
+    if (resolvedSrc.startsWith("/workspace/") || resolvedSrc.startsWith(".bond/images/")) {
+      const encodedPath = encodeURIComponent(resolvedSrc);
+      resolvedSrc = `/api/v1/workspace-files/${encodedPath}`;
+    }
+    return (
+      <img
+        src={resolvedSrc}
+        alt={alt || ""}
+        loading="lazy"
+        style={{
+          maxWidth: "min(100%, 512px)",
+          maxHeight: "420px",
+          borderRadius: "8px",
+          border: "1px solid rgba(255,255,255,0.1)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+          cursor: "pointer",
+        }}
+        onClick={() => {
+          if (resolvedSrc) window.open(resolvedSrc, "_blank");
+        }}
+        {...props}
+      />
+    );
+  },
   hr: () => (
     <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.1)", margin: "12px 0" }} />
   ),

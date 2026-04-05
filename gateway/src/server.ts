@@ -162,7 +162,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
 
   // API key authentication middleware — skip /health and /webhooks
   app.use((req: any, res: any, next: any) => {
-    if (req.path === "/health" || req.path.startsWith("/webhooks")) return next();
+    if (req.path === "/health" || req.path.startsWith("/webhooks") || req.path.startsWith("/api/v1/workspace-files")) return next();
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
     if (token !== config.apiKey) {
@@ -379,6 +379,67 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   app.post("/api/v1/broadcast", (req: any, res: any) => {
     webchat.broadcast(req.body);
     res.status(200).json({ status: "broadcasted" });
+  });
+
+  // Workspace file serving — serves generated images and other workspace files
+  // (Design Doc 100, Phase 2: image rendering in chat UI)
+  app.get("/api/v1/workspace-files/:path(*)", (req: any, res: any) => {
+    const requestedPath = decodeURIComponent(req.params.path);
+
+    // Security: resolve and validate the path is within allowed directories
+    const { resolve, join } = require("node:path");
+    const { existsSync, statSync, createReadStream } = require("node:fs");
+
+    // Allow serving from workspace or .bond/images
+    const allowedRoots = [
+      resolve(process.env.WORKSPACE_DIR || "/workspace"),
+      resolve(join(process.env.HOME || "/root", ".bond", "images")),
+    ];
+
+    let fullPath: string;
+    if (requestedPath.startsWith("/")) {
+      fullPath = resolve(requestedPath);
+    } else {
+      fullPath = resolve(join(process.env.WORKSPACE_DIR || "/workspace", requestedPath));
+    }
+
+    // Ensure the resolved path is under an allowed root (prevent path traversal)
+    const isAllowed = allowedRoots.some((root: string) => fullPath.startsWith(root));
+    if (!isAllowed) {
+      return res.status(403).json({ error: "Access denied — path outside allowed directories" });
+    }
+
+    if (!existsSync(fullPath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    const stat = statSync(fullPath);
+    if (!stat.isFile()) {
+      return res.status(400).json({ error: "Not a file" });
+    }
+
+    // Determine content type from extension
+    const ext = fullPath.split(".").pop()?.toLowerCase() || "";
+    const mimeTypes: Record<string, string> = {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      webp: "image/webp",
+      svg: "image/svg+xml",
+      bmp: "image/bmp",
+      ico: "image/x-icon",
+      pdf: "application/pdf",
+      txt: "text/plain",
+      json: "application/json",
+      md: "text/markdown",
+    };
+    const contentType = mimeTypes[ext] || "application/octet-stream";
+
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Length", stat.size);
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    createReadStream(fullPath).pipe(res);
   });
 
   // HTTP server for health check + WS upgrade

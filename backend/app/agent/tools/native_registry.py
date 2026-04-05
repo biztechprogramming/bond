@@ -44,6 +44,7 @@ def build_native_registry() -> ToolRegistry:
         handle_file_search_unified,
     )
     from .coding_agent import handle_coding_agent
+    from .image_gen import handle_generate_image
     from .db_discover import handle_db_discover
     from .web import handle_web_read, handle_web_search
     from .work_plan import handle_work_plan
@@ -97,4 +98,5 @@ def build_native_registry() -> ToolRegistry:
     registry.register("shell_diff", handle_shell_diff)
     registry.register("shell_awk", handle_shell_awk)
     registry.register("shell_jq", handle_shell_jq)
+    registry.register("generate_image", handle_generate_image)
     return registry

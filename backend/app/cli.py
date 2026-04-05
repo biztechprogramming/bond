@@ -146,6 +146,60 @@ def setup() -> None:
         else:
             print("  API key saved to encrypted vault.")
 
+    # --- Image Generation (optional) ---
+    print("\n  \U0001f3a8 Image Generation (optional)")
+    print("  " + "\u2501" * 30 + "\n")
+    print("  Bond can generate images (icons, logos, mockups, diagrams).\n")
+
+    image_providers_yaml = _load_providers().get("image", {})
+    image_provider_ids = list(image_providers_yaml.keys())
+
+    for i, pid in enumerate(image_provider_ids, 1):
+        name = image_providers_yaml[pid].get("name", pid)
+        note = ""
+        if pid == "openai" and selected_provider == "openai":
+            note = " \u2014 uses your existing OpenAI key \u2713"
+        elif pid == "comfyui":
+            note = " \u2014 local, free, requires GPU"
+        print(f"    {i}. {name}{note}")
+    skip_idx = len(image_provider_ids) + 1
+    print(f"    {skip_idx}. Skip for now")
+    print()
+
+    img_choice = input(f"  Choose [1-{skip_idx}]: ").strip() or str(skip_idx)
+    try:
+        img_idx = int(img_choice) - 1
+    except ValueError:
+        img_idx = len(image_provider_ids)  # skip
+
+    image_config: dict = {}
+    if 0 <= img_idx < len(image_provider_ids):
+        img_provider = image_provider_ids[img_idx]
+        img_provider_name = image_providers_yaml[img_provider].get("name", img_provider)
+        img_default_model = image_providers_yaml[img_provider].get("default_model", "")
+
+        if img_provider == "openai" and selected_provider == "openai":
+            print(f"  \u2705 Image generation configured: {img_provider_name} / {img_default_model}")
+            print("     Using existing OpenAI API key from vault.")
+        elif img_provider == "comfyui":
+            print(f"  \u2705 Image generation configured: {img_provider_name}")
+            print("     Make sure ComfyUI is running on http://localhost:8188")
+        else:
+            img_api_key = input(f"  {img_provider_name} API key: ").strip()
+            if img_api_key:
+                vault_key = f"{img_provider.upper()}_API_KEY"
+                vault.set(vault_key, img_api_key)
+                print(f"  \u2705 {img_provider_name} API key saved to vault.")
+            else:
+                print("  Warning: No API key provided. Set it later in settings.")
+
+        image_config = {
+            "provider": img_provider,
+            "model": img_default_model,
+        }
+    else:
+        print("  Skipped image generation setup.")
+
     # Write bond.json
     config = {
         "llm": {
@@ -153,6 +207,8 @@ def setup() -> None:
             "model": model,
         },
     }
+    if image_config:
+        config["image"] = image_config
 
     if BOND_JSON_PATH.exists():
         with open(BOND_JSON_PATH) as f:
