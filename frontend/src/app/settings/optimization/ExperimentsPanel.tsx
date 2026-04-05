@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API, apiFetch } from "@/lib/config";
 import ProgressBar from "./charts/ProgressBar";
 import ConfirmDialog from "./components/ConfirmDialog";
 import Pagination from "./components/Pagination";

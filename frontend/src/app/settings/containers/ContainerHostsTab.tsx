@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API, apiFetch } from "@/lib/config";
 import AddContainerHostModal from "./AddContainerHostModal";
 import EditContainerHostModal from "./EditContainerHostModal";
 
