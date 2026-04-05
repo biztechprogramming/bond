@@ -199,6 +199,7 @@ export default function ContainerHostsTab() {
           .cht-host-label { display: block; }
           .cht-host-actions { width: 100%; margin-top: 4px; }
           .cht-save-row { flex-direction: column; align-items: stretch; }
+          .cht-install-log { max-height: none !important; }
         }
       `}</style>
 
@@ -372,6 +373,7 @@ export default function ContainerHostsTab() {
           </div>
           <div
             ref={installLogRef}
+            className="cht-install-log"
             style={{
               backgroundColor: "#0a0a12",
               border: "1px solid #1e1e2e",
