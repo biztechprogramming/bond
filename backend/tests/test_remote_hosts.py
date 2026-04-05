@@ -361,3 +361,123 @@ class TestRegistrySerialization:
         assert config[0]["id"] == "server-1"
         assert config[0]["labels"] == ["gpu"]
         assert config[0]["host"] == "192.168.1.100"
+
+
+# ---------------------------------------------------------------------------
+# DB loading tests (Phase 2.5)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryDBLoading:
+    @pytest.mark.asyncio
+    async def test_load_from_db_populates_hosts(self):
+        """load_from_db should populate hosts from DB rows."""
+        registry = HostRegistry()
+
+        fake_rows = [
+            {
+                "id": "local", "name": "Local", "host": "localhost", "port": 0,
+                "user": "", "ssh_key_encrypted": None, "daemon_port": 8990,
+                "max_agents": 8, "memory_mb": 0, "labels": "[]",
+                "enabled": 1, "status": "active", "is_local": 1,
+            },
+            {
+                "id": "remote-1", "name": "Remote 1", "host": "10.0.0.1", "port": 22,
+                "user": "bond", "ssh_key_encrypted": "", "daemon_port": 8990,
+                "max_agents": 4, "memory_mb": 16000, "labels": '["gpu"]',
+                "enabled": 1, "status": "active", "is_local": 0,
+            },
+        ]
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.mappings.return_value.all.return_value = fake_rows
+        mock_session.execute = AsyncMock(side_effect=[
+            mock_result,  # host query
+            MagicMock(fetchone=lambda: ("least-loaded",)),  # strategy query
+        ])
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("backend.app.db.session.get_session_factory", return_value=mock_factory):
+            await registry.load_from_db()
+
+        assert registry._db_loaded is True
+        assert len(registry.get_all_remote_hosts()) == 1
+        assert registry.get_all_remote_hosts()[0].id == "remote-1"
+        assert registry.get_all_remote_hosts()[0].labels == ["gpu"]
+        assert registry.local.max_agents == 8
+
+    @pytest.mark.asyncio
+    async def test_cache_ttl_prevents_reload(self):
+        """Calling load_from_db within TTL should not re-query."""
+        registry = HostRegistry()
+        registry._db_loaded = True
+        registry._cache_ts = __import__("time").time()  # just now
+
+        # Should return immediately without hitting DB
+        await registry.load_from_db()
+        # No error = it didn't try to import get_session_factory
+
+    @pytest.mark.asyncio
+    async def test_refresh_resets_cache(self):
+        """refresh() should reset cache and reload."""
+        registry = HostRegistry()
+        registry._db_loaded = True
+        registry._cache_ts = __import__("time").time()
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.mappings.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(side_effect=[
+            mock_result,
+            MagicMock(fetchone=lambda: None),
+        ])
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("backend.app.db.session.get_session_factory", return_value=mock_factory):
+            await registry.refresh()
+
+        assert registry._db_loaded is True
+        assert len(registry.get_all_remote_hosts()) == 0
+
+    @pytest.mark.asyncio
+    async def test_load_preserves_running_counts(self):
+        """Running counts should survive a DB reload."""
+        registry = HostRegistry()
+        host = RemoteHost(id="srv-1", name="Server", host="10.0.0.1")
+        registry.add_host(host)
+        registry.increment_running("srv-1")
+        registry.increment_running("srv-1")
+        assert host.running_count == 2
+
+        fake_rows = [{
+            "id": "srv-1", "name": "Server", "host": "10.0.0.1", "port": 22,
+            "user": "bond", "ssh_key_encrypted": "", "daemon_port": 8990,
+            "max_agents": 4, "memory_mb": 0, "labels": "[]",
+            "enabled": 1, "status": "active", "is_local": 0,
+        }]
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.mappings.return_value.all.return_value = fake_rows
+        mock_session.execute = AsyncMock(side_effect=[
+            mock_result,
+            MagicMock(fetchone=lambda: None),
+        ])
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("backend.app.db.session.get_session_factory", return_value=mock_factory):
+            await registry.refresh()
+
+        reloaded = registry.get_host("srv-1")
+        assert reloaded is not None
+        assert reloaded.running_count == 2

@@ -15,45 +15,48 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
+import signal
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("bond.host_daemon")
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 _API_VERSION = "v1"
 _MIN_GATEWAY_VERSION = "0.90.0"
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration (loaded from environment variables)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class DaemonConfig:
-    port: int = 18795
-    max_agents: int = 4
-    workspace_root: str = "/var/bond/workspaces"
-    shared_root: str = "/var/bond/shared"
-    auth_token: str = ""  # Shared secret for gateway auth
-    heartbeat_timeout_minutes: int = 10
+    port: int = int(os.environ.get("BOND_DAEMON_PORT", "18795"))
+    max_agents: int = int(os.environ.get("BOND_MAX_AGENTS", "4"))
+    workspace_root: str = os.environ.get("BOND_WORKSPACE_ROOT", "/var/bond/workspaces")
+    shared_root: str = os.environ.get("BOND_SHARED_ROOT", "/var/bond/shared")
+    auth_token: str = os.environ.get("BOND_DAEMON_AUTH_TOKEN", "")
+    heartbeat_timeout_minutes: int = int(os.environ.get("BOND_HEARTBEAT_TIMEOUT", "10"))
 
 
 _config = DaemonConfig()
 
 # ---------------------------------------------------------------------------
-# App
+# Tracked containers (populated on startup and maintained at runtime)
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Bond Host Daemon", version=__version__)
-
+_tracked_containers: dict[str, dict] = {}
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -76,6 +79,11 @@ class ContainerSpec(BaseModel):
 class ContainerResponse(BaseModel):
     container_id: str
     worker_url: str
+
+
+class ExecRequest(BaseModel):
+    command: list[str]
+    timeout: int = 30
 
 
 # ---------------------------------------------------------------------------
@@ -107,8 +115,43 @@ class GatewayHeartbeatMonitor:
 _heartbeat = GatewayHeartbeatMonitor()
 
 # ---------------------------------------------------------------------------
-# Auth middleware
+# Lifespan (replaces deprecated @app.on_event)
 # ---------------------------------------------------------------------------
+
+_heartbeat_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _heartbeat_task
+    # startup
+    os.makedirs(_config.workspace_root, exist_ok=True)
+    os.makedirs(_config.shared_root, exist_ok=True)
+    await _reconcile_running_containers()
+    await _cleanup_stale_credentials()
+    _heartbeat_task = asyncio.create_task(_heartbeat.monitor_loop())
+    logger.info("Bond host daemon v%s started (max_agents=%d)", __version__, _config.max_agents)
+    yield
+    # shutdown
+    _heartbeat_task.cancel()
+    await _graceful_shutdown_all()
+
+
+app = FastAPI(title="Bond Host Daemon", version=__version__, lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Middleware
+# ---------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def version_header_middleware(request: Request, call_next):
+    """Add daemon version headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Daemon-Version"] = __version__
+    response.headers["X-API-Version"] = _API_VERSION
+    return response
 
 
 @app.middleware("http")
@@ -118,7 +161,7 @@ async def auth_middleware(request: Request, call_next):
     if _config.auth_token and request.url.path != "/health":
         auth = request.headers.get("Authorization", "")
         if auth != f"Bearer {_config.auth_token}":
-            raise HTTPException(401, "Invalid auth token")
+            return JSONResponse(status_code=401, content={"detail": "Invalid auth token"})
     return await call_next(request)
 
 
@@ -127,23 +170,12 @@ async def auth_middleware(request: Request, call_next):
 # ---------------------------------------------------------------------------
 
 
-@app.on_event("startup")
-async def startup_recovery():
-    """Reconcile with Docker and clean up stale resources."""
-    os.makedirs(_config.workspace_root, exist_ok=True)
-    os.makedirs(_config.shared_root, exist_ok=True)
-
-    await _reconcile_running_containers()
-    await _cleanup_stale_credentials()
-
-    # Start heartbeat monitor
-    asyncio.create_task(_heartbeat.monitor_loop())
-    logger.info("Bond host daemon v%s started (max_agents=%d)", __version__, _config.max_agents)
-
-
 async def _reconcile_running_containers():
-    """Re-discover running bond-agent-* containers."""
+    """Re-discover running bond-agent-* containers and populate tracking registry."""
     containers = await _list_bond_containers()
+    _tracked_containers.clear()
+    for c in containers:
+        _tracked_containers[c["name"]] = c
     logger.info("Found %d existing bond-agent containers on startup", len(containers))
 
 
@@ -169,19 +201,29 @@ async def create_container(spec: ContainerSpec):
     """Create an agent container on this machine."""
 
     # Idempotency: return existing container if it matches
+    if spec.key in _tracked_containers:
+        existing = _tracked_containers[spec.key]
+        if existing.get("running"):
+            return ContainerResponse(
+                container_id=existing["id"],
+                worker_url=f"http://localhost:{existing.get('port', 0)}",
+            )
+
+    # Also check Docker directly
     existing = await _find_container(spec.key)
     if existing and existing.get("running"):
+        _tracked_containers[spec.key] = existing
         return ContainerResponse(
             container_id=existing["id"],
             worker_url=f"http://localhost:{existing['port']}",
         )
 
     # Enforce local max_agents (daemon-side enforcement, P0)
-    running = await _list_bond_containers()
-    if len(running) >= _config.max_agents:
+    running_count = sum(1 for c in _tracked_containers.values() if c.get("running"))
+    if running_count >= _config.max_agents:
         raise HTTPException(
             429,
-            f"Host at capacity ({len(running)}/{_config.max_agents})",
+            f"Host at capacity ({running_count}/{_config.max_agents})",
         )
 
     # 1. Ensure image is available
@@ -190,7 +232,10 @@ async def create_container(spec: ContainerSpec):
     # 2. Prepare workspace via git clone
     workspace_dir = os.path.join(_config.workspace_root, spec.key)
     if spec.repo_url:
-        await _git_clone_with_verify(spec.repo_url, spec.repo_branch, workspace_dir)
+        await _git_clone_with_verify(
+            spec.repo_url, spec.repo_branch, workspace_dir,
+            ssh_private_key=spec.ssh_private_key,
+        )
 
     # 3. Write agent config
     config_path = _write_agent_config(spec.key, spec.agent_config)
@@ -254,6 +299,14 @@ async def create_container(spec: ContainerSpec):
     # 7. Get assigned port
     port = await _get_container_port(container_id, "18791/tcp")
 
+    # Track the new container
+    _tracked_containers[spec.key] = {
+        "id": container_id,
+        "name": spec.key,
+        "running": True,
+        "port": port,
+    }
+
     logger.info("Created container %s for %s (port %d)", container_id, spec.key, port)
     return ContainerResponse(
         container_id=container_id,
@@ -265,6 +318,9 @@ async def create_container(spec: ContainerSpec):
 async def destroy_container(key: str):
     """Stop and remove a container, cleaning up workspace and credentials."""
     await _docker_stop_and_remove(key)
+
+    # Remove from tracking
+    _tracked_containers.pop(key, None)
 
     workspace_dir = os.path.join(_config.workspace_root, key)
     if os.path.exists(workspace_dir):
@@ -307,6 +363,30 @@ async def list_containers():
     """List all bond-agent-* containers."""
     containers = await _list_bond_containers()
     return {"containers": containers}
+
+
+@app.post("/containers/{key}/exec")
+async def exec_in_container(key: str, req: ExecRequest):
+    """Execute a command in a running container."""
+    if not await _container_exists(key):
+        raise HTTPException(404, f"Container {key} not found")
+
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "exec", key, *req.command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=req.timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        raise HTTPException(504, "Command timed out")
+
+    return {
+        "exit_code": proc.returncode,
+        "stdout": stdout.decode(errors="replace"),
+        "stderr": stderr.decode(errors="replace"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +550,9 @@ async def _pull_or_build_image(image: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _git_clone_with_verify(url: str, branch: str, dest: str) -> None:
+async def _git_clone_with_verify(
+    url: str, branch: str, dest: str, *, ssh_private_key: str = "",
+) -> None:
     """Clone and verify integrity."""
     if os.path.exists(dest):
         shutil.rmtree(dest)
@@ -480,33 +562,71 @@ async def _git_clone_with_verify(url: str, branch: str, dest: str) -> None:
         "GIT_LFS_SKIP_SMUDGE": "1",
     }
 
+    # Use SSH key for git operations if available
+    if ssh_private_key:
+        tmpdir = f"/dev/shm/bond-git-clone-{os.getpid()}"
+        os.makedirs(tmpdir, mode=0o700, exist_ok=True)
+        key_path = os.path.join(tmpdir, "id_ed25519")
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, ssh_private_key.encode())
+        finally:
+            os.close(fd)
+        env["GIT_SSH_COMMAND"] = f"ssh -i {key_path} -o StrictHostKeyChecking=no"
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "clone", "--branch", branch, "--depth", "1", url, dest,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise HTTPException(422, f"Git clone failed: {stderr.decode()}")
+
+        # Verify clone integrity
+        verify = await asyncio.create_subprocess_exec(
+            "git", "-C", dest, "rev-parse", "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        v_out, _ = await verify.communicate()
+        if verify.returncode != 0:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise HTTPException(422, f"Clone verification failed for {url}")
+
+        # Sanitize git config to remove any credential traces
+        await _sanitize_git_config(dest)
+    finally:
+        # Clean up temporary SSH key
+        if ssh_private_key:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+async def _sanitize_git_config(dest: str) -> None:
+    """Remove credential helpers and URL-embedded passwords from .git/config."""
+    # Remove credential section (ignore errors if section doesn't exist)
     proc = await asyncio.create_subprocess_exec(
-        "git", "clone", "--branch", branch, "--depth", "1", url, dest,
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        raise HTTPException(422, f"Git clone failed: {stderr.decode()}")
-
-    # Verify clone integrity
-    verify = await asyncio.create_subprocess_exec(
-        "git", "-C", dest, "rev-parse", "HEAD",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    v_out, _ = await verify.communicate()
-    if verify.returncode != 0:
-        shutil.rmtree(dest, ignore_errors=True)
-        raise HTTPException(422, f"Clone verification failed for {url}")
-
-    # Strip credential info from .git/config
-    await asyncio.create_subprocess_exec(
         "git", "-C", dest, "config", "--remove-section", "credential",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    await proc.communicate()
+    # returncode != 0 is fine — section may not exist
+
+    # Strip URL-embedded credentials from remote URLs
+    git_config_path = os.path.join(dest, ".git", "config")
+    if os.path.exists(git_config_path):
+        with open(git_config_path, "r") as f:
+            content = f.read()
+        # Replace https://user:pass@host with https://host
+        sanitized = re.sub(
+            r"(https?://)([^@/]+@)", r"\1", content,
+        )
+        if sanitized != content:
+            with open(git_config_path, "w") as f:
+                f.write(sanitized)
 
 
 # ---------------------------------------------------------------------------
@@ -583,10 +703,11 @@ async def _graceful_shutdown_all():
 
 def main():
     parser = argparse.ArgumentParser(description="Bond Host Daemon")
-    parser.add_argument("--port", type=int, default=18795)
-    parser.add_argument("--max-agents", type=int, default=4)
-    parser.add_argument("--auth-token", type=str, default="")
-    parser.add_argument("--heartbeat-timeout", type=int, default=10, help="Minutes")
+    parser.add_argument("--port", type=int, default=_config.port)
+    parser.add_argument("--max-agents", type=int, default=_config.max_agents)
+    parser.add_argument("--auth-token", type=str, default=_config.auth_token)
+    parser.add_argument("--heartbeat-timeout", type=int,
+                        default=_config.heartbeat_timeout_minutes, help="Minutes")
     args = parser.parse_args()
 
     _config.port = args.port
@@ -596,8 +717,21 @@ def main():
 
     _heartbeat._timeout = args.heartbeat_timeout * 60
 
+    # Register signal handlers for graceful shutdown
+    loop = asyncio.new_event_loop()
+
+    def _signal_handler():
+        logger.info("Received shutdown signal — stopping gracefully")
+        loop.create_task(_graceful_shutdown_all())
+
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=args.port, log_level="info")
+    server = uvicorn.Server(config)
+
+    loop.add_signal_handler(signal.SIGTERM, _signal_handler)
+    loop.add_signal_handler(signal.SIGINT, _signal_handler)
+    loop.run_until_complete(server.serve())
 
 
 if __name__ == "__main__":

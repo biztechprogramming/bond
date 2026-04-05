@@ -1,5 +1,6 @@
 # Bond Agent Worker — Python Development Environment
-# Extends bond-agent-worker:latest with Python dev tools, Playwright, and testing.
+# Extends bond-agent-worker:latest with Python dev tools and testing.
+# Base image already provides: Node.js 22, pnpm, Playwright + Chromium.
 #
 # Usage:
 #   docker build -f docker/Dockerfile.python -t bond-agent-python:latest .
@@ -8,21 +9,12 @@ FROM bond-agent-worker:latest
 
 USER root
 
-# Install system deps for Playwright and general dev
+# Install general dev tools (Playwright system deps already in base image)
 RUN apt-get update && apt-get install -y \
     wget \
     tmux \
     vim \
     build-essential \
-    # Playwright system deps
-    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-    libxrandr2 libgbm1 libasound2 libatspi2.0-0 libwayland-client0 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Node.js (for frontend tooling)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dev tools
@@ -43,10 +35,7 @@ RUN pip install --no-cache-dir \
 # Install Jupyter kernel for code interpreter (opt-in via BOND_CODE_INTERPRETER=1)
 RUN python3 -m ipykernel install --name python --display-name "Python"
 
-# Install Playwright
-RUN pip install playwright \
-    && playwright install chromium \
-    && playwright install-deps chromium
+# Playwright is already installed in the base image (Dockerfile.agent)
 
 # Install delta for git diffs
 RUN ARCH=$(dpkg --print-architecture) \
