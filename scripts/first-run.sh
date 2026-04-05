@@ -12,6 +12,12 @@ if [ -f "$SENTINEL" ]; then
   exit 0
 fi
 
+# Skip if setup wizard already ran (BOND_API_KEY set in .env)
+if [ -n "${BOND_API_KEY:-}" ]; then
+  touch "$SENTINEL"
+  exit 0
+fi
+
 mkdir -p "$BOND_DATA"
 
 # Resolve credentials
