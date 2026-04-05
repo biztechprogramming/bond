@@ -123,8 +123,14 @@ async def _multi_read_sandbox(paths: list[str], container_id: str) -> dict:
                 content = stdout.decode("utf-8", errors="replace")
                 lines = content.split("\n")
                 total_lines = len(lines)
-                if total_lines > 500 or len(content) > 100_000:
-                    content = content[:100_000] + "\n... [truncated at 100KB]"
+                # Token gate
+                token_count = estimate_tokens(content)
+                if token_count > MAX_POST_READ_TOKENS:
+                    content = truncate_to_tokens(content, MAX_POST_READ_TOKENS)
+                    return p, {
+                        "content": content, "total_lines": total_lines,
+                        "size": len(stdout), "truncated": True,
+                    }
                 return p, {"content": content, "total_lines": total_lines, "size": len(stdout)}
             return p, {"error": stderr.decode("utf-8", errors="replace").strip()}
         except asyncio.TimeoutError:
@@ -136,6 +142,8 @@ async def _multi_read_sandbox(paths: list[str], container_id: str) -> dict:
 
 async def _multi_read_host(paths: list[str], allowed_dirs: list[str]) -> dict:
     """Read multiple files from host filesystem concurrently."""
+    rs = get_read_state()
+
     async def read_one(p: str) -> tuple[str, dict]:
         resolved = _resolve_and_check(p, allowed_dirs)
         if resolved is None:
@@ -145,11 +153,34 @@ async def _multi_read_host(paths: list[str], allowed_dirs: list[str]) -> dict:
                 return p, {"error": f"File not found: {p}"}
             if not resolved.is_file():
                 return p, {"error": f"Not a file: {p}"}
+            track_file_read(str(resolved))
+
+            # mtime dedup
+            file_stat = resolved.stat()
+            file_mtime = file_stat.st_mtime
+            prev = rs.check(str(resolved), file_mtime, None, None)
+            if prev is not None:
+                return p, {
+                    "path": str(resolved),
+                    "status": "unchanged",
+                    "note": f"File has not changed since last read ({prev.token_count} tokens saved)",
+                }
+
             raw_content = resolved.read_text(encoding="utf-8", errors="replace")
             all_lines = raw_content.splitlines()
             total_lines = len(all_lines)
-            if total_lines > 500 or len(raw_content) > 100_000:
-                raw_content = raw_content[:100_000] + "\n... [truncated at 100KB]"
+
+            # Token gate
+            token_count = estimate_tokens(raw_content)
+            if token_count > MAX_POST_READ_TOKENS:
+                raw_content = truncate_to_tokens(raw_content, MAX_POST_READ_TOKENS)
+                rs.record(str(resolved), file_mtime, None, None, estimate_tokens(raw_content))
+                return p, {
+                    "content": raw_content, "total_lines": total_lines,
+                    "size": len(raw_content), "truncated": True,
+                }
+
+            rs.record(str(resolved), file_mtime, None, None, token_count)
             return p, {"content": raw_content, "total_lines": total_lines, "size": len(raw_content)}
         except Exception as e:
             return p, {"error": f"Failed to read file: {e}"}
