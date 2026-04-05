@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import DirBrowser from "@/components/shared/DirBrowser";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useAvailableModels, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
 import { getAgents as getAgentRows, getAgentChannels, getAgentMounts, getConnection } from "@/lib/spacetimedb-client";
 
@@ -103,7 +103,7 @@ export default function AgentsTab() {
 
   // Sandbox images still fetched via REST (no STDB table for these)
   useEffect(() => {
-    fetch(`${BACKEND_API}/agents/sandbox-images`).then(r => r.ok ? r.json() : []).then(setSandboxImages).catch(() => {});
+    apiFetch(`${BACKEND_API}/agents/sandbox-images`).then(r => r.ok ? r.json() : []).then(setSandboxImages).catch(() => {});
   }, []);
 
   const newAgent = (): Agent => ({
@@ -166,7 +166,7 @@ export default function AgentsTab() {
     if (!hasContainerAffectingChanges()) { await doSave(); return; }
     // Check if container is running
     try {
-      const res = await fetch(`${BACKEND_API}/agents/${editing.id}/container-status`);
+      const res = await apiFetch(`${BACKEND_API}/agents/${editing.id}/container-status`);
       if (res.ok) {
         const data = await res.json();
         if (data.running) {

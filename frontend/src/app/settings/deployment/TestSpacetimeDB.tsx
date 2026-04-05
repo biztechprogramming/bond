@@ -48,14 +48,14 @@ export default function TestSpacetimeDB() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/status`);
+      const res = await apiFetch(`${API}/status`);
       if (res.ok) setStatus(await res.json());
     } catch { /* ignore */ }
   }, []);
 
   const fetchSettings = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/settings`);
+      const res = await apiFetch(`${API}/settings`);
       if (res.ok) {
         const data = await res.json();
         setHost(data.host);
@@ -76,7 +76,7 @@ export default function TestSpacetimeDB() {
   const handleSaveSettings = async () => {
     setSettingsMsg("");
     try {
-      const res = await fetch(`${API}/settings`, {
+      const res = await apiFetch(`${API}/settings`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ host, port, module }),
@@ -91,7 +91,7 @@ export default function TestSpacetimeDB() {
     setStreaming(true);
     setLogs([]);
     try {
-      const res = await fetch(`${API}/start`, { method: "POST" });
+      const res = await apiFetch(`${API}/start`, { method: "POST" });
       const reader = res.body?.getReader();
       if (!reader) { setStreaming(false); return; }
       const decoder = new TextDecoder();
@@ -122,7 +122,7 @@ export default function TestSpacetimeDB() {
     if (!confirm("Stop the test SpacetimeDB instance?")) return;
     setStopping(true);
     try {
-      const res = await fetch(`${API}/stop`, { method: "POST" });
+      const res = await apiFetch(`${API}/stop`, { method: "POST" });
       const data = await res.json();
       setLogs(prev => [...prev, { type: "info", message: data.output || (data.success ? "Stopped." : "Failed to stop.") }]);
     } catch (err: any) {
@@ -136,7 +136,7 @@ export default function TestSpacetimeDB() {
     setTestingHost(true);
     setHostConn(null);
     try {
-      const res = await fetch(`${API}/test-connectivity`, {
+      const res = await apiFetch(`${API}/test-connectivity`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ host, port }),
@@ -152,7 +152,7 @@ export default function TestSpacetimeDB() {
     setTestingContainer(true);
     setContainerConn(null);
     try {
-      const res = await fetch(`${API}/test-from-container`, {
+      const res = await apiFetch(`${API}/test-from-container`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ host, port }),

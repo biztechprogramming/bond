@@ -5,7 +5,8 @@
  * Environment variables override bond.json values.
  */
 
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { randomBytes } from "crypto";
 import { homedir } from "os";
 import { join, resolve } from "path";
 
@@ -23,6 +24,7 @@ export interface GatewayConfig {
   spacetimedbModuleName: string;
   spacetimedbToken: string;
   webhooks?: WebhooksConfig;
+  apiKey: string;
 }
 
 /** Walk up from cwd to find bond.json */
@@ -40,6 +42,25 @@ function findBondJson(): Record<string, any> {
     dir = parent;
   }
   return {};
+}
+
+/** Resolve the Bond API key: env var > file > auto-generate. */
+function resolveApiKey(): string {
+  if (process.env.BOND_API_KEY) return process.env.BOND_API_KEY;
+  const keyDir = join(homedir(), ".bond", "data");
+  const keyPath = join(keyDir, ".gateway_key");
+  if (existsSync(keyPath)) {
+    const key = readFileSync(keyPath, "utf8").trim();
+    if (key) return key;
+  }
+  // Auto-generate
+  mkdirSync(keyDir, { recursive: true });
+  const key = randomBytes(32).toString("hex"); // 64 hex chars
+  writeFileSync(keyPath, key, { mode: 0o600 });
+  console.log(`[config] Generated new API key at ${keyPath}`);
+  // Make available to all internal modules via env
+  process.env.BOND_API_KEY = key;
+  return key;
 }
 
 /** Read the SpacetimeDB token from ~/.config/spacetime/cli.toml if not in env. */
@@ -81,5 +102,6 @@ export function loadConfig(): GatewayConfig {
     spacetimedbModuleName: process.env.BOND_SPACETIMEDB_MODULE || "bond-core-v2",
     spacetimedbToken: resolveSpacetimeToken(),
     webhooks,
+    apiKey: resolveApiKey(),
   };
 }

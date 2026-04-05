@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import LiveLogViewer from "../settings/deployment/LiveLogViewer";
 
 interface DeploymentPlan {
@@ -187,7 +187,7 @@ export default function ShipProgress({ plan, onDone, onViewApp }: Props) {
     if (!runId) return;
     setCancelling(true);
     try {
-      await fetch(`${GATEWAY_API}/deployments/runs/${runId}/cancel`, {
+      await apiFetch(`${GATEWAY_API}/deployments/runs/${runId}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });

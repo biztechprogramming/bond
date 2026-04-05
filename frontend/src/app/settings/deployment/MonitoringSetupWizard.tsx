@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   environment: string;
@@ -48,7 +48,7 @@ export default function MonitoringSetupWizard({ environment, onComplete, onCance
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${GATEWAY_API}/deployments/discovery/manifests`)
+    apiFetch(`${GATEWAY_API}/deployments/discovery/manifests`)
       .then((r) => r.ok ? r.json() : [])
       .then((manifests: any[]) => {
         const svcs: DiscoveredService[] = [];
@@ -84,7 +84,7 @@ export default function MonitoringSetupWizard({ environment, onComplete, onCance
     setMsg("");
     try {
       const enabled = services.filter((s) => configs[s.id]?.enabled);
-      const res = await fetch(`${GATEWAY_API}/deployments/monitoring/${environment}`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/monitoring/${environment}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

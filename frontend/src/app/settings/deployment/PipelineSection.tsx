@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import PipelineRow from "./PipelineRow";
 import StatusIndicator, { DeployStatus } from "./StatusIndicator";
 import PipelineStepView, { PipelineStep } from "./PipelineStepView";
@@ -36,12 +36,12 @@ export default function PipelineSection({ environmentNames }: Props) {
 
   const fetchPipelineData = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/promotions`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/promotions`);
       if (res.ok) setPromotions(await res.json());
     } catch { /* API may not exist yet */ }
 
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/pipeline`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/pipeline`);
       if (res.ok) setPipeline(await res.json());
     } catch { /* API may not exist yet */ }
 

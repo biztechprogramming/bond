@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   initialYaml?: string;
@@ -26,7 +26,7 @@ export default function PipelineYamlEditor({ initialYaml = "", repoUrl }: Props)
     setValidation(null);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/validate-yaml`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/validate-yaml`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ yaml }),
@@ -48,7 +48,7 @@ export default function PipelineYamlEditor({ initialYaml = "", repoUrl }: Props)
     setSaving(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/pipeline-yaml`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/pipeline-yaml`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ yaml, repo: repoUrl }),
@@ -71,7 +71,7 @@ export default function PipelineYamlEditor({ initialYaml = "", repoUrl }: Props)
     setLoading(true);
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/pipeline-yaml?repo=${encodeURIComponent(repoUrl)}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/pipeline-yaml?repo=${encodeURIComponent(repoUrl)}`);
       if (res.ok) {
         const data = await res.json();
         setYaml(data.yaml || "");

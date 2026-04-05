@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API , apiFetch } from "@/lib/config";
 
 interface AddContainerHostModalProps {
   onComplete: () => void;
@@ -26,7 +26,7 @@ export default function AddContainerHostModal({ onComplete, onCancel }: AddConta
     setTesting(true);
     setTestResult("");
     try {
-      const res = await fetch(`${BACKEND_API}/hosts/test-connection`, {
+      const res = await apiFetch(`${BACKEND_API}/hosts/test-connection`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ host, port: Number(port), user, ssh_key: sshKey || null }),
@@ -43,7 +43,7 @@ export default function AddContainerHostModal({ onComplete, onCancel }: AddConta
     setSaving(true);
     setError("");
     try {
-      const res = await fetch(`${BACKEND_API}/hosts`, {
+      const res = await apiFetch(`${BACKEND_API}/hosts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

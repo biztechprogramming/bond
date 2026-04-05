@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -212,7 +212,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
 
     try {
       // Create resource
-      const createRes = await fetch(`${GATEWAY_API}/deployments/resources`, {
+      const createRes = await apiFetch(`${GATEWAY_API}/deployments/resources`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -232,7 +232,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
 
       // Probe
       try {
-        const probeRes = await fetch(`${GATEWAY_API}/deployments/resources/${rid}/probe`, { method: "POST" });
+        const probeRes = await apiFetch(`${GATEWAY_API}/deployments/resources/${rid}/probe`, { method: "POST" });
         if (probeRes.ok) {
           const probeData = await probeRes.json();
           const caps = probeData.capabilities_json ? (typeof probeData.capabilities_json === "string" ? JSON.parse(probeData.capabilities_json) : probeData.capabilities_json) : probeData;
@@ -272,7 +272,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
     }, 800);
 
     try {
-      const res = await fetch(`${GATEWAY_API}/broker/deploy`, {
+      const res = await apiFetch(`${GATEWAY_API}/broker/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "discover", resource_id: resourceId }),
@@ -316,7 +316,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
         // Fallback: try the manifest endpoint directly
         clearInterval(progressTimer);
         try {
-          const fallback = await fetch(`${GATEWAY_API}/deployments/discovery/manifests/${resourceId}`);
+          const fallback = await apiFetch(`${GATEWAY_API}/deployments/discovery/manifests/${resourceId}`);
           if (fallback.ok) {
             const manifest = await fallback.json();
             setManifestName(manifest.application || resourceId);
@@ -378,7 +378,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
   // Fetch existing system components for parent dropdown
   useEffect(() => {
     if (step === "review") {
-      fetch(`${GATEWAY_API}/deployments/components`)
+      apiFetch(`${GATEWAY_API}/deployments/components`)
         .then(r => r.ok ? r.json() : [])
         .then(data => {
           const systems = (Array.isArray(data) ? data : data.components || []).filter((c: Component) => c.component_type === "system");
@@ -396,7 +396,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
     try {
       let parentId: string | null = null;
       if (parentSystem === "new" && newSystemName.trim()) {
-        const sysRes = await fetch(`${GATEWAY_API}/deployments/components`, {
+        const sysRes = await apiFetch(`${GATEWAY_API}/deployments/components`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: newSystemName.trim().toLowerCase().replace(/[^a-z0-9-]/g, "-"), display_name: newSystemName.trim(), component_type: "system" }),
@@ -408,14 +408,14 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
 
       for (const draft of enabled) {
         try {
-          const compRes = await fetch(`${GATEWAY_API}/deployments/components`, {
+          const compRes = await apiFetch(`${GATEWAY_API}/deployments/components`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name: draft.name, display_name: draft.display_name, component_type: draft.component_type, icon: draft.icon || null, parent_id: parentId }),
           });
           if (compRes.ok && resourceId) {
             const comp = await compRes.json();
-            await fetch(`${GATEWAY_API}/deployments/components/${comp.id}/resources`, {
+            await apiFetch(`${GATEWAY_API}/deployments/components/${comp.id}/resources`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ resource_id: resourceId }),
@@ -448,7 +448,7 @@ export default function OnboardServerWizard({ environments, onComplete, onCancel
     setGenerating(true);
     const selected = Object.entries(scriptSelections).filter(([, v]) => v).map(([k]) => k);
     try {
-      const res = await fetch(`${GATEWAY_API}/broker/deploy`, {
+      const res = await apiFetch(`${GATEWAY_API}/broker/deploy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import { useResources, useComponents, useAlerts as useAlertsHook, useResourceEnvironments } from "@/hooks/useSpacetimeDB";
 
 interface Agent {
@@ -308,7 +308,7 @@ export default function EnvironmentDashboard({ environment, agents, onNavigate }
 
   const fetchReceipts = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/receipts/${encodeURIComponent(envName)}?limit=10`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/receipts/${encodeURIComponent(envName)}?limit=10`);
       if (res.ok) {
         const data = await res.json();
         const mapped: DeploymentReceipt[] = (Array.isArray(data) ? data : []).map((r: any) => ({

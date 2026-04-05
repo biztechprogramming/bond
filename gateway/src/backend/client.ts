@@ -74,14 +74,27 @@ export interface AgentInfo {
 
 export class BackendClient {
   private baseUrl: string;
+  private apiKey: string | null = null;
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
   }
 
+  /** Set the API key for authenticating with the backend. */
+  setApiKey(key: string): void {
+    this.apiKey = key;
+  }
+
+  /** Build auth headers for backend requests. */
+  private authHeaders(extra?: Record<string, string>): Record<string, string> {
+    const headers: Record<string, string> = { ...extra };
+    if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
+    return headers;
+  }
+
   async getSetting(key: string): Promise<string | null> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/v1/settings`);
+      const res = await fetch(`${this.baseUrl}/api/v1/settings`, { headers: this.authHeaders() });
       if (!res.ok) return null;
       const settings = (await res.json()) as Record<string, string>;
       return settings[key] ?? null;
@@ -93,7 +106,7 @@ export class BackendClient {
   async agentTurn(req: AgentTurnRequest): Promise<AgentTurnResponse> {
     const res = await fetch(`${this.baseUrl}/api/v1/agent/turn`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(req),
     });
 
@@ -111,7 +124,7 @@ export class BackendClient {
   ): Promise<string> {
     const res = await fetch(`${this.baseUrl}/api/v1/llm/complete`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ messages, ...options }),
     });
     if (!res.ok) {
@@ -123,7 +136,7 @@ export class BackendClient {
   }
 
   async getConversation(id: string): Promise<ConversationDetail> {
-    const res = await fetch(`${this.baseUrl}/api/v1/conversations/${id}`);
+    const res = await fetch(`${this.baseUrl}/api/v1/conversations/${id}`, { headers: this.authHeaders() });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Backend error ${res.status}: ${text}`);
@@ -134,7 +147,7 @@ export class BackendClient {
   async createConversation(id: string, agentId?: string, channel?: string, title?: string): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ id, agent_id: agentId ?? null, channel: channel ?? "webchat", title: title ?? null }),
     });
     if (!res.ok) {
@@ -144,7 +157,7 @@ export class BackendClient {
   }
 
   async listConversations(): Promise<ConversationSummary[]> {
-    const res = await fetch(`${this.baseUrl}/api/v1/conversations`);
+    const res = await fetch(`${this.baseUrl}/api/v1/conversations`, { headers: this.authHeaders() });
     if (!res.ok) {
       const text = await res.text();
       throw new Error(`Backend error ${res.status}: ${text}`);
@@ -184,7 +197,7 @@ export class BackendClient {
     console.log(`[BACKEND-CLIENT] Calling backend: ${this.baseUrl}/api/v1/conversations/${conversationId}/turn`);
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/turn`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         message: message ?? null,
         agent_id: agentId ?? null,
@@ -205,6 +218,7 @@ export class BackendClient {
   async deleteConversation(id: string): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${id}`, {
       method: "DELETE",
+      headers: this.authHeaders(),
     });
     if (!res.ok) {
       const text = await res.text();
@@ -215,7 +229,7 @@ export class BackendClient {
   async queueMessage(conversationId: string, content: string): Promise<QueueMessageResponse> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ content, role: "user" }),
     });
     if (!res.ok) {
@@ -231,7 +245,7 @@ export class BackendClient {
   ): Promise<{ status: string }> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/interrupt`, {
       method: "POST",
-      headers: newMessages ? { "Content-Type": "application/json" } : {},
+      headers: this.authHeaders(newMessages ? { "Content-Type": "application/json" } : {}),
       body: newMessages ? JSON.stringify({ new_messages: newMessages }) : undefined,
     });
     if (!res.ok) {
@@ -244,7 +258,7 @@ export class BackendClient {
   async *agentTurnStream(req: AgentTurnRequest): AsyncGenerator<SSEEvent> {
     const res = await fetch(`${this.baseUrl}/api/v1/agent/turn`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ ...req, stream: true }),
     });
 
@@ -264,7 +278,7 @@ export class BackendClient {
   ): Promise<{ message_id: string }> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ role: "user", content }),
     });
     if (!res.ok) {
@@ -281,7 +295,7 @@ export class BackendClient {
   ): Promise<{ message_id: string }> {
     const res = await fetch(`${this.baseUrl}/api/v1/conversations/${conversationId}/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ role: "assistant", content, tool_calls_made: toolCallsMade }),
     });
     if (!res.ok) {
@@ -294,7 +308,7 @@ export class BackendClient {
   async promoteMemory(data: MemoryPromotionEvent): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/v1/shared-memories`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -305,7 +319,7 @@ export class BackendClient {
 
   async listAgents(): Promise<AgentInfo[]> {
     try {
-      const res = await fetch(`${this.baseUrl}/api/v1/agents`);
+      const res = await fetch(`${this.baseUrl}/api/v1/agents`, { headers: this.authHeaders() });
       if (!res.ok) return [];
       const agents = await res.json();
       return (agents as any[]).map((a) => ({

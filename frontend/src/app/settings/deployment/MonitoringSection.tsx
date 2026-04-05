@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   environment: string;
@@ -42,14 +42,14 @@ export default function MonitoringSection({ environment }: Props) {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/monitoring/${environment}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/monitoring/${environment}`);
       if (res.ok) setStatus(await res.json());
     } catch { /* ignore */ }
   };
 
   const fetchIssues = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/monitoring/${environment}/issues`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/monitoring/${environment}/issues`);
       if (res.ok) setIssues(await res.json());
     } catch { /* ignore */ }
   };

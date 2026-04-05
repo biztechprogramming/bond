@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface SecretManagerProps {
   environment: string;
@@ -39,7 +39,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
 
   const fetchSecrets = useCallback(async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/secrets/${environment}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/secrets/${environment}`);
       if (res.ok) {
         const data = await res.json();
         setSecrets(data.secrets || []);
@@ -51,7 +51,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
   useEffect(() => { fetchSecrets(); }, [fetchSecrets]);
 
   useEffect(() => {
-    fetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(environment)}`)
+    apiFetch(`${GATEWAY_API}/deployments/components?environment=${encodeURIComponent(environment)}`)
       .then(r => r.ok ? r.json() : [])
       .then(data => setComponents(Array.isArray(data) ? data : data.components || []))
       .catch(() => {});
@@ -74,7 +74,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
 
   const saveSecret = async (key: string, value: string) => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/secrets/${environment}`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/secrets/${environment}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ key, value }),
@@ -89,7 +89,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
 
   const deleteSecret = async (key: string) => {
     try {
-      await fetch(`${GATEWAY_API}/deployments/secrets/${environment}/${encodeURIComponent(key)}`, { method: "DELETE" });
+      await apiFetch(`${GATEWAY_API}/deployments/secrets/${environment}/${encodeURIComponent(key)}`, { method: "DELETE" });
       await fetchSecrets();
     } catch { setMsg("Failed to delete secret"); }
   };
@@ -111,7 +111,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
       if (!file) return;
       const text = await file.text();
       try {
-        const res = await fetch(`${GATEWAY_API}/deployments/secrets/${environment}/import`, {
+        const res = await apiFetch(`${GATEWAY_API}/deployments/secrets/${environment}/import`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content: text }),
@@ -127,7 +127,7 @@ export default function SecretManager({ environment, onBack }: SecretManagerProp
 
   const rotateEncryption = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/secrets/${environment}/rotate`, { method: "POST" });
+      const res = await apiFetch(`${GATEWAY_API}/deployments/secrets/${environment}/rotate`, { method: "POST" });
       setMsg(res.ok ? "Encryption rotated" : "Rotation failed");
     } catch { setMsg("Rotation failed"); }
   };

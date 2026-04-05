@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   appName: string;
@@ -35,7 +35,7 @@ export default function ProposalViewer({ appName, onBack }: Props) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${GATEWAY_API}/deployments/discovery/proposals/${appName}`)
+    apiFetch(`${GATEWAY_API}/deployments/discovery/proposals/${appName}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data) => setProposals(data))
       .catch(() => setProposals(null))
@@ -45,7 +45,7 @@ export default function ProposalViewer({ appName, onBack }: Props) {
   const handleAccept = async (script: Script) => {
     setMsg("");
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/scripts`, {
+      const res = await apiFetch(`${GATEWAY_API}/deployments/scripts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: script.name, description: script.description, content: script.content, level: script.level }),

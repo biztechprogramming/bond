@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface ComponentDetailProps {
   componentId: string;
@@ -162,10 +162,10 @@ export default function ComponentDetail({ componentId, onBack, onNavigate }: Com
   const fetchAll = useCallback(async () => {
     try {
       const [compRes, resRes, scriptRes, secretRes] = await Promise.all([
-        fetch(`${GATEWAY_API}/deployments/components/${componentId}`),
-        fetch(`${GATEWAY_API}/deployments/components/${componentId}/resources`),
-        fetch(`${GATEWAY_API}/deployments/components/${componentId}/scripts`),
-        fetch(`${GATEWAY_API}/deployments/components/${componentId}/secrets`),
+        apiFetch(`${GATEWAY_API}/deployments/components/${componentId}`),
+        apiFetch(`${GATEWAY_API}/deployments/components/${componentId}/resources`),
+        apiFetch(`${GATEWAY_API}/deployments/components/${componentId}/scripts`),
+        apiFetch(`${GATEWAY_API}/deployments/components/${componentId}/secrets`),
       ]);
 
       if (compRes.ok) {
@@ -185,7 +185,7 @@ export default function ComponentDetail({ componentId, onBack, onNavigate }: Com
   const fetchStatus = useCallback(async () => {
     if (!selectedEnv) return;
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/components/${componentId}/status?environment=${encodeURIComponent(selectedEnv)}`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/components/${componentId}/status?environment=${encodeURIComponent(selectedEnv)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.alert_rules) setAlertRules(data.alert_rules);

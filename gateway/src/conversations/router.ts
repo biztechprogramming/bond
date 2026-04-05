@@ -77,7 +77,7 @@ export function createConversationsRouter(config: GatewayConfig) {
       try {
         await fetch(`${config.backendUrl}/api/v1/conversations`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
           body: JSON.stringify({ id, agent_id: agentId, channel, title: title ?? null }),
         });
       } catch (syncErr: any) {
@@ -231,7 +231,7 @@ export function createConversationsRouter(config: GatewayConfig) {
       await callReducer(url, mod, "delete_conversation", [id], token);
       // Mirror delete to backend SQLite
       try {
-        await fetch(`${config.backendUrl}/api/v1/conversations/${id}`, { method: "DELETE" });
+        await fetch(`${config.backendUrl}/api/v1/conversations/${id}`, { method: "DELETE", headers: { "Authorization": `Bearer ${config.apiKey}` } });
       } catch (syncErr: any) {
         console.warn("[conversations] backend delete sync failed (non-fatal):", syncErr.message);
       }

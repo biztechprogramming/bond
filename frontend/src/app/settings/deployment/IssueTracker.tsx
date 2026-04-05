@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 
 interface Props {
   environment: string;
@@ -34,7 +34,7 @@ export default function IssueTracker({ environment }: Props) {
 
   const fetchAlerts = async () => {
     try {
-      const res = await fetch(`${GATEWAY_API}/deployments/monitoring/${environment}/alerts`);
+      const res = await apiFetch(`${GATEWAY_API}/deployments/monitoring/${environment}/alerts`);
       if (res.ok) setAlerts(await res.json());
     } catch { /* ignore */ }
     setLoading(false);

@@ -44,8 +44,8 @@ export default function OverviewPanel() {
     try {
       setError("");
       const [ovRes, outRes] = await Promise.all([
-        fetch(`${API}/overview?days=${period}`),
-        fetch(`${API}/outcomes?days=${period}`),
+        apiFetch(`${API}/overview?days=${period}`),
+        apiFetch(`${API}/outcomes?days=${period}`),
       ]);
       if (!ovRes.ok || !outRes.ok) throw new Error("Failed to load");
       setOverview(await ovRes.json());

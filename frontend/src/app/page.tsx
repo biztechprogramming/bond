@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { GatewayWebSocket, type GatewayMessage, type ConversationSummary, type ConnectionState } from "@/lib/ws";
-import { GATEWAY_API } from "@/lib/config";
+import { GATEWAY_API , apiFetch } from "@/lib/config";
 import type { ChatMessage, AgentStatus, PlanCardData } from "@/lib/types";
 import ChatPanel from "@/components/shared/ChatPanel";
 import PlanCard from "@/components/shared/PlanCard";
@@ -186,7 +186,7 @@ export default function Home() {
   const deleteMessage = async (msgId: string, index: number) => {
     if (msgId && conversationId) {
       try {
-        await fetch(`${GATEWAY_API}/conversations/${conversationId}/messages/${msgId}`, {
+        await apiFetch(`${GATEWAY_API}/conversations/${conversationId}/messages/${msgId}`, {
           method: "DELETE",
         });
       } catch { /* best effort */ }
