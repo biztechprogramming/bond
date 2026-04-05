@@ -166,6 +166,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
     if (token !== config.apiKey) {
+      console.warn(`[gateway] 401 on ${req.method} ${req.path} — token: ${JSON.stringify(token)} (len=${token?.length ?? 'null'}), config.apiKey: ${JSON.stringify(config.apiKey)} (len=${config.apiKey?.length ?? 'null'})`);
       return res.status(401).json({ error: "Unauthorized — invalid or missing API key" });
     }
     next();
@@ -348,7 +349,11 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   }));
   pipeline.use(new ContextLoader());
   pipeline.use(new TurnExecutor(backendClient));
-  pipeline.use(new Persister());
+  pipeline.use(new Persister({
+    spacetimedbUrl: config.spacetimedbUrl,
+    spacetimedbModuleName: config.spacetimedbModuleName,
+    spacetimedbToken: config.spacetimedbToken,
+  }));
   pipeline.use(new ResponseFanOut({
     getWatchers(conversationId: string) {
       const binding = channelManager.getChannelBinding(conversationId);
