@@ -75,7 +75,7 @@ def main():
 
     if not args.url:
         if preset_url_base:
-            args.url = f"http://localhost:18788{preset_url_base}"
+            args.url = f"http://host.docker.internal:18788{preset_url_base}"
         else:
             parser.error("--url is required (or use --preset to derive it)")
 

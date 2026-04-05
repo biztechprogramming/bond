@@ -21,7 +21,10 @@ backend (port 18790), and gateway (port 18789) in the background using the test 
 
 Wait for the script to report all services are healthy before proceeding.
 
-If the dev environment is already running (check with `curl -s http://localhost:18788`), skip this step.
+If the dev environment is already running (check with `curl -s http://host.docker.internal:18788`), skip this step.
+
+> **Note:** From inside agent containers, use `host.docker.internal` instead of `localhost` to reach
+> the host machine's services. The `--preset` flag and default base URL already use this automatically.
 
 ### Step 2: Take a "before" screenshot
 
@@ -29,7 +32,7 @@ Run the screenshot script:
 
 ```bash
 python skills/visual-ui-test/scripts/take-screenshot.py \
-  --url http://localhost:18788/<page-path> \
+  --url http://host.docker.internal:18788/<page-path> \
   --output /tmp/screenshots/before.png \
   --width 1280 --height 720
 ```
@@ -56,7 +59,7 @@ The dev server hot-reloads, so just wait 2-3 seconds after saving, then:
 
 ```bash
 python skills/visual-ui-test/scripts/take-screenshot.py \
-  --url http://localhost:18788/<page-path> \
+  --url http://host.docker.internal:18788/<page-path> \
   --output /tmp/screenshots/after.png \
   --width 1280 --height 720
 ```
@@ -165,12 +168,12 @@ python scripts/take-screenshot.py \
 ```bash
 # Full-page screenshots before and after a refactor
 python scripts/take-screenshot.py \
-  --url http://localhost:18788/ --full-page --output /tmp/screenshots/before-full.png
+  --url http://host.docker.internal:18788/ --full-page --output /tmp/screenshots/before-full.png
 
 # ... make changes ...
 
 python scripts/take-screenshot.py \
-  --url http://localhost:18788/ --full-page --output /tmp/screenshots/after-full.png
+  --url http://host.docker.internal:18788/ --full-page --output /tmp/screenshots/after-full.png
 
 python scripts/compare-screenshots.py \
   --before /tmp/screenshots/before-full.png --after /tmp/screenshots/after-full.png \
