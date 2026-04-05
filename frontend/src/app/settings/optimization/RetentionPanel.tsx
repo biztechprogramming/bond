@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { BACKEND_API } from "@/lib/config";
+import { BACKEND_API, apiFetch } from "@/lib/config";
 import LoadingSkeleton from "./components/LoadingSkeleton";
 import ErrorBanner from "./components/ErrorBanner";
 import EmptyState from "./components/EmptyState";
