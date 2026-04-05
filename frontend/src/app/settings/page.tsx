@@ -93,6 +93,7 @@ export default function SettingsPage() {
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [googleKey, setGoogleKey] = useState("");
+  const [replicateKey, setReplicateKey] = useState("");
   const [keySaveMsg, setKeySaveMsg] = useState("");
 
   const switchTab = (tab: TabId) => {
@@ -435,6 +436,22 @@ export default function SettingsPage() {
             {[
               { label: "Voyage AI", key: "embedding.api_key.voyage", state: voyageKey, set: setVoyageKey, placeholder: "Voyage API key" },
               { label: "Gemini", key: "embedding.api_key.gemini", state: geminiKey, set: setGeminiKey, placeholder: "Gemini API key" },
+            ].map(({ label, key, state, set, placeholder }) => (
+              <div key={key} style={s.field}>
+                <label style={s.label}>
+                  {label} {masked(key) && <span style={s.masked}>Current: {masked(key)}</span>}
+                </label>
+                <div style={s.keyRow}>
+                  <input type="password" style={s.input} value={state} onChange={(e) => set(e.target.value)} placeholder={placeholder} />
+                  <button style={s.button} onClick={() => saveKey(key, state, set)}>Save</button>
+                  {masked(key) && <button style={s.deleteBtn} onClick={() => deleteKey(key)}>Delete</button>}
+                </div>
+              </div>
+            ))}
+
+            <h3 style={{ color: "#e0e0e8", fontSize: "0.95rem", margin: "24px 0 12px" }}>Image Providers</h3>
+            {[
+              { label: "Replicate", key: "image.api_key.replicate", state: replicateKey, set: setReplicateKey, placeholder: "r8_..." },
             ].map(({ label, key, state, set, placeholder }) => (
               <div key={key} style={s.field}>
                 <label style={s.label}>
