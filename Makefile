@@ -1,4 +1,4 @@
-.PHONY: dev backend gateway frontend setup install test lint clean images \
+.PHONY: dev backend gateway frontend setup show-credentials install test lint clean images \
 	webhook-secret webhook-setup webhook-test webhook-status \
 	langfuse-up langfuse-down langfuse-logs langfuse-ps langfuse-restart langfuse-stop langfuse-start langfuse-health langfuse-reset \
 	opensandbox-health opensandbox-logs
@@ -29,11 +29,16 @@ gateway:
 
 # Frontend (Next.js)
 frontend:
+	set -a && . ./.env && set +a && \
 	cd frontend && pnpm dev --hostname 0.0.0.0
 
 # First-run setup wizard
 setup:
 	uv run bond setup
+
+# Re-display security credentials
+show-credentials:
+	set -a && . ./.env && set +a && uv run python scripts/show_credentials.py
 
 # Install all dependencies
 install:

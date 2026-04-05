@@ -6,6 +6,8 @@ Usage: python -m backend.app.cli setup
 from __future__ import annotations
 
 import json
+import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -220,6 +222,128 @@ def setup() -> None:
         json.dump(config, f, indent=2)
 
     print(f"\n  Configuration saved to {BOND_JSON_PATH}")
+
+    # ── Generate security keys ────────────────────────────────────
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    data_dir = BOND_HOME / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Read existing .env content
+    env_lines: list[str] = []
+    if env_path.exists():
+        env_lines = env_path.read_text().splitlines()
+
+    def _env_get(key: str) -> str:
+        """Get value from env_lines."""
+        for line in env_lines:
+            stripped = line.strip()
+            if stripped.startswith(f"{key}="):
+                val = stripped[len(key) + 1 :]
+                return val.strip().strip('"').strip("'")
+        return ""
+
+    def _env_set(key: str, value: str) -> None:
+        """Set/update a key in env_lines. Prefers uncommented lines."""
+        nonlocal env_lines
+        uncommented = re.compile(rf"^{re.escape(key)}\s*=")
+        commented = re.compile(rf"^#\s*{re.escape(key)}\s*=")
+        # First pass: update existing uncommented line
+        for i, line in enumerate(env_lines):
+            if uncommented.match(line.strip()):
+                env_lines[i] = f"{key}={value}"
+                return
+        # Second pass: replace commented placeholder
+        for i, line in enumerate(env_lines):
+            if commented.match(line.strip()):
+                env_lines[i] = f"{key}={value}"
+                return
+        env_lines.append(f"{key}={value}")
+
+    # BOND_API_KEY
+    bond_api_key = _env_get("BOND_API_KEY")
+    if not bond_api_key:
+        bond_api_key = secrets.token_hex(32)
+    _env_set("BOND_API_KEY", bond_api_key)
+
+    # Write to .gateway_key for backward compat
+    gateway_key_path = data_dir / ".gateway_key"
+    gateway_key_path.write_text(bond_api_key)
+
+    # BOND_VAULT_KEY
+    vault_key_path = data_dir / ".vault_key"
+    bond_vault_key = _env_get("BOND_VAULT_KEY")
+    if not bond_vault_key:
+        if vault_key_path.exists():
+            bond_vault_key = vault_key_path.read_text().strip()
+        if not bond_vault_key:
+            bond_vault_key = secrets.token_hex(32)
+    _env_set("BOND_VAULT_KEY", bond_vault_key)
+
+    # Write to .vault_key for backward compat
+    vault_key_path.write_text(bond_vault_key)
+
+    # Write .env
+    env_path.write_text("\n".join(env_lines) + "\n")
+
+    # Resolve SpacetimeDB token for display
+    stdb_token = _env_get("SPACETIMEDB_TOKEN")
+    if not stdb_token:
+        toml_path = Path.home() / ".config" / "spacetime" / "cli.toml"
+        if toml_path.exists():
+            m = re.search(r'spacetimedb_token\s*=\s*"([^"]+)"', toml_path.read_text())
+            if m:
+                stdb_token = m.group(1)
+
+    # ── Display credentials ───────────────────────────────────────
+    print()
+    print("  " + "=" * 62)
+    print("  SECURITY CREDENTIALS — Save these in a password manager NOW")
+    print("  " + "=" * 62)
+    print()
+    print("  1. BOND API KEY")
+    print(f"     {bond_api_key}")
+    print()
+    print("     Controls access to ALL Bond HTTP and WebSocket endpoints.")
+    print("     Anyone with this key has full access to your Bond instance.")
+    print("     Location: .env (BOND_API_KEY) and ~/.bond/data/.gateway_key")
+    print()
+    print("  2. SPACETIMEDB TOKEN")
+    print(f"     {stdb_token or '<not configured>'}")
+    print()
+    print("     Grants admin access to the SpacetimeDB database.")
+    print("     Can read/modify all conversations, agents, and memories.")
+    print("     Location: .env (SPACETIMEDB_TOKEN) or ~/.config/spacetime/cli.toml")
+    print()
+    print("  3. VAULT ENCRYPTION KEY")
+    print(f"     {bond_vault_key}")
+    print()
+    print("     Encrypts all stored secrets (LLM API keys, OAuth tokens).")
+    print("     IF LOST, ALL STORED CREDENTIALS BECOME UNRECOVERABLE.")
+    print("     Location: .env (BOND_VAULT_KEY) and ~/.bond/data/.vault_key")
+    print()
+    print("  " + "=" * 62)
+    print()
+    print("  WARNING: Losing these credentials may result in permanent")
+    print("  loss of access to your data and stored secrets.")
+    print()
+    print("  " + "=" * 62)
+    print()
+
+    # Require acknowledgment
+    if sys.stdin.isatty():
+        response = input("  Type 'I understand' to continue: ").strip()
+        if response != "I understand":
+            response = input("  You must type 'I understand' to proceed: ").strip()
+            if response != "I understand":
+                print("  Exiting. Re-run 'make setup' to try again.")
+                sys.exit(1)
+        print()
+        print("  Credentials acknowledged.")
+
+    # Create first-run sentinel so first-run.sh skips
+    sentinel = data_dir / ".first_run_complete"
+    sentinel.touch()
+
     print("\n  Bond is ready! Start with: make dev\n")
 
 
