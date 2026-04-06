@@ -478,6 +478,27 @@ security/secrets/secrets.md:
     - "API key storage"
     - "environment variables for secrets"
 
+tools/image-generation.md:
+  tier: 3
+  utterances:
+    - "generate an image"
+    - "create a picture"
+    - "make an icon"
+    - "design a logo"
+    - "create artwork"
+    - "generate a photo"
+    - "make an illustration"
+    - "create a visual"
+    - "draw something"
+    - "image generation"
+    - "create an image"
+    - "make a banner"
+    - "design an image"
+    - "AI art"
+    - "DALL-E"
+    - "Stable Diffusion"
+    - "Flux"
+
 frontend/visual-verification.md:
   tier: 2
   phase: implementing

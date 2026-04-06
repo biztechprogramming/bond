@@ -303,6 +303,7 @@ async def handle_file_write(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(file_content)
         get_read_state().invalidate(str(path))
+        _file_buffer_manager.close(str(path))
         return {"status": "written", "path": str(path), "bytes": len(file_content)}
     except Exception as e:
         return {"error": f"Failed to write {path_str}: {e}"}
@@ -345,6 +346,7 @@ async def handle_file_edit(
 
         path.write_text(content)
         get_read_state().invalidate(str(path))
+        _file_buffer_manager.close(str(path))
         return {"status": "edited", "path": str(path), "edits_applied": len(edits)}
     except Exception as e:
         return {"error": f"Failed to edit {path_str}: {e}"}
