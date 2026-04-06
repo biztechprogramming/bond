@@ -75,7 +75,7 @@ async def test_migration_000002_up(tmp_path):
         ]:
             assert await _trigger_exists(db, trigger), f"Trigger {trigger} should exist"
 
-        # Embedding configs are seeded
+        # Embedding configs are seeded (by migration 000002, before 000029 drops the table)
         cursor = await db.execute("SELECT COUNT(*) FROM embedding_configs")
         row = await cursor.fetchone()
         assert row[0] == 8  # 4 voyage + 3 qwen + 1 gemini

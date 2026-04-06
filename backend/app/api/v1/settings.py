@@ -1,7 +1,7 @@
 """Settings API — thin route handlers delegating to SettingsService.
 
-SpacetimeDB is the source of truth for runtime settings.
-SQLite holds static reference data (embedding_configs) and local crypto state.
+SpacetimeDB is the source of truth for runtime settings and embedding model config.
+SQLite holds local crypto state.
 """
 
 from __future__ import annotations
@@ -53,25 +53,25 @@ async def get_all_settings(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/embedding/models")
-async def get_embedding_models(db: AsyncSession = Depends(get_db)):
-    """Return all available embedding models from the reference table."""
-    models = await _service().get_embedding_models(db)
+async def get_embedding_models():
+    """Return all available embedding models from SpacetimeDB."""
+    models = await _service().get_embedding_models()
     return [asdict(m) for m in models]
 
 
 @router.get("/embedding/current")
-async def get_current_embedding(db: AsyncSession = Depends(get_db)):
+async def get_current_embedding():
     """Return the active embedding configuration."""
-    config = await _service().get_embedding_current(db)
+    config = await _service().get_embedding_current()
     return asdict(config)
 
 
 @router.put("/embedding")
-async def update_embedding(body: EmbeddingUpdate, db: AsyncSession = Depends(get_db)):
+async def update_embedding(body: EmbeddingUpdate):
     """Validate and update embedding configuration."""
     try:
         return await _service().update_embedding(
-            db, body.model, body.dimension, body.execution_mode,
+            body.model, body.dimension, body.execution_mode,
         )
     except SettingsValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))

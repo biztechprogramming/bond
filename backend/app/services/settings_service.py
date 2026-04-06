@@ -1,8 +1,8 @@
 """Settings service — business logic for app settings, embedding, and LLM configuration.
 
 Keeps data-access and validation logic out of route handlers.
-SpacetimeDB is the source of truth for runtime settings.
-SQLite holds static reference data (embedding_configs) and local crypto state.
+SpacetimeDB is the source of truth for runtime settings and embedding model config.
+SQLite holds local crypto state.
 """
 
 from __future__ import annotations
@@ -36,6 +36,18 @@ _EMBEDDING_DEFAULTS = {
     "embedding.output_dimension": "1024",
     "embedding.execution_mode": "auto",
 }
+
+# Seed data for embedding models in SpacetimeDB
+_EMBEDDING_SEED = [
+    ("voyage-4-nano", "voyage4", "voyage", 2048, "[256,512,1024,2048]", True, False, True),
+    ("voyage-4-lite", "voyage4", "voyage", 2048, "[256,512,1024,2048]", False, True, False),
+    ("voyage-4", "voyage4", "voyage", 2048, "[256,512,1024,2048]", False, True, False),
+    ("voyage-4-large", "voyage4", "voyage", 2048, "[256,512,1024,2048]", False, True, False),
+    ("Qwen3-Embedding-0.6B", "qwen3", "huggingface", 1024, "[256,512,1024]", True, False, False),
+    ("Qwen3-Embedding-4B", "qwen3", "huggingface", 2560, "[256,512,1024,2560]", True, False, False),
+    ("Qwen3-Embedding-8B", "qwen3", "huggingface", 4096, "[256,512,1024,4096]", True, False, False),
+    ("gemini-embedding-001", "gemini", "google", 768, "[768]", False, True, False),
+]
 
 
 # ── Value helpers ─────────────────────────────────────────────
@@ -158,65 +170,58 @@ class SettingsService:
 
         return {"key": f"llm.api_key.{provider_id}", "value": mask_value(raw_key)}
 
-    # ── Embedding config (reference data in SQLite, active config in SpacetimeDB) ─
+    # ── Embedding config (SpacetimeDB) ────────────────────────
 
-    async def get_embedding_models(self, db: AsyncSession) -> list[EmbeddingModel]:
-        """Return all available embedding models from the reference table."""
-        result = await db.execute(
-            text(
-                "SELECT model_name, family, provider, max_dimension, "
-                "supported_dimensions, supports_local, supports_api, is_default "
-                "FROM embedding_configs ORDER BY family, model_name"
-            )
+    async def seed_embedding_models(self) -> None:
+        """Seed embedding models into SpacetimeDB if the table is empty."""
+        rows = await self._stdb.query(
+            "SELECT model_name FROM embedding_models LIMIT 1"
+        )
+        if rows:
+            return
+        for name, family, provider, max_dim, dims, local, api, default in _EMBEDDING_SEED:
+            await self._stdb.call_reducer("set_embedding_model", [
+                name, family, provider, max_dim, dims, local, api, default,
+            ])
+
+    async def get_embedding_models(self) -> list[EmbeddingModel]:
+        """Return all available embedding models from SpacetimeDB."""
+        rows = await self._stdb.query(
+            "SELECT model_name, family, provider, max_dimension, "
+            "supported_dimensions, supports_local, supports_api, is_default "
+            "FROM embedding_models ORDER BY family, model_name"
         )
         return [
             EmbeddingModel(
-                model_name=r[0],
-                family=r[1],
-                provider=r[2],
-                max_dimension=r[3],
-                supported_dimensions=json.loads(r[4]),
-                supports_local=bool(r[5]),
-                supports_api=bool(r[6]),
-                is_default=bool(r[7]),
+                model_name=r["model_name"],
+                family=r["family"],
+                provider=r["provider"],
+                max_dimension=r["max_dimension"],
+                supported_dimensions=json.loads(r["supported_dimensions"]),
+                supports_local=bool(r["supports_local"]),
+                supports_api=bool(r["supports_api"]),
+                is_default=bool(r["is_default"]),
             )
-            for r in result.fetchall()
+            for r in rows
         ]
 
-    async def get_embedding_current(self, db: AsyncSession) -> EmbeddingConfig:
+    async def get_embedding_current(self) -> EmbeddingConfig:
         """Return the active embedding configuration, seeding defaults if needed."""
-        # Read current settings from SQLite
-        keys = list(_EMBEDDING_DEFAULTS.keys()) + [
-            "embedding.api_key.voyage",
-            "embedding.api_key.gemini",
-        ]
-        placeholders = ", ".join(f"'{k}'" for k in keys)
-        result = await db.execute(
-            text(f"SELECT key, value FROM settings WHERE key IN ({placeholders})")
+        # Read current settings from SpacetimeDB
+        rows = await self._stdb.query(
+            "SELECT key, value FROM settings WHERE key LIKE 'embedding.%'"
         )
-        raw_map = {row[0]: row[1] for row in result.fetchall()}
+        raw_map = {r["key"]: r["value"] for r in rows}
 
-        # Seed missing defaults into both SQLite and SpacetimeDB
+        # Seed missing defaults into SpacetimeDB
         missing = {k: v for k, v in _EMBEDDING_DEFAULTS.items() if k not in raw_map}
         if missing:
             for key, value in missing.items():
-                await db.execute(
-                    text(
-                        "INSERT INTO settings (key, value) VALUES (:key, :value) "
-                        "ON CONFLICT(key) DO NOTHING"
-                    ),
-                    {"key": key, "value": value},
-                )
-                raw_map[key] = value
-            await db.commit()
-
-            for key, value in missing.items():
                 await self._stdb.call_reducer("set_setting", [key, value])
+                raw_map[key] = value
 
-        # Check API key presence (settings table + provider_api_keys table)
-        has_voyage, has_gemini = await self._check_api_key_presence(
-            db, raw_map,
-        )
+        # Check API key presence
+        has_voyage, has_gemini = await self._check_api_key_presence(raw_map)
 
         return EmbeddingConfig(
             model=raw_map.get("embedding.model", _EMBEDDING_DEFAULTS["embedding.model"]),
@@ -227,25 +232,22 @@ class SettingsService:
         )
 
     async def update_embedding(
-        self, db: AsyncSession, model: str, dimension: int, execution_mode: str,
+        self, model: str, dimension: int, execution_mode: str,
     ) -> dict[str, Any]:
         """Validate and update embedding configuration."""
-        # Validate model exists in reference table
-        result = await db.execute(
-            text(
-                "SELECT family, supported_dimensions, supports_local, supports_api "
-                "FROM embedding_configs WHERE model_name = :model"
-            ),
-            {"model": model},
+        # Validate model exists in SpacetimeDB
+        rows = await self._stdb.query(
+            "SELECT family, supported_dimensions, supports_local, supports_api "
+            f"FROM embedding_models WHERE model_name = '{_escape(model)}'"
         )
-        model_row = result.fetchone()
-        if not model_row:
+        if not rows:
             raise SettingsValidationError(f"Unknown model: {model}")
 
-        new_family = model_row[0]
-        supported_dims = json.loads(model_row[1])
-        supports_local = bool(model_row[2])
-        supports_api = bool(model_row[3])
+        model_row = rows[0]
+        new_family = model_row["family"]
+        supported_dims = json.loads(model_row["supported_dimensions"])
+        supports_local = bool(model_row["supports_local"])
+        supports_api = bool(model_row["supports_api"])
 
         # Validate dimension
         if dimension not in supported_dims:
@@ -262,7 +264,7 @@ class SettingsService:
             raise SettingsValidationError(f"Model {model} does not support API execution")
 
         # Detect family switch
-        warning = await self._detect_family_switch(db, model, new_family)
+        warning = await self._detect_family_switch(model, new_family)
 
         # Persist to SpacetimeDB (source of truth for the worker)
         for key, value in [
@@ -369,7 +371,7 @@ class SettingsService:
     # ── Private helpers ───────────────────────────────────────
 
     async def _check_api_key_presence(
-        self, db: AsyncSession, raw_map: dict[str, str],
+        self, raw_map: dict[str, str],
     ) -> tuple[bool, bool]:
         """Check whether Voyage and Gemini API keys are configured."""
         voyage_raw = raw_map.get("embedding.api_key.voyage", "")
@@ -394,24 +396,24 @@ class SettingsService:
         return has_voyage, has_gemini
 
     async def _detect_family_switch(
-        self, db: AsyncSession, new_model: str, new_family: str,
+        self, new_model: str, new_family: str,
     ) -> str | None:
         """Return a warning message if switching embedding families, else None."""
-        result = await db.execute(
-            text("SELECT value FROM settings WHERE key = 'embedding.model'")
+        # Read current model from SpacetimeDB settings
+        rows = await self._stdb.query(
+            "SELECT value FROM settings WHERE key = 'embedding.model'"
         )
-        current_row = result.fetchone()
-        if not current_row:
+        if not rows:
             return None
+        current_model = rows[0]["value"]
 
-        result2 = await db.execute(
-            text("SELECT family FROM embedding_configs WHERE model_name = :model"),
-            {"model": current_row[0]},
+        # Look up current model's family
+        family_rows = await self._stdb.query(
+            f"SELECT family FROM embedding_models WHERE model_name = '{_escape(current_model)}'"
         )
-        old_family_row = result2.fetchone()
-        if old_family_row and old_family_row[0] != new_family:
+        if family_rows and family_rows[0]["family"] != new_family:
             return (
-                f"Switching from {old_family_row[0]} to {new_family} family. "
+                f"Switching from {family_rows[0]['family']} to {new_family} family. "
                 "All existing embeddings will need to be re-generated."
             )
         return None
