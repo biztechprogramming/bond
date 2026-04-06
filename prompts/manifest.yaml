@@ -32,6 +32,9 @@ universal/act-before-responding.md:
 universal/message-handling.md:
   tier: 1
 
+bond-architecture.md:
+  tier: 1
+
 # Demoted from Tier 1 — only needed during active work phases
 universal/reasoning.md:
   tier: 2
