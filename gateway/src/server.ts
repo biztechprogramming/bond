@@ -9,7 +9,8 @@ import "dotenv/config";
 import { WebSocketServer } from "ws";
 import { createServer } from "http";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { existsSync, statSync, createReadStream } from "node:fs";
 import express from "express";
 import { ulid } from "ulid";
 import type { GatewayConfig } from "./config/index.js";
@@ -384,9 +385,6 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     const requestedPath = decodeURIComponent(req.params.path);
 
     // Security: resolve and validate the path is within allowed directories
-    const { resolve, join } = require("node:path");
-    const { existsSync, statSync, createReadStream } = require("node:fs");
-
     // Allow serving from workspace or .bond/images
     const allowedRoots = [
       resolve(process.env.WORKSPACE_DIR || "/workspace"),
