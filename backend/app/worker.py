@@ -105,17 +105,27 @@ _state = WorkerState()
 # ---------------------------------------------------------------------------
 
 
+# Tools that must ALWAYS be present in tool_defs, even after clear().
+# If budget escalation or early termination clears tool_defs, these are
+# automatically re-added so the agent can always respond to the user.
+PROTECTED_TOOLS = frozenset({"respond", "say"})
+
+
 class UniqueToolDefs(list):
     """List subclass that enforces unique tool names and logs duplicates.
 
     Behaves exactly like a list (so json.dumps, litellm, and iteration_handlers
     all work unchanged), but append/extend skip entries whose function.name is
     already present, and clear() resets the tracking set.
+
+    Protected tools (respond, say) are automatically re-added after clear()
+    to guarantee the agent can always respond to the user.
     """
 
     def __init__(self, defs: list[dict] | None = None):
         super().__init__()
         self._names: set[str] = set()
+        self._protected_defs: list[dict] = []
         if defs:
             for d in defs:
                 self.append(d)
@@ -134,6 +144,13 @@ class UniqueToolDefs(list):
             return
         if name:
             self._names.add(name)
+            # Cache protected tool defs so clear() can re-add them
+            if name in PROTECTED_TOOLS:
+                self._protected_defs = [
+                    d for d in self._protected_defs
+                    if self._extract_name(d) != name
+                ]
+                self._protected_defs.append(tool_def)
         super().append(tool_def)
 
     def extend(self, tool_defs) -> None:  # type: ignore[override]
@@ -141,12 +158,24 @@ class UniqueToolDefs(list):
             self.append(d)
 
     def clear(self) -> None:
+        """Clear all tools, then re-add protected tools (respond, say)."""
+        saved = list(self._protected_defs)
         super().clear()
         self._names.clear()
+        for d in saved:
+            self.append(d)
 
     def has_tool(self, name: str) -> bool:
         """Check if a tool name is already present (O(1))."""
         return name in self._names
+
+    def ensure_protected(self) -> None:
+        """Verify protected tools are present; re-add if missing."""
+        for d in self._protected_defs:
+            name = self._extract_name(d)
+            if name and name not in self._names:
+                logger.warning("Re-adding missing protected tool: %s", name)
+                self.append(d)
 
 
 # ---------------------------------------------------------------------------
@@ -1024,6 +1053,9 @@ async def _run_agent_loop(
             _iter_langfuse_meta.setdefault("tags", [])
             if "call_type:primary" not in _iter_langfuse_meta["tags"]:
                 _iter_langfuse_meta["tags"].append("call_type:primary")
+
+        # Safety invariant: respond/say must always be available
+        tool_defs.ensure_protected()
 
         logger.info(
             "LLM request: model=%s tools=%d max_tokens=%d tier=%d context_tokens=~%d msgs=%d cache=%s",
