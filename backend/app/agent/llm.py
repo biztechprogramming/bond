@@ -18,6 +18,23 @@ from backend.app.core.vault import Vault
 
 logger = logging.getLogger("bond.agent.llm")
 
+
+# ---------------------------------------------------------------------------
+# Overflow error types (Doc 091: Overflow Recovery)
+# ---------------------------------------------------------------------------
+
+class ContextOverflowError(Exception):
+    """Raised when the LLM API rejects the request due to context length."""
+    def __init__(self, message: str, tokens_sent: int = 0):
+        super().__init__(message)
+        self.tokens_sent = tokens_sent
+
+
+class OutputTruncatedError(Exception):
+    """Raised when the model's response was cut off by max_output_tokens."""
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Model context window limits (Doc 090: Token-Aware Context Management)
 # ---------------------------------------------------------------------------
@@ -225,3 +242,25 @@ async def _stream_response(response) -> AsyncIterator[str]:
 def get_instructor_client():
     """Return a litellm client patched with instructor."""
     return instructor.from_litellm(litellm.acompletion)
+
+
+# ---------------------------------------------------------------------------
+# Overflow detection (Doc 091: Overflow Recovery)
+# ---------------------------------------------------------------------------
+
+_OVERFLOW_PATTERNS = [
+    "context_length_exceeded",
+    "maximum context length",
+    "request too large",
+    "413",
+    "token limit",
+    "too many tokens",
+]
+
+
+def classify_overflow_error(exc: Exception) -> ContextOverflowError | None:
+    """If *exc* looks like a context-overflow error, wrap it; else return None."""
+    error_str = str(exc).lower()
+    if any(term in error_str for term in _OVERFLOW_PATTERNS):
+        return ContextOverflowError(str(exc))
+    return None
