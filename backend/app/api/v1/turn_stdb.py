@@ -122,6 +122,7 @@ async def _stream_container_turn_stdb(
             "tool_calls_made": tool_calls_made,
             "queued_count": 0,
             "interrupted": interrupted,
+            "response": response_content,
         })
     except Exception as e:
         logger.error(f"[TURN_STDB] Container turn error: conversation={conversation_id} error={e}", exc_info=True)

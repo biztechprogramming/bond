@@ -630,6 +630,12 @@ export class WebChatChannel {
       }
 
       session.agentBusy = false;
+
+      // Capture buffered content before clearing — include it in the
+      // "done" event so the frontend can display the response even if
+      // streaming chunks were missed.
+      const finalBuffer = this.streamBuffers.get(conversationId);
+      const finalResponse = finalBuffer?.content || "";
       this.streamBuffers.delete(conversationId);
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -639,7 +645,8 @@ export class WebChatChannel {
         type: "done", sessionId, conversationId,
         messageId: responseMessageId, agentName,
         queuedCount: 0, agentStatus: "idle",
-      });
+        ...(finalResponse ? { response: finalResponse } : {}),
+      } as any);
 
       this.handleListConversations(socket).catch(() => {});
     } catch (err) {
