@@ -169,7 +169,7 @@ async def _generate_openai(
             prompt=prompt,
             n=count,
             size=size,
-            quality="standard",
+            quality="auto",
             api_key=api_key,
         )
     finally:
