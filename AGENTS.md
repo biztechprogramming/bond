@@ -2,6 +2,10 @@
 
 This file defines what AI agents can and cannot modify when working on the Bond codebase.
 
+## Architecture Overview
+
+See `prompts/bond-architecture.md` for the system architecture that agents operate within. This document explains the four services, message flow, sandbox lifecycle, and key paths. It is loaded automatically into every agent's context as a Tier 1 prompt.
+
 ## What agents CAN change
 
 ### Prompt fragments
