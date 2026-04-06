@@ -368,7 +368,7 @@ class TestResolveProviderKeyViaGateway:
     async def test_retries_on_connect_error(self):
         call_count = 0
 
-        async def mock_get(url):
+        async def mock_get(url, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count < 3:

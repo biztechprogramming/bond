@@ -294,15 +294,6 @@ class LocalContainerAdapter:
         except Exception:
             pass
 
-        # Pass gateway API key so the worker's persistence client can authenticate
-        bond_api_key = os.environ.get("BOND_API_KEY", "")
-        if not bond_api_key:
-            key_path = Path.home() / ".bond" / "data" / ".gateway_key"
-            if key_path.exists():
-                bond_api_key = key_path.read_text().strip()
-        if bond_api_key:
-            cmd.extend(["-e", f"BOND_API_KEY={bond_api_key}"])
-
         # Broker token for MCP proxy access
         try:
             from backend.app.config import get_settings
