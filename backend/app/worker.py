@@ -112,7 +112,7 @@ _state = WorkerState()
 # Tools that must ALWAYS be present in tool_defs, even after clear().
 # If budget escalation or early termination clears tool_defs, these are
 # automatically re-added so the agent can always respond to the user.
-PROTECTED_TOOLS = frozenset({"respond", "say"})
+PROTECTED_TOOLS = frozenset({"respond", "say", "coding_agent"})
 
 
 class UniqueToolDefs(list):
