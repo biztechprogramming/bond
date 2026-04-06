@@ -70,7 +70,7 @@ async def run_pre_gather(
 
     # Build LLM kwargs for plan calls (same provider settings as primary model)
     plan_llm_kwargs = {}
-    for k in ("api_base", "api_version", "organization"):
+    for k in ("api_base", "api_version", "organization", "extra_headers"):
         if k in extra_kwargs:
             plan_llm_kwargs[k] = extra_kwargs[k]
 

@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from collections import OrderedDict
 from typing import Any
 
@@ -22,6 +23,58 @@ logger = logging.getLogger("bond.agent.tools.file_buffer")
 MAX_OPEN_FILES = 10
 DEFAULT_WINDOW = 100  # lines
 MAX_WINDOW = 300
+
+# Invisible Unicode characters that LLMs sometimes emit.
+# These corrupt source files silently — strip them on write.
+_INVISIBLE_CHARS = re.compile(
+    "["
+    "\u200b"  # zero-width space
+    "\u200c"  # zero-width non-joiner
+    "\u200d"  # zero-width joiner
+    "\u200e"  # left-to-right mark
+    "\u200f"  # right-to-left mark
+    "\u2060"  # word joiner
+    "\u2061"  # function application
+    "\u2062"  # invisible times
+    "\u2063"  # invisible separator
+    "\u2064"  # invisible plus
+    "\ufeff"  # BOM / zero-width no-break space
+    "\u00ad"  # soft hyphen
+    "\u034f"  # combining grapheme joiner
+    "\u061c"  # arabic letter mark
+    "\u115f"  # hangul choseong filler
+    "\u1160"  # hangul jungseong filler
+    "\u17b4"  # khmer vowel inherent aq
+    "\u17b5"  # khmer vowel inherent aa
+    "\u180e"  # mongolian vowel separator
+    "\uffa0"  # halfwidth hangul filler
+    "\ufff9"  # interlinear annotation anchor
+    "\ufffa"  # interlinear annotation separator
+    "\ufffb"  # interlinear annotation terminator
+    "]"
+)
+
+
+def _sanitize_content(text: str) -> str:
+    """Strip invisible Unicode characters that LLMs inject into generated code.
+
+    These zero-width and control characters are invisible in editors but break
+    parsers, compilers, and interpreters. We strip them on write to prevent
+    silent file corruption.
+    """
+    cleaned = _INVISIBLE_CHARS.sub("", text)
+    if len(cleaned) != len(text):
+        removed_count = len(text) - len(cleaned)
+        removed_chars = set()
+        for ch in text:
+            if _INVISIBLE_CHARS.match(ch):
+                removed_chars.add(f"U+{ord(ch):04X} ({unicodedata.name(ch, 'UNKNOWN')})")
+        logger.warning(
+            "Stripped %d invisible Unicode character(s) from content: %s",
+            removed_count,
+            ", ".join(sorted(removed_chars)),
+        )
+    return cleaned
 
 
 def _normalize_ws(s: str) -> str:
@@ -188,6 +241,9 @@ class FileBuffer:
         self.last_accessed = time.time()
         start = max(1, start)
         end = min(self.total_lines, end)
+
+        # Sanitize invisible Unicode characters that LLMs sometimes inject
+        new_content = _sanitize_content(new_content)
 
         # Split new content into lines, preserving line endings
         new_lines_normalized = []

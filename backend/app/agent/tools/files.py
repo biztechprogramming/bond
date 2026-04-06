@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .native import _extract_outline
-from .file_buffer import _manager as _file_buffer_manager, track_file_read
+from .file_buffer import _manager as _file_buffer_manager, track_file_read, _sanitize_content
 from .read_state import (
     get_read_state,
     estimate_tokens,
@@ -522,6 +522,7 @@ async def handle_file_write(
     """Write content to a file in an allowed workspace directory."""
     path_str = arguments.get("path", "")
     content = arguments.get("content", "")
+    content = _sanitize_content(content)
 
     # Sandbox mode: write via docker exec tee with stdin piping
     container_id = await _get_sandbox_container(context)
@@ -619,6 +620,7 @@ async def handle_file_edit(
                 return {"error": f"Edit {i}: old_text not found in file"}
             if count > 1:
                 return {"error": f"Edit {i}: old_text matches {count} times (ambiguous, must match exactly once)"}
+            new_text = _sanitize_content(new_text)
             content = content.replace(old_text, new_text, 1)
 
         # Write back
