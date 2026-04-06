@@ -124,7 +124,7 @@ TOOL_TIMEOUTS: dict[str, int] = {
     "file_write": 10,
     "file_edit": 10,
     "project_search": 30,
-    "coding_agent": 900,  # 15 minutes
+    "coding_agent": 1800,  # 30 minutes
     "respond": 5,
     "say": 5,
 }
