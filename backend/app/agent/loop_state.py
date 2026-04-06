@@ -85,6 +85,18 @@ class LoopState:
     lifecycle_turn_number: int = 0
     lifecycle_injected: bool = False
 
+    # Token-aware context management (Doc 090)
+    tokens_compacted: int = 0
+    compaction_events: int = 0
+    peak_token_count: int = 0
+
+    def record_compaction(self, tokens_before: int, tokens_after: int):
+        self.tokens_compacted += (tokens_before - tokens_after)
+        self.compaction_events += 1
+
+    def record_token_count(self, count: int):
+        self.peak_token_count = max(self.peak_token_count, count)
+
     @classmethod
     def create(cls, max_iterations: int, preturn_msg_count: int, cache_bp2_index: int) -> LoopState:
         """Factory method to create a LoopState with computed defaults."""
