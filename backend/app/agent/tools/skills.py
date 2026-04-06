@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 # Module-level router instance, lazily initialized
 _router = None
 
-
 def _get_router():
     """Get or create the SkillRouter singleton.
 
@@ -41,10 +40,8 @@ def _get_router():
         )
     return _router
 
-
 # Settings loaded async before first use
 _router_settings: dict | None = None
-
 
 async def init_router(persistence=None) -> None:
     """Load embedding settings and pre-initialize the router.
@@ -73,7 +70,12 @@ async def init_router(persistence=None) -> None:
             "Ensure the worker is connected to the gateway."
         )
 
-    # Read embedding settings from DB — these MUST exist (configured via Settings → Embedding)
+    # Read embedding settings from DB, falling back to defaults if not yet seeded
+    _EMBEDDING_DEFAULTS = {
+        "embedding.model": "voyage-4-nano",
+        "embedding.output_dimension": "1024",
+        "embedding.execution_mode": "auto",
+    }
     required_keys = ("embedding.model", "embedding.output_dimension", "embedding.execution_mode")
     for key in required_keys:
         try:
@@ -85,10 +87,13 @@ async def init_router(persistence=None) -> None:
 
     missing = [k for k in required_keys if k not in settings]
     if missing:
-        raise RuntimeError(
-            f"Embedding settings not configured: {', '.join(missing)}. "
-            "Configure them in Settings → Embedding tab."
+        logger.warning(
+            "Embedding settings not found in DB: %s — using defaults. "
+            "Configure them in Settings → Embedding tab.",
+            ", ".join(missing),
         )
+        for key in missing:
+            settings[key] = _EMBEDDING_DEFAULTS[key]
 
     # Read API keys (optional — only required for api/gemini execution modes)
     for provider_id, settings_key in (("voyage", "embedding.api_key.voyage"), ("gemini", "embedding.api_key.gemini")):
@@ -112,13 +117,11 @@ async def init_router(persistence=None) -> None:
                 bool(settings.get("embedding.api_key.voyage")),
                 bool(settings.get("embedding.api_key.gemini")))
 
-
 def set_router_engine(embedding_engine, openviking_adapter=None) -> None:
     """Set the embedding engine on the router (called during app startup if available)."""
     global _router
     from backend.app.agent.skills_router import SkillRouter
     _router = SkillRouter(embedding_engine=embedding_engine, openviking_adapter=openviking_adapter)
-
 
 async def handle_skills(
     arguments: dict[str, Any],
