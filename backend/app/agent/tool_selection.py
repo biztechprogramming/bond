@@ -184,6 +184,13 @@ TOOL_KEYWORDS: dict[str, list[str]] = {
         "parallel", "concurrent", "simultaneously", "at the same time",
         "in parallel", "batch", "orchestrate", "multiple items",
     ],
+    "generate_image": [
+        "image", "picture", "photo", "icon", "logo", "illustration",
+        "artwork", "art", "visual", "banner", "thumbnail", "avatar",
+        "generate image", "create image", "make image", "draw",
+        "design", "graphic", "dall-e", "dalle", "stable diffusion",
+        "flux", "comfyui", "wallpaper", "poster", "diagram",
+    ],
     "repo_pr": [
         "pull request", "open pr", "create tool", "propose change",
         "add prompt", "push branch", "new tool", "submit pr",
