@@ -217,6 +217,27 @@ export default function ChatPanel({
               {msg.role === "user" && msg.content.startsWith("[System:") ? "System" : msg.role === "user" ? "You" : msg.role === "assistant" ? (msg.agentName || selectedAgentName || "Agent") : "System"}
             </div>
             {msg.role === "assistant" ? (() => {
+              const imageResults = (msg as any).imageResults;
+              if (imageResults && imageResults.length > 0) {
+                const allImages = imageResults.flatMap((ir: any) =>
+                  (ir.paths || []).map((p: string) => ({
+                    src: rewriteImageSrc(p),
+                    prompt: ir.prompt || "",
+                    revisedPrompt: ir.revised_prompt,
+                    provider: ir.provider || "openai",
+                    model: ir.model || "unknown",
+                    size: ir.size || "1024x1024",
+                    cost: ir.cost,
+                    onExpand: () => {},
+                  }))
+                );
+                return (
+                  <div style={s.chatMsgContent}>
+                    {allImages.length > 0 && <ImageGrid images={allImages} />}
+                    <MarkdownMessage content={msg.content} />
+                  </div>
+                );
+              }
               const imageResult = extractImageResults(msg.content);
               if (imageResult) {
                 const images = imageResult.paths.map((p) => ({

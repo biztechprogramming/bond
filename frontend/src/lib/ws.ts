@@ -28,7 +28,8 @@ export interface GatewayMessage {
     | "webhook_push"
     | "branch_changed"
     | "skill_activated" | "skill_feedback"
-    | "interim_message";
+    | "interim_message"
+    | "image_result";
   sessionId?: string;
   content?: string;
   error?: string;

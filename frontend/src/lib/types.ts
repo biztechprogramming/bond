@@ -34,6 +34,7 @@ export interface ChatMessage {
   status?: "sending" | "queued" | "delivered" | "complete";
   injected?: boolean;
   agentName?: string;
+  imageResults?: Array<{ paths: string[]; prompt: string; revised_prompt?: string; provider: string; model: string; size: string; cost?: number }>;
 }
 
 export interface PlanCardData {

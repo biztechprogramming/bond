@@ -68,6 +68,7 @@ export default function Home() {
   const currentAgentNameRef = useRef<string>("");
   const conversationIdRef = useRef<string | null>(conversationId);
   const [toolActivity, setToolActivity] = useState<{ name: string; args: string; time: number }[]>([]);
+  const [pendingImages, setPendingImages] = useState<Array<{ paths: string[]; prompt: string; revised_prompt?: string; provider: string; model: string; size: string; cost?: number }>>([]);
   const [codingAgentActive, setCodingAgentActive] = useState(false);
   const [codingAgentDiffs, setCodingAgentDiffs] = useState<Record<string, { diff: string; count: number }>>({});
   const [codingAgentSummary, setCodingAgentSummary] = useState<string | null>(null);
@@ -313,6 +314,11 @@ export default function Home() {
             agentName: "Coding Agent",
           }]);
         } catch { /* ignore */ }
+      } else if (msg.type === "image_result" && msg.content) {
+        try {
+          const data = JSON.parse(msg.content) as { paths: string[]; prompt: string; revised_prompt?: string; provider: string; model: string; size: string; cost?: number };
+          setPendingImages((prev) => [...prev, data]);
+        } catch { /* ignore */ }
       } else if (msg.type === "interim_message" && msg.content) {
         // Say tool: finalize any current streaming content, add the interim
         // message as its own bubble, then reset streaming so the thinking
@@ -339,12 +345,14 @@ export default function Home() {
           // Use streamed content, or fall back to response in the done event
           const finalContent = prev || (msg as any).response || "";
           if (finalContent) {
+            const imgs = pendingImages.length > 0 ? [...pendingImages] : undefined;
+            setPendingImages([]);
             setMessages((msgs) => {
               const last = msgs[msgs.length - 1];
               if (last?.role === "assistant" && last.content === finalContent) {
                 return msgs;
               }
-              return [...msgs, { id: msg.messageId, role: "assistant", content: finalContent, agentName: msg.agentName || currentAgentNameRef.current || undefined }];
+              return [...msgs, { id: msg.messageId, role: "assistant", content: finalContent, agentName: msg.agentName || currentAgentNameRef.current || undefined, imageResults: imgs }];
             });
           }
           return "";

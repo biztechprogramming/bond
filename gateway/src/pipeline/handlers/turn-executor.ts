@@ -100,6 +100,13 @@ export class TurnExecutor implements PipelineHandler {
           });
           break;
 
+        case "image_result":
+          await context.emit("image_result", {
+            content: JSON.stringify(event.data),
+            conversationId: message.conversationId,
+          });
+          break;
+
         case "coding_agent_started":
           await context.emit("coding_agent_started", {
             agent_type: event.data.agent_type,

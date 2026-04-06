@@ -17,7 +17,8 @@ export interface OutgoingMessage {
     | "plan_created" | "item_updated" | "plan_completed"
     | "user_message" | "pong"
     | "webhook_push"
-    | "branch_changed";
+    | "branch_changed"
+    | "image_result";
   sessionId?: string;
   content?: string;
   error?: string;
