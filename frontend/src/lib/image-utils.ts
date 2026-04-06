@@ -24,6 +24,11 @@ export const IMAGE_COSTS: Record<string, Record<string, number>> = {
 };
 
 export function rewriteImageSrc(src: string): string {
+  // New gateway-served images (Design Doc 104) — pass through as-is
+  if (src.startsWith("/api/v1/images/")) {
+    return src;
+  }
+  // Legacy paths — proxy through workspace-files endpoint
   if (src.startsWith("/workspace/") || src.startsWith(".bond/images/") || src.startsWith("/data/images/")) {
     return `/api/v1/workspace-files/${encodeURIComponent(src)}`;
   }
