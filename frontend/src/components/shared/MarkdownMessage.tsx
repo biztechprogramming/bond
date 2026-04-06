@@ -166,7 +166,7 @@ const components: Components = {
   img: ({ src, alt, ...props }) => {
     // Rewrite workspace image paths to gateway file-serving endpoint
     let resolvedSrc = src || "";
-    if (resolvedSrc.startsWith("/workspace/") || resolvedSrc.startsWith(".bond/images/")) {
+    if (resolvedSrc.startsWith("/workspace/") || resolvedSrc.startsWith(".bond/images/") || resolvedSrc.startsWith("/data/images/")) {
       const encodedPath = encodeURIComponent(resolvedSrc);
       resolvedSrc = `/api/v1/workspace-files/${encodedPath}`;
     }
