@@ -31,6 +31,7 @@ import { EventBus, EventHistory, CompletionDispatcher, createEventsRouter } from
 import { ChannelManager } from "./channels/manager.js";
 import { createChannelRouter } from "./channels/routes.js";
 import { createSolidTimeRouter } from "./integrations/solidtime.js";
+import { createMediaRouter } from "./media/router.js";
 import {
   MessagePipeline,
   RateLimitHandler,
@@ -373,6 +374,9 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     webchat.broadcast(req.body);
     res.status(200).json({ status: "broadcasted" });
   });
+
+  // Image upload and serving (Design Doc 104: Agent Image Delivery)
+  app.use(createMediaRouter());
 
   // Workspace file serving — serves generated images and other workspace files
   // (Design Doc 100, Phase 2: image rendering in chat UI)
