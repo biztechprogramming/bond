@@ -16,7 +16,10 @@ import litellm
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.llm import chat_completion, _resolve_api_key, get_instructor_client
+from backend.app.agent.llm import (
+    chat_completion, _resolve_api_key, get_instructor_client,
+    ContextOverflowError, is_overflow_error,
+)
 from backend.app.agent.tools import build_registry
 from backend.app.agent.tools.definitions import get_pydantic_definitions
 from backend.app.agent.tool_result_cache import ToolResultCache
@@ -132,6 +135,94 @@ async def _load_agent_by_id(db: AsyncSession, agent_id: str) -> dict[str, Any]:
     ]
 
     return agent
+
+
+# ---------------------------------------------------------------------------
+# Doc 091: Overflow Recovery — 3-tier compaction + LLM call wrapper
+# ---------------------------------------------------------------------------
+
+MAX_OVERFLOW_RETRIES = 3
+
+
+def _aggressive_compact(messages: list[dict], keep_recent_turns: int = 3) -> list[dict]:
+    """Tier 2: Drop all tool call/result messages older than *keep_recent_turns*.
+
+    Preserves system messages and recent conversation.
+    """
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+    recent = non_system[-(keep_recent_turns * 2):] if non_system else []
+    return system_msgs + recent
+
+
+def _emergency_collapse(messages: list[dict]) -> list[dict]:
+    """Tier 3: Keep only the system prompt + last 2 messages."""
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+    last_two = non_system[-2:] if len(non_system) >= 2 else non_system
+    collapsed = system_msgs + last_two
+    logger.warning(
+        "emergency_collapse original_messages=%d collapsed_messages=%d",
+        len(messages), len(collapsed),
+    )
+    return collapsed
+
+
+def _standard_compact(messages: list[dict], target_ratio: float = 0.6) -> list[dict]:
+    """Tier 1: Simple compaction — keep system + recent, drop middle.
+
+    Similar to _check_token_budget but targets a specific ratio of the
+    original message count (since we may not know the model's context limit).
+    """
+    if len(messages) <= 5:
+        return messages
+
+    system_msg = messages[0] if messages[0].get("role") == "system" else None
+    start = 1 if system_msg else 0
+    keep_tail = max(4, int(len(messages) * target_ratio))
+    keep_tail = min(keep_tail, len(messages) - start)
+
+    tail = messages[-keep_tail:]
+    result = []
+    if system_msg:
+        result.append(system_msg)
+    result.extend(tail)
+    return result
+
+
+async def _llm_call_with_recovery(
+    llm_coro_factory,
+    messages: list[dict],
+) -> tuple[Any, list[dict]]:
+    """Wrap an LLM call with 3-tier overflow recovery.
+
+    *llm_coro_factory* is a callable ``(messages) -> awaitable`` that performs
+    the actual LLM call.  Returns ``(response, possibly_compacted_messages)``.
+    """
+    tiers = ["standard", "aggressive", "emergency"]
+    last_error: ContextOverflowError | None = None
+
+    for attempt in range(MAX_OVERFLOW_RETRIES):
+        try:
+            response = await llm_coro_factory(messages)
+            return response, messages
+        except Exception as exc:
+            if not is_overflow_error(exc):
+                raise
+            last_error = ContextOverflowError(str(exc))
+            tier = tiers[attempt]
+            logger.warning(
+                "overflow_recovery attempt=%d tier=%s error=%s",
+                attempt + 1, tier, str(exc)[:200],
+            )
+            if attempt == 0:
+                messages = _standard_compact(messages)
+            elif attempt == 1:
+                messages = _aggressive_compact(messages, keep_recent_turns=3)
+            else:
+                messages = _emergency_collapse(messages)
+
+    raise last_error  # type: ignore[misc]
 
 
 async def agent_turn(
@@ -370,31 +461,44 @@ async def agent_turn(
                 response = MockResponse(MockChoice(MockMessage(tool_name, args)))
             except Exception as e:
                 logger.error("Instructor tool call failed: %s", e)
-                # Fallback to standard litellm on error
-                response = await litellm.acompletion(
+                # Fallback to standard litellm on error — with overflow recovery
+                async def _fallback_call(msgs):
+                    return await litellm.acompletion(
+                        model=model_string,
+                        messages=msgs,
+                        tools=tool_defs if tool_defs else None,
+                        temperature=0.7,
+                        max_tokens=current_max_tokens,
+                        **extra_kwargs,
+                    )
+                response, messages = await _llm_call_with_recovery(
+                    _fallback_call, messages,
+                )
+        else:
+            # Standard path — with overflow recovery (Doc 091)
+            async def _standard_call(msgs):
+                return await litellm.acompletion(
                     model=model_string,
-                    messages=messages,
+                    messages=msgs,
                     tools=tool_defs if tool_defs else None,
                     temperature=0.7,
                     max_tokens=current_max_tokens,
                     **extra_kwargs,
                 )
-        else:
-            response = await litellm.acompletion(
-                model=model_string,
-                messages=messages,
-                tools=tool_defs if tool_defs else None,
-                temperature=0.7,
-                max_tokens=current_max_tokens,
-                **extra_kwargs,
+            response, messages = await _llm_call_with_recovery(
+                _standard_call, messages,
             )
 
         choice = response.choices[0]
         message = choice.message
 
-        # Handle truncation with continuation
+        # Handle truncation with continuation (Doc 091: improved logging + overflow guard)
         if choice.finish_reason == "length":
             continuation_attempts += 1
+            logger.info(
+                "truncation_retry attempt=%d max=%d tier=%d",
+                continuation_attempts, 3, current_tier,
+            )
             if continuation_attempts > 3:
                 return "Output token limit exceeded repeatedly. Try breaking the task into smaller pieces."
             if current_tier < len(TOKEN_TIERS) - 1:

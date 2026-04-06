@@ -85,6 +85,19 @@ class LoopState:
     lifecycle_turn_number: int = 0
     lifecycle_injected: bool = False
 
+    # Overflow recovery (Doc 091)
+    overflow_events: int = 0
+    overflow_recoveries: int = 0
+    truncation_retries: int = 0
+    recovery_tiers_used: list[str] = field(default_factory=list)
+
+    def record_overflow(self, tier: str, recovered: bool):
+        """Record an overflow event and the recovery tier used."""
+        self.overflow_events += 1
+        self.recovery_tiers_used.append(tier)
+        if recovered:
+            self.overflow_recoveries += 1
+
     @classmethod
     def create(cls, max_iterations: int, preturn_msg_count: int, cache_bp2_index: int) -> LoopState:
         """Factory method to create a LoopState with computed defaults."""

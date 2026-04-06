@@ -18,6 +18,40 @@ from backend.app.core.vault import Vault
 
 logger = logging.getLogger("bond.agent.llm")
 
+# ---------------------------------------------------------------------------
+# Overflow error detection (Doc 091: Overflow Recovery)
+# ---------------------------------------------------------------------------
+
+OVERFLOW_ERROR_PATTERNS = [
+    "context_length_exceeded",
+    "maximum context length",
+    "request too large",
+    "413",
+    "token limit",
+    "too many tokens",
+]
+
+
+class ContextOverflowError(Exception):
+    """Raised when the LLM API rejects the request due to context length."""
+
+    def __init__(self, message: str, tokens_sent: int = 0):
+        super().__init__(message)
+        self.tokens_sent = tokens_sent
+
+
+class OutputTruncatedError(Exception):
+    """Raised when the model's response was cut off by max_output_tokens."""
+
+    pass
+
+
+def is_overflow_error(error: Exception) -> bool:
+    """Check whether an exception represents a context overflow."""
+    error_str = str(error).lower()
+    return any(pat in error_str for pat in OVERFLOW_ERROR_PATTERNS)
+
+
 # Load provider config
 _PROVIDERS_PATH = Path(__file__).parent / "providers.yaml"
 
