@@ -6,7 +6,7 @@ duration tracking, and formatted output for the model.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import time
 
 
@@ -68,6 +68,33 @@ class ToolResult:
             tool_name=tool_name,
             duration_ms=timeout_seconds * 1000,
         )
+
+
+@dataclass
+class ValidationResult:
+    """Result of validating tool input before execution (Design Doc 094)."""
+    valid: bool
+    errors: list[str] = field(default_factory=list)
+
+    def to_message_content(self, tool_name: str) -> str:
+        """Format validation errors for the model."""
+        if self.valid:
+            return ""
+        error_list = "\n".join(f"  - {e}" for e in self.errors)
+        return (
+            f"Invalid parameters for '{tool_name}':\n"
+            f"{error_list}\n\n"
+            f"Please fix the parameters and try again. "
+            f"Check the tool definition for required fields and types."
+        )
+
+    @staticmethod
+    def ok() -> "ValidationResult":
+        return ValidationResult(valid=True)
+
+    @staticmethod
+    def fail(errors: list[str]) -> "ValidationResult":
+        return ValidationResult(valid=False, errors=errors)
 
 
 class ToolTimer:
