@@ -3,6 +3,7 @@ import React, { useState, useCallback } from "react";
 import ReactMarkdown, { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import { rewriteImageSrc } from "@/lib/image-utils";
 
 
 function CopyButton({ text }: { text: string }) {
@@ -164,12 +165,7 @@ const components: Components = {
     </td>
   ),
   img: ({ src, alt, ...props }) => {
-    // Rewrite workspace image paths to gateway file-serving endpoint
-    let resolvedSrc = src || "";
-    if (resolvedSrc.startsWith("/workspace/") || resolvedSrc.startsWith(".bond/images/") || resolvedSrc.startsWith("/data/images/")) {
-      const encodedPath = encodeURIComponent(resolvedSrc);
-      resolvedSrc = `/api/v1/workspace-files/${encodedPath}`;
-    }
+    const resolvedSrc = rewriteImageSrc(src || "");
     return (
       <img
         src={resolvedSrc}

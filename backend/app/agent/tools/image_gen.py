@@ -139,13 +139,42 @@ async def handle_generate_image(arguments: dict, context: dict) -> dict:
         saved_paths.append(str(output_path))
         logger.info("Image saved: %s", output_path)
 
+    # Upload images to gateway (Design Doc 104: Agent Image Delivery)
+    uploaded_urls: list[str] = []
+    gateway_url = os.environ.get("GATEWAY_URL", "http://gateway:18789")
+    agent_id = context.get("agent_id", "unknown") if context else "unknown"
+    conversation_id = context.get("conversation_id", "") if context else ""
+
+    for path_str in saved_paths:
+        try:
+            file_path = Path(path_str)
+            async with httpx.AsyncClient(timeout=30) as client:
+                with open(file_path, "rb") as f:
+                    resp = await client.post(
+                        f"{gateway_url}/api/v1/images/upload",
+                        files={"file": (file_path.name, f, "image/png")},
+                        data={
+                            "agent_id": agent_id,
+                            "conversation_id": conversation_id,
+                            "filename": file_path.name,
+                            "prompt": prompt,
+                        },
+                    )
+                    resp.raise_for_status()
+                    uploaded_urls.append(resp.json()["url"])
+        except Exception as e:
+            logger.warning("Failed to upload image to gateway: %s — falling back to local path", e)
+            uploaded_urls.append(path_str)
+
     return {
         "success": True,
         "paths": saved_paths,
+        "urls": uploaded_urls,
+        "url": uploaded_urls[0] if uploaded_urls else saved_paths[0],
         "provider": provider,
         "model": model,
         "prompt": prompt,
-        "message": f"Generated {len(saved_paths)} image(s): {', '.join(saved_paths)}",
+        "message": f"Generated {len(saved_paths)} image(s): {', '.join(uploaded_urls or saved_paths)}",
     }
 
 
