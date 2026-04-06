@@ -116,4 +116,9 @@ describe("GET /api/v1/images/:filename", () => {
     const resp = await fetch(`${baseUrl}/api/v1/images/img_nonexistent.png`);
     expect(resp.status).toBe(404);
   });
+
+  it("rejects path traversal attempts", async () => {
+    const resp = await fetch(`${baseUrl}/api/v1/images/..%2F..%2Fetc%2Fpasswd`);
+    expect([403, 404]).toContain(resp.status);
+  });
 });
