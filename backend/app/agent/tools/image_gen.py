@@ -95,6 +95,10 @@ async def handle_generate_image(arguments: dict, context: dict) -> dict:
     if not filename:
         slug = re.sub(r"[^a-z0-9]+", "-", prompt.lower())[:40]
         filename = slug.rstrip("-") or "image"
+    else:
+        # Strip any existing image extension to avoid double extensions
+        # (e.g., "photo.png" -> "photo" before we append ".png")
+        filename = re.sub(r"\.(png|jpe?g|webp|gif|bmp)$", "", filename, flags=re.IGNORECASE)
 
     # Dispatch to provider adapter
     adapter_name = PROVIDER_ADAPTERS.get(provider)

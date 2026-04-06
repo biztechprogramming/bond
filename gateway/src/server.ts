@@ -391,7 +391,12 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     ];
 
     let fullPath: string;
-    if (requestedPath.startsWith("/")) {
+    if (requestedPath.startsWith("/data/images/")) {
+      // Agent containers save images to /data/images/ which maps to
+      // ~/.bond/images/ on the shared bond-data volume.
+      const bondImages = resolve(join(process.env.HOME || "/root", ".bond", "images"));
+      fullPath = resolve(join(bondImages, requestedPath.slice("/data/images/".length)));
+    } else if (requestedPath.startsWith("/")) {
       fullPath = resolve(requestedPath);
     } else {
       fullPath = resolve(join(process.env.WORKSPACE_DIR || "/workspace", requestedPath));
