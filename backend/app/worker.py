@@ -50,6 +50,10 @@ from backend.app.agent.context_pipeline import (
     _log_compression_stats,
     _apply_sliding_window,
 )
+from backend.app.agent.llm import ContextOverflowError, classify_overflow_error
+from backend.app.agent.loop import (
+    _aggressive_compact, _emergency_collapse, MAX_OVERFLOW_RETRIES,
+)
 from backend.app.agent.cache_manager import (
     _advance_cache_breakpoint,
 )
@@ -1133,18 +1137,43 @@ async def _run_agent_loop(
         _retry_max = int(os.environ.get("LLM_RETRY_MAX_ATTEMPTS", "10"))
         _retry_max_wait = float(os.environ.get("LLM_RETRY_MAX_WAIT_SECONDS", "180"))
         response = None
+        _overflow_attempt = 0  # Doc 091: overflow recovery counter
 
         for _retry_attempt in range(_retry_max):
-            response = await _cancellable_llm_call(
-                _state.interrupt_event,
-                model=_iter_model,
-                messages=messages,
-                tools=tool_defs if tool_defs else None,
-                temperature=0.7,
-                max_tokens=current_max_tokens,
-                metadata=_iter_langfuse_meta if _iter_langfuse_meta else None,
-                **_iter_kwargs,
-            )
+            try:
+                response = await _cancellable_llm_call(
+                    _state.interrupt_event,
+                    model=_iter_model,
+                    messages=messages,
+                    tools=tool_defs if tool_defs else None,
+                    temperature=0.7,
+                    max_tokens=current_max_tokens,
+                    metadata=_iter_langfuse_meta if _iter_langfuse_meta else None,
+                    **_iter_kwargs,
+                )
+            except Exception as _llm_exc:
+                # Doc 091: Overflow recovery
+                _overflow_err = classify_overflow_error(_llm_exc)
+                if _overflow_err is not None and _overflow_attempt < MAX_OVERFLOW_RETRIES:
+                    _tiers = ["standard", "aggressive", "emergency"]
+                    _tier = _tiers[_overflow_attempt]
+                    logger.warning(
+                        "overflow_recovery attempt=%d tier=%s error=%s",
+                        _overflow_attempt + 1, _tier, str(_llm_exc)[:200],
+                    )
+                    _tokens_before = _estimate_messages_tokens(messages)
+                    if _overflow_attempt == 0:
+                        messages = _aggressive_compact(messages, keep_recent_turns=5)
+                    elif _overflow_attempt == 1:
+                        messages = _aggressive_compact(messages, keep_recent_turns=3)
+                    else:
+                        messages = _emergency_collapse(messages)
+                    _tokens_after = _estimate_messages_tokens(messages)
+                    loop.record_overflow(_tier, recovered=False)
+                    loop.record_compaction(_tokens_before, _tokens_after)
+                    _overflow_attempt += 1
+                    continue  # retry with compacted messages
+                raise  # not overflow or retries exhausted
 
             if response is None:
                 _state.interrupt_event.clear()
@@ -1173,6 +1202,13 @@ async def _run_agent_loop(
                     return "", loop.tool_calls_made
 
             if response.choices:
+                # Doc 091: mark overflow as recovered if we had retried
+                if _overflow_attempt > 0:
+                    loop.record_overflow(
+                        ["standard", "aggressive", "emergency"][_overflow_attempt - 1],
+                        recovered=True,
+                    )
+                    _overflow_attempt = 0
                 break
 
             # Empty response — exponential backoff

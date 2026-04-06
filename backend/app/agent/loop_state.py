@@ -90,12 +90,25 @@ class LoopState:
     compaction_events: int = 0
     peak_token_count: int = 0
 
+    # Overflow recovery (Doc 091)
+    overflow_events: int = 0
+    overflow_recoveries: int = 0
+    truncation_retries: int = 0
+    recovery_tiers_used: list[str] = field(default_factory=list)
+
     def record_compaction(self, tokens_before: int, tokens_after: int):
         self.tokens_compacted += (tokens_before - tokens_after)
         self.compaction_events += 1
 
     def record_token_count(self, count: int):
         self.peak_token_count = max(self.peak_token_count, count)
+
+    def record_overflow(self, tier: str, recovered: bool):
+        """Record an overflow event and recovery attempt (Doc 091)."""
+        self.overflow_events += 1
+        self.recovery_tiers_used.append(tier)
+        if recovered:
+            self.overflow_recoveries += 1
 
     @classmethod
     def create(cls, max_iterations: int, preturn_msg_count: int, cache_bp2_index: int) -> LoopState:

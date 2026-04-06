@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.agent.llm import (
     chat_completion, _resolve_api_key, get_instructor_client,
     get_context_limit, COMPACTION_THRESHOLD, HARD_CEILING,
+    ContextOverflowError, classify_overflow_error,
 )
 from backend.app.agent.context_pipeline import _estimate_messages_tokens
 from backend.app.agent.tools import build_registry
@@ -212,6 +213,98 @@ async def _check_token_budget(messages: list[dict], model: str) -> list[dict]:
     )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Doc 091: Overflow Recovery — 3-tier recovery chain
+# ---------------------------------------------------------------------------
+
+MAX_OVERFLOW_RETRIES = 3
+MAX_TRUNCATION_RETRIES = 3
+
+
+def _aggressive_compact(messages: list[dict], keep_recent_turns: int = 3) -> list[dict]:
+    """Drop all tool call/result messages older than keep_recent_turns.
+
+    Preserves system messages and recent conversation.
+    """
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+
+    # Keep only the last N pairs of messages
+    recent = non_system[-(keep_recent_turns * 2):]
+
+    return system_msgs + recent
+
+
+def _emergency_collapse(messages: list[dict]) -> list[dict]:
+    """Nuclear option: keep only the system prompt and the last 2 non-system messages."""
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+
+    last_two = non_system[-2:] if len(non_system) >= 2 else non_system
+
+    collapsed = system_msgs + last_two
+    logger.warning(
+        "emergency_collapse original_messages=%d collapsed_messages=%d",
+        len(messages), len(collapsed),
+    )
+    return collapsed
+
+
+async def _llm_call_with_overflow_recovery(
+    messages: list[dict],
+    model: str,
+    llm_coro_factory,
+) -> tuple[Any, list[dict]]:
+    """Wrap an LLM call with 3-tier overflow recovery.
+
+    *llm_coro_factory* is a callable(messages) -> awaitable that makes the
+    actual LLM call.  Returns (response, possibly_compacted_messages).
+    """
+    last_error: Exception | None = None
+    tiers = ["standard", "aggressive", "emergency"]
+
+    for attempt in range(MAX_OVERFLOW_RETRIES):
+        try:
+            response = await llm_coro_factory(messages)
+            return response, messages
+        except Exception as exc:
+            overflow = classify_overflow_error(exc)
+            if overflow is None:
+                raise  # not an overflow error — propagate
+            last_error = overflow
+            tier = tiers[attempt]
+            logger.warning(
+                "overflow_recovery_attempt attempt=%d tier=%s error=%s",
+                attempt + 1, tier, str(exc)[:200],
+            )
+
+            context_limit = get_context_limit(model)
+            tokens_before = _estimate_messages_tokens(messages)
+
+            if attempt == 0:
+                # Tier 1: Standard compaction — keep system + fit as many recent msgs
+                messages = await _check_token_budget(messages, model)
+                # Force tighter target if _check_token_budget didn't compact enough
+                if _estimate_messages_tokens(messages) == tokens_before:
+                    messages = _aggressive_compact(messages, keep_recent_turns=5)
+            elif attempt == 1:
+                # Tier 2: Aggressive — drop old tool results entirely
+                messages = _aggressive_compact(messages, keep_recent_turns=3)
+            else:
+                # Tier 3: Emergency collapse
+                messages = _emergency_collapse(messages)
+
+            tokens_after = _estimate_messages_tokens(messages)
+            logger.info(
+                "overflow_compaction tier=%s tokens_before=%d tokens_after=%d",
+                tier, tokens_before, tokens_after,
+            )
+
+    # All retries exhausted
+    logger.error("overflow_recovery_exhausted attempts=%d", MAX_OVERFLOW_RETRIES)
+    raise last_error  # type: ignore[misc]
 
 
 async def agent_turn(
@@ -452,24 +545,42 @@ async def agent_turn(
                 
                 response = MockResponse(MockChoice(MockMessage(tool_name, args)))
             except Exception as e:
-                logger.error("Instructor tool call failed: %s", e)
-                # Fallback to standard litellm on error
-                response = await litellm.acompletion(
-                    model=model_string,
-                    messages=messages,
+                overflow = classify_overflow_error(e)
+                if overflow is not None:
+                    # Doc 091: overflow during Instructor — recover with standard path
+                    logger.warning("Instructor call hit overflow, attempting recovery")
+                    async def _fallback_call(msgs):
+                        return await litellm.acompletion(
+                            model=model_string, messages=msgs,
+                            tools=tool_defs if tool_defs else None,
+                            temperature=0.7, max_tokens=current_max_tokens,
+                            **extra_kwargs,
+                        )
+                    response, messages = await _llm_call_with_overflow_recovery(
+                        messages, model_string, _fallback_call,
+                    )
+                else:
+                    logger.error("Instructor tool call failed: %s", e)
+                    # Fallback to standard litellm on error
+                    response = await litellm.acompletion(
+                        model=model_string,
+                        messages=messages,
+                        tools=tool_defs if tool_defs else None,
+                        temperature=0.7,
+                        max_tokens=current_max_tokens,
+                        **extra_kwargs,
+                    )
+        else:
+            # Doc 091: wrap with overflow recovery
+            async def _standard_call(msgs):
+                return await litellm.acompletion(
+                    model=model_string, messages=msgs,
                     tools=tool_defs if tool_defs else None,
-                    temperature=0.7,
-                    max_tokens=current_max_tokens,
+                    temperature=0.7, max_tokens=current_max_tokens,
                     **extra_kwargs,
                 )
-        else:
-            response = await litellm.acompletion(
-                model=model_string,
-                messages=messages,
-                tools=tool_defs if tool_defs else None,
-                temperature=0.7,
-                max_tokens=current_max_tokens,
-                **extra_kwargs,
+            response, messages = await _llm_call_with_overflow_recovery(
+                messages, model_string, _standard_call,
             )
 
         choice = response.choices[0]
