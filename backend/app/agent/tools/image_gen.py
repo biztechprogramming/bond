@@ -70,9 +70,10 @@ async def handle_generate_image(arguments: dict, context: dict) -> dict:
                 f"Set {env_key} or run 'make setup' to configure.",
             }
 
-    # Determine output path
-    workspace = context.get("workspace_dir", "/workspace")
-    output_dir = Path(workspace) / ".bond" / "images"
+    # Determine output path — /data/images is the writable directory in the
+    # agent container.  /workspace is a host bind-mount and .bond is a
+    # separate named volume on the *main* Bond container, not the agent.
+    output_dir = Path("/data/images")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not filename:
