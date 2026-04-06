@@ -16,7 +16,11 @@ import litellm
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.agent.llm import chat_completion, _resolve_api_key, get_instructor_client
+from backend.app.agent.llm import (
+    chat_completion, _resolve_api_key, get_instructor_client,
+    get_context_limit, COMPACTION_THRESHOLD, HARD_CEILING,
+)
+from backend.app.agent.context_pipeline import _estimate_messages_tokens
 from backend.app.agent.tools import build_registry
 from backend.app.agent.tools.definitions import get_pydantic_definitions
 from backend.app.agent.tool_result_cache import ToolResultCache
@@ -132,6 +136,82 @@ async def _load_agent_by_id(db: AsyncSession, agent_id: str) -> dict[str, Any]:
     ]
 
     return agent
+
+
+async def _check_token_budget(messages: list[dict], model: str) -> list[dict]:
+    """Check token usage against model limits; compact if needed (Doc 090).
+
+    Uses simple message dropping since the full _compress_history requires
+    conversation_id and config that aren't available in loop.py's context.
+    Returns the (possibly compacted) message list.
+    """
+    token_count = _estimate_messages_tokens(messages)
+    context_limit = get_context_limit(model)
+    usage_ratio = token_count / context_limit
+
+    logger.info(
+        "token_budget_check token_count=%d context_limit=%d usage_ratio=%.1f%% model=%s",
+        token_count, context_limit, usage_ratio * 100, model,
+    )
+
+    if usage_ratio < COMPACTION_THRESHOLD:
+        return messages
+
+    # Determine target based on severity
+    if usage_ratio >= HARD_CEILING:
+        target_tokens = int(context_limit * 0.60)
+        logger.warning(
+            "token_budget_hard_ceiling token_count=%d limit=%d — aggressive compaction to %d",
+            token_count, context_limit, target_tokens,
+        )
+    else:
+        target_tokens = int(context_limit * 0.70)
+        logger.info(
+            "token_budget_proactive_compaction token_count=%d limit=%d — compacting to %d",
+            token_count, context_limit, target_tokens,
+        )
+
+    # Simple compaction: keep system message + most recent messages, drop middle
+    if not messages:
+        return messages
+
+    # Always keep the system message (index 0) and the last 4 messages
+    keep_tail = 4
+    if len(messages) <= keep_tail + 1:
+        return messages  # too few messages to compact
+
+    system_msg = messages[0] if messages[0].get("role") == "system" else None
+    start = 1 if system_msg else 0
+    tail = messages[-keep_tail:]
+
+    # Drop messages from the middle until we're under target
+    middle = messages[start:-keep_tail]
+    compacted_middle: list[dict] = []
+    current_estimate = (
+        _estimate_messages_tokens([system_msg] if system_msg else [])
+        + _estimate_messages_tokens(tail)
+    )
+
+    # Walk middle from newest to oldest, keeping as many as fit
+    for msg in reversed(middle):
+        msg_tokens = _estimate_messages_tokens([msg])
+        if current_estimate + msg_tokens <= target_tokens:
+            compacted_middle.insert(0, msg)
+            current_estimate += msg_tokens
+
+    result = []
+    if system_msg:
+        result.append(system_msg)
+    result.extend(compacted_middle)
+    result.extend(tail)
+
+    tokens_after = _estimate_messages_tokens(result)
+    logger.info(
+        "token_budget_compacted before=%d after=%d dropped=%d messages",
+        token_count, tokens_after, len(messages) - len(result),
+    )
+
+    return result
 
 
 async def agent_turn(
@@ -313,6 +393,9 @@ async def agent_turn(
         )
         raw_defs = registry.get_definitions_for(selected_tool_names)
         tool_defs = [compact_tool_schema(td) for td in raw_defs]
+
+        # Doc 090: Pre-call token budget check
+        messages = await _check_token_budget(messages, model_string)
 
         # Use Instructor for validated tool calls
         pydantic_tools = get_pydantic_definitions(selected_tool_names)
