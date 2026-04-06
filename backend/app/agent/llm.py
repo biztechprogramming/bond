@@ -18,6 +18,32 @@ from backend.app.core.vault import Vault
 
 logger = logging.getLogger("bond.agent.llm")
 
+# ---------------------------------------------------------------------------
+# Model context window limits (Doc 090: Token-Aware Context Management)
+# ---------------------------------------------------------------------------
+
+MODEL_CONTEXT_LIMITS: dict[str, int] = {
+    "claude-sonnet-4-20250514": 200_000,
+    "claude-3-5-sonnet-20241022": 200_000,
+    "claude-3-haiku-20240307": 200_000,
+    "gpt-4o": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4-turbo": 128_000,
+    "deepseek-chat": 64_000,
+}
+
+COMPACTION_THRESHOLD = 0.80  # 80% — trigger proactive compaction
+HARD_CEILING = 0.95  # 95% — never send more than this
+
+
+def get_context_limit(model: str) -> int:
+    """Return the context window size for a model, defaulting conservatively."""
+    for key, limit in MODEL_CONTEXT_LIMITS.items():
+        if key in model:
+            return limit
+    return 64_000  # conservative default for unknown models
+
+
 # Load provider config
 _PROVIDERS_PATH = Path(__file__).parent / "providers.yaml"
 
@@ -167,6 +193,10 @@ async def chat_completion(
         )
         return _stream_response(response)
     else:
+        # Doc 090: estimate input tokens for logging
+        from backend.app.agent.context_pipeline import _estimate_messages_tokens
+        input_tokens = _estimate_messages_tokens(messages)
+
         response = await litellm.acompletion(
             model=model_string,
             messages=messages,
@@ -174,6 +204,16 @@ async def chat_completion(
             max_tokens=max_tokens,
             **extra_kwargs,
         )
+
+        # Doc 090: log token counts
+        output_tokens = 0
+        if hasattr(response, "usage") and response.usage:
+            output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+        logger.info(
+            "llm_call_complete model=%s input_tokens=%d output_tokens=%d total_tokens=%d",
+            model_string, input_tokens, output_tokens, input_tokens + output_tokens,
+        )
+
         return response.choices[0].message.content
 
 async def _stream_response(response) -> AsyncIterator[str]:
