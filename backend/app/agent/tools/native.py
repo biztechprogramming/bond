@@ -19,7 +19,7 @@ from typing import Any
 import aiosqlite
 from ulid import ULID
 
-from .file_buffer import _manager as _file_buffer_manager, track_file_read
+from .file_buffer import _manager as _file_buffer_manager, track_file_read, _sanitize_content
 from .read_state import (
     get_read_state,
     estimate_tokens,
@@ -300,6 +300,7 @@ async def handle_file_write(
     # new files be created relative to cwd as before.
     path = _resolve_path(path_str)
     try:
+        file_content = _sanitize_content(file_content)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(file_content)
         get_read_state().invalidate(str(path))
@@ -342,6 +343,7 @@ async def handle_file_edit(
             if count > 1:
                 return {"error": f"Edit {i}: old_text matches {count} times (ambiguous, must match exactly once)"}
 
+            new_text = _sanitize_content(new_text)
             content = content.replace(old_text, new_text, 1)
 
         path.write_text(content)

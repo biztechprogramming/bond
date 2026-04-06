@@ -10,6 +10,7 @@ from backend.app.agent.tools.file_buffer import (
     FileBuffer,
     _find_line,
     _normalize_ws,
+    _sanitize_content,
     handle_file_smart_edit,
     _manager,
 )
@@ -249,6 +250,57 @@ class TestSmartEditWhitespaceIntegration:
             assert "Name" in result.get("after_edit", "")
         finally:
             self._cleanup(path)
+
+# ---------------------------------------------------------------------------
+# _sanitize_content
+# ---------------------------------------------------------------------------
+
+class TestSanitizeContent:
+    """Tests for invisible Unicode character stripping."""
+
+    def test_clean_content_unchanged(self):
+        text = "def hello():\n    return 42\n"
+        assert _sanitize_content(text) == text
+
+    def test_strips_zero_width_space(self):
+        text = "def\u200b hello():\n    return 42\n"
+        assert _sanitize_content(text) == "def hello():\n    return 42\n"
+
+    def test_strips_zero_width_non_joiner(self):
+        text = "import\u200c os\n"
+        assert _sanitize_content(text) == "import os\n"
+
+    def test_strips_zero_width_joiner(self):
+        text = "x\u200d = 1\n"
+        assert _sanitize_content(text) == "x = 1\n"
+
+    def test_strips_bom(self):
+        text = "\ufeffimport sys\n"
+        assert _sanitize_content(text) == "import sys\n"
+
+    def test_strips_word_joiner(self):
+        text = "hello\u2060world\n"
+        assert _sanitize_content(text) == "helloworld\n"
+
+    def test_strips_soft_hyphen(self):
+        text = "some\u00adthing\n"
+        assert _sanitize_content(text) == "something\n"
+
+    def test_strips_multiple_different_chars(self):
+        text = "\ufeffdef\u200b foo\u200c():\u200d\n"
+        assert _sanitize_content(text) == "def foo():\n"
+
+    def test_empty_string(self):
+        assert _sanitize_content("") == ""
+
+    def test_preserves_normal_unicode(self):
+        text = "# Comment with émojis 🎉 and ñ\n"
+        assert _sanitize_content(text) == text
+
+    def test_preserves_tabs_and_whitespace(self):
+        text = "\tdef foo():\n\t\treturn True\n"
+        assert _sanitize_content(text) == text
+
 
     def test_search_not_found_returns_error(self):
         content = "line1\nline2\nline3\n"
