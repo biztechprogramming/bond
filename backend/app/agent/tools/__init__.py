@@ -28,6 +28,11 @@ class ToolRegistry:
         """Get the handler for a tool name."""
         return self._handlers.get(name)
 
+    def get_schema(self, name: str) -> type | None:
+        """Get the Pydantic input schema for a tool (Design Doc 094)."""
+        from .tool_schemas import TOOL_INPUT_SCHEMAS
+        return TOOL_INPUT_SCHEMAS.get(name)
+
     async def execute(
         self,
         name: str,

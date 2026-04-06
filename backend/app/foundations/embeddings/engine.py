@@ -18,6 +18,10 @@ from .voyage import VoyageAPIProvider
 
 logger = logging.getLogger(__name__)
 
+# Models that only work locally — not available via the Voyage REST API.
+# When auto mode has a Voyage key, these must use the local provider.
+_LOCAL_ONLY_MODELS = {"voyage-4-nano"}
+
 
 class EmbeddingConfigError(RuntimeError):
     """Raised when embedding settings are missing or invalid."""
@@ -30,7 +34,8 @@ class EmbeddingEngine:
       - ``local``  → LocalEmbeddingProvider
       - ``api``    → VoyageAPIProvider (requires Voyage key)
       - ``gemini`` → GeminiAPIProvider (requires Gemini key)
-      - ``auto``   → Voyage if key present, else Gemini if key present, else local
+      - ``auto``   → Voyage if key present *and* model is API-compatible,
+                      else Gemini if key present, else local
 
     Missing required keys raise ``EmbeddingConfigError`` — no silent fallbacks.
     """
@@ -71,6 +76,12 @@ class EmbeddingEngine:
             )
 
         elif execution_mode == "api":
+            if model_name in _LOCAL_ONLY_MODELS:
+                raise EmbeddingConfigError(
+                    f"Model '{model_name}' is local-only and cannot be used with "
+                    "execution_mode='api'. Switch to a Voyage API model "
+                    "(e.g. voyage-4-lite) or set execution_mode to 'local'."
+                )
             if not voyage_key:
                 raise EmbeddingConfigError(
                     "execution_mode is 'api' but no Voyage API key is configured. "
@@ -97,7 +108,7 @@ class EmbeddingEngine:
             )
 
         elif execution_mode == "auto":
-            if voyage_key:
+            if voyage_key and model_name not in _LOCAL_ONLY_MODELS:
                 logger.info("Auto: using Voyage API embedding provider (model=%s, dim=%d)", model_name, dimension)
                 self._provider = VoyageAPIProvider(
                     model_name=model_name,
@@ -112,7 +123,14 @@ class EmbeddingEngine:
                     api_key=gemini_key,
                 )
             else:
-                logger.info("Auto: no API keys configured, using local embedding provider (model=%s, dim=%d)", model_name, dimension)
+                if model_name in _LOCAL_ONLY_MODELS and voyage_key:
+                    logger.info(
+                        "Auto: model %s is local-only — using local provider "
+                        "despite Voyage key being present (dim=%d)",
+                        model_name, dimension,
+                    )
+                else:
+                    logger.info("Auto: no API keys configured, using local embedding provider (model=%s, dim=%d)", model_name, dimension)
                 self._provider = LocalEmbeddingProvider(
                     model_name=model_name,
                     dimension=dimension,
