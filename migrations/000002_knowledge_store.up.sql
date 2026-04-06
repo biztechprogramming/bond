@@ -24,7 +24,7 @@ CREATE TABLE embedding_configs (
 -- Voyage 4 family (shared embedding space — all interchangeable)
 INSERT INTO embedding_configs (model_name, family, provider, max_dimension, supported_dimensions, supports_local, supports_api, is_default)
 VALUES
-    ('voyage-4-nano',  'voyage4', 'voyage', 2048, '[256,512,1024,2048]', 1, 1, 1),
+    ('voyage-4-nano',  'voyage4', 'voyage', 2048, '[256,512,1024,2048]', 1, 0, 1),
     ('voyage-4-lite',  'voyage4', 'voyage', 2048, '[256,512,1024,2048]', 0, 1, 0),
     ('voyage-4',       'voyage4', 'voyage', 2048, '[256,512,1024,2048]', 0, 1, 0),
     ('voyage-4-large', 'voyage4', 'voyage', 2048, '[256,512,1024,2048]', 0, 1, 0);

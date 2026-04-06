@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from backend.app.agent.tools.tool_result import ToolResult, ToolTimer
+from backend.app.agent.tools.tool_result import ToolResult, ToolTimer, ValidationResult
 
 logger = logging.getLogger("bond.agent.worker")
 
@@ -464,6 +464,37 @@ def _summarize_args(args: dict) -> str:
     return str(summary)
 
 
+def validate_tool_input(tool_name: str, arguments: dict) -> ValidationResult:
+    """Validate tool arguments against the Pydantic schema (Design Doc 094).
+
+    Returns ValidationResult.ok() if valid or no schema exists.
+    Returns ValidationResult.fail() with specific error messages if invalid.
+    """
+    from backend.app.agent.tools.tool_schemas import TOOL_INPUT_SCHEMAS
+    from pydantic import ValidationError
+
+    schema = TOOL_INPUT_SCHEMAS.get(tool_name)
+    if schema is None:
+        # No schema defined for this tool — allow execution
+        logger.debug("no_input_schema tool=%s", tool_name)
+        return ValidationResult.ok()
+
+    try:
+        schema(**arguments)
+        return ValidationResult.ok()
+    except ValidationError as e:
+        errors = []
+        for err in e.errors():
+            field_path = " → ".join(str(loc) for loc in err["loc"])
+            errors.append(f"{field_path}: {err['msg']}")
+
+        logger.warning(
+            "tool_input_validation_failed tool=%s errors=%s args_keys=%s",
+            tool_name, errors, list(arguments.keys()),
+        )
+        return ValidationResult.fail(errors)
+
+
 async def execute_tool_call(
     tool_call: Any,
     tool_name: str,
@@ -485,6 +516,13 @@ async def execute_tool_call(
     """
     if tool_name not in agent_tools:
         return {"error": f"Tool '{tool_name}' is not enabled."}, 0.0
+
+    # Validate inputs BEFORE execution (Design Doc 094)
+    validation = validate_tool_input(tool_name, tool_args)
+    if not validation.valid:
+        error_msg = validation.to_message_content(tool_name)
+        logger.warning("tool_input_rejected tool=%s", tool_name)
+        return {"error": error_msg}, 0.0
 
     # Use precomputed parallel result if available
     if tool_call.id in parallel_precomputed:
