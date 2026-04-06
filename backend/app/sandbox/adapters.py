@@ -432,9 +432,15 @@ class LocalContainerAdapter:
         # Agent config file
         cmd.extend(["-v", f"{config_path}:/config/agent.json:ro"])
 
-        # Vault data
+        # Shared images directory — mount the bond-data volume's images dir
+        # into the agent so generated images are accessible to the gateway.
         from backend.app.config import get_settings
         bond_home = Path(get_settings().bond_home)
+        shared_images_dir = bond_home / "images"
+        os.makedirs(str(shared_images_dir), exist_ok=True)
+        cmd.extend(["-v", f"{shared_images_dir}:/data/images:rw"])
+
+        # Vault data
         vault_data_dir = bond_home / "data"
         if vault_data_dir.exists():
             cmd.extend(["-v", f"{vault_data_dir}:/bond-home/data:rw"])

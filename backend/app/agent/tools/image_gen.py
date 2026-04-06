@@ -96,6 +96,9 @@ async def handle_generate_image(arguments: dict, context: dict) -> dict:
         slug = re.sub(r"[^a-z0-9]+", "-", prompt.lower())[:40]
         filename = slug.rstrip("-") or "image"
 
+    # Only append .png if the filename doesn't already have an image extension
+    has_image_ext = bool(re.search(r"\.(png|jpe?g|webp|gif|bmp)$", filename, flags=re.IGNORECASE))
+
     # Dispatch to provider adapter
     adapter_name = PROVIDER_ADAPTERS.get(provider)
     if not adapter_name:
@@ -119,7 +122,8 @@ async def handle_generate_image(arguments: dict, context: dict) -> dict:
     saved_paths = []
     for i, image_data in enumerate(results):
         suffix = f"_{i + 1}" if count > 1 else ""
-        output_path = output_dir / f"{filename}{suffix}.png"
+        ext = "" if has_image_ext else ".png"
+        output_path = output_dir / f"{filename}{suffix}{ext}"
 
         if isinstance(image_data, bytes):
             output_path.write_bytes(image_data)
