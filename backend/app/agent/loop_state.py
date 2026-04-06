@@ -8,6 +8,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.tool_result import ToolResult
+
+
+@dataclass
+class ToolMetrics:
+    """Track tool execution metrics across the loop (Doc 092)."""
+    total_calls: int = 0
+    successful_calls: int = 0
+    failed_calls: int = 0
+    timeout_calls: int = 0
+    total_duration_ms: int = 0
+    slowest_tool: str = ""
+    slowest_duration_ms: int = 0
+
+    def record(self, result: ToolResult):
+        self.total_calls += 1
+        self.total_duration_ms += result.duration_ms
+        if result.success:
+            self.successful_calls += 1
+        elif result.error and "timed out" in result.error:
+            self.timeout_calls += 1
+        else:
+            self.failed_calls += 1
+        if result.duration_ms > self.slowest_duration_ms:
+            self.slowest_duration_ms = result.duration_ms
+            self.slowest_tool = result.tool_name
+
 
 @dataclass
 class LoopState:
@@ -19,81 +49,37 @@ class LoopState:
     continuation_attempts: int = 0
     MAX_CONTINUATIONS: int = 3
 
-    # Repetition detection
-    REPETITION_THRESHOLD: int = 2
-    recent_tool_calls: list[tuple[str, str]] = field(default_factory=list)
+    # Iteration tracking
+    max_iterations: int = 100
+    adaptive_budget: int = 100
+    iteration: int = 0
 
-    # Name-only repetition detection (catches varied args for same tool)
-    NAME_ONLY_THRESHOLD: int = 5
-    NAME_ONLY_EXEMPT_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
-        "file_read", "file_search", "shell_ls", "shell_find",
-        "shell_wc", "shell_tree", "git_info", "project_search", "file_list",
-    }))
-    recent_tool_names: list[str] = field(default_factory=list)
+    # Budget escalation tracking
+    budget_warned_65: bool = False
+    budget_warned_80: bool = False
+    budget_restricted: bool = False
+    restricted_tools: list[str] = field(default_factory=list)
 
-    # Cyclical loop detection
-    CYCLE_WINDOW: int = 30
-    CYCLE_MIN_PERIOD: int = 2
-    CYCLE_MAX_PERIOD: int = 8
-    CYCLE_REPEATS: int = 3
-    loop_intervention_count: int = 0
-    LOOP_MAX_INTERVENTIONS: int = 2
-
-    # Empty/failed result tracking
-    consecutive_empty_results: int = 0
-    EMPTY_RESULT_THRESHOLD: int = 2
-
-    # Pre-turn message tracking
+    # Message tracking
     preturn_msg_count: int = 0
     cache_bp2_index: int = 0
 
-    # Tool classification sets
-    INFO_GATHERING_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
-        "file_read", "search_memory",
-        "web_search", "web_read", "work_plan",
-        "shell_find", "shell_ls", "file_search", "git_info",
-        "shell_wc", "shell_tree", "project_search", "file_list",
-    }))
-    CONSEQUENTIAL_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
-        "file_write", "file_edit", "code_execute", "respond", "memory_save",
-    }))
+    # Loop detection
+    consecutive_tool_only: int = 0
+    last_tool_names: list[str] = field(default_factory=list)
+    last_tool_args_hash: str = ""
 
-    # Phase 1B: Batching nudge tracking
-    consecutive_single_info_iterations: int = 0
+    # Metrics (Doc 092)
+    tool_metrics: ToolMetrics = field(default_factory=ToolMetrics)
 
-    # Coding-task detection
-    CODING_TOOLS: frozenset[str] = field(default_factory=lambda: frozenset({
-        "file_edit", "file_write", "work_plan", "coding_agent",
-    }))
-    is_coding_task: bool = False
-
-    # Phase 2A: Adaptive iteration budget
-    adaptive_budget_set: bool = False
-    adaptive_budget: int = 100
-
-    # Phase 2B: Early termination for read-only tasks
-    has_made_consequential_call: bool = False
-
-    # General counters
-    tool_calls_made: int = 0
-    max_iterations: int = 100
-
-    # Tool-call density warning
-    _tool_density_warned: bool = False
-
-    # Lifecycle phase tracking (Doc 024)
-    lifecycle_turn_number: int = 0
-    lifecycle_injected: bool = False
-
-    # Token-aware context management (Doc 090)
+    # Compaction tracking (Doc 091)
     tokens_compacted: int = 0
     compaction_events: int = 0
     peak_token_count: int = 0
 
-    # Overflow recovery (Doc 091)
+    # Overflow recovery tracking (Doc 091)
     overflow_events: int = 0
     overflow_recoveries: int = 0
-    truncation_retries: int = 0
     recovery_tiers_used: list[str] = field(default_factory=list)
 
     def record_compaction(self, tokens_before: int, tokens_after: int):
