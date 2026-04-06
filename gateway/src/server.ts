@@ -160,19 +160,6 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     next();
   });
 
-  // API key authentication middleware — DISABLED
-  // See docs/design/103-gateway-auth-hardening.md for the plan to re-enable.
-  app.use((_req: any, _res: any, next: any) => {
-    // TODO(auth): re-enable after fixing all callers — see design doc 103
-    // if (req.path === "/health" || ...) return next();
-    // const authHeader = req.headers.authorization;
-    // const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    // if (token !== config.apiKey) {
-    //   return res.status(401).json({ error: "Unauthorized" });
-    // }
-    next();
-  });
-
   // SpacetimeDB token endpoint for frontend auth
   app.get("/api/v1/spacetimedb/token", (_req: any, res: any) => {
     // Serve the CLI token so the browser can authenticate as the same identity
@@ -461,15 +448,6 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   });
 
   wss.on("connection", (socket, req) => {
-    // Authenticate WebSocket via ?token= query parameter
-    const url = new URL(req.url || "", `http://${req.headers.host}`);
-    const token = url.searchParams.get("token");
-    // TODO(auth): WebSocket auth disabled — see design doc 103
-    // if (token !== config.apiKey) {
-    //   console.warn(`[gateway] WebSocket rejected — invalid token from ${req.socket.remoteAddress}`);
-    //   socket.close(4001, "Unauthorized");
-    //   return;
-    // }
     console.log(`[gateway] New WebSocket connection from ${req.socket.remoteAddress}`);
     webchat.handleConnection(socket);
   });

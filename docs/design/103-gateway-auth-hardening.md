@@ -171,6 +171,22 @@ file doesn't exist. The frontend never auto-generates — it just returns empty.
 
 ---
 
+## Items to Re-Enable
+
+When re-enabling auth, ALL of the following must be uncommented/restored:
+
+| # | File | Lines | What was disabled | Code snippet |
+|---|------|-------|-------------------|-------------|
+| 1 | `gateway/src/server.ts` | ~163–174 | HTTP middleware: checks `Bearer` token against `config.apiKey` for all routes | `if (token !== config.apiKey) { return res.status(401).json({ error: "Unauthorized" }); }` |
+| 2 | `gateway/src/server.ts` | ~467–472 | WebSocket auth: checks `?token=` query param against `config.apiKey` on WS upgrade | `if (token !== config.apiKey) { socket.close(4001, "Unauthorized"); return; }` |
+| 3 | `backend/app/main.py` | ~141–142 | FastAPI `check_api_key` middleware: checks `Bearer` token against `BOND_API_KEY` | `if token != BOND_API_KEY: return JSONResponse(status_code=401, ...)` |
+
+All three are marked with `TODO(auth)` comments referencing this design doc (103).
+
+**Note (2026-04-06):** Persistent 401 errors from the worker (`persistence_client → gateway /api/v1/tool-logs`) were reported even after the above auth checks were disabled in source. The exact error string `"Unauthorized — invalid or missing API key"` was not found in the current codebase, suggesting the running gateway process was using a stale `dist/` build from before the auth-disable commits. **Ensure `npm run build` is run after any source changes and the gateway process is restarted.** The `dist/` directory was verified to match source as of this commit.
+
+---
+
 ## Files Changed in This Disable
 
 | File | Change |
