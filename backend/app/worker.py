@@ -1488,6 +1488,22 @@ async def _run_agent_loop(
                 # Track tool names for outcome
                 outcome.track_tool(tool_name)
 
+                # Image generation result SSE
+                if (tool_name == "generate_image"
+                    and isinstance(result, dict)
+                    and result.get("paths")
+                    and event_queue is not None):
+                    await event_queue.put(_sse_event("image_result", {
+                        "paths": result.get("paths", []),
+                        "urls": result.get("urls", []),
+                        "prompt": result.get("prompt", ""),
+                        "revised_prompt": result.get("revised_prompt"),
+                        "provider": result.get("provider", "openai"),
+                        "model": result.get("model", "unknown"),
+                        "size": result.get("size", "1024x1024"),
+                        "cost": result.get("cost"),
+                    }))
+
                 # Coding agent started SSE
                 if (tool_name == "coding_agent"
                     and isinstance(result, dict)
