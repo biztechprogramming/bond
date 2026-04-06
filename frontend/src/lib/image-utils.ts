@@ -24,7 +24,7 @@ export const IMAGE_COSTS: Record<string, Record<string, number>> = {
 };
 
 export function rewriteImageSrc(src: string): string {
-  if (src.startsWith("/workspace/") || src.startsWith(".bond/images/")) {
+  if (src.startsWith("/workspace/") || src.startsWith(".bond/images/") || src.startsWith("/data/images/")) {
     return `/api/v1/workspace-files/${encodeURIComponent(src)}`;
   }
   return src;

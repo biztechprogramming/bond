@@ -387,6 +387,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     const allowedRoots = [
       resolve(process.env.WORKSPACE_DIR || "/workspace"),
       resolve(join(process.env.HOME || "/root", ".bond", "images")),
+      resolve("/data/images"),
     ];
 
     let fullPath: string;
