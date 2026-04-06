@@ -1,6 +1,6 @@
 # Design Doc 092: Structured Tool Results with Error Feedback
 
-**Status:** Proposed  
+**Status:** Implemented
 **Date:** 2026-04-02  
 **Triggered by:** Comparison of Bond agent loop vs Claude Code source — stability improvements
 

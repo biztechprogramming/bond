@@ -8,6 +8,36 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.tool_result import ToolResult
+
+
+@dataclass
+class ToolMetrics:
+    """Track tool execution metrics across the loop (Doc 092)."""
+    total_calls: int = 0
+    successful_calls: int = 0
+    failed_calls: int = 0
+    timeout_calls: int = 0
+    total_duration_ms: int = 0
+    slowest_tool: str = ""
+    slowest_duration_ms: int = 0
+
+    def record(self, result: ToolResult):
+        self.total_calls += 1
+        self.total_duration_ms += result.duration_ms
+        if result.success:
+            self.successful_calls += 1
+        elif result.error and "timed out" in result.error:
+            self.timeout_calls += 1
+        else:
+            self.failed_calls += 1
+        if result.duration_ms > self.slowest_duration_ms:
+            self.slowest_duration_ms = result.duration_ms
+            self.slowest_tool = result.tool_name
+
 
 @dataclass
 class LoopState:
@@ -89,6 +119,9 @@ class LoopState:
     tokens_compacted: int = 0
     compaction_events: int = 0
     peak_token_count: int = 0
+
+    # Tool execution metrics (Doc 092)
+    tool_metrics: ToolMetrics = field(default_factory=ToolMetrics)
 
     # Overflow recovery (Doc 091)
     overflow_events: int = 0

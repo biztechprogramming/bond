@@ -15,7 +15,24 @@ import time
 from pathlib import Path
 from typing import Any
 
+from backend.app.agent.tools.tool_result import ToolResult, ToolTimer
+
 logger = logging.getLogger("bond.agent.worker")
+
+# Per-tool timeout limits in seconds (Doc 092)
+TOOL_TIMEOUTS: dict[str, int] = {
+    "code_execute": 60,
+    "shell_grep": 30,
+    "shell_find": 30,
+    "file_read": 10,
+    "file_write": 10,
+    "file_edit": 10,
+    "project_search": 30,
+    "coding_agent": 900,
+    "respond": 5,
+    "say": 5,
+}
+DEFAULT_TOOL_TIMEOUT = 30
 
 
 def handle_truncation(
@@ -438,6 +455,15 @@ def detect_empty_result(
     return None
 
 
+def _summarize_args(args: dict) -> str:
+    """Summarize tool arguments for logging (truncate long values)."""
+    summary = {}
+    for k, v in args.items():
+        s = str(v)
+        summary[k] = s[:100] + "..." if len(s) > 100 else s
+    return str(summary)
+
+
 async def execute_tool_call(
     tool_call: Any,
     tool_name: str,
@@ -451,9 +477,11 @@ async def execute_tool_call(
     conversation_id: str,
     event_queue: Any = None,
 ) -> tuple[dict, float]:
-    """Execute a single tool call, handling interrupts and parallel precomputation.
+    """Execute a single tool call with structured result handling (Doc 092).
 
-    Returns (result, duration).
+    Wraps execution with per-tool timeouts and structured error handling.
+    Returns (result, duration) — the raw dict result for backward compatibility.
+    The ToolResult is recorded on state.tool_metrics for observability.
     """
     if tool_name not in agent_tools:
         return {"error": f"Tool '{tool_name}' is not enabled."}, 0.0
@@ -464,37 +492,111 @@ async def execute_tool_call(
         logger.info("Using precomputed parallel result for %s (%.2fs)", tool_name, duration)
         return result, duration
 
-    start_ts = time.time()
-    tool_task = asyncio.create_task(
-        registry.execute(tool_name, tool_args, tool_context)
-    )
-    interrupt_task = asyncio.create_task(
-        interrupt_event.wait()
-    )
-    done, pending = await asyncio.wait(
-        {tool_task, interrupt_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for t in pending:
-        t.cancel()
+    timeout = TOOL_TIMEOUTS.get(tool_name, DEFAULT_TOOL_TIMEOUT)
+
+    with ToolTimer() as timer:
         try:
-            await t
-        except asyncio.CancelledError:
-            pass
+            tool_task = asyncio.create_task(
+                registry.execute(tool_name, tool_args, tool_context)
+            )
+            interrupt_task = asyncio.create_task(
+                interrupt_event.wait()
+            )
 
-    if tool_task in done:
-        result = tool_task.result()
+            # Apply per-tool timeout via asyncio.wait_for on the wait itself
+            try:
+                done, pending = await asyncio.wait_for(
+                    asyncio.wait(
+                        {tool_task, interrupt_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    ),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                # Cancel both tasks on timeout
+                tool_task.cancel()
+                interrupt_task.cancel()
+                try:
+                    await tool_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                try:
+                    await interrupt_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+                tool_result = ToolResult.from_timeout(tool_name, timeout)
+                logger.warning(
+                    "tool_timeout tool=%s timeout=%d args_summary=%s",
+                    tool_name, timeout, _summarize_args(tool_args),
+                )
+                # Record metrics
+                if hasattr(state, 'tool_metrics'):
+                    state.tool_metrics.record(tool_result)
+                return {"error": tool_result.error}, timer.duration_ms / 1000
+
+            # Cancel pending tasks
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+
+            if tool_task in done:
+                result = tool_task.result()
+            else:
+                logger.info("Tool %s interrupted by user", tool_name)
+                from backend.app.agent.tools.coding_agent import kill_coding_agent
+                await kill_coding_agent(state.agent_id)
+                result = {"error": "Tool execution interrupted by user"}
+                interrupt_event.clear()
+                if state.pending_messages:
+                    # Caller should handle injecting these
+                    pass
+
+        except Exception as e:
+            tool_result = ToolResult.from_error(
+                error=f"{type(e).__name__}: {e}",
+                tool_name=tool_name,
+                duration_ms=timer.duration_ms,
+            )
+            logger.error(
+                "tool_execution_error tool=%s error=%s error_type=%s duration_ms=%d",
+                tool_name, str(e), type(e).__name__, timer.duration_ms,
+            )
+            if hasattr(state, 'tool_metrics'):
+                state.tool_metrics.record(tool_result)
+            return {"error": tool_result.error}, timer.duration_ms / 1000
+
+    duration = timer.duration_ms / 1000
+
+    # Build ToolResult for metrics tracking
+    is_error = isinstance(result, dict) and ("error" in result)
+    if is_error:
+        tool_result = ToolResult.from_error(
+            error=str(result.get("error", "")),
+            tool_name=tool_name,
+            duration_ms=timer.duration_ms,
+        )
     else:
-        logger.info("Tool %s interrupted by user", tool_name)
-        from backend.app.agent.tools.coding_agent import kill_coding_agent
-        await kill_coding_agent(state.agent_id)
-        result = {"error": "Tool execution interrupted by user"}
-        interrupt_event.clear()
-        if state.pending_messages:
-            # Caller should handle injecting these
-            pass
+        output_str = str(result) if not isinstance(result, str) else result
+        tool_result = ToolResult.from_success(
+            output=output_str,
+            tool_name=tool_name,
+            duration_ms=timer.duration_ms,
+        )
 
-    duration = time.time() - start_ts
+    # Record metrics (Doc 092)
+    if hasattr(state, 'tool_metrics'):
+        state.tool_metrics.record(tool_result)
+
+    logger.info(
+        "tool_executed tool=%s success=%s duration_ms=%d output_length=%d truncated=%s",
+        tool_name, tool_result.success, tool_result.duration_ms,
+        len(tool_result.output), tool_result.truncated,
+    )
+
     return result, duration
 
 

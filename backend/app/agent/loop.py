@@ -24,6 +24,7 @@ from backend.app.agent.llm import (
 from backend.app.agent.context_pipeline import _estimate_messages_tokens
 from backend.app.agent.tools import build_registry
 from backend.app.agent.tools.definitions import get_pydantic_definitions
+from backend.app.agent.tools.tool_result import ToolResult, ToolTimer
 from backend.app.agent.tool_result_cache import ToolResultCache
 from backend.app.core.oauth import get_oauth_extra_headers
 
@@ -644,7 +645,18 @@ async def agent_turn(
                             formatted = session_cache.format_cache_hit(cached, iteration)
                             if formatted is not None:
                                 return tc, {"output": formatted}
-                    raw_result = await registry.execute(name, args, tool_context)
+                    # Doc 092: wrap with structured error handling
+                    with ToolTimer() as _t:
+                        try:
+                            raw_result = await registry.execute(name, args, tool_context)
+                        except Exception as _exc:
+                            _tr = ToolResult.from_error(
+                                error=f"{type(_exc).__name__}: {_exc}",
+                                tool_name=name,
+                                duration_ms=_t.duration_ms,
+                            )
+                            logger.error("tool_execution_error tool=%s error=%s", name, _exc)
+                            return tc, {"error": _tr.to_message_content()}
                     # Doc 065: store result and record mutations
                     if session_cache:
                         result_text = json.dumps(raw_result) if isinstance(raw_result, dict) else str(raw_result)
@@ -696,7 +708,18 @@ async def agent_turn(
                 if tool_name not in all_enabled_tools:
                     result = {"error": f"Tool '{tool_name}' is not enabled for this agent."}
                 else:
-                    result = await registry.execute(tool_name, tool_args, tool_context)
+                    # Doc 092: wrap with ToolResult for structured error handling
+                    with ToolTimer() as _timer:
+                        try:
+                            result = await registry.execute(tool_name, tool_args, tool_context)
+                        except Exception as _exc:
+                            _tool_result = ToolResult.from_error(
+                                error=f"{type(_exc).__name__}: {_exc}",
+                                tool_name=tool_name,
+                                duration_ms=_timer.duration_ms,
+                            )
+                            logger.error("tool_execution_error tool=%s error=%s", tool_name, _exc)
+                            result = {"error": _tool_result.to_message_content()}
 
                 # Doc 065: store result and record mutations
                 if session_cache:
@@ -711,10 +734,17 @@ async def agent_turn(
 
                     return result.get("message", "")
 
+                # Doc 092: Format tool result with structured error feedback
+                if isinstance(result, dict) and "error" in result and not result.get("_terminal"):
+                    _content = result["error"] if isinstance(result["error"], str) else json.dumps(result)
+                    logger.info("tool_failure_feedback tool=%s error=%s", tool_name, result.get("error"))
+                else:
+                    _content = json.dumps(result)
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": json.dumps(result),
+                    "content": _content,
                 })
         else:
             # Text response — return it
