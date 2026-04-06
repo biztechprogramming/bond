@@ -13,8 +13,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Always included regardless of heuristics
-ALWAYS_INCLUDE = {"respond", "say"}
+# Always included regardless of heuristics.
+# coding_agent is always available so the agent can delegate complex tasks
+# at any point — it should never be gated behind keyword heuristics.
+ALWAYS_INCLUDE = {"respond", "say", "coding_agent"}
 
 # Filesystem toolkit (8 tools) — always included as a group in coding/file contexts.
 # ~1,200 tokens total. Cheaper than one wasted iteration.
