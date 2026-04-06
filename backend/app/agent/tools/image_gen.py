@@ -56,8 +56,24 @@ async def handle_generate_image(arguments: dict, context: dict) -> dict:
     api_key: str | None = None
     if provider != "comfyui":
         try:
-            resolver = ApiKeyResolver(provider=provider, model=model or "")
-            api_key = await resolver.resolve_api_key(model or "")
+            # Build resolver from worker config if available in context,
+            # otherwise fall back to injected_keys from bond.json.
+            injected_keys: dict[str, str] = {}
+            provider_aliases: dict[str, str] = {}
+            litellm_prefixes: dict[str, str] = {}
+            if context:
+                cfg = context.get("config", {})
+                injected_keys = cfg.get("api_keys", {})
+                provider_aliases = cfg.get("provider_aliases", {})
+                litellm_prefixes = cfg.get("litellm_prefixes", {})
+            resolver = ApiKeyResolver(
+                injected_keys=injected_keys,
+                provider_aliases=provider_aliases,
+                litellm_prefixes=litellm_prefixes,
+            )
+            # Construct a model-like string so the resolver can identify the provider
+            resolve_model = model or f"{provider}/image-gen"
+            api_key = await resolver.resolve_api_key(resolve_model)
         except Exception as e:
             logger.warning("API key resolution failed for image provider %s: %s", provider, e)
 
@@ -142,17 +158,33 @@ async def _generate_openai(
 
     model = model or "gpt-image-1"
 
-    response = await litellm.aimage_generation(
-        model=f"openai/{model}",
-        prompt=prompt,
-        n=count,
-        size=size,
-        quality="standard",
-        response_format="b64_json",
-        api_key=api_key,
-    )
+    # gpt-image-1 does not support response_format through litellm's
+    # parameter validation.  Use drop_params so litellm silently strips
+    # any unsupported keys instead of raising UnsupportedParamsError.
+    prev_drop = getattr(litellm, "drop_params", False)
+    litellm.drop_params = True
+    try:
+        response = await litellm.aimage_generation(
+            model=f"openai/{model}",
+            prompt=prompt,
+            n=count,
+            size=size,
+            quality="standard",
+            api_key=api_key,
+        )
+    finally:
+        litellm.drop_params = prev_drop
 
-    return [item.b64_json for item in response.data]
+    # Extract image data — prefer b64_json, fall back to url
+    images: list[bytes | str] = []
+    for item in response.data:
+        if hasattr(item, "b64_json") and item.b64_json:
+            images.append(item.b64_json)
+        elif hasattr(item, "url") and item.url:
+            images.append(item.url)
+        else:
+            logger.warning("Image response item has no b64_json or url: %s", item)
+    return images
 
 
 async def _generate_replicate(

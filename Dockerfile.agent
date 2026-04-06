@@ -120,7 +120,7 @@ RUN chmod +x /opt/opensandbox/execd
 # Note: /data and /workspace ownership is handled at runtime in the
 # entrypoint via group membership (not chown) to avoid changing
 # ownership on host-mounted volumes.
-RUN mkdir -p /data /data/shared /data/images /config /workspace /opt/opensandbox
+RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox
 
 # Bond library is mounted at /bond at runtime (read-only)
 # Worker is invoked as: python -m backend.app.worker --port 18791
