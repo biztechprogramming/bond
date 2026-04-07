@@ -41,13 +41,18 @@ async def lifespan(app: FastAPI):
     configure_logging()
     await init_db()
 
-    # Seed embedding models into SpacetimeDB if empty
+    # Seed embedding models and default settings into SpacetimeDB if empty
     from backend.app.services.settings_service import SettingsService
     try:
-        await SettingsService().seed_embedding_models()
+        svc = SettingsService()
+        await svc.seed_embedding_models()
+        # Seed embedding settings (embedding.model, embedding.output_dimension,
+        # embedding.execution_mode) into SpacetimeDB so the worker container can
+        # read them on first boot — get_embedding_current() inserts missing defaults.
+        await svc.get_embedding_current()
     except Exception as e:
         import logging as _log
-        _log.getLogger("bond.startup").error("Failed to seed embedding models — app may be broken: %s", e, exc_info=True)
+        _log.getLogger("bond.startup").error("Failed to seed embedding models/settings — app may be broken: %s", e, exc_info=True)
         raise
 
     # Background job scheduler - using SpacetimeDB
