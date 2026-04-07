@@ -190,23 +190,26 @@ class SettingsService:
         rows = await self._stdb.query(
             "SELECT model_name, family, provider, max_dimension, "
             "supported_dimensions, supports_local, supports_api, is_default "
-            "FROM embedding_models ORDER BY family, model_name"
+            "FROM embedding_models"
         )
         if not rows:
             logger.warning("No embedding models found in SpacetimeDB — was seed_embedding_models() called?")
-        return [
-            EmbeddingModel(
-                model_name=r["model_name"],
-                family=r["family"],
-                provider=r["provider"],
-                max_dimension=r["max_dimension"],
-                supported_dimensions=json.loads(r["supported_dimensions"]),
-                supports_local=bool(r["supports_local"]),
-                supports_api=bool(r["supports_api"]),
-                is_default=bool(r["is_default"]),
-            )
-            for r in rows
-        ]
+        return sorted(
+            [
+                EmbeddingModel(
+                    model_name=r["model_name"],
+                    family=r["family"],
+                    provider=r["provider"],
+                    max_dimension=r["max_dimension"],
+                    supported_dimensions=json.loads(r["supported_dimensions"]),
+                    supports_local=bool(r["supports_local"]),
+                    supports_api=bool(r["supports_api"]),
+                    is_default=bool(r["is_default"]),
+                )
+                for r in rows
+            ],
+            key=lambda m: (m.family, m.model_name),
+        )
 
     async def get_embedding_current(self) -> EmbeddingConfig:
         """Return the active embedding configuration, seeding defaults if needed."""

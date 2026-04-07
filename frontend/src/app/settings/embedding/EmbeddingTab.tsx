@@ -25,17 +25,6 @@ interface EmbeddingCurrent {
   has_gemini_key: boolean;
 }
 
-const FALLBACK_MODELS: EmbeddingModel[] = [
-  { model_name: "voyage-4-nano", family: "voyage4", provider: "voyage", max_dimension: 2048, supported_dimensions: [256, 512, 1024, 2048], supports_local: true, supports_api: false, is_default: true },
-  { model_name: "voyage-4-lite", family: "voyage4", provider: "voyage", max_dimension: 2048, supported_dimensions: [256, 512, 1024, 2048], supports_local: false, supports_api: true, is_default: false },
-  { model_name: "voyage-4", family: "voyage4", provider: "voyage", max_dimension: 2048, supported_dimensions: [256, 512, 1024, 2048], supports_local: false, supports_api: true, is_default: false },
-  { model_name: "voyage-4-large", family: "voyage4", provider: "voyage", max_dimension: 2048, supported_dimensions: [256, 512, 1024, 2048], supports_local: false, supports_api: true, is_default: false },
-  { model_name: "Qwen3-Embedding-0.6B", family: "qwen3", provider: "huggingface", max_dimension: 1024, supported_dimensions: [256, 512, 1024], supports_local: true, supports_api: false, is_default: false },
-  { model_name: "Qwen3-Embedding-4B", family: "qwen3", provider: "huggingface", max_dimension: 2560, supported_dimensions: [256, 512, 1024, 2560], supports_local: true, supports_api: false, is_default: false },
-  { model_name: "Qwen3-Embedding-8B", family: "qwen3", provider: "huggingface", max_dimension: 4096, supported_dimensions: [256, 512, 1024, 4096], supports_local: true, supports_api: false, is_default: false },
-  { model_name: "gemini-embedding-001", family: "gemini", provider: "google", max_dimension: 768, supported_dimensions: [768], supports_local: false, supports_api: true, is_default: false },
-];
-
 export default function EmbeddingTab() {
   const [models, setModels] = useState<EmbeddingModel[]>([]);
   const [current, setCurrent] = useState<EmbeddingCurrent | null>(null);
@@ -54,7 +43,6 @@ export default function EmbeddingTab() {
         modelsData = await modelsRes.json();
       }
     } catch { /* ignore */ }
-    if (!modelsData.length) modelsData = FALLBACK_MODELS;
     setModels(modelsData);
 
     try {
