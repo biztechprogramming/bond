@@ -553,7 +553,7 @@ class TestEnsureRunning:
 
         health_check_count = 0
 
-        async def mock_health(url, agent_id, cid, timeout=30.0, interval=0.5):
+        async def mock_health(url, agent_id, cid, timeout=90.0, interval=0.5):
             nonlocal health_check_count
             health_check_count += 1
             if health_check_count == 1:
