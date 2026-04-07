@@ -309,6 +309,62 @@ async def _llm_call_with_overflow_recovery(
     raise last_error  # type: ignore[misc]
 
 
+def _inject_image_results(messages: list[dict], text_response: str) -> str:
+    """Append image generation results as JSON so the frontend can render them.
+
+    Scans recent tool results for successful generate_image calls and appends
+    the image data as a markdown JSON code block that extractImageResults() can parse.
+    """
+    # Find generate_image tool call IDs from the most recent assistant message
+    image_tool_call_ids: dict[str, dict] = {}
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            for tc in (msg.get("tool_calls") or []):
+                fn = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", None)
+                name = fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", None)
+                if name == "generate_image":
+                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                    # Extract size from tool arguments
+                    args_str = fn.get("arguments", "{}") if isinstance(fn, dict) else getattr(fn, "arguments", "{}")
+                    try:
+                        call_args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                    except (json.JSONDecodeError, TypeError):
+                        call_args = {}
+                    image_tool_call_ids[tc_id] = call_args
+            break  # Only check the most recent assistant message
+
+    if not image_tool_call_ids:
+        return text_response
+
+    # Find matching tool results
+    for msg in messages:
+        if msg.get("role") != "tool":
+            continue
+        tc_id = msg.get("tool_call_id")
+        if tc_id not in image_tool_call_ids:
+            continue
+        try:
+            result = json.loads(msg.get("content", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not result.get("success") or not result.get("paths"):
+            continue
+
+        call_args = image_tool_call_ids[tc_id]
+        # Build the image result object the frontend expects
+        # Prefer gateway URLs over local paths
+        paths = result.get("urls") or result.get("paths", [])
+        image_data = {
+            "paths": paths,
+            "prompt": result.get("prompt", ""),
+            "provider": result.get("provider", "openai"),
+            "model": result.get("model", "unknown"),
+            "size": call_args.get("size", "1024x1024"),
+        }
+        text_response += "\n\n```json\n" + json.dumps(image_data) + "\n```"
+
+    return text_response
+
 async def agent_turn(
     user_message: str,
     history: list[dict[str, str]] | None = None,
@@ -771,8 +827,12 @@ async def agent_turn(
                 })
         else:
             # Text response — return it
-            
-            return message.content or ""
+            text_response = message.content or ""
+
+            # Inject image result JSON so the frontend can render generated images
+            text_response = _inject_image_results(messages, text_response)
+
+            return text_response
 
     
     logger.warning("Agent hit max iterations (%d)", max_iterations)
