@@ -92,16 +92,20 @@ def _find_line(
 ) -> tuple[int | None, int]:
     """Find the Nth occurrence of *pattern* in *lines*.
 
-    Strategy:
-      1. Compile as regex (case-insensitive) and test each line.
-      2. If that yields 0 matches, fall back to whitespace-normalized
-         literal containment check (also case-insensitive).
-      3. If the pattern contains newlines, join consecutive lines and
-         do a multi-line literal match (whitespace-normalized).
+    Strategy (single-line patterns):
+      1. Exact literal substring match (case-insensitive).
+      2. Whitespace-normalized literal containment (case-insensitive).
+      3. Regex match (case-insensitive) — last resort.
+
+    For multi-line patterns (containing newlines):
+      Whitespace-normalized literal match against consecutive line groups.
+
+    Each strategy only runs if the previous one did not find enough
+    matches to reach the requested occurrence.
 
     Args:
         lines: The buffer lines to search.
-        pattern: Regex or literal pattern to find.
+        pattern: Literal or regex pattern to find.
         occurrence: Which match to return (1 = first).
         start_from: 0-based index to start searching from.
         skip_first: If True, skip the line at start_from itself.
@@ -111,29 +115,43 @@ def _find_line(
     """
     end_idx = len(lines) if max_lines <= 0 else min(len(lines), start_from + max_lines)
 
-    # --- Strategy 1: single-line regex ---
     if "\n" not in pattern:
-        try:
-            rgx = re.compile(pattern, re.IGNORECASE)
-        except re.error:
-            rgx = re.compile(re.escape(pattern), re.IGNORECASE)
-
         match_count = 0
+
+        # --- Strategy 1: exact literal substring (case-insensitive) ---
+        pat_lower = pattern.lower()
         for i in range(start_from, end_idx):
             if skip_first and i == start_from:
                 continue
-            if rgx.search(lines[i]):
+            if pat_lower in lines[i].lower():
                 match_count += 1
                 if match_count == occurrence:
-                    return (i + 1, match_count)  # 1-indexed
+                    return (i + 1, match_count)
 
         # --- Strategy 2: whitespace-normalized literal fallback ---
-        if match_count == 0:
+        if match_count < occurrence:
             pat_norm = _normalize_ws(pattern).lower()
+            match_count = 0
             for i in range(start_from, end_idx):
                 if skip_first and i == start_from:
                     continue
                 if pat_norm in _normalize_ws(lines[i]).lower():
+                    match_count += 1
+                    if match_count == occurrence:
+                        return (i + 1, match_count)
+
+        # --- Strategy 3: regex (last resort) ---
+        if match_count < occurrence:
+            try:
+                rgx = re.compile(pattern, re.IGNORECASE)
+            except re.error:
+                return (None, match_count)
+
+            match_count = 0
+            for i in range(start_from, end_idx):
+                if skip_first and i == start_from:
+                    continue
+                if rgx.search(lines[i]):
                     match_count += 1
                     if match_count == occurrence:
                         return (i + 1, match_count)

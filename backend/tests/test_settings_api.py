@@ -22,7 +22,7 @@ async def _apply_sql(db: aiosqlite.Connection, sql_file: Path) -> None:
 
 @pytest.fixture()
 async def settings_client(_clear_settings_cache, mock_stdb):
-    """Client with fully migrated DB (settings + embedding_configs tables) and mocked SpacetimeDB."""
+    """Client with fully migrated DB and mocked SpacetimeDB (embedding models in SpacetimeDB)."""
     import backend.app.db.session as sess
 
     # Reset DB globals

@@ -197,6 +197,48 @@ class TestFindLineMultiLine:
 
 
 # ---------------------------------------------------------------------------
+# _find_line — Literal-first ordering
+# ---------------------------------------------------------------------------
+
+class TestFindLineLiteralFirst:
+    """Verify literal match is preferred over regex interpretation."""
+
+    def test_parentheses_in_pattern(self):
+        """Search for `getModel()` should match literally, not as regex group."""
+        lines = ["const x = getModel()", "const y = getmode", "const z = getModel()"]
+        result, count = _find_line(lines, "getModel()")
+        assert result == 1
+        assert count == 1
+
+    def test_brackets_in_pattern(self):
+        """Search for `items[0]` should match literally, not as char class."""
+        lines = ["val = items[0]", "val = items0"]
+        result, _ = _find_line(lines, "items[0]")
+        assert result == 1
+
+    def test_dot_in_pattern(self):
+        """Search for `config.name` should match literally, not `.` as any-char."""
+        lines = ["x = configXname", "x = config.name"]
+        result, _ = _find_line(lines, "config.name")
+        assert result == 2
+
+    def test_regex_still_works_as_fallback(self):
+        """Actual regex like `def \\w+\\(` should still work as Strategy 3."""
+        lines = ["def hello(x):", "class Foo:"]
+        result, _ = _find_line(lines, r"def \w+\(")
+        assert result == 1
+
+    def test_literal_beats_regex_false_match(self):
+        """Regex would match wrong line but literal matches the right one."""
+        # Pattern: "a.b" — regex matches "axb" (line 1), literal matches "a.b" (line 2)
+        lines = ["axb", "a.b"]
+        result, _ = _find_line(lines, "a.b")
+        # Literal strategy finds "a.b" at line 2 but also "axb" won't match literally
+        # Wait — "a.b" is literally in "a.b" (line 2) but NOT in "axb"
+        assert result == 2
+
+
+# ---------------------------------------------------------------------------
 # Integration: handle_file_smart_edit with whitespace flexibility
 # ---------------------------------------------------------------------------
 
