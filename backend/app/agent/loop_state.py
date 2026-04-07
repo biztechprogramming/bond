@@ -8,10 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from typing import ClassVar, TYPE_CHECKING
-
-from backend.app.agent.parallel_worker import ALWAYS_CONSEQUENTIAL
-from backend.app.agent.tool_selection import CODING_SIGNAL_TOOLS
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.tool_result import ToolResult
@@ -46,9 +43,6 @@ class ToolMetrics:
 class LoopState:
     """All mutable tracking state for a single agent loop execution."""
 
-    CONSEQUENTIAL_TOOLS: ClassVar[frozenset] = ALWAYS_CONSEQUENTIAL
-    CODING_TOOLS: ClassVar[frozenset] = CODING_SIGNAL_TOOLS
-
     # Adaptive max_tokens: start low (fast + cheap), escalate on truncation
     TOKEN_TIERS: list[int] = field(default_factory=lambda: [32768, 65536])
     current_tier: int = 0
@@ -74,11 +68,6 @@ class LoopState:
     consecutive_tool_only: int = 0
     last_tool_names: list[str] = field(default_factory=list)
     last_tool_args_hash: str = ""
-
-    # Consequential / coding-task tracking
-    has_made_consequential_call: bool = False
-    is_coding_task: bool = False
-    _tool_density_warned: bool = False
 
     # Metrics (Doc 092)
     tool_metrics: ToolMetrics = field(default_factory=ToolMetrics)
