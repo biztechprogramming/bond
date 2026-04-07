@@ -3,7 +3,7 @@ import type { ChatMessage, AgentStatus } from "@/lib/types";
 import { toolIcon } from "@/lib/theme";
 import MarkdownMessage from "@/components/shared/MarkdownMessage";
 import ImageGrid from "@/components/chat/ImageGrid";
-import { extractImageResults, rewriteImageSrc } from "@/lib/image-utils";
+import { extractImageResults, stripImageJson, rewriteImageSrc } from "@/lib/image-utils";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -229,7 +229,11 @@ export default function ChatPanel({
                   cost: imageResult.cost,
                   onExpand: () => {},
                 }));
-                return <div style={s.chatMsgContent}><ImageGrid images={images} /></div>;
+                const textContent = stripImageJson(msg.content);
+                return <div style={s.chatMsgContent}>
+                  {textContent && <MarkdownMessage content={textContent} />}
+                  <ImageGrid images={images} />
+                </div>;
               }
               return <div style={s.chatMsgContent}><MarkdownMessage content={msg.content} /></div>;
             })() : (

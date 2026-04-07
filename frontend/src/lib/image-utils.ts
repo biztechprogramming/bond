@@ -71,6 +71,11 @@ function isImageResult(obj: Record<string, unknown>): boolean {
   );
 }
 
+export function stripImageJson(content: string): string {
+  // Remove ```json code blocks that contain image results
+  return content.replace(/\n?\n?```(?:json)?\s*\n?\{[\s\S]*?"paths"\s*:\s*\[[\s\S]*?\}\n?```/g, "").trim();
+}
+
 function normalizeResult(obj: Record<string, unknown>): ImageResult {
   return {
     paths: obj.paths as string[],
