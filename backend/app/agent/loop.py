@@ -25,7 +25,6 @@ from backend.app.agent.context_pipeline import _estimate_messages_tokens
 from backend.app.agent.tools import build_registry
 from backend.app.agent.tools.definitions import get_pydantic_definitions
 from backend.app.agent.tools.tool_result import ToolResult, ToolTimer
-from backend.app.agent.loop_guard import StuckDetector
 from backend.app.agent.tool_result_cache import ToolResultCache
 from backend.app.core.oauth import get_oauth_extra_headers
 
@@ -520,10 +519,6 @@ async def agent_turn(
     current_tier = 0
     continuation_attempts = 0
 
-    # Doc 093: Stuck detection
-    _max_consecutive_repeats = agent.get("max_consecutive_repeats", 2)
-    stuck_detector = StuckDetector(max_consecutive_repeats=_max_consecutive_repeats)
-
     # Tool-use loop
     for iteration in range(max_iterations):
         current_max_tokens = TOKEN_TIERS[current_tier]
@@ -685,24 +680,6 @@ async def agent_turn(
                 except json.JSONDecodeError:
                     args = {}
                 parsed_calls.append((tc, tc.function.name, args))
-
-            # Doc 093: record tool calls for stuck detection
-            for _tc, _name, _args in parsed_calls:
-                stuck_detector.record_tool_call(_name, _args)
-
-            # Doc 093: check for stuck pattern before executing
-            if stuck_detector.is_stuck():
-                stuck_detector.stuck_interventions += 1
-                logger.warning("stuck_pattern_detected iteration=%d", iteration)
-                stuck_detector.clear()
-                # Inject stuck message as tool results instead of executing
-                for tc, name, args in parsed_calls:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": stuck_detector.get_stuck_message(),
-                    })
-                continue
 
             # Separate into parallel-safe and sequential groups
             parallel_batch = []
