@@ -24,6 +24,7 @@ from backend.app.agent.pre_gather import (
     DEEP_MAP_FILE_SELECT_PROMPT,
     gather_phase,
     partition_by_dependencies,
+    workspace_plan_phase,
 )
 from backend.app.agent.pre_gather_integration import PreGatherResult
 
@@ -632,3 +633,250 @@ class TestDomainConcurrencyLimiting:
 
         # Both should have been active simultaneously at some point
         assert max(active_count) == 2
+
+
+# ---------------------------------------------------------------------------
+# workspace_plan_phase — LLM call kwargs inspection
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspacePlanPhaseCallKwargs:
+    """Verify the exact kwargs sent to litellm.acompletion by workspace_plan_phase.
+
+    These tests capture the call_kwargs to ensure no unexpected keys (like
+    `tools` or `tool_choice`) leak into the plan phase LLM call, which could
+    cause Anthropic to reject the request (potentially misclassified as
+    rate_limit_error).
+    """
+
+    @pytest.mark.asyncio
+    async def test_call_kwargs_no_tools_or_tool_choice(self, monkeypatch):
+        """The plan phase must NOT send tools or tool_choice to litellm."""
+        captured = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            mock_resp = MagicMock()
+            mock_resp.choices = [
+                MagicMock(message=MagicMock(content='{"complexity": "simple"}'))
+            ]
+            return mock_resp
+
+        monkeypatch.setattr("backend.app.agent.pre_gather.litellm.acompletion", fake_acompletion)
+        # Disable OAuth prefix (no OAuth token)
+        monkeypatch.setattr(
+            "backend.app.core.oauth.ensure_oauth_system_prefix",
+            lambda msgs, **kw: msgs,
+        )
+
+        await workspace_plan_phase(
+            user_message="Fix the bug in worker.py",
+            history=[],
+            workspace_overview="=== bond/ (git) ===\n  src/",
+            model="claude-sonnet-4-20250514",
+        )
+
+        # KEY ASSERTION: no tools or tool_choice in the call
+        assert "tools" not in captured, (
+            "tools should NOT be in plan phase call_kwargs — "
+            "this would cause Anthropic to reject the request"
+        )
+        assert "tool_choice" not in captured, (
+            "tool_choice should NOT be in plan phase call_kwargs"
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_kwargs_basic_structure(self, monkeypatch):
+        """Verify the expected keys are present in the call."""
+        captured = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            mock_resp = MagicMock()
+            mock_resp.choices = [
+                MagicMock(message=MagicMock(content='{"complexity": "moderate"}'))
+            ]
+            return mock_resp
+
+        monkeypatch.setattr("backend.app.agent.pre_gather.litellm.acompletion", fake_acompletion)
+        monkeypatch.setattr(
+            "backend.app.core.oauth.ensure_oauth_system_prefix",
+            lambda msgs, **kw: msgs,
+        )
+
+        await workspace_plan_phase(
+            user_message="Refactor the settings page",
+            history=[],
+            workspace_overview="=== bond/ (git) ===",
+            model="claude-sonnet-4-20250514",
+            api_key="sk-test-key",
+        )
+
+        assert captured["model"] == "claude-sonnet-4-20250514"
+        assert captured["temperature"] == 0.3
+        assert captured["max_tokens"] == 2000
+        assert captured["api_key"] == "sk-test-key"
+        assert len(captured["messages"]) == 2  # system + user
+        assert captured["messages"][0]["role"] == "system"
+
+    @pytest.mark.asyncio
+    async def test_llm_kwargs_spread_only_adds_filtered_keys(self, monkeypatch):
+        """Extra kwargs (like api_base) should pass through, but not override existing keys."""
+        captured = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            mock_resp = MagicMock()
+            mock_resp.choices = [
+                MagicMock(message=MagicMock(content='{"complexity": "simple"}'))
+            ]
+            return mock_resp
+
+        monkeypatch.setattr("backend.app.agent.pre_gather.litellm.acompletion", fake_acompletion)
+        monkeypatch.setattr(
+            "backend.app.core.oauth.ensure_oauth_system_prefix",
+            lambda msgs, **kw: msgs,
+        )
+
+        # Simulate plan_llm_kwargs from pre_gather_integration (filtered keys only)
+        await workspace_plan_phase(
+            user_message="Fix the bug in the worker module please",
+            history=[],
+            workspace_overview="=== bond/ ===",
+            model="claude-sonnet-4-20250514",
+            api_base="https://custom.api.example.com",
+            extra_headers={"X-Custom": "value"},
+        )
+
+        assert captured.get("api_base") == "https://custom.api.example.com"
+        assert captured.get("extra_headers") == {"X-Custom": "value"}
+        # Still no tools
+        assert "tools" not in captured
+        assert "tool_choice" not in captured
+
+    @pytest.mark.asyncio
+    async def test_llm_kwargs_cannot_override_model_or_messages(self, monkeypatch):
+        """The spread should NOT override keys already in call_kwargs."""
+        captured = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            mock_resp = MagicMock()
+            mock_resp.choices = [
+                MagicMock(message=MagicMock(content='{"complexity": "simple"}'))
+            ]
+            return mock_resp
+
+        monkeypatch.setattr("backend.app.agent.pre_gather.litellm.acompletion", fake_acompletion)
+        monkeypatch.setattr(
+            "backend.app.core.oauth.ensure_oauth_system_prefix",
+            lambda msgs, **kw: msgs,
+        )
+
+        # Try to inject 'model' via llm_kwargs — should be ignored
+        await workspace_plan_phase(
+            user_message="Fix the bug in the worker module please",
+            history=[],
+            workspace_overview="=== bond/ ===",
+            model="claude-sonnet-4-20250514",
+            temperature=999,  # should NOT override
+        )
+
+        assert captured["model"] == "claude-sonnet-4-20250514"
+        assert captured["temperature"] == 0.3  # original, not overridden
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_error_handling(self, monkeypatch):
+        """RateLimitError should be caught and return None."""
+        import litellm as litellm_mod
+
+        async def fake_acompletion(**kwargs):
+            raise litellm_mod.RateLimitError(
+                message="AnthropicException - rate_limit_error",
+                model="claude-sonnet-4-20250514",
+                llm_provider="anthropic",
+            )
+
+        monkeypatch.setattr("backend.app.agent.pre_gather.litellm.acompletion", fake_acompletion)
+        monkeypatch.setattr(
+            "backend.app.core.oauth.ensure_oauth_system_prefix",
+            lambda msgs, **kw: msgs,
+        )
+
+        result = await workspace_plan_phase(
+            user_message="Fix the bug in worker.py",
+            history=[],
+            workspace_overview="=== bond/ ===",
+            model="claude-sonnet-4-20250514",
+        )
+
+        # Should gracefully return None, not raise
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_oauth_prefix_applied_for_oauth_token(self, monkeypatch):
+        """When api_key is an OAuth token, ensure_oauth_system_prefix should be called."""
+        captured_messages = {}
+
+        async def fake_acompletion(**kwargs):
+            captured_messages["messages"] = kwargs["messages"]
+            mock_resp = MagicMock()
+            mock_resp.choices = [
+                MagicMock(message=MagicMock(content='{"complexity": "simple"}'))
+            ]
+            return mock_resp
+
+        monkeypatch.setattr("backend.app.agent.pre_gather.litellm.acompletion", fake_acompletion)
+        # Use the REAL ensure_oauth_system_prefix — don't mock it
+
+        result = await workspace_plan_phase(
+            user_message="Fix the bug in the worker module please",
+            history=[],
+            workspace_overview="=== bond/ ===",
+            model="claude-sonnet-4-20250514",
+            api_key="sk-ant-oat-fake-oauth-token",
+            extra_headers={"anthropic-beta": "oauth-2025-04-20"},
+        )
+
+        # OAuth prefix should have been prepended to system message
+        from backend.app.core.oauth import OAUTH_SYSTEM_PROMPT_PREFIX
+        system_content = captured_messages["messages"][0]["content"]
+        assert OAUTH_SYSTEM_PROMPT_PREFIX in system_content
+
+    @pytest.mark.asyncio
+    async def test_history_truncation(self, monkeypatch):
+        """History messages should be truncated to last 6 and content capped at 500 chars."""
+        captured = {}
+
+        async def fake_acompletion(**kwargs):
+            captured.update(kwargs)
+            mock_resp = MagicMock()
+            mock_resp.choices = [
+                MagicMock(message=MagicMock(content='{"complexity": "simple"}'))
+            ]
+            return mock_resp
+
+        monkeypatch.setattr("backend.app.agent.pre_gather.litellm.acompletion", fake_acompletion)
+        monkeypatch.setattr(
+            "backend.app.core.oauth.ensure_oauth_system_prefix",
+            lambda msgs, **kw: msgs,
+        )
+
+        long_history = [
+            {"role": "user", "content": "x" * 1000}
+            for _ in range(10)
+        ]
+
+        await workspace_plan_phase(
+            user_message="Fix the bug in the worker module please",
+            history=long_history,
+            workspace_overview="=== bond/ ===",
+            model="claude-sonnet-4-20250514",
+        )
+
+        messages = captured["messages"]
+        # system + up to 6 history + user = at most 8
+        assert len(messages) <= 8
+        # History content should be truncated to 500 chars
+        for msg in messages[1:-1]:  # skip system and final user
+            assert len(msg["content"]) <= 500

@@ -254,8 +254,12 @@ export default function Home() {
           if (name) currentAgentNameRef.current = name;
         }
         if (status === "interrupted") {
-          // Agent was stopped — keep loading true briefly so progress stays visible
-          // until the "done" event arrives to finalize
+          // Agent was interrupted — reset UI state immediately as a safety net.
+          // The "done" event should also arrive shortly, but if it doesn't,
+          // this ensures the UI doesn't stay stuck in "stopping" forever.
+          setLoading(false);
+          setAgentStatus("idle");
+          setToolActivity([]);
         } else if (status === "idle") {
           // Safety net: if we receive an explicit idle status (e.g., from
           // a completion turn that sent no done event), clear loading state
