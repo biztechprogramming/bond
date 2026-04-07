@@ -140,9 +140,7 @@ class SettingsService:
     async def upsert(self, key: str, value: str) -> dict[str, str]:
         """Create or update a single setting in SpacetimeDB."""
         stored = write_value(key, value)
-        success = await self._stdb.call_reducer("set_setting", [key, stored])
-        if not success:
-            raise SettingsError(f"Failed to store setting: {key}")
+        await self._stdb.call_reducer("set_setting", [key, stored])
         return {"key": key, "value": read_value(key, stored)}
 
     # ── Provider API keys ─────────────────────────────────────
@@ -162,11 +160,9 @@ class SettingsService:
         key_type = detect_key_type(f"llm.api_key.{provider_id}", raw_key)
         now = int(time.time() * 1000)
 
-        success = await self._stdb.call_reducer(
+        await self._stdb.call_reducer(
             "set_provider_api_key", [provider_id, encrypted, key_type, now, now],
         )
-        if not success:
-            raise SettingsError("Failed to store API key")
 
         return {"key": f"llm.api_key.{provider_id}", "value": mask_value(raw_key)}
 
@@ -179,10 +175,15 @@ class SettingsService:
         )
         if rows:
             return
+        logger.info("Seeding %d embedding models into SpacetimeDB", len(_EMBEDDING_SEED))
         for name, family, provider, max_dim, dims, local, api, default in _EMBEDDING_SEED:
-            await self._stdb.call_reducer("set_embedding_model", [
-                name, family, provider, max_dim, dims, local, api, default,
-            ])
+            try:
+                await self._stdb.call_reducer("set_embedding_model", [
+                    name, family, provider, max_dim, dims, local, api, default,
+                ])
+            except Exception:
+                logger.error("Failed to seed embedding model: %s", name, exc_info=True)
+                raise
 
     async def get_embedding_models(self) -> list[EmbeddingModel]:
         """Return all available embedding models from SpacetimeDB."""
@@ -191,6 +192,8 @@ class SettingsService:
             "supported_dimensions, supports_local, supports_api, is_default "
             "FROM embedding_models ORDER BY family, model_name"
         )
+        if not rows:
+            logger.warning("No embedding models found in SpacetimeDB — was seed_embedding_models() called?")
         return [
             EmbeddingModel(
                 model_name=r["model_name"],
@@ -272,9 +275,7 @@ class SettingsService:
             ("embedding.output_dimension", str(dimension)),
             ("embedding.execution_mode", execution_mode),
         ]:
-            success = await self._stdb.call_reducer("set_setting", [key, value])
-            if not success:
-                raise SettingsError(f"Failed to store setting: {key}")
+            await self._stdb.call_reducer("set_setting", [key, value])
 
         result = {"status": "ok", "model": model, "dimension": dimension, "execution_mode": execution_mode}
         if warning:

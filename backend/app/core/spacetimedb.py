@@ -60,54 +60,59 @@ class StdbClient:
         return headers
 
     async def query(self, sql: str) -> list[dict[str, Any]]:
-        """Execute a SQL query and return rows as dictionaries."""
+        """Execute a SQL query and return rows as dictionaries.
+
+        Raises on any failure — callers must handle exceptions explicitly.
+        """
         url = f"{self.base_url}/v1/database/{self.module}/sql"
         try:
             resp = await self._client.post(url, headers=self._headers(), content=sql)
-            if resp.status_code != 200:
-                error_msg = f"SpacetimeDB SQL failed ({resp.status_code}): {resp.text}"
-                logger.error(error_msg)
-                # Raise on write operations so callers know something failed
-                sql_upper = sql.strip().upper()
-                if sql_upper.startswith(("INSERT", "UPDATE", "DELETE")):
-                    raise RuntimeError(error_msg)
-                return []
-            
-            data = resp.json()
-            if not data or not isinstance(data, list):
-                return []
-            
-            result_set = data[0]
-            rows = result_set.get("rows", [])
-            schema = result_set.get("schema", {}).get("elements", [])
-            
-            # Extract column names, handling SpacetimeDB's Option wrapper
-            columns = []
-            for e in schema:
-                name = e.get("name")
-                if isinstance(name, dict) and "some" in name:
-                    columns.append(name["some"])
-                else:
-                    columns.append(name)
-            
-            return [dict(zip(columns, row)) for row in rows]
         except Exception as e:
-            logger.error("SpacetimeDB query error: %s", e)
+            logger.error("SpacetimeDB query error for [%s]: %s", sql.strip()[:120], e, exc_info=True)
+            raise
+
+        if resp.status_code != 200:
+            error_msg = f"SpacetimeDB SQL failed ({resp.status_code}): {resp.text}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        data = resp.json()
+        if not data or not isinstance(data, list):
             return []
 
+        result_set = data[0]
+        rows = result_set.get("rows", [])
+        schema = result_set.get("schema", {}).get("elements", [])
+
+        # Extract column names, handling SpacetimeDB's Option wrapper
+        columns = []
+        for e in schema:
+            name = e.get("name")
+            if isinstance(name, dict) and "some" in name:
+                columns.append(name["some"])
+            else:
+                columns.append(name)
+
+        return [dict(zip(columns, row)) for row in rows]
+
     async def call_reducer(self, reducer: str, args: list[Any]) -> bool:
-        """Call a SpacetimeDB reducer."""
+        """Call a SpacetimeDB reducer.
+
+        Raises on any failure — callers must handle exceptions explicitly.
+        """
         url = f"{self.base_url}/v1/database/{self.module}/call/{reducer}"
         try:
             # SpacetimeDB positional args are passed as a JSON array
             resp = await self._client.post(url, headers=self._headers(), json=args)
-            if resp.status_code != 200:
-                logger.error("SpacetimeDB reducer %s failed (%d): %s", reducer, resp.status_code, resp.text)
-                return False
-            return True
         except Exception as e:
-            logger.error("SpacetimeDB reducer error (%s): %s", reducer, e)
-            return False
+            logger.error("SpacetimeDB reducer error (%s): %s", reducer, e, exc_info=True)
+            raise
+
+        if resp.status_code != 200:
+            error_msg = f"SpacetimeDB reducer {reducer} failed ({resp.status_code}): {resp.text}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+        return True
 
     async def close(self):
         await self._client.aclose()

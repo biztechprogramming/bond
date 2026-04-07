@@ -55,14 +55,22 @@ async def get_all_settings(db: AsyncSession = Depends(get_db)):
 @router.get("/embedding/models")
 async def get_embedding_models():
     """Return all available embedding models from SpacetimeDB."""
-    models = await _service().get_embedding_models()
+    try:
+        models = await _service().get_embedding_models()
+    except Exception as e:
+        logger.error("Failed to fetch embedding models: %s", e)
+        raise HTTPException(status_code=503, detail="SpacetimeDB unavailable")
     return [asdict(m) for m in models]
 
 
 @router.get("/embedding/current")
 async def get_current_embedding():
     """Return the active embedding configuration."""
-    config = await _service().get_embedding_current()
+    try:
+        config = await _service().get_embedding_current()
+    except Exception as e:
+        logger.error("Failed to fetch embedding config: %s", e)
+        raise HTTPException(status_code=503, detail="SpacetimeDB unavailable")
     return asdict(config)
 
 
@@ -85,20 +93,32 @@ async def update_embedding(body: EmbeddingUpdate):
 @router.get("/llm/providers")
 async def get_llm_providers():
     """Return enabled LLM providers."""
-    providers = await _service().get_llm_providers()
+    try:
+        providers = await _service().get_llm_providers()
+    except Exception as e:
+        logger.error("Failed to fetch LLM providers: %s", e)
+        raise HTTPException(status_code=503, detail="SpacetimeDB unavailable")
     return [asdict(p) for p in providers]
 
 
 @router.get("/llm/models")
 async def get_llm_models():
     """Return available LLM models with litellm-compatible IDs."""
-    return await _service().get_llm_models()
+    try:
+        return await _service().get_llm_models()
+    except Exception as e:
+        logger.error("Failed to fetch LLM models: %s", e)
+        raise HTTPException(status_code=503, detail="SpacetimeDB unavailable")
 
 
 @router.get("/llm/current")
 async def get_llm_current():
     """Return current LLM provider/model and which providers have keys."""
-    current = await _service().get_llm_current()
+    try:
+        current = await _service().get_llm_current()
+    except Exception as e:
+        logger.error("Failed to fetch LLM current config: %s", e)
+        raise HTTPException(status_code=503, detail="SpacetimeDB unavailable")
     return asdict(current)
 
 
@@ -108,7 +128,11 @@ async def get_llm_current():
 @router.get("/{key:path}")
 async def get_setting(key: str):
     """Return a single setting by key."""
-    result = await _service().get(key)
+    try:
+        result = await _service().get(key)
+    except Exception as e:
+        logger.error("Failed to fetch setting %s: %s", key, e)
+        raise HTTPException(status_code=503, detail="SpacetimeDB unavailable")
     if result is None:
         raise HTTPException(status_code=404, detail=f"Setting not found: {key}")
     return result

@@ -47,7 +47,8 @@ async def lifespan(app: FastAPI):
         await SettingsService().seed_embedding_models()
     except Exception as e:
         import logging as _log
-        _log.getLogger("bond.startup").warning("Failed to seed embedding models: %s", e)
+        _log.getLogger("bond.startup").error("Failed to seed embedding models — app may be broken: %s", e, exc_info=True)
+        raise
 
     # Background job scheduler - using SpacetimeDB
     scheduler = JobScheduler(get_session_factory())
