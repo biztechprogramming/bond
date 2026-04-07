@@ -124,7 +124,7 @@ class SandboxManager:
         worker_url: str,
         agent_id: str,
         container_id: str,
-        timeout: float = 30.0,
+        timeout: float = 90.0,
         interval: float = 0.5,
     ) -> None:
         """Poll worker /health until it responds with correct agent_id, or raise."""
