@@ -146,7 +146,8 @@ export async function connectToSpacetimeDB(
               "SELECT * FROM component_resources",
               "SELECT * FROM alerts",
               "SELECT * FROM alert_rules",
-              "SELECT * FROM resource_environments"
+              "SELECT * FROM resource_environments",
+              "SELECT * FROM embedding_models"
             ]);
         })
         .onConnectError((ctx, err) => {
@@ -260,6 +261,12 @@ export async function connectToSpacetimeDB(
         conn.db.resource_environments.onInsert(() => notifyListeners());
         conn.db.resource_environments.onUpdate(() => notifyListeners());
         conn.db.resource_environments.onDelete(() => notifyListeners());
+      }
+
+      if (conn.db.embeddingModels) {
+        conn.db.embeddingModels.onInsert(() => notifyListeners());
+        conn.db.embeddingModels.onUpdate(() => notifyListeners());
+        conn.db.embeddingModels.onDelete(() => notifyListeners());
       }
 
     } catch (err) {
@@ -631,6 +638,28 @@ export function getResourceEnvironments(): ResourceEnvironmentRow[] {
   const rows: ResourceEnvironmentRow[] = [];
   for (const row of db.db.resource_environments.iter()) {
     rows.push(row as unknown as ResourceEnvironmentRow);
+  }
+  return rows;
+}
+
+// Embedding Models
+export interface EmbeddingModelRow {
+  modelName: string;
+  family: string;
+  provider: string;
+  maxDimension: number;
+  supportedDimensions: string;
+  supportsLocal: boolean;
+  supportsApi: boolean;
+  isDefault: boolean;
+  createdAt: bigint;
+}
+
+export function getEmbeddingModels(): EmbeddingModelRow[] {
+  if (!db || !db.db.embeddingModels) return [];
+  const rows: EmbeddingModelRow[] = [];
+  for (const row of db.db.embeddingModels.iter()) {
+    rows.push(row as unknown as EmbeddingModelRow);
   }
   return rows;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, getSettings, getProviderApiKeys, getProviders, getResources, getComponents, getEnvironments, getComponentResources, getAlerts, getResourceEnvironments, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow, type SettingRow, type ProviderApiKeyRow, type ProviderRow, type ResourceRow, type ComponentRow, type EnvironmentRow, type ComponentResourceRow, type AlertRow, type ResourceEnvironmentRow } from '@/lib/spacetimedb-client';
+import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, getSettings, getProviderApiKeys, getProviders, getResources, getComponents, getEnvironments, getComponentResources, getAlerts, getResourceEnvironments, getEmbeddingModels, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow, type SettingRow, type ProviderApiKeyRow, type ProviderRow, type ResourceRow, type ComponentRow, type EnvironmentRow, type ComponentResourceRow, type AlertRow, type ResourceEnvironmentRow, type EmbeddingModelRow } from '@/lib/spacetimedb-client';
 
 /**
  * useSpacetimeDB React hook.
@@ -131,6 +131,10 @@ export function useAlerts(): AlertRow[] {
 
 export function useResourceEnvironments(): ResourceEnvironmentRow[] {
   return useSpacetimeDB(() => getResourceEnvironments());
+}
+
+export function useEmbeddingModels(): EmbeddingModelRow[] {
+  return useSpacetimeDB(() => getEmbeddingModels());
 }
 
 // ── Composite Hooks ──────────────────────────────────────────────────────
