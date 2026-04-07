@@ -65,8 +65,21 @@ async def async_client(_reset_db_globals):
         yield client
 
 
+# Seed data matching the SpacetimeDB embedding_models table
+_EMBEDDING_MODELS_SEED = [
+    {"model_name": "Qwen3-Embedding-0.6B", "family": "qwen3", "provider": "huggingface", "max_dimension": 1024, "supported_dimensions": "[256,512,1024]", "supports_local": True, "supports_api": False, "is_default": False},
+    {"model_name": "Qwen3-Embedding-4B", "family": "qwen3", "provider": "huggingface", "max_dimension": 2560, "supported_dimensions": "[256,512,1024,2560]", "supports_local": True, "supports_api": False, "is_default": False},
+    {"model_name": "Qwen3-Embedding-8B", "family": "qwen3", "provider": "huggingface", "max_dimension": 4096, "supported_dimensions": "[256,512,1024,4096]", "supports_local": True, "supports_api": False, "is_default": False},
+    {"model_name": "gemini-embedding-001", "family": "gemini", "provider": "google", "max_dimension": 768, "supported_dimensions": "[768]", "supports_local": False, "supports_api": True, "is_default": False},
+    {"model_name": "voyage-4", "family": "voyage4", "provider": "voyage", "max_dimension": 2048, "supported_dimensions": "[256,512,1024,2048]", "supports_local": False, "supports_api": True, "is_default": False},
+    {"model_name": "voyage-4-large", "family": "voyage4", "provider": "voyage", "max_dimension": 2048, "supported_dimensions": "[256,512,1024,2048]", "supports_local": False, "supports_api": True, "is_default": False},
+    {"model_name": "voyage-4-lite", "family": "voyage4", "provider": "voyage", "max_dimension": 2048, "supported_dimensions": "[256,512,1024,2048]", "supports_local": False, "supports_api": True, "is_default": False},
+    {"model_name": "voyage-4-nano", "family": "voyage4", "provider": "voyage", "max_dimension": 2048, "supported_dimensions": "[256,512,1024,2048]", "supports_local": True, "supports_api": False, "is_default": True},
+]
+
+
 class _InMemoryStdb:
-    """In-memory SpacetimeDB mock that stores settings and provider keys in dicts."""
+    """In-memory SpacetimeDB mock that stores settings, provider keys, and embedding models."""
 
     def __init__(self) -> None:
         self.settings: dict[str, str] = {}
@@ -77,16 +90,28 @@ class _InMemoryStdb:
             {"id": "google", "display_name": "Google", "is_enabled": True, "litellm_prefix": "google"},
         ]
         self.llm_models: list[dict] = []
+        # Pre-seed embedding models (sorted by family, model_name)
+        self.embedding_models: list[dict] = list(_EMBEDDING_MODELS_SEED)
 
     async def query(self, sql: str) -> list[dict]:
         sql_upper = sql.strip().upper()
+        if "FROM EMBEDDING_MODELS" in sql_upper:
+            if "WHERE MODEL_NAME" in sql_upper:
+                # Extract model name
+                name = sql.split("'")[1]
+                return [m for m in self.embedding_models if m["model_name"] == name]
+            if "LIMIT 1" in sql_upper:
+                return self.embedding_models[:1]
+            return list(self.embedding_models)
         if "FROM SETTINGS" in sql_upper:
             if "WHERE KEY =" in sql_upper:
-                # Extract key value
                 key = sql.split("'")[1]
                 if key in self.settings:
                     return [{"key": key, "value": self.settings[key]}]
                 return []
+            if "LIKE" in sql_upper:
+                prefix = sql.split("'")[1].replace("%", "")
+                return [{"key": k, "value": v} for k, v in self.settings.items() if k.startswith(prefix)]
             return [{"key": k, "value": v} for k, v in self.settings.items()]
         if "FROM PROVIDERS" in sql_upper:
             return self.providers
@@ -106,6 +131,18 @@ class _InMemoryStdb:
             }
         elif reducer == "delete_setting":
             self.settings.pop(args[0], None)
+        elif reducer == "set_embedding_model":
+            name = args[0]
+            model = {
+                "model_name": name, "family": args[1], "provider": args[2],
+                "max_dimension": args[3], "supported_dimensions": args[4],
+                "supports_local": args[5], "supports_api": args[6], "is_default": args[7],
+            }
+            self.embedding_models = [m for m in self.embedding_models if m["model_name"] != name]
+            self.embedding_models.append(model)
+            self.embedding_models.sort(key=lambda m: (m["family"], m["model_name"]))
+        elif reducer == "delete_embedding_model":
+            self.embedding_models = [m for m in self.embedding_models if m["model_name"] != args[0]]
         return True
 
 

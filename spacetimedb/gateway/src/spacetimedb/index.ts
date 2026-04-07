@@ -62,12 +62,14 @@ import CreateDeploymentResourceReducer from "./create_deployment_resource_reduce
 import CreateDeploymentTriggerReducer from "./create_deployment_trigger_reducer";
 import CreateMonitoringAlertReducer from "./create_monitoring_alert_reducer";
 import DeactivateComponentReducer from "./deactivate_component_reducer";
+import DeduplicateModelsReducer from "./deduplicate_models_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteAgentChannelsForAgentReducer from "./delete_agent_channels_for_agent_reducer";
 import DeleteAgentMountsForAgentReducer from "./delete_agent_mounts_for_agent_reducer";
 import DeleteAgentPromptFragmentReducer from "./delete_agent_prompt_fragment_reducer";
 import DeleteConversationReducer from "./delete_conversation_reducer";
 import DeleteConversationMessageReducer from "./delete_conversation_message_reducer";
+import DeleteEmbeddingModelReducer from "./delete_embedding_model_reducer";
 import DeleteMcpServerReducer from "./delete_mcp_server_reducer";
 import DeletePromptFragmentReducer from "./delete_prompt_fragment_reducer";
 import DeletePromptTemplateReducer from "./delete_prompt_template_reducer";
@@ -88,6 +90,7 @@ import ImportAgentMountReducer from "./import_agent_mount_reducer";
 import ImportAgentPromptFragmentReducer from "./import_agent_prompt_fragment_reducer";
 import ImportConversationReducer from "./import_conversation_reducer";
 import ImportConversationMessageReducer from "./import_conversation_message_reducer";
+import ImportEmbeddingModelReducer from "./import_embedding_model_reducer";
 import ImportModelReducer from "./import_model_reducer";
 import ImportPromptFragmentReducer from "./import_prompt_fragment_reducer";
 import ImportPromptFragmentVersionReducer from "./import_prompt_fragment_version_reducer";
@@ -111,6 +114,7 @@ import RenameWorkItemReducer from "./rename_work_item_reducer";
 import ResolveMonitoringAlertReducer from "./resolve_monitoring_alert_reducer";
 import SaveMessageReducer from "./save_message_reducer";
 import SetDefaultAgentReducer from "./set_default_agent_reducer";
+import SetEmbeddingModelReducer from "./set_embedding_model_reducer";
 import SetProviderAliasReducer from "./set_provider_alias_reducer";
 import SetProviderApiKeyReducer from "./set_provider_api_key_reducer";
 import SetSettingReducer from "./set_setting_reducer";
@@ -143,6 +147,7 @@ import ComponentSecretsRow from "./component_secrets_table";
 import ComponentsRow from "./components_table";
 import ConversationMessagesRow from "./conversation_messages_table";
 import ConversationsRow from "./conversations_table";
+import EmbeddingModelsRow from "./embedding_models_table";
 import EnvironmentApproversRow from "./environment_approvers_table";
 import EnvironmentHistoryRow from "./environment_history_table";
 import EnvironmentsRow from "./environments_table";
@@ -313,6 +318,17 @@ const tablesSchema = __schema({
       { name: 'conversations_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ConversationsRow),
+  embeddingModels: __table({
+    name: 'embedding_models',
+    indexes: [
+      { name: 'modelName', algorithm: 'btree', columns: [
+        'modelName',
+      ] },
+    ],
+    constraints: [
+      { name: 'embedding_models_model_name_key', constraint: 'unique', columns: ['modelName'] },
+    ],
+  }, EmbeddingModelsRow),
   environment_approvers: __table({
     name: 'environment_approvers',
     indexes: [
@@ -587,12 +603,14 @@ const reducersSchema = __reducers(
   __reducerSchema("create_deployment_trigger", CreateDeploymentTriggerReducer),
   __reducerSchema("create_monitoring_alert", CreateMonitoringAlertReducer),
   __reducerSchema("deactivate_component", DeactivateComponentReducer),
+  __reducerSchema("deduplicate_models", DeduplicateModelsReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_agent_channels_for_agent", DeleteAgentChannelsForAgentReducer),
   __reducerSchema("delete_agent_mounts_for_agent", DeleteAgentMountsForAgentReducer),
   __reducerSchema("delete_agent_prompt_fragment", DeleteAgentPromptFragmentReducer),
   __reducerSchema("delete_conversation", DeleteConversationReducer),
   __reducerSchema("delete_conversation_message", DeleteConversationMessageReducer),
+  __reducerSchema("delete_embedding_model", DeleteEmbeddingModelReducer),
   __reducerSchema("delete_mcp_server", DeleteMcpServerReducer),
   __reducerSchema("delete_prompt_fragment", DeletePromptFragmentReducer),
   __reducerSchema("delete_prompt_template", DeletePromptTemplateReducer),
@@ -613,6 +631,7 @@ const reducersSchema = __reducers(
   __reducerSchema("import_agent_prompt_fragment", ImportAgentPromptFragmentReducer),
   __reducerSchema("import_conversation", ImportConversationReducer),
   __reducerSchema("import_conversation_message", ImportConversationMessageReducer),
+  __reducerSchema("import_embedding_model", ImportEmbeddingModelReducer),
   __reducerSchema("import_model", ImportModelReducer),
   __reducerSchema("import_prompt_fragment", ImportPromptFragmentReducer),
   __reducerSchema("import_prompt_fragment_version", ImportPromptFragmentVersionReducer),
@@ -636,6 +655,7 @@ const reducersSchema = __reducers(
   __reducerSchema("resolve_monitoring_alert", ResolveMonitoringAlertReducer),
   __reducerSchema("save_message", SaveMessageReducer),
   __reducerSchema("set_default_agent", SetDefaultAgentReducer),
+  __reducerSchema("set_embedding_model", SetEmbeddingModelReducer),
   __reducerSchema("set_provider_alias", SetProviderAliasReducer),
   __reducerSchema("set_provider_api_key", SetProviderApiKeyReducer),
   __reducerSchema("set_setting", SetSettingReducer),

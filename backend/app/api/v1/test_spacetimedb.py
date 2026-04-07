@@ -220,5 +220,5 @@ async def update_settings(req: SettingsUpdate):
         f"{SETTINGS_PREFIX}.module": req.module,
     }
     for key, value in pairs.items():
-        await stdb.call_reducer("set_setting", [key, value])
+        await stdb.call_reducer("set_setting", [key, value, "setting"])
     return {"host": req.host, "port": req.port, "module": req.module}

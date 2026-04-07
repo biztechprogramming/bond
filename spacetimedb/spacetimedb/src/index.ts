@@ -182,6 +182,22 @@ const spacetimedb = schema({
     }
   ),
 
+  // -- Embedding Models --
+  embeddingModels: table(
+    { public: true },
+    {
+      modelName: t.string().primaryKey(),
+      family: t.string(),
+      provider: t.string(),
+      maxDimension: t.u32(),
+      supportedDimensions: t.string(),
+      supportsLocal: t.bool(),
+      supportsApi: t.bool(),
+      isDefault: t.bool(),
+      createdAt: t.u64(),
+    }
+  ),
+
   // -- Settings --
   settings: table(
     { public: true },
@@ -1025,6 +1041,64 @@ export const deleteSetting = spacetimedb.reducer(
   },
   (ctx, args) => {
     ctx.db.settings.key.delete(args.key);
+  }
+);
+
+// -- Embedding Models --
+
+export const setEmbeddingModel = spacetimedb.reducer(
+  {
+    modelName: t.string(),
+    family: t.string(),
+    provider: t.string(),
+    maxDimension: t.u32(),
+    supportedDimensions: t.string(),
+    supportsLocal: t.bool(),
+    supportsApi: t.bool(),
+    isDefault: t.bool(),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    const existing = ctx.db.embeddingModels.modelName.find(args.modelName);
+    if (existing) {
+      ctx.db.embeddingModels.modelName.update({
+        ...args,
+        createdAt: existing.createdAt,
+      });
+    } else {
+      ctx.db.embeddingModels.insert({
+        ...args,
+        createdAt: now,
+      });
+    }
+  }
+);
+
+export const deleteEmbeddingModel = spacetimedb.reducer(
+  {
+    modelName: t.string(),
+  },
+  (ctx, args) => {
+    ctx.db.embeddingModels.modelName.delete(args.modelName);
+  }
+);
+
+export const importEmbeddingModel = spacetimedb.reducer(
+  {
+    modelName: t.string(),
+    family: t.string(),
+    provider: t.string(),
+    maxDimension: t.u32(),
+    supportedDimensions: t.string(),
+    supportsLocal: t.bool(),
+    supportsApi: t.bool(),
+    isDefault: t.bool(),
+    createdAt: t.u64(),
+  },
+  (ctx, model) => {
+    const existing = ctx.db.embeddingModels.modelName.find(model.modelName);
+    if (existing) ctx.db.embeddingModels.modelName.delete(model.modelName);
+    ctx.db.embeddingModels.insert(model);
   }
 );
 

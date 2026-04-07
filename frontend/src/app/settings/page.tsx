@@ -108,7 +108,8 @@ export default function SettingsPage() {
         apiFetch(`${API_BASE}/embedding/current`),
         apiFetch(`${API_BASE}/llm/current`),
       ]);
-      setModels(await modelsRes.json());
+      const modelsData = await modelsRes.json();
+      setModels(Array.isArray(modelsData) ? modelsData : []);
       const cur = await currentRes.json();
       setCurrent(cur);
       setSelectedModel(cur.model);

@@ -182,6 +182,19 @@ export const Conversations = __t.object("Conversations", {
 });
 export type Conversations = __Infer<typeof Conversations>;
 
+export const EmbeddingModels = __t.object("EmbeddingModels", {
+  modelName: __t.string(),
+  family: __t.string(),
+  provider: __t.string(),
+  maxDimension: __t.u32(),
+  supportedDimensions: __t.string(),
+  supportsLocal: __t.bool(),
+  supportsApi: __t.bool(),
+  isDefault: __t.bool(),
+  createdAt: __t.u64(),
+});
+export type EmbeddingModels = __Infer<typeof EmbeddingModels>;
+
 export const EnvironmentApprovers = __t.object("EnvironmentApprovers", {
   id: __t.string(),
   environmentName: __t.string(),

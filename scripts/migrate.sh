@@ -101,6 +101,12 @@ if curl -s "$SPACETIMEDB_URL/v1/health" > /dev/null 2>&1; then
     cd "$SPACETIMEDB_MODULE"
     spacetime_publish "$SPACETIMEDB_URL"
     echo "SpacetimeDB migrations complete."
+
+    echo ""
+    echo "Regenerating SpacetimeDB TypeScript bindings..."
+    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
+    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/gateway/src/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
+    echo "TypeScript bindings regenerated."
 else
     echo ""
     echo "SpacetimeDB not running at $SPACETIMEDB_URL — skipping module publish."
