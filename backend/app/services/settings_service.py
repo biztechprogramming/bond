@@ -140,7 +140,7 @@ class SettingsService:
     async def upsert(self, key: str, value: str) -> dict[str, str]:
         """Create or update a single setting in SpacetimeDB."""
         stored = write_value(key, value)
-        await self._stdb.call_reducer("set_setting", [key, stored])
+        await self._stdb.call_reducer("set_setting", [key, stored, "setting"])
         return {"key": key, "value": read_value(key, stored)}
 
     # ── Provider API keys ─────────────────────────────────────
@@ -210,17 +210,20 @@ class SettingsService:
 
     async def get_embedding_current(self) -> EmbeddingConfig:
         """Return the active embedding configuration, seeding defaults if needed."""
-        # Read current settings from SpacetimeDB
-        rows = await self._stdb.query(
-            "SELECT key, value FROM settings WHERE key LIKE 'embedding.%'"
-        )
-        raw_map = {r["key"]: r["value"] for r in rows}
+        # Read current settings from SpacetimeDB (no LIKE support)
+        raw_map: dict[str, str] = {}
+        for k in _EMBEDDING_DEFAULTS:
+            rows = await self._stdb.query(
+                f"SELECT key, value FROM settings WHERE key = '{k}'"
+            )
+            for r in rows:
+                raw_map[r["key"]] = r["value"]
 
         # Seed missing defaults into SpacetimeDB
         missing = {k: v for k, v in _EMBEDDING_DEFAULTS.items() if k not in raw_map}
         if missing:
             for key, value in missing.items():
-                await self._stdb.call_reducer("set_setting", [key, value])
+                await self._stdb.call_reducer("set_setting", [key, value, "setting"])
                 raw_map[key] = value
 
         # Check API key presence
@@ -275,7 +278,7 @@ class SettingsService:
             ("embedding.output_dimension", str(dimension)),
             ("embedding.execution_mode", execution_mode),
         ]:
-            await self._stdb.call_reducer("set_setting", [key, value])
+            await self._stdb.call_reducer("set_setting", [key, value, "setting"])
 
         result = {"status": "ok", "model": model, "dimension": dimension, "execution_mode": execution_mode}
         if warning:
