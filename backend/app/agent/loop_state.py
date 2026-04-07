@@ -58,7 +58,6 @@ class LoopState:
     # Iteration tracking
     max_iterations: int = 100
     adaptive_budget: int = 100
-    adaptive_budget_set: bool = True
     iteration: int = 0
 
     # Budget escalation tracking
