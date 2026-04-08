@@ -1,12 +1,16 @@
 """Tests for Design Doc 096: Progress Checkpointing."""
 
 import pytest
+from unittest.mock import patch, MagicMock
 
 from backend.app.agent.continuation import (
     LightweightCheckpoint,
     ToolCallRecord,
     IterationBudget,
+    PlanPosition,
     format_checkpoint_context,
+    _check_git_divergence,
+    _merge_plan_into_checkpoint,
 )
 from backend.app.agent.loop import _classify_stop_reason, _summarize_progress
 
@@ -330,3 +334,128 @@ class TestIterationBudget:
         b = IterationBudget(total=0)
         assert b.pct_used == 1.0
         assert b.should_stop
+
+
+# ---------------------------------------------------------------------------
+# _check_git_divergence (Phase 3)
+# ---------------------------------------------------------------------------
+
+class TestCheckGitDivergence:
+    def _run_side_effect(self, outputs: dict):
+        """Create a side_effect for subprocess.run based on command keyword."""
+        def _run(cmd, **kwargs):
+            result = MagicMock()
+            cmd_str = " ".join(cmd)
+            for key, (returncode, stdout) in outputs.items():
+                if key in cmd_str:
+                    result.returncode = returncode
+                    result.stdout = stdout
+                    return result
+            result.returncode = 1
+            result.stdout = ""
+            return result
+        return _run
+
+    def test_no_git_state_in_checkpoint(self):
+        cp = LightweightCheckpoint()  # no git_branch or git_head_sha
+        assert _check_git_divergence(cp, "/tmp") is False
+
+    @patch("backend.app.agent.continuation.subprocess.run")
+    def test_matching_state_no_divergence(self, mock_run):
+        cp = LightweightCheckpoint(git_branch="main", git_head_sha="abc123")
+        mock_run.side_effect = self._run_side_effect({
+            "--abbrev-ref": (0, "main\n"),
+            "rev-parse HEAD": (0, "abc123\n"),
+        })
+        assert _check_git_divergence(cp, "/tmp") is False
+
+    @patch("backend.app.agent.continuation.subprocess.run")
+    def test_different_branch_divergence(self, mock_run):
+        cp = LightweightCheckpoint(git_branch="main", git_head_sha="abc123")
+        mock_run.side_effect = self._run_side_effect({
+            "--abbrev-ref": (0, "feature/new\n"),
+        })
+        assert _check_git_divergence(cp, "/tmp") is True
+
+    @patch("backend.app.agent.continuation.subprocess.run")
+    def test_same_branch_many_commits_divergence(self, mock_run):
+        cp = LightweightCheckpoint(git_branch="main", git_head_sha="abc123")
+        mock_run.side_effect = self._run_side_effect({
+            "--abbrev-ref": (0, "main\n"),
+            "rev-parse HEAD": (0, "def456\n"),
+            "rev-list": (0, "10\n"),
+        })
+        assert _check_git_divergence(cp, "/tmp") is True
+
+    @patch("backend.app.agent.continuation.subprocess.run")
+    def test_same_branch_few_commits_no_divergence(self, mock_run):
+        cp = LightweightCheckpoint(git_branch="main", git_head_sha="abc123")
+        mock_run.side_effect = self._run_side_effect({
+            "--abbrev-ref": (0, "main\n"),
+            "rev-parse HEAD": (0, "def456\n"),
+            "rev-list": (0, "3\n"),
+        })
+        assert _check_git_divergence(cp, "/tmp") is False
+
+
+# ---------------------------------------------------------------------------
+# _merge_plan_into_checkpoint (Phase 3)
+# ---------------------------------------------------------------------------
+
+class TestMergePlanIntoCheckpoint:
+    def test_merge_replaces_todos(self):
+        cp = LightweightCheckpoint(open_todos=["old todo"])
+        pos = PlanPosition(
+            plan_id="p1",
+            plan_title="Test Plan",
+            completed_items=[{"title": "Done item", "ordinal": 1}],
+            in_progress_items=[{"title": "Current item", "ordinal": 2}],
+            pending_items=[
+                {"title": "Next item", "ordinal": 3},
+                {"title": "Last item", "ordinal": 4},
+            ],
+        )
+        result = _merge_plan_into_checkpoint(cp, pos)
+        assert result.open_todos[0] == "[IN PROGRESS] Current item"
+        assert "[Plan item 3] Next item" in result.open_todos
+        assert "[Plan item 4] Last item" in result.open_todos
+        assert "old todo" not in result.open_todos
+
+    def test_merge_prepends_progress_summary(self):
+        cp = LightweightCheckpoint(progress_summary="5 iterations done")
+        pos = PlanPosition(
+            plan_id="p1",
+            plan_title="Test Plan",
+            completed_items=[{"title": "A"}, {"title": "B"}],
+            pending_items=[{"title": "C"}],
+        )
+        result = _merge_plan_into_checkpoint(cp, pos)
+        assert result.progress_summary.startswith("Work plan: 2/3")
+        assert "5 iterations done" in result.progress_summary
+
+    def test_merge_no_pending_keeps_existing_todos(self):
+        cp = LightweightCheckpoint(open_todos=["existing"])
+        pos = PlanPosition(plan_id="p1", plan_title="Done")
+        result = _merge_plan_into_checkpoint(cp, pos)
+        assert result.open_todos == ["existing"]
+
+
+# ---------------------------------------------------------------------------
+# _classify_stop_reason budget_exhausted (Phase 3 verification)
+# ---------------------------------------------------------------------------
+
+class TestBudgetExhaustedClassification:
+    def test_at_max_iterations(self):
+        cp = LightweightCheckpoint()
+        assert _classify_stop_reason(79, 80, cp) == "budget_exhausted"
+
+    def test_one_before_max(self):
+        cp = LightweightCheckpoint()
+        # iteration is 0-indexed, so iteration=78 means 79th iteration, max=80
+        # 78 >= 80-1=79 is False, so not budget_exhausted
+        assert _classify_stop_reason(78, 80, cp) == "completed"
+
+    def test_exactly_at_threshold(self):
+        cp = LightweightCheckpoint()
+        # iteration=79, max=80: 79 >= 79 => True
+        assert _classify_stop_reason(79, 80, cp) == "budget_exhausted"

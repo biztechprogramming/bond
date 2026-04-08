@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -243,6 +244,7 @@ def build_continuation_context(
     position: PlanPosition,
     plan: dict[str, Any],
     adjustment: str | None = None,
+    checkpoint: LightweightCheckpoint | None = None,
 ) -> str:
     """Build a minimal, focused context message for a continuation turn.
 
@@ -255,6 +257,12 @@ def build_continuation_context(
 
     Target: ~500-2000 tokens instead of 100K+.
     """
+    # When both a checkpoint and plan position exist, merge them
+    if checkpoint is not None:
+        _merge_plan_into_checkpoint(checkpoint, position)
+        # Include checkpoint details in the plan context below
+        # (the merged checkpoint's open_todos and progress_summary are used)
+
     lines: list[str] = []
 
     lines.append(f"# Resuming: {position.plan_title}")
@@ -704,6 +712,76 @@ async def load_checkpoint(conversation_id: str) -> LightweightCheckpoint | None:
         return None
     finally:
         await client.close()
+
+
+def _check_git_divergence(
+    checkpoint: LightweightCheckpoint,
+    workspace_dir: str,
+) -> bool:
+    """Return True if git state has diverged enough to invalidate the checkpoint."""
+    if not checkpoint.git_branch and not checkpoint.git_head_sha:
+        return False  # No git state recorded — can't check
+    try:
+        # Check branch
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, cwd=workspace_dir, timeout=5,
+        )
+        if branch.returncode == 0 and checkpoint.git_branch:
+            if branch.stdout.strip() != checkpoint.git_branch:
+                return True  # Different branch
+        # Check HEAD distance
+        if checkpoint.git_head_sha:
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd=workspace_dir, timeout=5,
+            )
+            if head.returncode == 0 and head.stdout.strip() != checkpoint.git_head_sha:
+                # Check how many commits apart
+                distance = subprocess.run(
+                    ["git", "rev-list", "--count", f"{checkpoint.git_head_sha}..HEAD"],
+                    capture_output=True, text=True, cwd=workspace_dir, timeout=5,
+                )
+                if distance.returncode == 0 and int(distance.stdout.strip()) > 5:
+                    return True  # More than 5 commits apart
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        pass
+    return False
+
+
+def _merge_plan_into_checkpoint(
+    checkpoint: LightweightCheckpoint,
+    plan_position: PlanPosition,
+) -> LightweightCheckpoint:
+    """Merge work plan progress into checkpoint for unified resumption context.
+
+    The plan provides structure (what items exist, which are done).
+    The checkpoint provides details (what was tried, what failed, what files changed).
+    """
+    # Add plan items as TODOs (replacing checkpoint's open_todos with plan-aware ones)
+    plan_todos: list[str] = []
+    for item in plan_position.pending_items:
+        plan_todos.append(f"[Plan item {item.get('ordinal', '?')}] {item.get('title', '')}")
+    if plan_position.in_progress_items:
+        current = plan_position.in_progress_items[0]
+        plan_todos.insert(0, f"[IN PROGRESS] {current.get('title', '')}")
+
+    # Plan TODOs take precedence over checkpoint TODOs (more structured)
+    if plan_todos:
+        checkpoint.open_todos = plan_todos
+
+    # Add plan progress to summary
+    completed_count = len(plan_position.completed_items)
+    plan_summary = (
+        f"Work plan: {completed_count}/{plan_position.total_items} items complete "
+        f"({plan_position.progress_pct:.0f}%)"
+    )
+    if checkpoint.progress_summary:
+        checkpoint.progress_summary = f"{plan_summary}\n{checkpoint.progress_summary}"
+    else:
+        checkpoint.progress_summary = plan_summary
+
+    return checkpoint
 
 
 async def delete_checkpoint(conversation_id: str) -> None:

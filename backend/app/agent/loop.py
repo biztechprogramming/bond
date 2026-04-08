@@ -29,8 +29,9 @@ from backend.app.agent.tool_result_cache import ToolResultCache
 from backend.app.agent.interrupts import check_interrupt
 from backend.app.agent.continuation import (
     LightweightCheckpoint, ToolCallRecord, save_checkpoint,
-    load_checkpoint, format_checkpoint_context,
+    load_checkpoint, delete_checkpoint, format_checkpoint_context,
     IterationBudget, build_checkpoint_from_history,
+    _check_git_divergence, classify_intent, ContinuationIntent,
 )
 from backend.app.core.oauth import get_oauth_extra_headers
 
@@ -502,13 +503,29 @@ async def agent_turn(
     loop_checkpoint = LightweightCheckpoint()
     loop_checkpoint.last_user_request = user_message[:500]
 
+    # Doc 096 Phase 3: Clean up checkpoint on new task
+    try:
+        intent = classify_intent(user_message, has_active_plan=False)
+        if intent == ContinuationIntent.NEW_TASK:
+            try:
+                await delete_checkpoint(_conversation_id)
+            except Exception:
+                logger.debug("Checkpoint cleanup failed (non-fatal)", exc_info=True)
+    except Exception:
+        logger.debug("Intent classification failed (non-fatal)", exc_info=True)
+
     # Load any existing checkpoint for resume
     try:
         existing_checkpoint = await load_checkpoint(_conversation_id)
         if existing_checkpoint:
-            checkpoint_context = format_checkpoint_context(existing_checkpoint)
-            messages.insert(1, {"role": "system", "content": checkpoint_context})
-            logger.info("Loaded existing checkpoint for conversation %s", _conversation_id)
+            # Check git divergence before using checkpoint
+            if workspace_dirs and _check_git_divergence(existing_checkpoint, workspace_dirs[0]):
+                logger.info("Checkpoint git state diverged — discarding stale checkpoint")
+                await delete_checkpoint(_conversation_id)
+            else:
+                checkpoint_context = format_checkpoint_context(existing_checkpoint)
+                messages.insert(1, {"role": "system", "content": checkpoint_context})
+                logger.info("Loaded existing checkpoint for conversation %s", _conversation_id)
     except Exception:
         logger.debug("Failed to load checkpoint (non-fatal)", exc_info=True)
 
