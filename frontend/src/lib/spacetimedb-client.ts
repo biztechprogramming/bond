@@ -140,6 +140,7 @@ export async function connectToSpacetimeDB(
               "SELECT * FROM prompt_fragment_versions",
               "SELECT * FROM prompt_template_versions",
               "SELECT * FROM agent_prompt_fragments",
+              "SELECT * FROM mcp_servers",
               "SELECT * FROM resources",
               "SELECT * FROM components",
               "SELECT * FROM environments",
@@ -217,6 +218,13 @@ export async function connectToSpacetimeDB(
         conn.db.provider_api_keys.onInsert(() => notifyListeners());
         conn.db.provider_api_keys.onUpdate(() => notifyListeners());
         conn.db.provider_api_keys.onDelete(() => notifyListeners());
+      }
+
+      // MCP servers
+      if (conn.db.mcp_servers) {
+        conn.db.mcp_servers.onInsert(() => notifyListeners());
+        conn.db.mcp_servers.onUpdate(() => notifyListeners());
+        conn.db.mcp_servers.onDelete(() => notifyListeners());
       }
 
       // Deployment tables
@@ -631,6 +639,39 @@ export function getResourceEnvironments(): ResourceEnvironmentRow[] {
   const rows: ResourceEnvironmentRow[] = [];
   for (const row of db.db.resource_environments.iter()) {
     rows.push(row as unknown as ResourceEnvironmentRow);
+  }
+  return rows;
+}
+
+// MCP Servers
+export interface McpServerRow {
+  id: string;
+  name: string;
+  command: string;
+  args: string;
+  env: string;
+  enabled: boolean;
+  agentId: string | null;
+  createdAt: bigint;
+  updatedAt: bigint;
+}
+
+export function getMcpServers(): McpServerRow[] {
+  if (!db || !db.db.mcp_servers) return [];
+  const rows: McpServerRow[] = [];
+  for (const row of db.db.mcp_servers.iter()) {
+    const r = row as unknown as McpServerRow;
+    rows.push({
+      id: r.id,
+      name: r.name,
+      command: r.command,
+      args: r.args,
+      env: r.env,
+      enabled: r.enabled,
+      agentId: r.agentId || null,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    });
   }
   return rows;
 }
