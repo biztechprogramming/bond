@@ -18,7 +18,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
-from backend.app.agent.interrupts import set_interrupt, is_turn_active, get_worker_url
+from backend.app.agent.interrupts import set_interrupt, is_turn_active, get_worker_url, register_turn, unregister_turn
+from backend.app.agent.loop import agent_turn
 from backend.app.api.v1.turn_stdb import _stream_container_turn_stdb
 from backend.app.core.spacetimedb import get_stdb
 from backend.app.sandbox.manager import get_sandbox_manager
@@ -731,8 +732,64 @@ async def conversation_turn(
             background=None,  # Disable background tasks that might buffer response
         )
     else:
-        # Host-mode agent not supported without SQLite yet in this refactor
-        raise HTTPException(status_code=501, detail="Host-mode agents not yet supported in SpacetimeDB mode")
+        # Host-mode agent — run agent loop directly in this process
+        logger.info(f"[CONVERSATIONS] Agent {agent_id} is host-mode (no sandbox_image)")
+        return StreamingResponse(
+            _stream_host_turn_stdb(history, conversation_id, req.plan_id, agent_id, user_message, agent_row),
+            media_type="text/event-stream",
+            background=None,
+        )
+
+
+async def _stream_host_turn_stdb(
+    history: list[dict],
+    conversation_id: str,
+    plan_id: str | None,
+    agent_id: str,
+    user_message: str,
+    agent_row: dict,
+):
+    """SSE generator for host-mode agent turn in SpacetimeDB mode."""
+    register_turn(conversation_id)
+    try:
+        yield _sse("status", {"state": "thinking", "conversation_id": conversation_id})
+
+        result = await agent_turn(user_message, history, stream=False, agent_id=agent_id, db=None)
+
+        yield _sse("chunk", {"content": result})
+
+        # Save assistant message to SpacetimeDB
+        msg_id = str(ULID())
+        stdb = get_stdb()
+        saved = False
+        try:
+            success = await stdb.call_reducer("save_message", [
+                msg_id, agent_id, conversation_id, "assistant", result, "{}"
+            ])
+            if success:
+                saved = True
+        except Exception as e:
+            logger.error(f"[CONVERSATIONS] save_message failed for host-mode response: {e}")
+
+        if not saved:
+            try:
+                await stdb.call_reducer("add_conversation_message", [
+                    msg_id, conversation_id, "assistant", result, "", "", 0, "delivered"
+                ])
+            except Exception as e:
+                logger.error(f"[CONVERSATIONS] add_conversation_message also failed: {e}")
+
+        yield _sse("done", {
+            "message_id": msg_id,
+            "conversation_id": conversation_id,
+            "tool_calls_made": 0,
+            "queued_count": 0,
+        })
+    except Exception as e:
+        logger.error(f"[CONVERSATIONS] Host-mode turn error: {e}")
+        yield _sse("error", {"message": str(e)})
+    finally:
+        unregister_turn(conversation_id)
 
 
 # -- Internal helpers --
