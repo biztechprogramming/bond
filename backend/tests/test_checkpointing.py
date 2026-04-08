@@ -5,6 +5,7 @@ import pytest
 from backend.app.agent.continuation import (
     LightweightCheckpoint,
     ToolCallRecord,
+    IterationBudget,
     format_checkpoint_context,
 )
 from backend.app.agent.loop import _classify_stop_reason, _summarize_progress
@@ -186,9 +187,9 @@ class TestFormatCheckpointContext:
 # ---------------------------------------------------------------------------
 
 class TestClassifyStopReason:
-    def test_max_iterations(self):
+    def test_budget_exhausted(self):
         cp = LightweightCheckpoint()
-        assert _classify_stop_reason(79, 80, cp) == "max_iterations"
+        assert _classify_stop_reason(79, 80, cp) == "budget_exhausted"
 
     def test_completed(self):
         cp = LightweightCheckpoint()
@@ -197,6 +198,28 @@ class TestClassifyStopReason:
     def test_existing_stop_reason(self):
         cp = LightweightCheckpoint(stop_reason="interrupted")
         assert _classify_stop_reason(5, 80, cp) == "interrupted"
+
+    def test_transient_error(self):
+        cp = LightweightCheckpoint()
+        err = Exception("rate_limit exceeded, retry after 30s")
+        assert _classify_stop_reason(5, 80, cp, error=err) == "transient_error"
+
+    def test_transient_error_429(self):
+        cp = LightweightCheckpoint()
+        err = Exception("HTTP 429 Too Many Requests")
+        assert _classify_stop_reason(5, 80, cp, error=err) == "transient_error"
+
+    def test_fatal_error(self):
+        cp = LightweightCheckpoint()
+        err = ValueError("something broke badly")
+        result = _classify_stop_reason(5, 80, cp, error=err)
+        assert result.startswith("error: ValueError:")
+        assert "something broke badly" in result
+
+    def test_error_does_not_override_existing_stop_reason(self):
+        cp = LightweightCheckpoint(stop_reason="interrupted")
+        err = Exception("some error")
+        assert _classify_stop_reason(5, 80, cp, error=err) == "interrupted"
 
 
 # ---------------------------------------------------------------------------
@@ -227,3 +250,83 @@ class TestSummarizeProgress:
         result = _summarize_progress(4, cp)
         assert "5 iterations" in result
         assert "tool calls" not in result
+
+
+# ---------------------------------------------------------------------------
+# IterationBudget thresholds
+# ---------------------------------------------------------------------------
+
+class TestIterationBudget:
+    def test_initial_state(self):
+        b = IterationBudget(total=100)
+        assert b.used == 0
+        assert b.remaining == 100
+        assert b.pct_used == 0.0
+        assert not b.should_checkpoint
+        assert not b.should_nudge
+        assert not b.should_wrap_up
+        assert not b.should_stop
+
+    def test_tick(self):
+        b = IterationBudget(total=100)
+        for _ in range(50):
+            b.tick()
+        assert b.used == 50
+        assert b.remaining == 50
+        assert b.pct_used == 0.5
+
+    def test_checkpoint_threshold_at_50pct(self):
+        b = IterationBudget(total=100)
+        for _ in range(49):
+            b.tick()
+        assert not b.should_checkpoint
+        b.tick()  # 50th
+        assert b.should_checkpoint
+        assert not b.should_nudge
+
+    def test_nudge_threshold_at_65pct(self):
+        b = IterationBudget(total=100)
+        for _ in range(65):
+            b.tick()
+        assert b.should_nudge
+        assert not b.should_wrap_up
+
+    def test_wrap_up_threshold_at_80pct(self):
+        b = IterationBudget(total=100)
+        for _ in range(80):
+            b.tick()
+        assert b.should_wrap_up
+        assert not b.should_stop
+
+    def test_stop_threshold_at_95pct(self):
+        b = IterationBudget(total=100)
+        for _ in range(95):
+            b.tick()
+        assert b.should_stop
+
+    def test_budget_message_none_below_50pct(self):
+        b = IterationBudget(total=100)
+        for _ in range(49):
+            b.tick()
+        assert b.get_budget_message() is None
+
+    def test_budget_message_checkpoint_at_50pct(self):
+        b = IterationBudget(total=100)
+        for _ in range(50):
+            b.tick()
+        msg = b.get_budget_message()
+        assert msg is not None
+        assert "BUDGET NOTE" in msg
+
+    def test_budget_message_stop_at_95pct(self):
+        b = IterationBudget(total=100)
+        for _ in range(95):
+            b.tick()
+        msg = b.get_budget_message()
+        assert msg is not None
+        assert "URGENT" in msg
+
+    def test_zero_total(self):
+        b = IterationBudget(total=0)
+        assert b.pct_used == 1.0
+        assert b.should_stop

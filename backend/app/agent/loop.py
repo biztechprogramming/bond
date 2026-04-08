@@ -30,6 +30,7 @@ from backend.app.agent.interrupts import check_interrupt
 from backend.app.agent.continuation import (
     LightweightCheckpoint, ToolCallRecord, save_checkpoint,
     load_checkpoint, format_checkpoint_context,
+    IterationBudget, build_checkpoint_from_history,
 )
 from backend.app.core.oauth import get_oauth_extra_headers
 
@@ -313,12 +314,18 @@ async def _llm_call_with_overflow_recovery(
     raise last_error  # type: ignore[misc]
 
 
-def _classify_stop_reason(iteration: int, max_iterations: int, checkpoint: LightweightCheckpoint) -> str:
+def _classify_stop_reason(iteration: int, max_iterations: int, checkpoint: LightweightCheckpoint, error: Exception | None = None) -> str:
     """Classify why the agent loop stopped."""
     if checkpoint.stop_reason:
         return checkpoint.stop_reason
+    if error is not None:
+        error_str = str(error).lower()
+        TRANSIENT_PATTERNS = ["rate_limit", "429", "503", "overloaded", "timeout", "connection"]
+        if any(p in error_str for p in TRANSIENT_PATTERNS):
+            return "transient_error"
+        return f"error: {type(error).__name__}: {str(error)[:200]}"
     if iteration >= max_iterations - 1:
-        return "max_iterations"
+        return "budget_exhausted"
     return "completed"
 
 
@@ -494,7 +501,6 @@ async def agent_turn(
     _conversation_id = str(agent.get("id", "unknown"))
     loop_checkpoint = LightweightCheckpoint()
     loop_checkpoint.last_user_request = user_message[:500]
-    _exit_error: Exception | None = None
 
     # Load any existing checkpoint for resume
     try:
@@ -506,346 +512,380 @@ async def agent_turn(
     except Exception:
         logger.debug("Failed to load checkpoint (non-fatal)", exc_info=True)
 
-    # Tool-use loop
-    for iteration in range(max_iterations):
-        # Doc 096: Check interrupt before LLM call
-        if check_interrupt(_conversation_id):
-            loop_checkpoint.stop_reason = "interrupted"
-            break
+    # Doc 096: Budget tracker
+    budget = IterationBudget(total=max_iterations)
+    _checkpoint_saved_at_threshold = False
+    _exit_error: Exception | None = None
 
-        loop_checkpoint.turn_number = iteration
-        current_max_tokens = TOKEN_TIERS[current_tier]
-
-        # Re-select tools each iteration (momentum from recent tool calls)
-        recent_tools: list[str] = []
-        for msg in messages:
-            if msg.get("role") == "assistant":
-                tcs = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
-                if tcs and isinstance(tcs, list):
-                    for tc in tcs:
-                        fn = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", None)
-                        name = fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", None)
-                        if name:
-                            recent_tools.append(name)
-        selected_tool_names = select_tools(
-            user_message=user_message,
-            enabled_tools=all_enabled_tools,
-            recent_tools_used=recent_tools[-10:] if recent_tools else None,
-            agent_name=agent.get("name"),
-            iteration=iteration,
-        )
-        raw_defs = registry.get_definitions_for(selected_tool_names)
-        tool_defs = [compact_tool_schema(td) for td in raw_defs]
-
-        # Doc 090: Pre-call token budget check
-        messages = await _check_token_budget(messages, model_string)
-
-        # Use Instructor for validated tool calls
-        pydantic_tools = get_pydantic_definitions(selected_tool_names)
-        if pydantic_tools:
-            # Create a Union of all available tools
-            # Instructor will handle the routing and validation
-            if len(pydantic_tools) > 1:
-                ToolUnion = Union[tuple(pydantic_tools)]
-            else:
-                ToolUnion = pydantic_tools[0]
-            
-            # Patch the call to use Instructor
-            instructor_client = get_instructor_client()
-            
-            try:
-                # Instructor's mode=instructor.Mode.TOOLS translates Pydantic to JSON Schema
-                # and handles the response back into Pydantic objects.
-                tool_call_obj = await instructor_client(
-                    model=model_string,
-                    messages=messages,
-                    response_model=ToolUnion,
-                    max_retries=2, # Self-correction turns!
-                    temperature=0.7,
-                    max_tokens=current_max_tokens,
-                    **extra_kwargs,
-                )
-                
-                # Convert Instructor result back into a format the loop expects
-                # (Simulating a LiteLLM response object for minimum code disruption)
-                
-                # Resolve tool name (handles both native snake_case and MCP PascalCase)
-                from backend.app.mcp import mcp_manager as _loop_mcp_manager
-                tool_name = _loop_mcp_manager.resolve_tool_name(tool_call_obj.__class__.__name__)
-                
-                args = tool_call_obj.model_dump(exclude_none=True)
-                
-                # Mock a response object
-                class MockMessage:
-                    def __init__(self, name, args):
-                        self.content = None
-                        self.tool_calls = [type('TC', (), {
-                            'function': type('FN', (), {'name': name, 'arguments': json.dumps(args)}),
-                            'id': f"call_{iteration}"
-                        })]
-                
-                class MockChoice:
-                    def __init__(self, msg):
-                        self.message = msg
-                        self.finish_reason = "tool_calls"
-                
-                class MockResponse:
-                    def __init__(self, choice):
-                        self.choices = [choice]
-                
-                response = MockResponse(MockChoice(MockMessage(tool_name, args)))
-            except Exception as e:
-                overflow = classify_overflow_error(e)
-                if overflow is not None:
-                    # Doc 091: overflow during Instructor — recover with standard path
-                    logger.warning("Instructor call hit overflow, attempting recovery")
-                    async def _fallback_call(msgs):
-                        return await litellm.acompletion(
-                            model=model_string, messages=msgs,
-                            tools=tool_defs if tool_defs else None,
-                            temperature=0.7, max_tokens=current_max_tokens,
-                            **extra_kwargs,
-                        )
-                    response, messages = await _llm_call_with_overflow_recovery(
-                        messages, model_string, _fallback_call,
-                    )
+    # Tool-use loop (wrapped in try/except for checkpoint safety)
+    try:
+        for iteration in range(max_iterations):
+            budget.tick()
+            # Doc 096: Check interrupt before LLM call
+            if check_interrupt(_conversation_id):
+                loop_checkpoint.stop_reason = "interrupted"
+                break
+    
+            loop_checkpoint.turn_number = iteration
+            current_max_tokens = TOKEN_TIERS[current_tier]
+    
+            # Re-select tools each iteration (momentum from recent tool calls)
+            recent_tools: list[str] = []
+            for msg in messages:
+                if msg.get("role") == "assistant":
+                    tcs = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+                    if tcs and isinstance(tcs, list):
+                        for tc in tcs:
+                            fn = tc.get("function", {}) if isinstance(tc, dict) else getattr(tc, "function", None)
+                            name = fn.get("name") if isinstance(fn, dict) else getattr(fn, "name", None)
+                            if name:
+                                recent_tools.append(name)
+            selected_tool_names = select_tools(
+                user_message=user_message,
+                enabled_tools=all_enabled_tools,
+                recent_tools_used=recent_tools[-10:] if recent_tools else None,
+                agent_name=agent.get("name"),
+                iteration=iteration,
+            )
+            raw_defs = registry.get_definitions_for(selected_tool_names)
+            tool_defs = [compact_tool_schema(td) for td in raw_defs]
+    
+            # Doc 090: Pre-call token budget check
+            messages = await _check_token_budget(messages, model_string)
+    
+            # Use Instructor for validated tool calls
+            pydantic_tools = get_pydantic_definitions(selected_tool_names)
+            if pydantic_tools:
+                # Create a Union of all available tools
+                # Instructor will handle the routing and validation
+                if len(pydantic_tools) > 1:
+                    ToolUnion = Union[tuple(pydantic_tools)]
                 else:
-                    logger.error("Instructor tool call failed: %s", e)
-                    # Fallback to standard litellm on error
-                    response = await litellm.acompletion(
+                    ToolUnion = pydantic_tools[0]
+                
+                # Patch the call to use Instructor
+                instructor_client = get_instructor_client()
+                
+                try:
+                    # Instructor's mode=instructor.Mode.TOOLS translates Pydantic to JSON Schema
+                    # and handles the response back into Pydantic objects.
+                    tool_call_obj = await instructor_client(
                         model=model_string,
                         messages=messages,
-                        tools=tool_defs if tool_defs else None,
+                        response_model=ToolUnion,
+                        max_retries=2, # Self-correction turns!
                         temperature=0.7,
                         max_tokens=current_max_tokens,
                         **extra_kwargs,
                     )
-        else:
-            # Doc 091: wrap with overflow recovery
-            async def _standard_call(msgs):
-                return await litellm.acompletion(
-                    model=model_string, messages=msgs,
-                    tools=tool_defs if tool_defs else None,
-                    temperature=0.7, max_tokens=current_max_tokens,
-                    **extra_kwargs,
+                    
+                    # Convert Instructor result back into a format the loop expects
+                    # (Simulating a LiteLLM response object for minimum code disruption)
+                    
+                    # Resolve tool name (handles both native snake_case and MCP PascalCase)
+                    from backend.app.mcp import mcp_manager as _loop_mcp_manager
+                    tool_name = _loop_mcp_manager.resolve_tool_name(tool_call_obj.__class__.__name__)
+                    
+                    args = tool_call_obj.model_dump(exclude_none=True)
+                    
+                    # Mock a response object
+                    class MockMessage:
+                        def __init__(self, name, args):
+                            self.content = None
+                            self.tool_calls = [type('TC', (), {
+                                'function': type('FN', (), {'name': name, 'arguments': json.dumps(args)}),
+                                'id': f"call_{iteration}"
+                            })]
+                    
+                    class MockChoice:
+                        def __init__(self, msg):
+                            self.message = msg
+                            self.finish_reason = "tool_calls"
+                    
+                    class MockResponse:
+                        def __init__(self, choice):
+                            self.choices = [choice]
+                    
+                    response = MockResponse(MockChoice(MockMessage(tool_name, args)))
+                except Exception as e:
+                    overflow = classify_overflow_error(e)
+                    if overflow is not None:
+                        # Doc 091: overflow during Instructor — recover with standard path
+                        logger.warning("Instructor call hit overflow, attempting recovery")
+                        async def _fallback_call(msgs):
+                            return await litellm.acompletion(
+                                model=model_string, messages=msgs,
+                                tools=tool_defs if tool_defs else None,
+                                temperature=0.7, max_tokens=current_max_tokens,
+                                **extra_kwargs,
+                            )
+                        response, messages = await _llm_call_with_overflow_recovery(
+                            messages, model_string, _fallback_call,
+                        )
+                    else:
+                        logger.error("Instructor tool call failed: %s", e)
+                        # Fallback to standard litellm on error
+                        response = await litellm.acompletion(
+                            model=model_string,
+                            messages=messages,
+                            tools=tool_defs if tool_defs else None,
+                            temperature=0.7,
+                            max_tokens=current_max_tokens,
+                            **extra_kwargs,
+                        )
+            else:
+                # Doc 091: wrap with overflow recovery
+                async def _standard_call(msgs):
+                    return await litellm.acompletion(
+                        model=model_string, messages=msgs,
+                        tools=tool_defs if tool_defs else None,
+                        temperature=0.7, max_tokens=current_max_tokens,
+                        **extra_kwargs,
+                    )
+                response, messages = await _llm_call_with_overflow_recovery(
+                    messages, model_string, _standard_call,
                 )
-            response, messages = await _llm_call_with_overflow_recovery(
-                messages, model_string, _standard_call,
-            )
+    
+            choice = response.choices[0]
+            message = choice.message
+    
+            # Handle truncation with continuation
+            if choice.finish_reason == "length":
+                continuation_attempts += 1
+                if continuation_attempts > 3:
+                    return "Output token limit exceeded repeatedly. Try breaking the task into smaller pieces."
+                if current_tier < len(TOKEN_TIERS) - 1:
+                    current_tier += 1
+                    logger.info("Escalating max_tokens to %d after truncation", TOKEN_TIERS[current_tier])
+                partial = message.content or ""
+                if partial:
+                    messages.append({"role": "assistant", "content": partial})
+                    messages.append({"role": "user", "content": "Your response was cut off. Please continue exactly where you left off."})
+                continue
+    
+            current_tier = 0
+            continuation_attempts = 0
+    
+            # Check for tool calls
+            if message.tool_calls:
+                messages.append(message.model_dump())
+    
+                # ── Parallel execution of independent tool calls ──
+                # Tools that only read state can run concurrently.
+                # Side-effecting or terminal tools must run sequentially.
+                PARALLELIZABLE_TOOLS = frozenset({
+                    "file_read", "search_memory", "code_execute",
+                    "web_search", "web_read",
+                })
+    
+                # Parse all tool calls upfront
+                parsed_calls = []
+                for tc in message.tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        args = {}
+                    parsed_calls.append((tc, tc.function.name, args))
+    
+                # Separate into parallel-safe and sequential groups
+                parallel_batch = []
+                sequential_batch = []
+                for tc, name, args in parsed_calls:
+                    if name in PARALLELIZABLE_TOOLS and name in all_enabled_tools:
+                        parallel_batch.append((tc, name, args))
+                    else:
+                        sequential_batch.append((tc, name, args))
+    
+                # Execute parallel batch concurrently
+                if parallel_batch:
+                    async def _exec_one(tc, name, args):
+                        logger.info("Tool call [%d] (parallel): %s(%s)", iteration, name, list(args.keys()))
+                        # Doc 065: check cache before executing
+                        if session_cache:
+                            cached = session_cache.check(name, args, iteration)
+                            if cached:
+                                formatted = session_cache.format_cache_hit(cached, iteration)
+                                if formatted is not None:
+                                    return tc, {"output": formatted}
+                        # Doc 092: wrap with structured error handling
+                        with ToolTimer() as _t:
+                            try:
+                                raw_result = await registry.execute(name, args, tool_context)
+                            except Exception as _exc:
+                                _tr = ToolResult.from_error(
+                                    error=f"{type(_exc).__name__}: {_exc}",
+                                    tool_name=name,
+                                    duration_ms=_t.duration_ms,
+                                )
+                                logger.error("tool_execution_error tool=%s error=%s", name, _exc)
+                                return tc, {"error": _tr.to_message_content()}
+                        # Doc 065: store result and record mutations
+                        if session_cache:
+                            result_text = json.dumps(raw_result) if isinstance(raw_result, dict) else str(raw_result)
+                            session_cache.store(name, args, result_text, iteration)
+                            session_cache.record_mutation(name, args, iteration)
+                            if name == "code_execute":
+                                session_cache.revalidate_after_execute()
+                        return tc, raw_result
+    
+                    parallel_results = await asyncio.gather(
+                        *[_exec_one(tc, name, args) for tc, name, args in parallel_batch],
+                        return_exceptions=True,
+                    )
+                    for item in parallel_results:
+                        if isinstance(item, Exception):
+                            # Find the matching tool call for error reporting
+                            tc = parallel_batch[parallel_results.index(item)][0]
+                            result = {"error": f"Parallel execution failed: {item}"}
+                        else:
+                            tc, result = item
+    
+                        if result.get("_terminal"):
+                            loop_checkpoint.stop_reason = "completed"
+                            return result.get("message", "")
 
-        choice = response.choices[0]
-        message = choice.message
-
-        # Handle truncation with continuation
-        if choice.finish_reason == "length":
-            continuation_attempts += 1
-            if continuation_attempts > 3:
-                return "Output token limit exceeded repeatedly. Try breaking the task into smaller pieces."
-            if current_tier < len(TOKEN_TIERS) - 1:
-                current_tier += 1
-                logger.info("Escalating max_tokens to %d after truncation", TOKEN_TIERS[current_tier])
-            partial = message.content or ""
-            if partial:
-                messages.append({"role": "assistant", "content": partial})
-                messages.append({"role": "user", "content": "Your response was cut off. Please continue exactly where you left off."})
-            continue
-
-        current_tier = 0
-        continuation_attempts = 0
-
-        # Check for tool calls
-        if message.tool_calls:
-            messages.append(message.model_dump())
-
-            # ── Parallel execution of independent tool calls ──
-            # Tools that only read state can run concurrently.
-            # Side-effecting or terminal tools must run sequentially.
-            PARALLELIZABLE_TOOLS = frozenset({
-                "file_read", "search_memory", "code_execute",
-                "web_search", "web_read",
-            })
-
-            # Parse all tool calls upfront
-            parsed_calls = []
-            for tc in message.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    args = {}
-                parsed_calls.append((tc, tc.function.name, args))
-
-            # Separate into parallel-safe and sequential groups
-            parallel_batch = []
-            sequential_batch = []
-            for tc, name, args in parsed_calls:
-                if name in PARALLELIZABLE_TOOLS and name in all_enabled_tools:
-                    parallel_batch.append((tc, name, args))
-                else:
-                    sequential_batch.append((tc, name, args))
-
-            # Execute parallel batch concurrently
-            if parallel_batch:
-                async def _exec_one(tc, name, args):
-                    logger.info("Tool call [%d] (parallel): %s(%s)", iteration, name, list(args.keys()))
+                        # Doc 096: Record parallel tool call in checkpoint
+                        _par_name = parallel_batch[parallel_results.index(item)][1] if not isinstance(item, Exception) else "unknown"
+                        _par_success = not isinstance(item, Exception) and "error" not in result
+                        _par_summary = str(result)[:200] if not isinstance(item, Exception) else str(item)[:200]
+                        loop_checkpoint.completed_actions.append(ToolCallRecord(
+                            tool_name=_par_name, success=_par_success, output_summary=_par_summary,
+                        ))
+                        if _par_success:
+                            loop_checkpoint.successful_tool_calls += 1
+                        else:
+                            loop_checkpoint.failed_tool_calls += 1
+    
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": json.dumps(result),
+                        })
+    
+                # Execute sequential batch in order
+                for tool_call, tool_name, tool_args in sequential_batch:
+                    logger.info("Tool call [%d]: %s(%s)", iteration, tool_name, list(tool_args.keys()))
+    
                     # Doc 065: check cache before executing
                     if session_cache:
-                        cached = session_cache.check(name, args, iteration)
+                        cached = session_cache.check(tool_name, tool_args, iteration)
                         if cached:
                             formatted = session_cache.format_cache_hit(cached, iteration)
                             if formatted is not None:
-                                return tc, {"output": formatted}
-                    # Doc 092: wrap with structured error handling
-                    with ToolTimer() as _t:
-                        try:
-                            raw_result = await registry.execute(name, args, tool_context)
-                        except Exception as _exc:
-                            _tr = ToolResult.from_error(
-                                error=f"{type(_exc).__name__}: {_exc}",
-                                tool_name=name,
-                                duration_ms=_t.duration_ms,
-                            )
-                            logger.error("tool_execution_error tool=%s error=%s", name, _exc)
-                            return tc, {"error": _tr.to_message_content()}
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": formatted,
+                                })
+                                continue
+    
+                    if tool_name not in all_enabled_tools:
+                        result = {"error": f"Tool '{tool_name}' is not enabled for this agent."}
+                    else:
+                        # Doc 092: wrap with ToolResult for structured error handling
+                        with ToolTimer() as _timer:
+                            try:
+                                result = await registry.execute(tool_name, tool_args, tool_context)
+                            except Exception as _exc:
+                                _tool_result = ToolResult.from_error(
+                                    error=f"{type(_exc).__name__}: {_exc}",
+                                    tool_name=tool_name,
+                                    duration_ms=_timer.duration_ms,
+                                )
+                                logger.error("tool_execution_error tool=%s error=%s", tool_name, _exc)
+                                result = {"error": _tool_result.to_message_content()}
+    
                     # Doc 065: store result and record mutations
                     if session_cache:
-                        result_text = json.dumps(raw_result) if isinstance(raw_result, dict) else str(raw_result)
-                        session_cache.store(name, args, result_text, iteration)
-                        session_cache.record_mutation(name, args, iteration)
-                        if name == "code_execute":
+                        result_text = json.dumps(result) if isinstance(result, dict) else str(result)
+                        session_cache.store(tool_name, tool_args, result_text, iteration)
+                        session_cache.record_mutation(tool_name, tool_args, iteration)
+                        if tool_name == "code_execute":
                             session_cache.revalidate_after_execute()
-                    return tc, raw_result
-
-                parallel_results = await asyncio.gather(
-                    *[_exec_one(tc, name, args) for tc, name, args in parallel_batch],
-                    return_exceptions=True,
-                )
-                for item in parallel_results:
-                    if isinstance(item, Exception):
-                        # Find the matching tool call for error reporting
-                        tc = parallel_batch[parallel_results.index(item)][0]
-                        result = {"error": f"Parallel execution failed: {item}"}
-                    else:
-                        tc, result = item
-
-                    if result.get("_terminal"):
-
-                        return result.get("message", "")
-
-                    # Doc 096: Record parallel tool call in checkpoint
-                    _par_name = parallel_batch[parallel_results.index(item)][1] if not isinstance(item, Exception) else "unknown"
-                    _par_success = not isinstance(item, Exception) and "error" not in result
-                    _par_summary = str(result)[:200] if not isinstance(item, Exception) else str(item)[:200]
+    
+                    # Doc 096: Record sequential tool call in checkpoint
+                    _seq_success = "error" not in result
+                    _seq_summary = str(result)[:200]
+                    _seq_duration = int(_timer.duration_ms) if '_timer' in dir() else 0
                     loop_checkpoint.completed_actions.append(ToolCallRecord(
-                        tool_name=_par_name, success=_par_success, output_summary=_par_summary,
+                        tool_name=tool_name, success=_seq_success, output_summary=_seq_summary,
+                        duration_ms=_seq_duration,
                     ))
-                    if _par_success:
+                    if _seq_success:
                         loop_checkpoint.successful_tool_calls += 1
                     else:
                         loop_checkpoint.failed_tool_calls += 1
+                    # Track file modifications
+                    if tool_name in ("file_edit", "file_write") and _seq_success:
+                        _fpath = tool_args.get("path", tool_args.get("file_path", ""))
+                        if _fpath and _fpath not in loop_checkpoint.files_modified:
+                            loop_checkpoint.files_modified.append(_fpath)
+    
+                    # Check for terminal tool (respond)
+                    if result.get("_terminal"):
+                        loop_checkpoint.stop_reason = "completed"
+                        return result.get("message", "")
 
+                    # Doc 092: Format tool result with structured error feedback
+                    if isinstance(result, dict) and "error" in result and not result.get("_terminal"):
+                        _content = result["error"] if isinstance(result["error"], str) else json.dumps(result)
+                        logger.info("tool_failure_feedback tool=%s error=%s", tool_name, result.get("error"))
+                    else:
+                        _content = json.dumps(result)
+    
                     messages.append({
                         "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(result),
+                        "tool_call_id": tool_call.id,
+                        "content": _content,
                     })
+    
+                    # Doc 096: Check interrupt after tool execution
+                    if check_interrupt(_conversation_id):
+                        loop_checkpoint.stop_reason = "interrupted"
+                        break
 
-            # Execute sequential batch in order
-            for tool_call, tool_name, tool_args in sequential_batch:
-                logger.info("Tool call [%d]: %s(%s)", iteration, tool_name, list(tool_args.keys()))
+                # Doc 096: Mid-loop budget-threshold checkpoint save
+                if budget.should_checkpoint and not _checkpoint_saved_at_threshold:
+                    loop_checkpoint.progress_summary = _summarize_progress(iteration, loop_checkpoint)
+                    if workspace_dirs:
+                        loop_checkpoint.capture_git_state(workspace_dirs[0])
+                    try:
+                        await save_checkpoint(_conversation_id, agent_id or "", loop_checkpoint)
+                        _checkpoint_saved_at_threshold = True
+                        logger.info("Mid-loop checkpoint saved at %s budget", f"{budget.pct_used:.0%}")
+                    except Exception:
+                        logger.debug("Mid-loop checkpoint save failed (non-fatal)", exc_info=True)
 
-                # Doc 065: check cache before executing
-                if session_cache:
-                    cached = session_cache.check(tool_name, tool_args, iteration)
-                    if cached:
-                        formatted = session_cache.format_cache_hit(cached, iteration)
-                        if formatted is not None:
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": formatted,
-                            })
-                            continue
+                # Doc 096: Inject budget-awareness messages
+                budget_msg = budget.get_budget_message()
+                if budget_msg:
+                    messages.append({"role": "system", "content": budget_msg})
+            else:
+                # Text response — return it
+                loop_checkpoint.stop_reason = "completed"
+                return message.content or ""
+    except Exception as exc:
+        _exit_error = exc
+        logger.error("Agent loop crashed: %s", exc, exc_info=True)
 
-                if tool_name not in all_enabled_tools:
-                    result = {"error": f"Tool '{tool_name}' is not enabled for this agent."}
-                else:
-                    # Doc 092: wrap with ToolResult for structured error handling
-                    with ToolTimer() as _timer:
-                        try:
-                            result = await registry.execute(tool_name, tool_args, tool_context)
-                        except Exception as _exc:
-                            _tool_result = ToolResult.from_error(
-                                error=f"{type(_exc).__name__}: {_exc}",
-                                tool_name=tool_name,
-                                duration_ms=_timer.duration_ms,
-                            )
-                            logger.error("tool_execution_error tool=%s error=%s", tool_name, _exc)
-                            result = {"error": _tool_result.to_message_content()}
-
-                # Doc 065: store result and record mutations
-                if session_cache:
-                    result_text = json.dumps(result) if isinstance(result, dict) else str(result)
-                    session_cache.store(tool_name, tool_args, result_text, iteration)
-                    session_cache.record_mutation(tool_name, tool_args, iteration)
-                    if tool_name == "code_execute":
-                        session_cache.revalidate_after_execute()
-
-                # Doc 096: Record sequential tool call in checkpoint
-                _seq_success = "error" not in result
-                _seq_summary = str(result)[:200]
-                _seq_duration = int(_timer.duration_ms) if '_timer' in dir() else 0
-                loop_checkpoint.completed_actions.append(ToolCallRecord(
-                    tool_name=tool_name, success=_seq_success, output_summary=_seq_summary,
-                    duration_ms=_seq_duration,
-                ))
-                if _seq_success:
-                    loop_checkpoint.successful_tool_calls += 1
-                else:
-                    loop_checkpoint.failed_tool_calls += 1
-                # Track file modifications
-                if tool_name in ("file_edit", "file_write") and _seq_success:
-                    _fpath = tool_args.get("path", tool_args.get("file_path", ""))
-                    if _fpath and _fpath not in loop_checkpoint.files_modified:
-                        loop_checkpoint.files_modified.append(_fpath)
-
-                # Check for terminal tool (respond)
-                if result.get("_terminal"):
-
-                    return result.get("message", "")
-
-                # Doc 092: Format tool result with structured error feedback
-                if isinstance(result, dict) and "error" in result and not result.get("_terminal"):
-                    _content = result["error"] if isinstance(result["error"], str) else json.dumps(result)
-                    logger.info("tool_failure_feedback tool=%s error=%s", tool_name, result.get("error"))
-                else:
-                    _content = json.dumps(result)
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": _content,
-                })
-
-                # Doc 096: Check interrupt after tool execution
-                if check_interrupt(_conversation_id):
-                    loop_checkpoint.stop_reason = "interrupted"
-                    break
-        else:
-            # Text response — return it
-            loop_checkpoint.stop_reason = "completed"
-            return message.content or ""
-
-    # Doc 096: Save checkpoint on loop exit
+    # Doc 096: Save checkpoint on loop exit (always runs — normal exit or crash)
     try:
         if not loop_checkpoint.stop_reason:
-            loop_checkpoint.stop_reason = _classify_stop_reason(iteration, max_iterations, loop_checkpoint)
+            loop_checkpoint.stop_reason = _classify_stop_reason(iteration, max_iterations, loop_checkpoint, error=_exit_error)
         loop_checkpoint.progress_summary = _summarize_progress(iteration, loop_checkpoint)
-        # Capture git state if workspace available
+        # Merge uncommitted changes from git
         if workspace_dirs:
+            git_checkpoint = build_checkpoint_from_history(messages, workspace_dirs[0])
+            loop_checkpoint.uncommitted_changes = git_checkpoint.uncommitted_changes
             loop_checkpoint.capture_git_state(workspace_dirs[0])
         await save_checkpoint(_conversation_id, agent_id or "", loop_checkpoint)
+        logger.info("Exit checkpoint saved: stop_reason=%s", loop_checkpoint.stop_reason)
     except Exception:
         logger.warning("Failed to save exit checkpoint", exc_info=True)
+
+    # Re-raise if the loop crashed (checkpoint has been saved)
+    if _exit_error is not None:
+        raise _exit_error
 
     logger.warning("Agent hit max iterations (%d)", max_iterations)
 
@@ -876,14 +916,38 @@ async def agent_turn(
                 agent.get("workspace_mounts", [{}])[0].get("host_path", "/workspace")
             ) if agent.get("workspace_mounts") else os.environ.get("WORKSPACE_DIR", "/workspace")
 
+            # Doc 096: Enrich handoff with checkpoint data
+            _checkpoint_section = ""
+            if loop_checkpoint.failed_approaches:
+                _checkpoint_section += (
+                    "\n## Approaches That Failed (don't retry)\n"
+                    + "\n".join(f"- {a}" for a in loop_checkpoint.failed_approaches)
+                    + "\n"
+                )
+            if loop_checkpoint.decisions:
+                _checkpoint_section += (
+                    "\n## Decisions Already Made\n"
+                    + "\n".join(f"- {d}" for d in loop_checkpoint.decisions)
+                    + "\n"
+                )
+
             _handoff_task = (
                 f"CONTINUE AND COMPLETE this task that ran out of iteration budget.\n\n"
                 f"## Original User Request\n{_user_msg}\n\n"
                 f"## Files Already Read\n{handoff_ctx['files_read']}\n\n"
                 f"## Changes Already Made\n{handoff_ctx['edits_made']}\n\n"
+                f"{_checkpoint_section}"
                 f"## Instructions\n"
                 f"Pick up where the previous agent left off. Complete the remaining work."
             )
+
+            loop_checkpoint.stop_reason = "auto_delegated"
+            if workspace_dirs:
+                loop_checkpoint.capture_git_state(workspace_dirs[0])
+            try:
+                await save_checkpoint(_conversation_id, agent_id or "", loop_checkpoint)
+            except Exception:
+                logger.debug("Pre-delegation checkpoint save failed", exc_info=True)
 
             _ca_result = await registry.execute("coding_agent", {
                 "task": _handoff_task,
