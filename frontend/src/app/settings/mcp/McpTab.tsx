@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useMcpServers, useAgents, useSpacetimeConnection, callReducer } from "@/hooks/useSpacetimeDB";
 import { type McpServerRow, type AgentRow } from "@/lib/spacetimedb-client";
+import { BACKEND_API, apiFetch } from "@/lib/config";
 
 function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '');
@@ -99,7 +100,7 @@ export default function McpTab() {
     let cancelled = false;
     const fetchStatus = async () => {
       try {
-        const res = await fetch("/api/v1/mcp/servers/status");
+        const res = await apiFetch(`${BACKEND_API}/mcp/servers/status`);
         if (res.ok) {
           const data = await res.json();
           const map: Record<string, any> = {};
@@ -204,7 +205,7 @@ export default function McpTab() {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch("/api/v1/mcp/servers/test", {
+      const res = await apiFetch(`${BACKEND_API}/mcp/servers/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
