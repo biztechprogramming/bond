@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useMcpServers, useAgents, useSpacetimeConnection, callReducer } from "@/hooks/useSpacetimeDB";
 import { type McpServerRow, type AgentRow } from "@/lib/spacetimedb-client";
 
@@ -45,6 +45,38 @@ function serverToForm(s: McpServerRow): McpServerForm {
   };
 }
 
+function StatusBadge({ status, lastError }: { status: string; lastError?: string | null }) {
+  const colors: Record<string, { bg: string; text: string; dot: string }> = {
+    connected: { bg: "#1a3a1a", text: "#4ade80", dot: "#22c55e" },
+    connecting: { bg: "#3a3a1a", text: "#facc15", dot: "#eab308" },
+    error: { bg: "#3a1a1a", text: "#ff6c8a", dot: "#ef4444" },
+    stopped: { bg: "#2a2a3e", text: "#8888a0", dot: "#6b7280" },
+    disabled: { bg: "#2a2a3e", text: "#5a5a6e", dot: "#4b5563" },
+  };
+  const c = colors[status] || colors.stopped;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+      <span style={{
+        width: "8px", height: "8px", borderRadius: "50%",
+        backgroundColor: c.dot, display: "inline-block",
+        boxShadow: status === "connected" ? `0 0 6px ${c.dot}` : "none",
+      }} />
+      <span style={{
+        fontSize: "0.75rem", color: c.text,
+        backgroundColor: c.bg, padding: "2px 8px",
+        borderRadius: "4px", fontWeight: 500,
+      }}>
+        {status}
+      </span>
+      {status === "error" && lastError && (
+        <span style={{ fontSize: "0.7rem", color: "#ff6c8a", maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={lastError}>
+          {lastError}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function McpTab() {
   const servers = useMcpServers();
   const agents = useAgents();
@@ -53,6 +85,35 @@ export default function McpTab() {
   const [isNew, setIsNew] = useState(false);
   const [msg, setMsg] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [serverStatuses, setServerStatuses] = useState<Record<string, any>>({});
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    status: string;
+    tools: { name: string; description: string }[];
+    connect_time_ms: number;
+    error: string | null;
+  } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch("/api/v1/mcp/servers/status");
+        if (res.ok) {
+          const data = await res.json();
+          const map: Record<string, any> = {};
+          for (const s of data.servers || []) {
+            map[s.server] = s;
+          }
+          if (!cancelled) setServerStatuses(map);
+        }
+      } catch {}
+    };
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 15000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
   const getAgentName = (agentId: string | null): string => {
     if (!agentId) return "Global (all agents)";
@@ -72,12 +133,14 @@ export default function McpTab() {
     });
     setIsNew(true);
     setMsg("");
+    setTestResult(null);
   };
 
   const startEdit = (server: McpServerRow) => {
     setEditing(serverToForm(server));
     setIsNew(false);
     setMsg("");
+    setTestResult(null);
   };
 
   const handleSave = () => {
@@ -136,6 +199,30 @@ export default function McpTab() {
     }));
   };
 
+  const handleTestConnection = async () => {
+    if (!editing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/v1/mcp/servers/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editing.name || "test",
+          command: editing.command,
+          args: editing.args,
+          env: Object.fromEntries(editing.env.map(e => [e.key, e.value])),
+        }),
+      });
+      const data = await res.json();
+      setTestResult(data);
+    } catch (e: any) {
+      setTestResult({ success: false, status: "error", tools: [], connect_time_ms: 0, error: e.message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div style={styles.topBar}>
@@ -146,7 +233,7 @@ export default function McpTab() {
           {editing ? (
             <>
               <button style={styles.button} onClick={handleSave}>Save</button>
-              <button style={styles.secondaryButton} onClick={() => { setEditing(null); setMsg(""); }}>Cancel</button>
+              <button style={styles.secondaryButton} onClick={() => { setEditing(null); setMsg(""); setTestResult(null); }}>Cancel</button>
             </>
           ) : (
             <button style={styles.button} onClick={startCreate}>+ Add Server</button>
@@ -160,44 +247,53 @@ export default function McpTab() {
         {!editing ? (
           <>
             <div style={styles.cardGrid}>
-              {servers.map((server) => (
-                <div key={server.id} style={styles.card}>
-                  <div style={styles.cardHeader}>
-                    <span style={styles.cardName}>
-                      {server.enabled ? "\u{1F7E2}" : "\u{1F534}"} {server.name}
-                    </span>
-                    <button
-                      style={{
-                        ...styles.smallButton,
-                        backgroundColor: server.enabled ? "#1a3a1a" : "#3a1a1a",
-                        color: server.enabled ? "#6cffa0" : "#ff6c8a",
-                      }}
-                      onClick={() => handleToggle(server)}
-                    >
-                      {server.enabled ? "Enabled" : "Disabled"}
-                    </button>
-                  </div>
-                  <div style={styles.cardMeta}>Command: {server.command} {parseArgs(server.args).join(" ")}</div>
-                  <div style={styles.cardMeta}>Scope: {getAgentName(server.agentId)}</div>
-                  {parseEnv(server.env).length > 0 && (
-                    <div style={styles.cardMeta}>
-                      Env: {parseEnv(server.env).map(e => `${e.key}=\u2022\u2022\u2022\u2022\u2022\u2022`).join(", ")}
+              {servers.map((server) => {
+                const st = serverStatuses[server.name];
+                const statusStr = st?.status || (server.enabled ? "stopped" : "disabled");
+                const toolCount = st?.tool_count || 0;
+                return (
+                  <div key={server.id} style={styles.card}>
+                    <div style={styles.cardHeader}>
+                      <span style={styles.cardName}>{server.name}</span>
+                      <button
+                        style={{
+                          ...styles.smallButton,
+                          backgroundColor: server.enabled ? "#1a3a1a" : "#3a1a1a",
+                          color: server.enabled ? "#6cffa0" : "#ff6c8a",
+                        }}
+                        onClick={() => handleToggle(server)}
+                      >
+                        {server.enabled ? "Enabled" : "Disabled"}
+                      </button>
                     </div>
-                  )}
-                  <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-                    <button style={styles.smallButton} onClick={() => startEdit(server)}>Edit</button>
-                    {confirmDelete === server.id ? (
-                      <>
-                        <span style={{ color: "#ff6c8a", fontSize: "0.8rem", alignSelf: "center" }}>Delete?</span>
-                        <button style={styles.dangerSmall} onClick={() => handleDelete(server.id)}>Yes</button>
-                        <button style={styles.smallButton} onClick={() => setConfirmDelete(null)}>No</button>
-                      </>
-                    ) : (
-                      <button style={styles.dangerSmall} onClick={() => setConfirmDelete(server.id)}>Delete</button>
+                    <div style={{ marginBottom: "8px" }}>
+                      <StatusBadge status={statusStr} lastError={st?.last_error} />
+                    </div>
+                    <div style={styles.cardMeta}>Command: {server.command} {parseArgs(server.args).join(" ")}</div>
+                    <div style={styles.cardMeta}>Scope: {getAgentName(server.agentId)}</div>
+                    {toolCount > 0 && (
+                      <div style={styles.cardMeta}>Tools: {toolCount} available</div>
                     )}
+                    {parseEnv(server.env).length > 0 && (
+                      <div style={styles.cardMeta}>
+                        Env: {parseEnv(server.env).map(e => `${e.key}=\u2022\u2022\u2022\u2022\u2022\u2022`).join(", ")}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                      <button style={styles.smallButton} onClick={() => startEdit(server)}>Edit</button>
+                      {confirmDelete === server.id ? (
+                        <>
+                          <span style={{ color: "#ff6c8a", fontSize: "0.8rem", alignSelf: "center" }}>Delete?</span>
+                          <button style={styles.dangerSmall} onClick={() => handleDelete(server.id)}>Yes</button>
+                          <button style={styles.smallButton} onClick={() => setConfirmDelete(null)}>No</button>
+                        </>
+                      ) : (
+                        <button style={styles.dangerSmall} onClick={() => setConfirmDelete(server.id)}>Delete</button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
             {servers.length === 0 && (
               <div style={{ color: "#8888a0", fontSize: "0.9rem", padding: "20px 0" }}>
@@ -357,6 +453,60 @@ export default function McpTab() {
                 </label>
               </div>
             )}
+
+            {/* Test Connection */}
+            <div style={{ ...styles.field, gridColumn: "1 / -1" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <button
+                  style={{
+                    ...styles.secondaryButton,
+                    opacity: !editing.command ? 0.5 : 1,
+                    cursor: !editing.command ? "not-allowed" : "pointer",
+                  }}
+                  onClick={handleTestConnection}
+                  disabled={!editing.command || testing}
+                >
+                  {testing ? "Testing..." : "Test Connection"}
+                </button>
+                {testResult && (
+                  <StatusBadge status={testResult.status} lastError={testResult.error} />
+                )}
+                {testResult?.success && (
+                  <span style={{ fontSize: "0.8rem", color: "#4ade80" }}>
+                    {testResult.connect_time_ms}ms
+                  </span>
+                )}
+              </div>
+              {testResult?.success && testResult.tools.length > 0 && (
+                <div style={{ marginTop: "12px", backgroundColor: "#1e1e2e", borderRadius: "8px", padding: "12px" }}>
+                  <div style={{ fontSize: "0.8rem", color: "#8888a0", marginBottom: "8px" }}>
+                    Discovered {testResult.tools.length} tools:
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {testResult.tools.map((tool) => (
+                      <span
+                        key={tool.name}
+                        style={{
+                          fontSize: "0.75rem",
+                          backgroundColor: "#2a2a3e",
+                          color: "#6c8aff",
+                          padding: "3px 8px",
+                          borderRadius: "4px",
+                        }}
+                        title={tool.description}
+                      >
+                        {tool.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {testResult && !testResult.success && testResult.error && (
+                <div style={{ marginTop: "8px", fontSize: "0.8rem", color: "#ff6c8a", backgroundColor: "#3a1a1a", padding: "8px 12px", borderRadius: "8px" }}>
+                  {testResult.error}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

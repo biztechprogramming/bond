@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
+import time
 from typing import List, Optional
 from uuid import uuid4
 
@@ -44,6 +47,34 @@ class MCPServerUpdate(BaseModel):
     env: Optional[dict] = None
     enabled: Optional[bool] = None
     agent_id: Optional[str] = None
+
+
+class MCPServerTestRequest(BaseModel):
+    name: str = "test"
+    command: str
+    args: Optional[List[str]] = []
+    env: Optional[dict] = {}
+
+
+class MCPServerTestResponse(BaseModel):
+    success: bool
+    status: str
+    tools: List[dict] = []
+    connect_time_ms: int
+    error: Optional[str] = None
+
+
+class MCPServerStatusItem(BaseModel):
+    name: str
+    scope: str = "global"
+    enabled: bool = True
+    status: str
+    healthy_connections: int = 0
+    pool_size: int = 2
+    tools: List[str] = []
+    tool_count: int = 0
+    last_error: Optional[str] = None
+    last_checked: Optional[str] = None
 
 
 # --- Proxy endpoints (called by Gateway broker) ---
@@ -117,6 +148,102 @@ async def proxy_call_tool(req: MCPProxyCallRequest):
     return MCPProxyCallResponse(result=result.get("result", ""))
 
 
+# --- Status and test endpoints ---
+
+@router.get("/servers/status")
+async def get_servers_status():
+    """Get live status of all MCP server connection pools."""
+    await mcp_manager.ensure_servers_loaded()
+    pool_status = mcp_manager.get_pool_status()
+
+    stdb = get_stdb()
+    rows = await stdb.query("SELECT * FROM mcp_servers")
+
+    servers = []
+    seen_names = set()
+
+    for key, ps in pool_status.items():
+        seen_names.add(ps["server"])
+        servers.append(ps)
+
+    for row in rows:
+        name = row["name"]
+        if name not in seen_names:
+            servers.append({
+                "server": name,
+                "scope": "global",
+                "pool_size": 0,
+                "healthy_connections": 0,
+                "has_healthy": False,
+                "status": "disabled" if not row["enabled"] else "stopped",
+                "tools": [],
+                "tool_count": 0,
+                "last_error": None,
+                "last_checked": None,
+            })
+
+    return {"servers": servers}
+
+
+@router.post("/servers/test", response_model=MCPServerTestResponse)
+async def test_mcp_server(config: MCPServerTestRequest):
+    """Test an MCP server connection without saving it."""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from contextlib import AsyncExitStack
+
+    start = time.monotonic()
+
+    params = StdioServerParameters(
+        command=config.command,
+        args=config.args or [],
+        env={**os.environ, **(config.env or {})}
+    )
+
+    exit_stack = AsyncExitStack()
+    try:
+        read, write = await asyncio.wait_for(
+            exit_stack.enter_async_context(stdio_client(params)),
+            timeout=10.0
+        )
+        session = await exit_stack.enter_async_context(ClientSession(read, write))
+        await asyncio.wait_for(session.initialize(), timeout=10.0)
+        tools_result = await asyncio.wait_for(session.list_tools(), timeout=10.0)
+        tools = [{"name": t.name, "description": t.description or ""} for t in tools_result.tools]
+        elapsed = int((time.monotonic() - start) * 1000)
+
+        return MCPServerTestResponse(
+            success=True,
+            status="connected",
+            tools=tools,
+            connect_time_ms=elapsed,
+            error=None
+        )
+    except asyncio.TimeoutError:
+        elapsed = int((time.monotonic() - start) * 1000)
+        return MCPServerTestResponse(
+            success=False,
+            status="error",
+            tools=[],
+            connect_time_ms=elapsed,
+            error="Connection timed out after 10 seconds"
+        )
+    except Exception as e:
+        elapsed = int((time.monotonic() - start) * 1000)
+        return MCPServerTestResponse(
+            success=False,
+            status="error",
+            tools=[],
+            connect_time_ms=elapsed,
+            error=str(e)
+        )
+    finally:
+        try:
+            await exit_stack.aclose()
+        except Exception:
+            pass
+
+
 # --- Existing CRUD endpoints ---
 
 @router.get("/servers", response_model=List[MCPServerRead])
@@ -148,7 +275,15 @@ async def list_servers(agent_id: Optional[str] = None):
         # Check pool status
         pool_key = f"{server['name']}::global"
         pool = mcp_manager.connection_pools.get(pool_key)
-        server["status"] = "running" if pool and pool.has_healthy_connection else "stopped"
+        if pool:
+            if pool.has_healthy_connection:
+                server["status"] = "connected"
+            elif pool.last_error:
+                server["status"] = "error"
+            else:
+                server["status"] = "stopped"
+        else:
+            server["status"] = "disabled" if not server["enabled"] else "stopped"
 
         servers.append(server)
 

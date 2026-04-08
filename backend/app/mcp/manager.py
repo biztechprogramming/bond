@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from contextlib import AsyncExitStack
+from datetime import datetime
 from typing import Dict, List, Optional, Any, TYPE_CHECKING, Union, Type
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -86,6 +87,9 @@ class MCPConnectionPool:
         self._semaphore = asyncio.Semaphore(pool_size)
         self._robin_index = 0
         self._lock = asyncio.Lock()
+        self.last_error: Optional[str] = None
+        self.last_checked: Optional[str] = None
+        self.discovered_tools: list[str] = []
 
     async def start(self):
         """Start all connections in the pool."""
@@ -96,9 +100,21 @@ class MCPConnectionPool:
                 self._connections.append(conn)
             except Exception as e:
                 logger.error(f"Failed to start pool connection for {self.config.name}: {e}")
-                # Start at least one - if first fails, raise
                 if not self._connections:
+                    self.last_error = str(e)
+                    self.last_checked = datetime.utcnow().isoformat() + "Z"
                     raise
+        # After starting, discover tools from first healthy connection
+        try:
+            for conn in self._connections:
+                if conn.is_healthy and conn.session:
+                    result = await conn.session.list_tools()
+                    self.discovered_tools = [t.name for t in result.tools]
+                    break
+            self.last_error = None
+        except Exception as e:
+            self.last_error = f"Tool discovery failed: {e}"
+        self.last_checked = datetime.utcnow().isoformat() + "Z"
 
     async def stop(self):
         """Stop all connections in the pool."""
@@ -217,9 +233,13 @@ class MCPManager:
                 key = f"{config.name}::{scope}"
                 if key not in self.connection_pools:
                     pool = MCPConnectionPool(config, self._pool_size)
-                    await pool.start()
+                    try:
+                        await pool.start()
+                        logger.info(f"Started connection pool: {key}")
+                    except Exception as e:
+                        logger.error(f"Failed to start MCP server {config.name}: {e}")
+                        pool.last_error = str(e)
                     self.connection_pools[key] = pool
-                    logger.info(f"Started connection pool: {key}")
 
         except Exception as e:
             logger.error(f"Failed to load MCP servers from DB: {e}")
@@ -265,10 +285,22 @@ class MCPManager:
                             await pool.start()
                         except Exception as e:
                             logger.error(f"Failed to restart pool {key}: {e}")
+                            pool.last_error = str(e)
                     else:
                         unhealthy = pool.pool_size - pool.healthy_count
                         if unhealthy > 0:
                             logger.info(f"Pool {key}: {pool.healthy_count}/{pool.pool_size} healthy")
+                        # Refresh discovered tools
+                        try:
+                            for conn in pool._connections:
+                                if conn.is_healthy and conn.session:
+                                    result = await conn.session.list_tools()
+                                    pool.discovered_tools = [t.name for t in result.tools]
+                                    pool.last_error = None
+                                    break
+                        except Exception as e:
+                            logger.warning(f"Tool refresh failed for {key}: {e}")
+                    pool.last_checked = datetime.utcnow().isoformat() + "Z"
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -390,10 +422,25 @@ class MCPManager:
         """Get status of all connection pools."""
         status = {}
         for key, pool in self.connection_pools.items():
+            server_name, scope = parse_connection_key(key)
+            if pool.config.enabled is False:
+                pool_status = "disabled"
+            elif pool.has_healthy_connection:
+                pool_status = "connected"
+            elif pool.last_error:
+                pool_status = "error"
+            else:
+                pool_status = "stopped"
             status[key] = {
-                "server": pool.config.name,
+                "server": server_name,
+                "scope": scope,
                 "pool_size": pool.pool_size,
-                "healthy": pool.healthy_count,
+                "healthy_connections": pool.healthy_count,
                 "has_healthy": pool.has_healthy_connection,
+                "status": pool_status,
+                "tools": pool.discovered_tools,
+                "tool_count": len(pool.discovered_tools),
+                "last_error": pool.last_error,
+                "last_checked": pool.last_checked,
             }
         return status
