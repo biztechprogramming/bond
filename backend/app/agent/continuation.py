@@ -353,6 +353,35 @@ def build_continuation_context(
 # ---------------------------------------------------------------------------
 
 @dataclass
+class ToolCallRecord:
+    """Record of a single tool call for checkpoint tracking."""
+    tool_name: str
+    success: bool
+    output_summary: str  # Truncated to ~200 chars
+    timestamp: str = ""  # ISO 8601
+    duration_ms: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "tool_name": self.tool_name,
+            "success": self.success,
+            "output_summary": self.output_summary,
+            "timestamp": self.timestamp,
+            "duration_ms": self.duration_ms,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ToolCallRecord":
+        return cls(
+            tool_name=data.get("tool_name", ""),
+            success=data.get("success", False),
+            output_summary=data.get("output_summary", ""),
+            timestamp=data.get("timestamp", ""),
+            duration_ms=data.get("duration_ms", 0),
+        )
+
+
+@dataclass
 class LightweightCheckpoint:
     """Minimal state for continuation without a work plan."""
     last_user_request: str = ""
@@ -361,6 +390,76 @@ class LightweightCheckpoint:
     decisions: list[str] = field(default_factory=list)
     open_todos: list[str] = field(default_factory=list)
     exact_identifiers: dict[str, str] = field(default_factory=dict)
+
+    # Progress checkpointing fields (Design Doc 096)
+    completed_actions: list[ToolCallRecord] = field(default_factory=list)
+    files_modified: list[str] = field(default_factory=list)
+    failed_approaches: list[str] = field(default_factory=list)
+    progress_summary: str = ""
+    stop_reason: str = ""
+    turn_number: int = 0
+    successful_tool_calls: int = 0
+    failed_tool_calls: int = 0
+    git_branch: str = ""
+    git_head_sha: str = ""
+
+    def capture_git_state(self, workspace_dir: str) -> None:
+        """Capture current git branch and HEAD SHA."""
+        import subprocess
+        try:
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, cwd=workspace_dir, timeout=5,
+            )
+            if branch.returncode == 0:
+                self.git_branch = branch.stdout.strip()
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd=workspace_dir, timeout=5,
+            )
+            if head.returncode == 0:
+                self.git_head_sha = head.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+    def to_dict(self) -> dict:
+        """Serialize to dict for JSON persistence."""
+        return {
+            "last_user_request": self.last_user_request,
+            "last_assistant_action": self.last_assistant_action,
+            "uncommitted_changes": self.uncommitted_changes,
+            "decisions": self.decisions,
+            "open_todos": self.open_todos,
+            "completed_actions": [a.to_dict() for a in self.completed_actions],
+            "files_modified": self.files_modified,
+            "failed_approaches": self.failed_approaches,
+            "progress_summary": self.progress_summary,
+            "stop_reason": self.stop_reason,
+            "turn_number": self.turn_number,
+            "successful_tool_calls": self.successful_tool_calls,
+            "failed_tool_calls": self.failed_tool_calls,
+            "git_branch": self.git_branch,
+            "git_head_sha": self.git_head_sha,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LightweightCheckpoint":
+        """Deserialize from dict."""
+        cp = cls()
+        for key in ["last_user_request", "last_assistant_action", "progress_summary",
+                     "stop_reason", "git_branch", "git_head_sha"]:
+            if key in data:
+                setattr(cp, key, data[key])
+        for key in ["uncommitted_changes", "decisions", "open_todos",
+                     "files_modified", "failed_approaches"]:
+            if key in data:
+                setattr(cp, key, data[key])
+        for key in ["turn_number", "successful_tool_calls", "failed_tool_calls"]:
+            if key in data:
+                setattr(cp, key, data[key])
+        if "completed_actions" in data:
+            cp.completed_actions = [ToolCallRecord.from_dict(a) for a in data["completed_actions"]]
+        return cp
 
 
 def build_checkpoint_from_history(
@@ -416,12 +515,80 @@ def build_checkpoint_from_history(
     return checkpoint
 
 
-def format_checkpoint_context(checkpoint: LightweightCheckpoint) -> str:
+def format_checkpoint_context(
+    checkpoint: LightweightCheckpoint,
+    max_tokens: int = 2000,
+) -> str:
     """Format a lightweight checkpoint as context for a continuation turn.
 
-    Target: ~500 tokens.
+    Token-budget-aware with truncation tiers (Design Doc 096):
+    - >=1500: full checkpoint
+    - 800-1500: medium (summary, failed approaches, TODOs, files)
+    - 300-800: minimal (summary, failed approaches, TODOs)
+    - <300: ultra-minimal (one-line summary + failed approaches)
     """
+    if max_tokens < 300:
+        # Ultra-minimal
+        lines = ["# Resuming Previous Work"]
+        if checkpoint.progress_summary:
+            lines.append(checkpoint.progress_summary)
+        if checkpoint.failed_approaches:
+            lines.append("Failed: " + "; ".join(checkpoint.failed_approaches[:3]))
+        return "\n".join(lines)
+
+    if max_tokens < 800:
+        # Minimal
+        lines = ["# Resuming Previous Work", ""]
+        if checkpoint.progress_summary:
+            lines.append(f"**Progress:** {checkpoint.progress_summary}")
+            lines.append("")
+        if checkpoint.failed_approaches:
+            lines.append("## Failed Approaches")
+            for f in checkpoint.failed_approaches[:5]:
+                lines.append(f"- {f}")
+            lines.append("")
+        if checkpoint.open_todos:
+            lines.append("## Open TODOs")
+            for t in checkpoint.open_todos[:5]:
+                lines.append(f"- {t}")
+            lines.append("")
+        lines.append("Pick up where you left off.")
+        return "\n".join(lines)
+
+    if max_tokens < 1500:
+        # Medium
+        lines = ["# Resuming Previous Work", ""]
+        if checkpoint.progress_summary:
+            lines.append(f"**Progress:** {checkpoint.progress_summary}")
+            lines.append("")
+        if checkpoint.failed_approaches:
+            lines.append("## Failed Approaches")
+            for f in checkpoint.failed_approaches[:5]:
+                lines.append(f"- {f}")
+            lines.append("")
+        if checkpoint.open_todos:
+            lines.append("## Open TODOs")
+            for t in checkpoint.open_todos[:10]:
+                lines.append(f"- {t}")
+            lines.append("")
+        if checkpoint.files_modified:
+            lines.append("## Files Modified")
+            for f in checkpoint.files_modified[:10]:
+                lines.append(f"- {f}")
+            lines.append("")
+        if checkpoint.git_branch:
+            lines.append(f"Branch: `{checkpoint.git_branch}`")
+        lines.append("")
+        lines.append("Pick up where you left off. Check current file/git state before making changes.")
+        return "\n".join(lines)
+
+    # Full checkpoint (>=1500 tokens budget)
     lines = ["# Resuming Previous Work", ""]
+
+    if checkpoint.progress_summary:
+        lines.append(f"**Progress:** {checkpoint.progress_summary}")
+        lines.append(f"**Stop reason:** {checkpoint.stop_reason}")
+        lines.append("")
 
     if checkpoint.last_user_request:
         lines.append("## Last Request")
@@ -433,9 +600,28 @@ def format_checkpoint_context(checkpoint: LightweightCheckpoint) -> str:
         lines.append(checkpoint.last_assistant_action)
         lines.append("")
 
+    if checkpoint.completed_actions:
+        lines.append("## Recent Actions")
+        for a in checkpoint.completed_actions[-10:]:
+            status = "ok" if a.success else "FAILED"
+            lines.append(f"- [{status}] {a.tool_name}: {a.output_summary}")
+        lines.append("")
+
+    if checkpoint.files_modified:
+        lines.append("## Files Modified")
+        for f in checkpoint.files_modified:
+            lines.append(f"- {f}")
+        lines.append("")
+
     if checkpoint.uncommitted_changes:
         lines.append("## Uncommitted Changes")
         for f in checkpoint.uncommitted_changes:
+            lines.append(f"- {f}")
+        lines.append("")
+
+    if checkpoint.failed_approaches:
+        lines.append("## Failed Approaches")
+        for f in checkpoint.failed_approaches:
             lines.append(f"- {f}")
         lines.append("")
 
@@ -457,10 +643,79 @@ def format_checkpoint_context(checkpoint: LightweightCheckpoint) -> str:
             lines.append(f"- {key}: `{val}`")
         lines.append("")
 
+    if checkpoint.git_branch or checkpoint.git_head_sha:
+        lines.append("## Git State")
+        if checkpoint.git_branch:
+            lines.append(f"- Branch: `{checkpoint.git_branch}`")
+        if checkpoint.git_head_sha:
+            lines.append(f"- HEAD: `{checkpoint.git_head_sha[:12]}`")
+        lines.append("")
+
     lines.append("## Instructions")
     lines.append("Pick up where you left off. Check the current file/git state before making changes.")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint Persistence (Design Doc 096)
+# ---------------------------------------------------------------------------
+
+
+async def save_checkpoint(
+    conversation_id: str,
+    agent_id: str,
+    checkpoint: LightweightCheckpoint,
+) -> None:
+    """Persist checkpoint to SpacetimeDB via PersistenceClient."""
+    from backend.app.agent.persistence_client import PersistenceClient
+    import json
+    from datetime import datetime, timezone, timedelta
+
+    client = PersistenceClient(conversation_id=conversation_id)
+    await client.init()
+    try:
+        now = datetime.now(timezone.utc)
+        await client.upsert_checkpoint(
+            checkpoint_id=conversation_id,
+            agent_id=agent_id,
+            conversation_id=conversation_id,
+            data=json.dumps(checkpoint.to_dict()),
+            stop_reason=checkpoint.stop_reason,
+            created_at=now.isoformat(),
+            updated_at=now.isoformat(),
+            expires_at=(now + timedelta(hours=1)).isoformat(),
+        )
+    finally:
+        await client.close()
+
+
+async def load_checkpoint(conversation_id: str) -> LightweightCheckpoint | None:
+    """Load checkpoint from SpacetimeDB."""
+    from backend.app.agent.persistence_client import PersistenceClient
+    import json
+
+    client = PersistenceClient(conversation_id=conversation_id)
+    await client.init()
+    try:
+        data = await client.get_checkpoint(conversation_id)
+        if data and "data" in data:
+            return LightweightCheckpoint.from_dict(json.loads(data["data"]))
+        return None
+    finally:
+        await client.close()
+
+
+async def delete_checkpoint(conversation_id: str) -> None:
+    """Delete checkpoint after successful completion."""
+    from backend.app.agent.persistence_client import PersistenceClient
+
+    client = PersistenceClient(conversation_id=conversation_id)
+    await client.init()
+    try:
+        await client.delete_checkpoint(conversation_id)
+    finally:
+        await client.close()
 
 
 # ---------------------------------------------------------------------------

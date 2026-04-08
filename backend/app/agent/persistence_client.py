@@ -284,6 +284,74 @@ class PersistenceClient:
             return resp.json()
         return False
 
+    # ---- Checkpoint persistence (Design Doc 096) ----
+
+    async def upsert_checkpoint(
+        self,
+        checkpoint_id: str,
+        agent_id: str,
+        conversation_id: str,
+        data: str,
+        stop_reason: str,
+        created_at: str,
+        updated_at: str,
+        expires_at: str,
+    ) -> dict | bool:
+        """Persist checkpoint via gateway API."""
+        if not self._initialized:
+            await self.init()
+        if self._mode == "api":
+            assert self._client is not None
+            payload = {
+                "checkpointId": checkpoint_id,
+                "agentId": agent_id,
+                "conversationId": conversation_id,
+                "data": data,
+                "stopReason": stop_reason,
+                "createdAt": created_at,
+                "updatedAt": updated_at,
+                "expiresAt": expires_at,
+            }
+            resp = await self._client.put("/checkpoints", json=payload)
+            if resp.status_code not in (200, 201):
+                raise RuntimeError(
+                    f"Gateway upsert_checkpoint failed ({resp.status_code}): {resp.text}"
+                )
+            return resp.json()
+        # sqlite mode: no-op for checkpoints
+        logger.debug("upsert_checkpoint skipped in sqlite mode")
+        return False
+
+    async def get_checkpoint(self, checkpoint_id: str) -> dict | None:
+        """Load checkpoint via gateway API."""
+        if not self._initialized:
+            await self.init()
+        if self._mode == "api":
+            assert self._client is not None
+            resp = await self._client.get(f"/checkpoints/{checkpoint_id}")
+            if resp.status_code == 404:
+                return None
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"Gateway get_checkpoint failed ({resp.status_code}): {resp.text}"
+                )
+            return resp.json()
+        return None
+
+    async def delete_checkpoint(self, checkpoint_id: str) -> bool:
+        """Delete checkpoint via gateway API."""
+        if not self._initialized:
+            await self.init()
+        if self._mode == "api":
+            assert self._client is not None
+            resp = await self._client.delete(f"/checkpoints/{checkpoint_id}")
+            if resp.status_code not in (200, 204, 404):
+                raise RuntimeError(
+                    f"Gateway delete_checkpoint failed ({resp.status_code}): {resp.text}"
+                )
+            return resp.status_code != 404
+        return False
+
     # ---- API mode ----
 
     async def _api_save_message(

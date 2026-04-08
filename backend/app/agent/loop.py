@@ -26,6 +26,11 @@ from backend.app.agent.tools import build_registry
 from backend.app.agent.tools.definitions import get_pydantic_definitions
 from backend.app.agent.tools.tool_result import ToolResult, ToolTimer
 from backend.app.agent.tool_result_cache import ToolResultCache
+from backend.app.agent.interrupts import check_interrupt
+from backend.app.agent.continuation import (
+    LightweightCheckpoint, ToolCallRecord, save_checkpoint,
+    load_checkpoint, format_checkpoint_context,
+)
 from backend.app.core.oauth import get_oauth_extra_headers
 
 logger = logging.getLogger("bond.agent.loop")
@@ -308,6 +313,27 @@ async def _llm_call_with_overflow_recovery(
     raise last_error  # type: ignore[misc]
 
 
+def _classify_stop_reason(iteration: int, max_iterations: int, checkpoint: LightweightCheckpoint) -> str:
+    """Classify why the agent loop stopped."""
+    if checkpoint.stop_reason:
+        return checkpoint.stop_reason
+    if iteration >= max_iterations - 1:
+        return "max_iterations"
+    return "completed"
+
+
+def _summarize_progress(iteration: int, checkpoint: LightweightCheckpoint) -> str:
+    """Build a human-readable progress summary."""
+    parts = []
+    parts.append(f"{iteration + 1} iterations")
+    total = checkpoint.successful_tool_calls + checkpoint.failed_tool_calls
+    if total:
+        parts.append(f"{total} tool calls ({checkpoint.successful_tool_calls} ok, {checkpoint.failed_tool_calls} failed)")
+    if checkpoint.files_modified:
+        parts.append(f"{len(checkpoint.files_modified)} files modified")
+    return ", ".join(parts) if parts else "no progress recorded"
+
+
 async def agent_turn(
     user_message: str,
     history: list[dict[str, str]] | None = None,
@@ -463,8 +489,31 @@ async def agent_turn(
     current_tier = 0
     continuation_attempts = 0
 
+    # Doc 096: Progress checkpointing
+    # Derive conversation_id from context (agent_id or fallback)
+    _conversation_id = str(agent.get("id", "unknown"))
+    loop_checkpoint = LightweightCheckpoint()
+    loop_checkpoint.last_user_request = user_message[:500]
+    _exit_error: Exception | None = None
+
+    # Load any existing checkpoint for resume
+    try:
+        existing_checkpoint = await load_checkpoint(_conversation_id)
+        if existing_checkpoint:
+            checkpoint_context = format_checkpoint_context(existing_checkpoint)
+            messages.insert(1, {"role": "system", "content": checkpoint_context})
+            logger.info("Loaded existing checkpoint for conversation %s", _conversation_id)
+    except Exception:
+        logger.debug("Failed to load checkpoint (non-fatal)", exc_info=True)
+
     # Tool-use loop
     for iteration in range(max_iterations):
+        # Doc 096: Check interrupt before LLM call
+        if check_interrupt(_conversation_id):
+            loop_checkpoint.stop_reason = "interrupted"
+            break
+
+        loop_checkpoint.turn_number = iteration
         current_max_tokens = TOKEN_TIERS[current_tier]
 
         # Re-select tools each iteration (momentum from recent tool calls)
@@ -682,6 +731,18 @@ async def agent_turn(
 
                         return result.get("message", "")
 
+                    # Doc 096: Record parallel tool call in checkpoint
+                    _par_name = parallel_batch[parallel_results.index(item)][1] if not isinstance(item, Exception) else "unknown"
+                    _par_success = not isinstance(item, Exception) and "error" not in result
+                    _par_summary = str(result)[:200] if not isinstance(item, Exception) else str(item)[:200]
+                    loop_checkpoint.completed_actions.append(ToolCallRecord(
+                        tool_name=_par_name, success=_par_success, output_summary=_par_summary,
+                    ))
+                    if _par_success:
+                        loop_checkpoint.successful_tool_calls += 1
+                    else:
+                        loop_checkpoint.failed_tool_calls += 1
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
@@ -729,6 +790,24 @@ async def agent_turn(
                     if tool_name == "code_execute":
                         session_cache.revalidate_after_execute()
 
+                # Doc 096: Record sequential tool call in checkpoint
+                _seq_success = "error" not in result
+                _seq_summary = str(result)[:200]
+                _seq_duration = int(_timer.duration_ms) if '_timer' in dir() else 0
+                loop_checkpoint.completed_actions.append(ToolCallRecord(
+                    tool_name=tool_name, success=_seq_success, output_summary=_seq_summary,
+                    duration_ms=_seq_duration,
+                ))
+                if _seq_success:
+                    loop_checkpoint.successful_tool_calls += 1
+                else:
+                    loop_checkpoint.failed_tool_calls += 1
+                # Track file modifications
+                if tool_name in ("file_edit", "file_write") and _seq_success:
+                    _fpath = tool_args.get("path", tool_args.get("file_path", ""))
+                    if _fpath and _fpath not in loop_checkpoint.files_modified:
+                        loop_checkpoint.files_modified.append(_fpath)
+
                 # Check for terminal tool (respond)
                 if result.get("_terminal"):
 
@@ -746,12 +825,28 @@ async def agent_turn(
                     "tool_call_id": tool_call.id,
                     "content": _content,
                 })
+
+                # Doc 096: Check interrupt after tool execution
+                if check_interrupt(_conversation_id):
+                    loop_checkpoint.stop_reason = "interrupted"
+                    break
         else:
             # Text response — return it
-            
+            loop_checkpoint.stop_reason = "completed"
             return message.content or ""
 
-    
+    # Doc 096: Save checkpoint on loop exit
+    try:
+        if not loop_checkpoint.stop_reason:
+            loop_checkpoint.stop_reason = _classify_stop_reason(iteration, max_iterations, loop_checkpoint)
+        loop_checkpoint.progress_summary = _summarize_progress(iteration, loop_checkpoint)
+        # Capture git state if workspace available
+        if workspace_dirs:
+            loop_checkpoint.capture_git_state(workspace_dirs[0])
+        await save_checkpoint(_conversation_id, agent_id or "", loop_checkpoint)
+    except Exception:
+        logger.warning("Failed to save exit checkpoint", exc_info=True)
+
     logger.warning("Agent hit max iterations (%d)", max_iterations)
 
     # Auto-delegate to coding agent if we made edits but ran out of time
