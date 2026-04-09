@@ -75,6 +75,11 @@ class Settings(BaseModel):
     opensandbox_server_url: str = "http://localhost:8090"
     opensandbox_api_key: str = ""
 
+    # Faucet database gateway (Design Doc 107)
+    faucet_port: int = 18795
+    faucet_bin: str = str(BOND_HOME / "bin" / "faucet")
+    faucet_config_dir: str = str(BOND_HOME / "faucet")
+
     # Remote container hosts (Design Doc 089)
     # Placement strategy: "least-loaded" or "round-robin"
     placement_strategy: str = "least-loaded"
