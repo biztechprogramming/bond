@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from backend.app.core.spacetimedb import get_stdb
-from backend.app.mcp import mcp_manager, MCPServerConfig
+from backend.app.mcp import mcp_manager, MCPServerConfig, parse_command
 from backend.app.mcp.manager import _is_stdb_none
 
 logger = logging.getLogger("bond.mcp.api")
@@ -62,6 +62,8 @@ class MCPServerTestResponse(BaseModel):
     tools: List[dict] = []
     connect_time_ms: int
     error: Optional[str] = None
+    resolved_command: Optional[str] = None
+    resolved_args: Optional[List[str]] = None
 
 
 class MCPServerStatusItem(BaseModel):
@@ -194,9 +196,11 @@ async def test_mcp_server(config: MCPServerTestRequest):
 
     start = time.monotonic()
 
+    cmd, args = parse_command(config.command, config.args or [])
+
     params = StdioServerParameters(
-        command=config.command,
-        args=config.args or [],
+        command=cmd,
+        args=args,
         env={**os.environ, **(config.env or {})}
     )
 
@@ -217,7 +221,9 @@ async def test_mcp_server(config: MCPServerTestRequest):
             status="connected",
             tools=tools,
             connect_time_ms=elapsed,
-            error=None
+            error=None,
+            resolved_command=cmd,
+            resolved_args=args,
         )
     except asyncio.TimeoutError:
         elapsed = int((time.monotonic() - start) * 1000)
@@ -226,7 +232,9 @@ async def test_mcp_server(config: MCPServerTestRequest):
             status="error",
             tools=[],
             connect_time_ms=elapsed,
-            error="Connection timed out after 10 seconds"
+            error="Connection timed out after 10 seconds",
+            resolved_command=cmd,
+            resolved_args=args,
         )
     except Exception as e:
         elapsed = int((time.monotonic() - start) * 1000)
@@ -235,7 +243,9 @@ async def test_mcp_server(config: MCPServerTestRequest):
             status="error",
             tools=[],
             connect_time_ms=elapsed,
-            error=str(e)
+            error=str(e),
+            resolved_command=cmd,
+            resolved_args=args,
         )
     finally:
         try:

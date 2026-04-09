@@ -93,6 +93,8 @@ export default function McpTab() {
     tools: { name: string; description: string }[];
     connect_time_ms: number;
     error: string | null;
+    resolved_command?: string | null;
+    resolved_args?: string[] | null;
   } | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -500,6 +502,11 @@ export default function McpTab() {
                       </span>
                     ))}
                   </div>
+                </div>
+              )}
+              {testResult?.resolved_command && (
+                <div style={{ marginTop: "6px", fontSize: "0.75rem", color: "#5a5a6e" }}>
+                  Resolved: <code style={{ color: "#8888a0" }}>{testResult.resolved_command} {testResult.resolved_args?.join(" ")}</code>
                 </div>
               )}
               {testResult && !testResult.success && testResult.error && (
