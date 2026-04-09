@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 from contextlib import AsyncExitStack
 from datetime import datetime
 from typing import Dict, List, Optional, Any, TYPE_CHECKING, Union, Type
@@ -18,6 +19,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger("bond.mcp")
 
 
+def parse_command(command: str, args: list[str]) -> tuple[str, list[str]]:
+    """Smart-split a command string when args is empty.
+
+    Users often paste the full command line into the command field:
+      "node /path/to/script.js -s user"
+
+    StdioServerParameters expects command="node" and args=["/path/to/script.js", "-s", "user"].
+    This function auto-splits when args is empty and command contains spaces.
+    """
+    if args:
+        return command, args  # Already split by user
+
+    command = command.strip()
+    if not command:
+        return command, args
+
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        # Malformed quoting — fall back to simple whitespace split
+        parts = command.split()
+
+    if len(parts) > 1:
+        return parts[0], parts[1:]
+    return command, args
+
+
 class MCPServerConfig(BaseModel):
     name: str
     command: str
@@ -30,9 +58,10 @@ class MCPConnection:
     """Manages a single MCP server connection with auto-recovery."""
     def __init__(self, config: MCPServerConfig):
         self.config = config
+        cmd, args = parse_command(config.command, config.args)
         self.params = StdioServerParameters(
-            command=config.command,
-            args=config.args,
+            command=cmd,
+            args=args,
             env={**os.environ, **config.env}
         )
         self.session: Optional[ClientSession] = None
