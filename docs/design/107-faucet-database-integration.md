@@ -347,6 +347,71 @@ The form supports both structured fields (host/port/database/user/pass) and raw 
 
 A new tab in the agent settings panel, alongside existing tabs like MCP, Environment, etc.
 
+**Key UX principle: Inline creation.** The `[+ Add]` button on this tab opens a dialog with two modes: **pick an existing database** from the global list, or **create a new one** inline. Users should never need to navigate away to Settings > Databases before they can give an agent database access. When a new database is created inline from the agent screen, it is automatically added to the global `DatabaseConnection` list so it becomes available for other agents immediately.
+
+**Add Database to Agent Dialog:**
+
+```
+┌──────────────────────────────────────────────┐
+│  Add Database to Agent                       │
+├──────────────────────────────────────────────┤
+│                                              │
+│  [● Existing Database] [○ New Database]      │
+│                                              │
+│  ── Existing Database ──────────────────     │
+│                                              │
+│  Database:  [▼ Select a database...    ]     │
+│             ┌────────────────────────────┐   │
+│             │ 🟢 myapp_prod  PostgreSQL  │   │
+│             │ 🟢 myapp_dev   PostgreSQL  │   │
+│             │ 🟡 analytics   Snowflake   │   │
+│             └────────────────────────────┘   │
+│                                              │
+│  Access:    [▼ Read Only    ]                │
+│                                              │
+│                        [Cancel] [Add]        │
+└──────────────────────────────────────────────┘
+
+── When "New Database" is selected: ───────────
+
+┌──────────────────────────────────────────────┐
+│  Add Database to Agent                       │
+├──────────────────────────────────────────────┤
+│                                              │
+│  [○ Existing Database] [● New Database]      │
+│                                              │
+│  ── New Database ───────────────────────     │
+│                                              │
+│  Name:        [                        ]     │
+│  Description: [                        ]     │
+│                                              │
+│  Driver:      [▼ PostgreSQL            ]     │
+│                                              │
+│  Host:        [                        ]     │
+│  Port:        [5432                    ]     │
+│  Database:    [                        ]     │
+│  Username:    [                        ]     │
+│  Password:    [                        ]     │
+│  SSL Mode:    [▼ require               ]     │
+│                                              │
+│  —— or ——                                    │
+│                                              │
+│  DSN:         [                        ]     │
+│                                              │
+│  Access:      [▼ Read Only    ]              │
+│                                              │
+│    [Test Connection]       [Cancel] [Add]    │
+└──────────────────────────────────────────────┘
+```
+
+When the user submits the "New Database" form, the backend:
+1. Creates the `DatabaseConnection` in the global list (same as `POST /api/v1/databases`)
+2. Assigns it to the agent with the selected access tier (same as `POST /api/v1/agents/{id}/databases`)
+
+Both steps happen atomically in a single API call. If the connection already exists (duplicate name), the dialog shows an error. The new connection immediately appears in the global Settings > Databases list.
+
+**Agent Databases Tab (main view):**
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Agent: incident-investigator                                   │
@@ -401,10 +466,17 @@ GET    /api/v1/databases/{id}/schema        # Get schema (via Faucet)
 
 # Agent Database Access
 GET    /api/v1/agents/{id}/databases        # List agent's database assignments
-POST   /api/v1/agents/{id}/databases        # Assign database to agent
+POST   /api/v1/agents/{id}/databases        # Assign existing OR create-and-assign (see below)
 PUT    /api/v1/agents/{id}/databases/{db_id} # Update access tier
 DELETE /api/v1/agents/{id}/databases/{db_id} # Remove database from agent
 ```
+
+The `POST /api/v1/agents/{id}/databases` endpoint supports two modes:
+
+1. **Assign existing database:** Send `{ "database_id": "...", "access_tier": "read_only" }`
+2. **Create and assign (inline):** Send `{ "connection": { "name": "...", "driver": "postgres", "dsn": "..." }, "access_tier": "read_only" }` — the backend creates the `DatabaseConnection` first, then assigns it to the agent atomically. The new connection is immediately available in the global database list for other agents.
+
+If `database_id` is provided, `connection` is ignored. If `connection` is provided without `database_id`, the backend creates the connection first.
 
 #### Request/Response Models
 
@@ -419,7 +491,6 @@ class DatabaseDriver(str, Enum):
     ORACLE = "oracle"
     SNOWFLAKE = "snowflake"
     SQLITE = "sqlite"
-
 class AccessTier(str, Enum):
     READ_ONLY = "read_only"
     FULL_CONTROL = "full_control"
@@ -442,8 +513,16 @@ class DatabaseConnectionResponse(BaseModel):
     # Note: DSN is NEVER returned in responses
 
 class AgentDatabaseAssign(BaseModel):
-    database_id: str
+    """Supports two modes: assign existing (database_id) or create-and-assign (connection)."""
+    database_id: str | None = None        # Pick existing database
+    connection: DatabaseConnectionCreate | None = None  # Or create a new one inline
     access_tier: AccessTier
+
+    @model_validator(mode='after')
+    def require_one(self):
+        if not self.database_id and not self.connection:
+            raise ValueError("Either database_id or connection must be provided")
+        return self
 
 class AgentDatabaseResponse(BaseModel):
     database_id: str
@@ -462,21 +541,22 @@ When a user assigns a database to an agent, Bond orchestrates the following:
 User clicks "Add" in Agent > Databases tab
          │
          ▼
-┌─ Bond Backend ──────────────────────────────────────────────┐
+┌─ Bond Backend ──────────────────────────────────────────────────┐
 │                                                              │
-│  1. Validate database_id exists and is healthy               │
-│  2. Determine Faucet role name:                              │
+│  1. If inline creation: create DatabaseConnection first      │
+│  2. Validate database_id exists and is healthy               │
+│  3. Determine Faucet role name:                              │
 │     "{db_name}_{access_tier}"  (e.g. myapp_prod_reader)     │
-│  3. Check if Faucet role exists; create if not:              │
+│  4. Check if Faucet role exists; create if not:              │
 │     faucet role create myapp_prod_reader \                   │
 │       --permission "myapp_prod:*:GET"                        │
-│  4. Create Faucet API key for this agent:                    │
+│  5. Create Faucet API key for this agent:                    │
 │     faucet key create \                                      │
 │       --role myapp_prod_reader \                             │
 │       --name "agent-{agent_id}-{db_name}"                   │
-│  5. Store API key (encrypted) in vault                       │
-│  6. Create agent_database_access record in SpacetimeDB       │
-│  7. Notify Gateway to refresh MCP tool filtering             │
+│  6. Store API key (encrypted) in vault                       │
+│  7. Create agent_database_access record in SpacetimeDB       │
+│  8. Notify Gateway to refresh MCP tool filtering             │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
          │
@@ -502,25 +582,23 @@ Faucet tool calls flow through the existing MCP proxy, which is already subject 
 
 Faucet's MCP server runs on the host and is proxied to containers exactly like any other host-side MCP server. The only addition is per-agent tool filtering based on access tier, which is a new capability in the proxy layer.
 
----
-
 ## Security
 
 ### Credential Storage
 
-- Database DSNs are **encrypted at rest** in Bond's vault (`~/.bond/vault/`). The `database_connection` table stores only a vault key reference, never the plaintext DSN.
-- Faucet API keys are similarly encrypted in the vault. The `agent_database_access` table stores only a hash for identification.
+- Database DSNs are encrypted at rest in Bond's vault (~/.bond/vault/). The database_connection table stores only a vault key reference, never the plaintext DSN.
+- Faucet API keys are similarly encrypted in the vault. The agent_database_access table stores only a hash for identification.
 - DSNs are decrypted only when passed to the Faucet CLI during `db add` operations. They are never logged, never included in API responses, and never sent to agent containers.
 
 ### Defense in Depth
 
-Access control is enforced at **three layers**:
+Access control is enforced at three layers:
 
 | Layer | Mechanism | What It Prevents |
-|-------|-----------|------------------|
+|-------|-----------|-----------------|
 | **1. MCP Proxy (Gateway)** | Tool filtering by access tier | Agent never sees tools it shouldn't have |
 | **2. Faucet RBAC** | API key → role → per-table verb permissions | Even if proxy is bypassed, Faucet rejects unauthorized operations |
-| **3. Database User** | The DSN's database user has its own privileges | Even if Faucet is bypassed, the DB user limits damage |
+| **3. Database User** | DSN's database user privileges | Even if Faucet is bypassed, the DB user can't do more than its grants allow |
 
 **Recommendation for production databases:** Use a database user with minimal privileges (e.g., `SELECT` only) in the DSN itself. This way, Faucet's RBAC and the database's native permissions are both enforcing read-only access.
 
