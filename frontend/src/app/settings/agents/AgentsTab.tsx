@@ -103,13 +103,73 @@ interface AvailableDb {
   driver: string;
 }
 
+const DRIVER_BADGE: Record<string, { label: string; bg: string; fg: string }> = {
+  postgresql: { label: "PG", bg: "#1a2a4a", fg: "#6c9fff" },
+  postgres: { label: "PG", bg: "#1a2a4a", fg: "#6c9fff" },
+  mysql: { label: "MY", bg: "#2a2a1a", fg: "#ffaa44" },
+  mariadb: { label: "MA", bg: "#2a2a1a", fg: "#ffaa44" },
+  sqlite: { label: "SQ", bg: "#1a2a2a", fg: "#44ccaa" },
+  libsql: { label: "LS", bg: "#1a2a2a", fg: "#44ccaa" },
+  mssql: { label: "MS", bg: "#2a1a2a", fg: "#cc88ff" },
+  cockroachdb: { label: "CR", bg: "#1a2a2a", fg: "#44ccaa" },
+};
+
+function driverBadge(driver: string) {
+  const key = driver.toLowerCase().replace(/\s+/g, "");
+  return DRIVER_BADGE[key] ?? { label: driver.slice(0, 2).toUpperCase(), bg: "#2a2a3e", fg: "#8888a0" };
+}
+
+function DriverIcon({ driver, size = 38 }: { driver: string; size?: number }) {
+  const b = driverBadge(driver);
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+      fontSize: size * 0.18, fontWeight: 700, letterSpacing: "0.03em", flexShrink: 0,
+      backgroundColor: b.bg, color: b.fg,
+    }}>
+      {b.label}
+    </div>
+  );
+}
+
+function StatusDot({ status }: { status: string }) {
+  const color = status === "active" ? "#6cffa0" : status === "pending" ? "#ffaa44" : "#ff6c8a";
+  return (
+    <span style={{
+      width: 7, height: 7, borderRadius: "50%", flexShrink: 0, display: "inline-block",
+      backgroundColor: color, boxShadow: `0 0 6px ${color}`,
+    }} />
+  );
+}
+
+function TierPill({ tier, onClick }: { tier: string; onClick?: () => void }) {
+  const isRo = tier === "read_only";
+  return (
+    <span
+      onClick={onClick}
+      style={{
+        fontSize: "0.72rem", fontWeight: 600, padding: "3px 10px", borderRadius: 10, whiteSpace: "nowrap",
+        cursor: onClick ? "pointer" : "default", transition: "all 0.15s",
+        background: isRo ? "rgba(108,138,255,0.12)" : "rgba(255,170,68,0.12)",
+        color: isRo ? "#6c8aff" : "#ffaa44",
+        border: `1px solid ${isRo ? "rgba(108,138,255,0.25)" : "rgba(255,170,68,0.25)"}`,
+      }}
+    >
+      {isRo ? "Read Only" : "Full Control"}
+    </span>
+  );
+}
+
 function AgentDatabasesSection({ agentId }: { agentId: string }) {
   const [dbs, setDbs] = useState<AgentDatabase[]>([]);
   const [availableDbs, setAvailableDbs] = useState<AvailableDb[]>([]);
-  const [adding, setAdding] = useState(false);
+  const [showAddPopover, setShowAddPopover] = useState(false);
   const [selectedDbId, setSelectedDbId] = useState("");
   const [accessTier, setAccessTier] = useState("read_only");
+  const [search, setSearch] = useState("");
   const [sectionMsg, setSectionMsg] = useState("");
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  const [tierDropdown, setTierDropdown] = useState<string | null>(null);
 
   const fetchDbs = useCallback(async () => {
     try {
@@ -127,8 +187,10 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
 
   useEffect(() => { fetchDbs(); fetchAvailable(); }, [fetchDbs, fetchAvailable]);
 
+  const assignedIds = new Set(dbs.map((d) => d.database_id));
+
   const handleAdd = async () => {
-    if (!selectedDbId) { setSectionMsg("Select a database."); return; }
+    if (!selectedDbId) return;
     try {
       const res = await apiFetch(`${BACKEND_API}/agents/${agentId}/databases`, {
         method: "POST",
@@ -136,8 +198,11 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
         body: JSON.stringify({ database_id: selectedDbId, access_tier: accessTier }),
       });
       if (res.ok) {
-        setSectionMsg("Assigned.");
-        setAdding(false);
+        setSectionMsg("Database assigned.");
+        setShowAddPopover(false);
+        setSelectedDbId("");
+        setAccessTier("read_only");
+        setSearch("");
         await fetchDbs();
       } else {
         const data = await res.json();
@@ -152,101 +217,290 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
     try {
       const res = await apiFetch(`${BACKEND_API}/agents/${agentId}/databases/${dbId}`, { method: "DELETE" });
       if (res.ok) {
-        setSectionMsg("Removed.");
+        setSectionMsg("Database removed.");
         await fetchDbs();
       }
     } catch { setSectionMsg("Failed to remove."); }
   };
 
+  const handleTierChange = async (dbId: string, newTier: string) => {
+    setTierDropdown(null);
+    try {
+      const res = await apiFetch(`${BACKEND_API}/agents/${agentId}/databases/${dbId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_tier: newTier }),
+      });
+      if (res.ok) await fetchDbs();
+      else setSectionMsg("Failed to update tier.");
+    } catch { setSectionMsg("Failed to update tier."); }
+  };
+
+  const filteredAvailable = availableDbs.filter((db) =>
+    db.name.toLowerCase().includes(search.toLowerCase()) ||
+    db.driver.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const openAdd = () => {
+    setShowAddPopover(true);
+    setSelectedDbId("");
+    setAccessTier("read_only");
+    setSearch("");
+    fetchAvailable();
+  };
+
+  // Clear messages after a delay
+  useEffect(() => {
+    if (!sectionMsg) return;
+    const t = setTimeout(() => setSectionMsg(""), 3000);
+    return () => clearTimeout(t);
+  }, [sectionMsg]);
+
   return (
-    <div style={{ ...agentDbStyles.field, gridColumn: "1 / -1" }}>
-      <label style={agentDbStyles.label}>
-        Databases{" "}
-        <button style={agentDbStyles.smallButton} onClick={() => setAdding(!adding)}>+ Add</button>
-      </label>
-      {sectionMsg && <div style={{ fontSize: "0.8rem", color: "#6cffa0", marginBottom: "8px" }}>{sectionMsg}</div>}
-      {adding && (
-        <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "center", flexWrap: "wrap" }}>
-          <select
-            style={{ ...agentDbStyles.select, width: "auto", minWidth: "160px" }}
-            value={selectedDbId}
-            onChange={(e) => setSelectedDbId(e.target.value)}
-          >
-            <option value="">Select database...</option>
-            {availableDbs.map((db) => (
-              <option key={db.id} value={db.id}>{db.name} ({db.driver})</option>
-            ))}
-          </select>
-          <select
-            style={{ ...agentDbStyles.select, width: "auto" }}
-            value={accessTier}
-            onChange={(e) => setAccessTier(e.target.value)}
-          >
-            <option value="read_only">Read Only</option>
-            <option value="full_control">Full Control</option>
-          </select>
-          <button style={agentDbStyles.addBtn} onClick={handleAdd}>Assign</button>
-          <button style={agentDbStyles.cancelBtn} onClick={() => setAdding(false)}>Cancel</button>
+    <div style={{ gridColumn: "1 / -1" }}>
+      {/* Section Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: "0.95rem", fontWeight: 600, color: "#8888a0", letterSpacing: "0.02em" }}>Databases</span>
+          <span style={{ fontSize: "0.8rem", color: "#5a5a6e", background: "#1e1e2e", padding: "2px 8px", borderRadius: 10 }}>{dbs.length}</span>
+        </div>
+        {dbs.length > 0 && (
+          <button onClick={openAdd} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "rgba(108,138,255,0.12)", color: "#6c8aff",
+            border: "1px solid transparent", borderRadius: 6, padding: "6px 14px",
+            fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+          }}>
+            <span style={{ fontSize: "1rem", lineHeight: 1 }}>+</span> Add Database
+          </button>
+        )}
+      </div>
+
+      {/* Toast message */}
+      {sectionMsg && (
+        <div style={{ fontSize: "0.8rem", color: sectionMsg.startsWith("Error") ? "#ff6c8a" : "#6cffa0", marginBottom: 12 }}>
+          {sectionMsg}
         </div>
       )}
-      {dbs.length === 0 && !adding && (
-        <div style={{ fontSize: "0.8rem", color: "#5a5a6e" }}>No databases assigned.</div>
-      )}
-      {dbs.map((db) => (
-        <div key={db.id} style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "6px", fontSize: "0.85rem" }}>
-          <span style={{
-            width: "8px", height: "8px", borderRadius: "50%",
-            backgroundColor: db.status === "active" ? "#22c55e" : "#ef4444",
-            display: "inline-block",
-          }} />
-          <span style={{ color: "#e0e0e8", fontWeight: 500 }}>{db.database_name}</span>
-          <span style={{ color: "#8888a0" }}>({db.driver})</span>
-          <span style={{
-            fontSize: "0.75rem",
-            backgroundColor: db.access_tier === "read_only" ? "#1a2a3a" : "#2a1a3a",
-            color: db.access_tier === "read_only" ? "#6c8aff" : "#c06cff",
-            padding: "2px 6px",
-            borderRadius: "4px",
+
+      {/* Empty State */}
+      {dbs.length === 0 && (
+        <div style={{
+          textAlign: "center", padding: "40px 20px",
+          border: "1px dashed #2a2a3e", borderRadius: 10, background: "#12121a",
+        }}>
+          <div style={{ fontSize: "2rem", marginBottom: 12, opacity: 0.4 }}>&#x1f5c4;&#xfe0f;</div>
+          <p style={{ color: "#5a5a6e", fontSize: "0.85rem", marginBottom: 16, lineHeight: 1.5 }}>
+            No databases assigned to this agent yet.<br />
+            Give this agent access to query and manage your databases.
+          </p>
+          <button onClick={openAdd} style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            background: "#6c8aff", color: "#fff", border: "none", borderRadius: 6,
+            padding: "9px 20px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
           }}>
-            {db.access_tier}
-          </span>
-          <button
-            style={{ backgroundColor: "transparent", border: "none", color: "#ff6c8a", cursor: "pointer", fontSize: "0.8rem" }}
-            onClick={() => handleRemove(db.database_id)}
-          >
-            Remove
+            <span>+</span> Add Database
           </button>
         </div>
-      ))}
+      )}
+
+      {/* Assigned Database Cards */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {dbs.map((db) => (
+          <div
+            key={db.id}
+            onMouseEnter={() => setHoveredCard(db.id)}
+            onMouseLeave={() => { setHoveredCard(null); setTierDropdown(null); }}
+            style={{
+              display: "flex", alignItems: "center", gap: 14,
+              background: "#12121a", border: `1px solid ${hoveredCard === db.id ? "#3a3a4e" : "#2a2a3e"}`,
+              borderRadius: 10, padding: "14px 16px", transition: "border-color 0.15s",
+            }}
+          >
+            <DriverIcon driver={db.driver} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#e0e0e8", display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                <StatusDot status={db.status} />
+                {db.database_name}
+              </div>
+              <div style={{ fontSize: "0.78rem", color: "#5a5a6e" }}>{db.driver}</div>
+            </div>
+            {/* Tier pill with inline toggle */}
+            <div style={{ position: "relative" }}>
+              <TierPill tier={db.access_tier} onClick={() => setTierDropdown(tierDropdown === db.id ? null : db.id)} />
+              {tierDropdown === db.id && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 10,
+                  background: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: 6,
+                  padding: 4, minWidth: 140, boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                }}>
+                  {(["read_only", "full_control"] as const).map((t) => (
+                    <button key={t} onClick={() => handleTierChange(db.database_id, t)} style={{
+                      display: "block", width: "100%", padding: "7px 12px", background: db.access_tier === t ? "#2a2a3e" : "none",
+                      border: "none", color: "#e0e0e8", fontSize: "0.8rem", textAlign: "left" as const,
+                      cursor: "pointer", borderRadius: 4,
+                    }}>
+                      {t === "read_only" ? "Read Only" : "Full Control"}{db.access_tier === t ? " \u2713" : ""}
+                      <span style={{ display: "block", fontSize: "0.7rem", color: "#5a5a6e", marginTop: 1 }}>
+                        {t === "read_only" ? "Query & describe only" : "CRUD + raw SQL"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Remove button */}
+            <button
+              onClick={() => handleRemove(db.database_id)}
+              title="Remove"
+              style={{
+                background: "none", border: "none", color: "#5a5a6e", cursor: "pointer",
+                padding: 6, borderRadius: 6, fontSize: "1rem", lineHeight: 1, flexShrink: 0,
+                opacity: hoveredCard === db.id ? 1 : 0, transition: "all 0.15s",
+              }}
+            >
+              &#x2715;
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* Add Database Popover/Modal */}
+      {showAddPopover && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAddPopover(false); }}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+          }}
+        >
+          <div style={{
+            background: "#12121a", border: "1px solid #2a2a3e", borderRadius: 14,
+            width: 480, maxHeight: "80vh", overflow: "hidden",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column",
+          }}>
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px 14px", borderBottom: "1px solid #2a2a3e" }}>
+              <span style={{ fontSize: "1rem", fontWeight: 600, color: "#e0e0e8" }}>Add Database</span>
+              <button onClick={() => setShowAddPopover(false)} style={{
+                background: "none", border: "none", color: "#5a5a6e", fontSize: "1.2rem", cursor: "pointer", padding: 4, borderRadius: 4,
+              }}>&#x2715;</button>
+            </div>
+
+            {/* Search */}
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid #2a2a3e" }}>
+              <input
+                type="text"
+                placeholder="Search databases\u2026"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                autoFocus
+                style={{
+                  width: "100%", background: "#1e1e2e", border: "1px solid #2a2a3e", borderRadius: 8,
+                  padding: "10px 14px", color: "#e0e0e8", fontSize: "0.88rem", outline: "none",
+                }}
+              />
+            </div>
+
+            {/* Database List */}
+            <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
+              {filteredAvailable.length === 0 && (
+                <div style={{ padding: "20px 14px", textAlign: "center", color: "#5a5a6e", fontSize: "0.85rem" }}>
+                  No databases found.
+                </div>
+              )}
+              {filteredAvailable.map((db) => {
+                const isAssigned = assignedIds.has(db.id);
+                const isSelected = selectedDbId === db.id;
+                return (
+                  <div
+                    key={db.id}
+                    onClick={() => { if (!isAssigned) setSelectedDbId(isSelected ? "" : db.id); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 8,
+                      cursor: isAssigned ? "default" : "pointer", transition: "background 0.1s",
+                      opacity: isAssigned ? 0.4 : 1,
+                      background: isSelected ? "rgba(108,138,255,0.12)" : "transparent",
+                      border: `1px solid ${isSelected ? "rgba(108,138,255,0.3)" : "transparent"}`,
+                    }}
+                  >
+                    <DriverIcon driver={db.driver} size={34} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "#e0e0e8" }}>{db.name}</div>
+                      <div style={{ fontSize: "0.76rem", color: "#5a5a6e", marginTop: 2 }}>
+                        {db.driver}{isAssigned ? " \u00b7 Already assigned" : ""}
+                      </div>
+                    </div>
+                    {/* Radio-style check */}
+                    <div style={{
+                      width: 20, height: 20, borderRadius: "50%", flexShrink: 0, display: "flex",
+                      alignItems: "center", justifyContent: "center", transition: "all 0.15s",
+                      border: `2px solid ${isSelected ? "#6c8aff" : isAssigned ? "#5a5a6e" : "#2a2a3e"}`,
+                      background: isSelected ? "#6c8aff" : "transparent",
+                    }}>
+                      {isSelected && <span style={{ color: "#fff", fontSize: "0.7rem", fontWeight: 700 }}>{"\u2713"}</span>}
+                      {isAssigned && !isSelected && <span style={{ fontSize: "0.65rem", color: "#5a5a6e" }}>&mdash;</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Access Tier Selector */}
+            <div style={{ padding: "14px 20px", borderTop: "1px solid #2a2a3e" }}>
+              <label style={{ display: "block", fontSize: "0.78rem", color: "#8888a0", marginBottom: 8, fontWeight: 500 }}>Access Level</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {([
+                  { value: "read_only", icon: "\ud83d\udd12", label: "Read Only", desc: "Query & describe tables", activeBg: "rgba(108,138,255,0.12)", activeBorder: "rgba(108,138,255,0.4)", activeColor: "#6c8aff" },
+                  { value: "full_control", icon: "\u26a1", label: "Full Control", desc: "CRUD + raw SQL", activeBg: "rgba(255,170,68,0.12)", activeBorder: "rgba(255,170,68,0.4)", activeColor: "#ffaa44" },
+                ] as const).map((opt) => {
+                  const active = accessTier === opt.value;
+                  return (
+                    <div
+                      key={opt.value}
+                      onClick={() => setAccessTier(opt.value)}
+                      style={{
+                        flex: 1, padding: "10px 14px", borderRadius: 8, cursor: "pointer", textAlign: "center",
+                        transition: "all 0.15s", fontSize: "0.82rem", fontWeight: 600,
+                        background: active ? opt.activeBg : "#1e1e2e",
+                        border: `1px solid ${active ? opt.activeBorder : "#2a2a3e"}`,
+                        color: active ? opt.activeColor : "#8888a0",
+                      }}
+                    >
+                      <span style={{ display: "block" }}>{opt.icon} {opt.label}</span>
+                      <span style={{ display: "block", fontSize: "0.7rem", fontWeight: 400, opacity: 0.7, marginTop: 2 }}>{opt.desc}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid #2a2a3e" }}>
+              <span
+                onClick={() => { setShowAddPopover(false); /* User should navigate to Databases tab */ }}
+                style={{ color: "#6c8aff", fontSize: "0.82rem", cursor: "pointer", transition: "opacity 0.15s" }}
+              >
+                + Create new database
+              </span>
+              <button
+                onClick={handleAdd}
+                disabled={!selectedDbId}
+                style={{
+                  background: "#6c8aff", color: "#fff", border: "none", borderRadius: 8,
+                  padding: "9px 24px", fontSize: "0.85rem", fontWeight: 600, cursor: selectedDbId ? "pointer" : "not-allowed",
+                  opacity: selectedDbId ? 1 : 0.4, transition: "background 0.15s",
+                }}
+              >
+                Assign Database
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-const agentDbStyles: Record<string, React.CSSProperties> = {
-  field: { flex: 1 },
-  label: {
-    display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500,
-  },
-  smallButton: {
-    backgroundColor: "#2a2a3e", color: "#6c8aff",
-    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
-    borderRadius: "4px", padding: "2px 8px", fontSize: "0.75rem", cursor: "pointer", marginLeft: "8px",
-  },
-  select: {
-    backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
-    borderRadius: "8px", padding: "8px 10px", color: "#e0e0e8", fontSize: "0.85rem", outline: "none",
-  },
-  addBtn: {
-    backgroundColor: "#6c8aff", color: "#fff",
-    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
-    borderRadius: "6px", padding: "8px 14px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
-  },
-  cancelBtn: {
-    backgroundColor: "#2a2a3e", color: "#e0e0e8",
-    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
-    borderRadius: "6px", padding: "8px 14px", fontSize: "0.85rem", cursor: "pointer",
-  },
-};
 
 export default function AgentsTab() {
   // Live subscriptions from SpacetimeDB — auto-updates on any table change
