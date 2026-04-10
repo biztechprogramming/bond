@@ -145,7 +145,8 @@ function StatusDot({ status }: { status: string }) {
 function TierPill({ tier, onClick }: { tier: string; onClick?: () => void }) {
   const isRo = tier === "read_only";
   return (
-    <span
+    <button
+      type="button"
       onClick={onClick}
       style={{
         fontSize: "0.72rem", fontWeight: 600, padding: "3px 10px", borderRadius: 10, whiteSpace: "nowrap",
@@ -156,7 +157,7 @@ function TierPill({ tier, onClick }: { tier: string; onClick?: () => void }) {
       }}
     >
       {isRo ? "Read Only" : "Full Control"}
-    </span>
+    </button>
   );
 }
 
@@ -170,6 +171,7 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
   const [sectionMsg, setSectionMsg] = useState("");
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [tierDropdown, setTierDropdown] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDbs = useCallback(async () => {
     try {
@@ -241,12 +243,21 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
     db.driver.toLowerCase().includes(search.toLowerCase())
   );
 
+  const closeModal = useCallback(() => {
+    setShowAddPopover(false);
+    setSelectedDbId("");
+    setAccessTier("read_only");
+    setSearch("");
+  }, []);
+
   const openAdd = () => {
     setShowAddPopover(true);
     setSelectedDbId("");
     setAccessTier("read_only");
     setSearch("");
     fetchAvailable();
+    // Focus the search input after render
+    setTimeout(() => searchInputRef.current?.focus(), 50);
   };
 
   // Clear messages after a delay
@@ -256,8 +267,24 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
     return () => clearTimeout(t);
   }, [sectionMsg]);
 
+  // Close tier dropdown on Escape
+  useEffect(() => {
+    if (!tierDropdown) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === "Escape") setTierDropdown(null); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [tierDropdown]);
+
   return (
     <div style={{ gridColumn: "1 / -1" }}>
+      <style>{`
+        .bond-db-card:focus-visible, .bond-db-card button:focus-visible,
+        [role="dialog"] button:focus-visible, [role="dialog"] input:focus-visible,
+        [role="option"]:focus-visible {
+          outline: 2px solid #6c8aff;
+          outline-offset: 2px;
+        }
+      `}</style>
       {/* Section Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -309,10 +336,13 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
         {dbs.map((db) => (
           <div
             key={db.id}
+            className="bond-db-card"
             onMouseEnter={() => setHoveredCard(db.id)}
             onMouseLeave={() => { setHoveredCard(null); setTierDropdown(null); }}
+            onFocus={() => setHoveredCard(db.id)}
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) { setHoveredCard(null); setTierDropdown(null); } }}
             style={{
-              display: "flex", alignItems: "center", gap: 14,
+              display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
               background: "#12121a", border: `1px solid ${hoveredCard === db.id ? "#3a3a4e" : "#2a2a3e"}`,
               borderRadius: 10, padding: "14px 16px", transition: "border-color 0.15s",
             }}
@@ -353,10 +383,11 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
             <button
               onClick={() => handleRemove(db.database_id)}
               title="Remove"
+              aria-label={`Remove ${db.database_name}`}
               style={{
                 background: "none", border: "none", color: "#5a5a6e", cursor: "pointer",
                 padding: 6, borderRadius: 6, fontSize: "1rem", lineHeight: 1, flexShrink: 0,
-                opacity: hoveredCard === db.id ? 1 : 0, transition: "all 0.15s",
+                opacity: hoveredCard === db.id ? 1 : 0.15, transition: "all 0.15s",
               }}
             >
               &#x2715;
@@ -368,21 +399,26 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
       {/* Add Database Popover/Modal */}
       {showAddPopover && (
         <div
-          onClick={(e) => { if (e.target === e.currentTarget) setShowAddPopover(false); }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Add Database"
+          onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+          onKeyDown={(e) => { if (e.key === "Escape") closeModal(); }}
           style={{
             position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
             display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+            padding: "16px",
           }}
         >
           <div style={{
             background: "#12121a", border: "1px solid #2a2a3e", borderRadius: 14,
-            width: 480, maxHeight: "80vh", overflow: "hidden",
+            width: "100%", maxWidth: 480, maxHeight: "80vh", overflow: "hidden",
             boxShadow: "0 20px 60px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column",
           }}>
             {/* Header */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px 14px", borderBottom: "1px solid #2a2a3e" }}>
               <span style={{ fontSize: "1rem", fontWeight: 600, color: "#e0e0e8" }}>Add Database</span>
-              <button onClick={() => setShowAddPopover(false)} style={{
+              <button onClick={closeModal} aria-label="Close" style={{
                 background: "none", border: "none", color: "#5a5a6e", fontSize: "1.2rem", cursor: "pointer", padding: 4, borderRadius: 4,
               }}>&#x2715;</button>
             </div>
@@ -390,6 +426,7 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
             {/* Search */}
             <div style={{ padding: "12px 20px", borderBottom: "1px solid #2a2a3e" }}>
               <input
+                ref={searchInputRef}
                 type="text"
                 placeholder="Search databases\u2026"
                 value={search}
@@ -415,13 +452,19 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
                 return (
                   <div
                     key={db.id}
+                    role="option"
+                    aria-selected={isSelected}
+                    aria-disabled={isAssigned}
+                    tabIndex={isAssigned ? -1 : 0}
                     onClick={() => { if (!isAssigned) setSelectedDbId(isSelected ? "" : db.id); }}
+                    onKeyDown={(e) => { if (!isAssigned && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setSelectedDbId(isSelected ? "" : db.id); } }}
                     style={{
                       display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 8,
                       cursor: isAssigned ? "default" : "pointer", transition: "background 0.1s",
                       opacity: isAssigned ? 0.4 : 1,
                       background: isSelected ? "rgba(108,138,255,0.12)" : "transparent",
                       border: `1px solid ${isSelected ? "rgba(108,138,255,0.3)" : "transparent"}`,
+                      outline: "none",
                     }}
                   >
                     <DriverIcon driver={db.driver} size={34} />
@@ -456,7 +499,8 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
                 ] as const).map((opt) => {
                   const active = accessTier === opt.value;
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={opt.value}
                       onClick={() => setAccessTier(opt.value)}
                       style={{
@@ -469,20 +513,21 @@ function AgentDatabasesSection({ agentId }: { agentId: string }) {
                     >
                       <span style={{ display: "block" }}>{opt.icon} {opt.label}</span>
                       <span style={{ display: "block", fontSize: "0.7rem", fontWeight: 400, opacity: 0.7, marginTop: 2 }}>{opt.desc}</span>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
             </div>
 
             {/* Footer */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid #2a2a3e" }}>
-              <span
-                onClick={() => { setShowAddPopover(false); /* User should navigate to Databases tab */ }}
-                style={{ color: "#6c8aff", fontSize: "0.82rem", cursor: "pointer", transition: "opacity 0.15s" }}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid #2a2a3e", flexWrap: "wrap", gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => { closeModal(); /* User should navigate to Databases tab */ }}
+                style={{ background: "none", border: "none", color: "#6c8aff", fontSize: "0.82rem", cursor: "pointer", transition: "opacity 0.15s", padding: 0 }}
               >
                 + Create new database
-              </span>
+              </button>
               <button
                 onClick={handleAdd}
                 disabled={!selectedDbId}

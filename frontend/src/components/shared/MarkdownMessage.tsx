@@ -165,7 +165,7 @@ const components: Components = {
     </td>
   ),
   img: ({ src, alt, ...props }) => {
-    const resolvedSrc = rewriteImageSrc(src || "");
+    const resolvedSrc = rewriteImageSrc(typeof src === "string" ? src : "");
     return (
       <img
         src={resolvedSrc}
