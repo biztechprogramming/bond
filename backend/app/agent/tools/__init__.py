@@ -145,4 +145,12 @@ def build_registry() -> ToolRegistry:
     from ._dynamic_tools import register_dynamic_tools
     register_dynamic_tools(registry)
 
+    # Register Bond-native virtual database tools (Design Doc 109)
+    from backend.app.mcp.database_capability import (
+        BOND_TO_FAUCET,
+        create_database_tool_handler,
+    )
+    for bond_tool_name in BOND_TO_FAUCET:
+        registry.register(bond_tool_name, create_database_tool_handler(bond_tool_name))
+
     return registry

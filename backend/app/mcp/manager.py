@@ -52,6 +52,9 @@ class MCPServerConfig(BaseModel):
     args: List[str] = []
     env: Dict[str, str] = {}
     enabled: bool = True
+    managed: bool = False
+    hidden_from_ui: bool = False
+    source: str = "user"
 
 
 class MCPConnection:
@@ -228,6 +231,49 @@ class MCPManager:
         self._dynamic_definitions: Dict[str, dict] = {}
         self._bond_to_class_map: Dict[str, str] = {}
 
+    async def ensure_faucet_registered(self) -> bool:
+        """Register Faucet as an internal managed MCP server (Design Doc 109).
+
+        This is called automatically — Faucet is NOT exposed in the
+        user-facing MCP server list.  The registration is internal,
+        managed by Bond, and hidden from the UI.
+
+        Returns True if Faucet is registered and has a healthy pool,
+        False otherwise (e.g. binary not installed).
+        """
+        key = "faucet::global"
+        if key in self.connection_pools and self.connection_pools[key].has_healthy_connection:
+            return True
+
+        try:
+            from backend.app.config import get_settings
+            settings = get_settings()
+            faucet_bin = str(settings.bond_home / "bin" / "faucet")
+            faucet_config_dir = str(settings.bond_home / "faucet")
+
+            config = MCPServerConfig(
+                name="faucet",
+                command=faucet_bin,
+                args=["mcp", "--config-dir", faucet_config_dir],
+                enabled=True,
+                managed=True,
+                hidden_from_ui=True,
+                source="bond-faucet-managed",
+            )
+            pool = MCPConnectionPool(config, self._pool_size)
+            try:
+                await pool.start()
+                logger.info("Faucet MCP registered as internal managed capability")
+            except Exception as e:
+                # Faucet binary may not be installed yet — this is non-fatal
+                logger.warning("Faucet MCP registration deferred (not available): %s", e)
+                pool.last_error = str(e)
+            self.connection_pools[key] = pool
+            return pool.has_healthy_connection
+        except Exception as e:
+            logger.warning("Failed to register Faucet MCP: %s", e)
+            return False
+
     async def ensure_servers_loaded(self, agent_id: Optional[str] = None):
         """Load enabled MCP servers from SpacetimeDB if not already loaded."""
         try:
@@ -358,8 +404,13 @@ class MCPManager:
         finally:
             pool.release()
 
-    async def list_tools(self, scope: str = "global") -> list[dict]:
-        """List all available tools across all servers for a scope."""
+    async def list_tools(self, scope: str = "global", include_managed: bool = False) -> list[dict]:
+        """List all available tools across all servers for a scope.
+
+        By default, managed/hidden servers (e.g. Faucet) are excluded.
+        Bond-native virtual database tools are exposed separately via
+        the database capability layer (Design Doc 109).
+        """
         all_tools = []
         seen_servers = set()
         for key, pool in self.connection_pools.items():
@@ -367,6 +418,9 @@ class MCPManager:
             if pool_scope != scope and pool_scope != "global":
                 continue
             if server_name in seen_servers:
+                continue
+            # Skip managed/hidden servers unless explicitly requested
+            if not include_managed and getattr(pool.config, "hidden_from_ui", False):
                 continue
             seen_servers.add(server_name)
 
