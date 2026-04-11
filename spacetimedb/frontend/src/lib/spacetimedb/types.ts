@@ -20,6 +20,18 @@ export const AgentChannels = __t.object("AgentChannels", {
 });
 export type AgentChannels = __Infer<typeof AgentChannels>;
 
+export const AgentDatabaseAccess = __t.object("AgentDatabaseAccess", {
+  id: __t.string(),
+  agentId: __t.string(),
+  databaseId: __t.string(),
+  accessTier: __t.string(),
+  faucetApiKeyVaultRef: __t.string(),
+  faucetRoleName: __t.string(),
+  status: __t.string(),
+  assignedAt: __t.u64(),
+});
+export type AgentDatabaseAccess = __Infer<typeof AgentDatabaseAccess>;
+
 export const AgentPromptFragments = __t.object("AgentPromptFragments", {
   id: __t.string(),
   agentId: __t.string(),
@@ -181,6 +193,18 @@ export const Conversations = __t.object("Conversations", {
   updatedAt: __t.u64(),
 });
 export type Conversations = __Infer<typeof Conversations>;
+
+export const DatabaseConnections = __t.object("DatabaseConnections", {
+  id: __t.string(),
+  name: __t.string(),
+  driver: __t.string(),
+  description: __t.string(),
+  status: __t.string(),
+  dsnVaultRef: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type DatabaseConnections = __Infer<typeof DatabaseConnections>;
 
 export const EmbeddingModels = __t.object("EmbeddingModels", {
   modelName: __t.string(),

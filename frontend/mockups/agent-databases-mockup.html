@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Databases — Mockup</title>
+<style>
+  /* ── Bond Design Tokens ── */
+  :root {
+    --bg-base: #0a0a12;
+    --bg-surface: #12121a;
+    --bg-input: #1e1e2e;
+    --bg-elevated: #2a2a3e;
+    --border: #2a2a3e;
+    --border-hover: #3a3a4e;
+    --text-primary: #e0e0e8;
+    --text-secondary: #8888a0;
+    --text-muted: #5a5a6e;
+    --accent: #6c8aff;
+    --accent-dim: rgba(108, 138, 255, 0.12);
+    --accent-hover: #5a78ee;
+    --green: #6cffa0;
+    --green-dim: rgba(108, 255, 160, 0.12);
+    --orange: #ffaa44;
+    --orange-dim: rgba(255, 170, 68, 0.12);
+    --red: #ff6c8a;
+    --red-dim: rgba(255, 108, 138, 0.12);
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 40px;
+    min-height: 100vh;
+  }
+
+  /* ── Section Container ── */
+  .section {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .section-header h3 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+  }
+
+  .section-header .count {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: var(--bg-input);
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+  }
+
+  /* ── Add Button (top-right) ── */
+  .btn-add {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-add:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-add .icon { font-size: 1rem; line-height: 1; }
+
+  /* ── Assigned Database Cards ── */
+  .db-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .db-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    transition: border-color 0.15s;
+  }
+  .db-card:hover {
+    border-color: var(--border-hover);
+  }
+
+  /* Driver icon badge */
+  .db-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+  }
+  .db-icon.pg { background: #1a2a4a; color: #6c9fff; }
+  .db-icon.mysql { background: #2a2a1a; color: #ffaa44; }
+  .db-icon.sqlite { background: #1a2a2a; color: #44ccaa; }
+  .db-icon.mssql { background: #2a1a2a; color: #cc88ff; }
+
+  /* Info block */
+  .db-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .db-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .db-meta {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  /* Status dot */
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .status-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.pending { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+  .status-dot.error { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+  /* Access tier pill */
+  .tier-pill {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 10px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+  }
+  .tier-pill.read-only {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(108, 138, 255, 0.25);
+  }
+  .tier-pill.full-control {
+    background: var(--orange-dim);
+    color: var(--orange);
+    border: 1px solid rgba(255, 170, 68, 0.25);
+  }
+
+  /* Tier toggle dropdown */
+  .tier-toggle {
+    position: relative;
+  }
+  .tier-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px;
+    z-index: 10;
+    min-width: 140px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .tier-toggle:hover .tier-dropdown,
+  .tier-toggle:focus-within .tier-dropdown {
+    display: block;
+  }
+  .tier-option {
+    display: block;
+    width: 100%;
+    padding: 7px 12px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.1s;
+  }
+  .tier-option:hover {
+    background: var(--bg-elevated);
+  }
+  .tier-option .option-desc {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 1px;
+  }
+
+  /* Remove button */
+  .btn-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    transition: all 0.15s;
+    font-size: 1rem;
+    line-height: 1;
+    flex-shrink: 0;
+    opacity: 0;
+  }
+  .db-card:hover .btn-remove {
+    opacity: 1;
+  }
+  .btn-remove:hover {
+    background: var(--red-dim);
+    color: var(--red);
+  }
+
+  /* ── Empty State ── */
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+  }
+  .empty-state .empty-icon {
+    font-size: 2rem;
+    margin-bottom: 12px;
+    opacity: 0.4;
+  }
+  .empty-state p {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+  .empty-state .btn-add-empty {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 9px 20px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .empty-state .btn-add-empty:hover {
+    background: var(--accent-hover);
+  }
+
+  /* ── Add Database Popover ── */
+  .popover-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .popover {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    width: 480px;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+  }
+  .popover-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .popover-header h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .popover-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: color 0.15s;
+  }
+  .popover-close:hover { color: var(--text-primary); }
+
+  /* Search input */
+  .popover-search {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .popover-search input {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px 10px 36px;
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    outline: none;
+    transition: border-color 0.15s;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%235a5a6e' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 10-1.397 1.398h-.001l3.85 3.85a1 1 0 001.415-1.414l-3.85-3.85zm-5.242.156a5 5 0 110-10 5 5 0 010 10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: 12px center;
+  }
+  .popover-search input:focus {
+    border-color: var(--accent);
+  }
+  .popover-search input::placeholder {
+    color: var(--text-muted);
+  }
+
+  /* Database list in popover */
+  .popover-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .popover-db-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border: 1px solid transparent;
+  }
+  .popover-db-item:hover {
+    background: var(--bg-input);
+  }
+  .popover-db-item.selected {
+    background: var(--accent-dim);
+    border-color: rgba(108, 138, 255, 0.3);
+  }
+  .popover-db-item .db-icon {
+    width: 34px;
+    height: 34px;
+    font-size: 0.65rem;
+  }
+  .popover-db-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .popover-db-name {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .popover-db-meta {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .popover-db-check {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .popover-db-item.selected .popover-db-check {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .popover-db-item.selected .popover-db-check::after {
+    content: "✓";
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+  }
+
+  /* Access tier selector in popover */
+  .popover-tier {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .popover-tier label {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+  .tier-buttons {
+    display: flex;
+    gap: 8px;
+  }
+  .tier-btn {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.15s;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .tier-btn.ro {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+  .tier-btn.ro.active {
+    background: var(--accent-dim);
+    border-color: rgba(108, 138, 255, 0.4);
+    color: var(--accent);
+  }
+  .tier-btn.fc {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+  .tier-btn.fc.active {
+    background: var(--orange-dim);
+    border-color: rgba(255, 170, 68, 0.4);
+    color: var(--orange);
+  }
+  .tier-btn .tier-label {
+    display: block;
+  }
+  .tier-btn .tier-desc {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 400;
+    opacity: 0.7;
+    margin-top: 2px;
+  }
+
+  /* Popover footer */
+  .popover-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .popover-footer .create-link {
+    color: var(--accent);
+    font-size: 0.82rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .popover-footer .create-link:hover {
+    opacity: 0.8;
+    text-decoration: underline;
+  }
+  .popover-footer .btn-assign {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 24px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .popover-footer .btn-assign:hover {
+    background: var(--accent-hover);
+  }
+  .popover-footer .btn-assign:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ── Inline Create (inside popover) ── */
+  .inline-create {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-base);
+  }
+  .inline-create h5 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 14px;
+  }
+  .inline-form-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .inline-form-row input,
+  .inline-form-row select {
+    flex: 1;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    outline: none;
+  }
+  .inline-form-row select {
+    max-width: 140px;
+  }
+  .inline-form-row input:focus,
+  .inline-form-row select:focus {
+    border-color: var(--accent);
+  }
+  .inline-form-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 12px;
+  }
+  .btn-inline-cancel {
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .btn-inline-save {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  /* ── Annotations / Labels ── */
+  .mockup-label {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: #fff;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    z-index: 200;
+  }
+
+  .demo-divider {
+    max-width: 720px;
+    margin: 48px auto 24px;
+    padding-top: 32px;
+    border-top: 1px dashed var(--border);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<div class="mockup-label">MOCKUP — Agent Database Assignment UI</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- STATE 1: Agent with assigned databases                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div class="section" style="margin-top: 48px;">
+  <div class="section-header">
+    <h3>Databases <span class="count">3</span></h3>
+    <button class="btn-add" onclick="document.getElementById('popover1').style.display='flex'">
+      <span class="icon">+</span> Add Database
+    </button>
+  </div>
+
+  <div class="db-list">
+    <!-- Card 1: PostgreSQL, Full Control -->
+    <div class="db-card">
+      <div class="db-icon pg">PG</div>
+      <div class="db-info">
+        <div class="db-name">
+          <span class="status-dot connected"></span>
+          production-analytics
+        </div>
+        <div class="db-meta">PostgreSQL · analytics-db.internal:5432</div>
+      </div>
+      <div class="tier-toggle">
+        <span class="tier-pill full-control">Full Control</span>
+        <div class="tier-dropdown">
+          <button class="tier-option">
+            Read Only
+            <span class="option-desc">Query & describe only</span>
+          </button>
+          <button class="tier-option" style="background: var(--bg-elevated);">
+            Full Control ✓
+            <span class="option-desc">CRUD + raw SQL</span>
+          </button>
+        </div>
+      </div>
+      <button class="btn-remove" title="Remove">✕</button>
+    </div>
+
+    <!-- Card 2: MySQL, Read Only -->
+    <div class="db-card">
+      <div class="db-icon mysql">MY</div>
+      <div class="db-info">
+        <div class="db-name">
+          <span class="status-dot connected"></span>
+          user-service-db
+        </div>
+        <div class="db-meta">MySQL · mysql-prod.internal:3306</div>
+      </div>
+      <div class="tier-toggle">
+        <span class="tier-pill read-only">Read Only</span>
+        <div class="tier-dropdown">
+          <button class="tier-option" style="background: var(--bg-elevated);">
+            Read Only ✓
+            <span class="option-desc">Query & describe only</span>
+          </button>
+          <button class="tier-option">
+            Full Control
+            <span class="option-desc">CRUD + raw SQL</span>
+          </button>
+        </div>
+      </div>
+      <button class="btn-remove" title="Remove">✕</button>
+    </div>
+
+    <!-- Card 3: SQLite, Read Only, pending -->
+    <div class="db-card">
+      <div class="db-icon sqlite">SQ</div>
+      <div class="db-info">
+        <div class="db-name">
+          <span class="status-dot pending"></span>
+          local-cache
+        </div>
+        <div class="db-meta">SQLite · /data/cache.db</div>
+      </div>
+      <div class="tier-toggle">
+        <span class="tier-pill read-only">Read Only</span>
+        <div class="tier-dropdown">
+          <button class="tier-option" style="background: var(--bg-elevated);">
+            Read Only ✓
+            <span class="option-desc">Query & describe only</span>
+          </button>
+          <button class="tier-option">
+            Full Control
+            <span class="option-desc">CRUD + raw SQL</span>
+          </button>
+        </div>
+      </div>
+      <button class="btn-remove" title="Remove">✕</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- STATE 2: Empty state (no databases assigned)               -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div class="demo-divider">Empty State — No databases assigned</div>
+
+<div class="section">
+  <div class="section-header">
+    <h3>Databases <span class="count">0</span></h3>
+  </div>
+
+  <div class="empty-state">
+    <div class="empty-icon">🗄️</div>
+    <p>No databases assigned to this agent yet.<br>
+    Give this agent access to query and manage your databases.</p>
+    <button class="btn-add-empty" onclick="document.getElementById('popover1').style.display='flex'">
+      <span>+</span> Add Database
+    </button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- POPOVER: Add Database                                      -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div class="demo-divider">Add Database Popover (click any "+ Add Database" button above)</div>
+
+<div id="popover1" class="popover-overlay" style="display: none;" onclick="if(event.target===this) this.style.display='none'">
+  <div class="popover">
+    <div class="popover-header">
+      <h4>Add Database</h4>
+      <button class="popover-close" onclick="document.getElementById('popover1').style.display='none'">✕</button>
+    </div>
+
+    <div class="popover-search">
+      <input type="text" placeholder="Search databases…" />
+    </div>
+
+    <div class="popover-list">
+      <!-- Available DB 1 (already assigned — disabled look) -->
+      <div class="popover-db-item" style="opacity: 0.4; cursor: default;">
+        <div class="db-icon pg">PG</div>
+        <div class="popover-db-info">
+          <div class="popover-db-name">production-analytics</div>
+          <div class="popover-db-meta">PostgreSQL · Already assigned</div>
+        </div>
+        <div class="popover-db-check" style="border-color: var(--text-muted);">
+          <span style="font-size: 0.65rem; color: var(--text-muted);">—</span>
+        </div>
+      </div>
+
+      <!-- Available DB 2 (selectable) -->
+      <div class="popover-db-item selected" onclick="this.classList.toggle('selected')">
+        <div class="db-icon pg">PG</div>
+        <div class="popover-db-info">
+          <div class="popover-db-name">reporting-warehouse</div>
+          <div class="popover-db-meta">PostgreSQL · warehouse.internal:5432</div>
+        </div>
+        <div class="popover-db-check"></div>
+      </div>
+
+      <!-- Available DB 3 (selectable) -->
+      <div class="popover-db-item" onclick="this.classList.toggle('selected')">
+        <div class="db-icon mysql">MY</div>
+        <div class="popover-db-info">
+          <div class="popover-db-name">orders-db</div>
+          <div class="popover-db-meta">MySQL · mysql-orders.internal:3306</div>
+        </div>
+        <div class="popover-db-check"></div>
+      </div>
+
+      <!-- Available DB 4 (selectable) -->
+      <div class="popover-db-item" onclick="this.classList.toggle('selected')">
+        <div class="db-icon mssql">MS</div>
+        <div class="popover-db-info">
+          <div class="popover-db-name">legacy-erp</div>
+          <div class="popover-db-meta">MSSQL · erp.corp.local:1433</div>
+        </div>
+        <div class="popover-db-check"></div>
+      </div>
+    </div>
+
+    <!-- Access Tier Selector -->
+    <div class="popover-tier">
+      <label>Access Level</label>
+      <div class="tier-buttons">
+        <div class="tier-btn ro active" onclick="this.classList.add('active'); this.nextElementSibling.classList.remove('active');">
+          <span class="tier-label">🔒 Read Only</span>
+          <span class="tier-desc">Query & describe tables</span>
+        </div>
+        <div class="tier-btn fc" onclick="this.classList.add('active'); this.previousElementSibling.classList.remove('active');">
+          <span class="tier-label">⚡ Full Control</span>
+          <span class="tier-desc">CRUD + raw SQL</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="popover-footer">
+      <a class="create-link" onclick="document.getElementById('inline-create').style.display='block'">+ Create new database</a>
+      <button class="btn-assign">Assign Database</button>
+    </div>
+
+    <!-- Inline Create (hidden by default, shown when clicking "Create new") -->
+    <div id="inline-create" class="inline-create" style="display: none;">
+      <h5>New Database Connection</h5>
+      <div class="inline-form-row">
+        <input type="text" placeholder="Connection name" />
+        <select>
+          <option>PostgreSQL</option>
+          <option>MySQL</option>
+          <option>SQLite</option>
+          <option>MSSQL</option>
+          <option>MariaDB</option>
+          <option>CockroachDB</option>
+          <option>LibSQL</option>
+        </select>
+      </div>
+      <div class="inline-form-row">
+        <input type="text" placeholder="Host" style="flex: 2;" />
+        <input type="text" placeholder="Port" style="max-width: 80px;" />
+      </div>
+      <div class="inline-form-row">
+        <input type="text" placeholder="Username" />
+        <input type="password" placeholder="Password" />
+      </div>
+      <div class="inline-form-row">
+        <input type="text" placeholder="Database name" />
+      </div>
+      <div class="inline-form-actions">
+        <button class="btn-inline-cancel" onclick="document.getElementById('inline-create').style.display='none'">Cancel</button>
+        <button class="btn-inline-save">Create & Assign</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- STATIC DEMO of the popover (always visible for review)     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<div class="demo-divider">Static Popover Preview (for review without clicking)</div>
+
+<div style="max-width: 480px; margin: 24px auto 60px;">
+  <div class="popover" style="position: relative;">
+    <div class="popover-header">
+      <h4>Add Database</h4>
+      <button class="popover-close">✕</button>
+    </div>
+
+    <div class="popover-search">
+      <input type="text" placeholder="Search databases…" value="report" style="color: var(--text-primary);" />
+    </div>
+
+    <div class="popover-list">
+      <div class="popover-db-item selected">
+        <div class="db-icon pg">PG</div>
+        <div class="popover-db-info">
+          <div class="popover-db-name">reporting-warehouse</div>
+          <div class="popover-db-meta">PostgreSQL · warehouse.internal:5432</div>
+        </div>
+        <div class="popover-db-check"></div>
+      </div>
+    </div>
+
+    <div class="popover-tier">
+      <label>Access Level</label>
+      <div class="tier-buttons">
+        <div class="tier-btn ro active">
+          <span class="tier-label">🔒 Read Only</span>
+          <span class="tier-desc">Query & describe tables</span>
+        </div>
+        <div class="tier-btn fc">
+          <span class="tier-label">⚡ Full Control</span>
+          <span class="tier-desc">CRUD + raw SQL</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="popover-footer">
+      <a class="create-link">+ Create new database</a>
+      <button class="btn-assign">Assign Database</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
