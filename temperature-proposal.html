@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Settings - Temperature Control Proposal</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { 
+    background: #0e0e14; color: #e0e0e8; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 40px; 
+  }
+  h1 { color: #a0a0ff; margin-bottom: 8px; font-size: 1.4rem; }
+  .subtitle { color: #6a6a80; margin-bottom: 32px; font-size: 0.9rem; }
+  
+  .proposal-note {
+    background: #1a1a2e; border: 1px solid #3a3a5e; border-radius: 8px;
+    padding: 16px 20px; margin-bottom: 32px; font-size: 0.85rem; line-height: 1.6;
+  }
+  .proposal-note strong { color: #ffaa44; }
+  .proposal-note .new-badge {
+    display: inline-block; background: #2a5a2a; color: #66ff66; font-size: 0.7rem;
+    padding: 2px 8px; border-radius: 4px; font-weight: 600; margin-left: 6px; vertical-align: middle;
+  }
+  
+  .form-container {
+    background: #16161e; border: 1px solid #2a2a3e; border-radius: 12px;
+    padding: 28px; max-width: 720px;
+  }
+  .form-title { font-size: 1.1rem; color: #c0c0d8; margin-bottom: 20px; }
+  
+  .form-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field.full { grid-column: 1 / -1; }
+  
+  label { font-size: 0.8rem; color: #8888a0; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+  input, select, textarea {
+    background: #1e1e2a; border: 1px solid #2e2e42; border-radius: 6px;
+    color: #e0e0e8; padding: 8px 12px; font-size: 0.9rem; outline: none;
+  }
+  input:focus, select:focus { border-color: #5555aa; }
+  select { cursor: pointer; }
+  textarea { min-height: 80px; resize: vertical; }
+  .hint { font-size: 0.72rem; color: #5a5a6e; margin-top: 2px; }
+  
+  /* NEW: Temperature control styling */
+  .temp-control {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .temp-slider-wrap {
+    flex: 1; display: flex; flex-direction: column; gap: 4px;
+  }
+  .temp-slider {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 6px;
+    background: linear-gradient(to right, #2244aa, #aa44aa, #aa4422);
+    border-radius: 3px; outline: none; cursor: pointer;
+  }
+  .temp-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%;
+    background: #e0e0e8; border: 2px solid #5555aa; cursor: pointer;
+  }
+  .temp-labels {
+    display: flex; justify-content: space-between; font-size: 0.65rem; color: #5a5a6e;
+  }
+  .temp-value-input {
+    width: 65px; text-align: center; font-size: 0.9rem;
+    background: #1e1e2a; border: 1px solid #2e2e42; border-radius: 6px;
+    color: #e0e0e8; padding: 6px 8px;
+  }
+  .temp-default-toggle {
+    display: flex; align-items: center; gap: 6px; margin-top: 4px;
+  }
+  .temp-default-toggle input[type="checkbox"] {
+    width: 16px; height: 16px; accent-color: #5555aa; cursor: pointer;
+  }
+  .temp-default-toggle span { font-size: 0.78rem; color: #8888a0; }
+  
+  /* Warning callout */
+  .model-warning {
+    background: #2a2210; border: 1px solid #554422; border-radius: 6px;
+    padding: 10px 14px; margin-top: 8px; font-size: 0.78rem; color: #ddaa44;
+    display: flex; align-items: flex-start; gap: 8px;
+  }
+  .model-warning .icon { font-size: 1.1rem; }
+  
+  /* Highlight for new fields */
+  .new-field {
+    position: relative;
+    border: 1px dashed #44aa44; border-radius: 8px; padding: 12px;
+    background: rgba(40, 80, 40, 0.08);
+  }
+  .new-field::before {
+    content: "NEW"; position: absolute; top: -8px; right: 12px;
+    background: #2a5a2a; color: #66ff66; font-size: 0.6rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 4px; letter-spacing: 1px;
+  }
+  
+  /* Existing fields (dimmed slightly to draw attention to new) */
+  .existing { opacity: 0.7; }
+  
+  .section-divider {
+    grid-column: 1 / -1; border-top: 1px solid #2a2a3e; margin: 4px 0;
+  }
+  
+  /* Scenario tabs */
+  .scenarios { margin-top: 40px; }
+  .scenario-tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .scenario-tab {
+    background: #1e1e2a; border: 1px solid #2e2e42; border-radius: 6px;
+    color: #8888a0; padding: 8px 16px; cursor: pointer; font-size: 0.85rem;
+  }
+  .scenario-tab.active { background: #2a2a4e; border-color: #5555aa; color: #c0c0ff; }
+  .scenario-content {
+    background: #16161e; border: 1px solid #2a2a3e; border-radius: 8px;
+    padding: 20px; max-width: 720px;
+  }
+  .scenario-content h3 { color: #a0a0d0; font-size: 0.95rem; margin-bottom: 12px; }
+  .scenario-content p { font-size: 0.85rem; line-height: 1.6; color: #b0b0c0; }
+  .scenario-content code { background: #1e1e2a; padding: 2px 6px; border-radius: 3px; color: #ddaa44; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+
+<h1>🛠️ Proposal: Agent Temperature Configuration</h1>
+<p class="subtitle">Adding per-agent temperature control to fix GPT-5 compatibility and give users fine-grained control</p>
+
+<div class="proposal-note">
+  <strong>Problem:</strong> Temperature is hardcoded to <code>0.7</code> in the agent loop. GPT-5 models only support <code>temperature=1</code>, 
+  causing <code>litellm.UnsupportedParamsError</code> on every conversation start.<br><br>
+  <strong>Solution:</strong> Add a <code>temperature</code> field to the agent configuration <span class="new-badge">NEW FIELD</span> 
+  with smart defaults — when set to "Auto", the backend picks the right value for the model (1.0 for GPT-5, 0.7 for others). 
+  Users can also override manually.
+</div>
+
+<div class="form-container">
+  <div class="form-title">Edit Agent — <span style="color: #a0a0ff">bond</span></div>
+  
+  <div class="form-grid">
+    <!-- Existing fields (dimmed) -->
+    <div class="field existing">
+      <label>Name</label>
+      <input value="bond" />
+    </div>
+    <div class="field existing">
+      <label>Display Name</label>
+      <input value="Bond" />
+    </div>
+    
+    <div class="field existing">
+      <label>Model</label>
+      <select>
+        <option>openai/gpt-5</option>
+        <option>anthropic/claude-sonnet-4-20250514</option>
+        <option>anthropic/claude-opus-4-6</option>
+      </select>
+    </div>
+    <div class="field existing">
+      <label>Utility Model</label>
+      <select>
+        <option>anthropic/claude-sonnet-4-20250514</option>
+        <option>openai/gpt-5</option>
+      </select>
+      <div class="hint">Selects which prompt fragments to include each turn</div>
+    </div>
+    
+    <!-- ===== NEW TEMPERATURE FIELD ===== -->
+    <div class="field full new-field">
+      <label>Temperature</label>
+      <div class="temp-control">
+        <div class="temp-slider-wrap">
+          <input type="range" class="temp-slider" min="0" max="2" step="0.1" value="1.0" />
+          <div class="temp-labels">
+            <span>0.0 Precise</span>
+            <span>1.0 Balanced</span>
+            <span>2.0 Creative</span>
+          </div>
+        </div>
+        <input type="number" class="temp-value-input" value="1.0" min="0" max="2" step="0.1" />
+      </div>
+      <div class="temp-default-toggle">
+        <input type="checkbox" id="auto-temp" />
+        <span>Auto (use model default — recommended for GPT-5 and reasoning models)</span>
+      </div>
+      <div class="model-warning">
+        <span class="icon">⚠️</span>
+        <div>
+          <strong>GPT-5 models only support temperature=1.</strong> 
+          Enable "Auto" to let Bond pick the right value automatically, or set to 1.0 manually.
+          For GPT-5.1, temperature is supported only when reasoning_effort='none'.
+        </div>
+      </div>
+      <div class="hint" style="margin-top: 6px;">
+        Controls randomness in model responses. Lower = more deterministic, higher = more creative. 
+        "Auto" uses 0.7 for most models, 1.0 for GPT-5, and omits the parameter for reasoning models.
+      </div>
+    </div>
+    
+    <div class="section-divider"></div>
+    
+    <div class="field existing">
+      <label>Sandbox Image</label>
+      <select>
+        <option>bond-agent:latest</option>
+        <option value="">None (host execution)</option>
+      </select>
+    </div>
+    <div class="field existing">
+      <label>Max Iterations</label>
+      <input type="number" value="80" />
+    </div>
+  </div>
+</div>
+
+<!-- Scenario demonstrations -->
+<div class="scenarios">
+  <h2 style="color: #a0a0ff; font-size: 1.1rem; margin-bottom: 12px;">How It Works — Scenarios</h2>
+  
+  <div class="scenario-content" style="margin-bottom: 16px;">
+    <h3>Scenario 1: GPT-5 with "Auto" enabled ✅</h3>
+    <p>
+      User selects <code>openai/gpt-5</code> as the model and checks <strong>"Auto"</strong>.<br>
+      → Backend detects GPT-5 model, sends <code>temperature=1.0</code> (the only supported value).<br>
+      → No error. Conversation starts normally.
+    </p>
+  </div>
+  
+  <div class="scenario-content" style="margin-bottom: 16px;">
+    <h3>Scenario 2: Claude with custom temperature</h3>
+    <p>
+      User selects <code>anthropic/claude-sonnet-4-20250514</code> and sets temperature to <code>0.3</code>.<br>
+      → Backend sends <code>temperature=0.3</code> to litellm.<br>
+      → More deterministic, focused responses for coding tasks.
+    </p>
+  </div>
+  
+  <div class="scenario-content" style="margin-bottom: 16px;">
+    <h3>Scenario 3: GPT-5 with manual override to 0.7 ⚠️</h3>
+    <p>
+      User selects <code>openai/gpt-5</code> and manually sets <code>0.7</code>.<br>
+      → The warning banner appears: "GPT-5 only supports temperature=1".<br>
+      → Backend applies <code>litellm.drop_params</code> as a safety net, so the call still succeeds 
+      (litellm strips the unsupported param), but the UI warns the user it will be ignored.
+    </p>
+  </div>
+  
+  <div class="scenario-content">
+    <h3>Scenario 4: Existing agents (migration)</h3>
+    <p>
+      Existing agents have no <code>temperature</code> value → treated as <code>null</code> → "Auto" mode.<br>
+      → Behavior: <code>0.7</code> for Claude/GPT-4o (same as today), <code>1.0</code> for GPT-5.<br>
+      → <strong>Zero breaking changes</strong> for existing configurations.
+    </p>
+  </div>
+</div>
+
+<div style="margin-top: 40px; max-width: 720px;">
+  <h2 style="color: #a0a0ff; font-size: 1.1rem; margin-bottom: 12px;">Auto-Detected State When "Auto" Is Checked</h2>
+  
+  <div class="form-container">
+    <div class="form-title">Edit Agent — <span style="color: #a0a0ff">bond</span> <span style="font-size: 0.8rem; color: #5a5a6e;">(Auto mode)</span></div>
+    <div class="form-grid">
+      <div class="field existing">
+        <label>Model</label>
+        <select>
+          <option selected>openai/gpt-5</option>
+        </select>
+      </div>
+      <div class="field existing">
+        <label>Utility Model</label>
+        <select>
+          <option>anthropic/claude-sonnet-4-20250514</option>
+        </select>
+      </div>
+      
+      <div class="field full new-field">
+        <label>Temperature</label>
+        <div class="temp-control">
+          <div class="temp-slider-wrap">
+            <input type="range" class="temp-slider" min="0" max="2" step="0.1" value="1.0" disabled 
+                   style="opacity: 0.4; cursor: not-allowed;" />
+            <div class="temp-labels">
+              <span>0.0 Precise</span>
+              <span>1.0 Balanced</span>
+              <span>2.0 Creative</span>
+            </div>
+          </div>
+          <input type="number" class="temp-value-input" value="1.0" disabled 
+                 style="opacity: 0.4; color: #66aa66;" />
+        </div>
+        <div class="temp-default-toggle">
+          <input type="checkbox" id="auto-temp-2" checked />
+          <span style="color: #66aa66;">✓ Auto — using <strong>1.0</strong> for GPT-5 (only supported value)</span>
+        </div>
+        <div class="hint">
+          The slider is disabled in Auto mode. Uncheck to override manually.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top: 40px; max-width: 720px;">
+  <h2 style="color: #a0a0ff; font-size: 1.1rem; margin-bottom: 12px;">Implementation Summary</h2>
+  <div class="proposal-note" style="line-height: 1.8;">
+    <strong>1. SpacetimeDB Schema:</strong> Add <code>temperature: Option&lt;f64&gt;</code> to Agent table + reducers<br>
+    <strong>2. Backend <code>agents.py</code>:</strong> Add <code>temperature: float | None = None</code> to AgentCreate/AgentUpdate<br>
+    <strong>3. Backend <code>loop.py</code>:</strong> Read <code>agent["temperature"]</code>, resolve via model-aware default map, pass to all 6 litellm calls<br>
+    <strong>4. Backend <code>llm.py</code>:</strong> Add <code>drop_params</code> safety net for unsupported params<br>
+    <strong>5. Frontend <code>AgentsTab.tsx</code>:</strong> Add temperature slider+input+auto checkbox between Model and Sandbox Image fields<br>
+    <strong>6. Frontend <code>spacetimedb-client</code>:</strong> Update AgentRow type to include <code>temperature</code><br>
+    <strong>Migration:</strong> Existing agents get <code>null</code> → Auto mode → identical behavior to today
+  </div>
+</div>
+
+</body>
+</html>

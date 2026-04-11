@@ -36,9 +36,11 @@ import {
 // Import all reducer arg schemas
 import AddAgentReducer from "./add_agent_reducer";
 import AddAgentChannelReducer from "./add_agent_channel_reducer";
+import AddAgentDatabaseAccessReducer from "./add_agent_database_access_reducer";
 import AddAgentMountReducer from "./add_agent_mount_reducer";
 import AddAgentPromptFragmentReducer from "./add_agent_prompt_fragment_reducer";
 import AddConversationMessageReducer from "./add_conversation_message_reducer";
+import AddDatabaseConnectionReducer from "./add_database_connection_reducer";
 import AddMcpServerReducer from "./add_mcp_server_reducer";
 import AddModelReducer from "./add_model_reducer";
 import AddPromptFragmentReducer from "./add_prompt_fragment_reducer";
@@ -65,10 +67,12 @@ import DeactivateComponentReducer from "./deactivate_component_reducer";
 import DeduplicateModelsReducer from "./deduplicate_models_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
 import DeleteAgentChannelsForAgentReducer from "./delete_agent_channels_for_agent_reducer";
+import DeleteAgentDatabaseAccessReducer from "./delete_agent_database_access_reducer";
 import DeleteAgentMountsForAgentReducer from "./delete_agent_mounts_for_agent_reducer";
 import DeleteAgentPromptFragmentReducer from "./delete_agent_prompt_fragment_reducer";
 import DeleteConversationReducer from "./delete_conversation_reducer";
 import DeleteConversationMessageReducer from "./delete_conversation_message_reducer";
+import DeleteDatabaseConnectionReducer from "./delete_database_connection_reducer";
 import DeleteEmbeddingModelReducer from "./delete_embedding_model_reducer";
 import DeleteMcpServerReducer from "./delete_mcp_server_reducer";
 import DeletePromptFragmentReducer from "./delete_prompt_fragment_reducer";
@@ -119,7 +123,9 @@ import SetProviderAliasReducer from "./set_provider_alias_reducer";
 import SetProviderApiKeyReducer from "./set_provider_api_key_reducer";
 import SetSettingReducer from "./set_setting_reducer";
 import UpdateAgentReducer from "./update_agent_reducer";
+import UpdateAgentDatabaseAccessReducer from "./update_agent_database_access_reducer";
 import UpdateConversationReducer from "./update_conversation_reducer";
+import UpdateDatabaseConnectionReducer from "./update_database_connection_reducer";
 import UpdateMcpServerReducer from "./update_mcp_server_reducer";
 import UpdateProviderReducer from "./update_provider_reducer";
 import UpdateWorkItemReducer from "./update_work_item_reducer";
@@ -135,6 +141,7 @@ import UpdatePromotionStatusReducer from "./update_promotion_status_reducer";
 
 // Import all table schema definitions
 import AgentChannelsRow from "./agent_channels_table";
+import AgentDatabaseAccessRow from "./agent_database_access_table";
 import AgentPromptFragmentsRow from "./agent_prompt_fragments_table";
 import AgentWorkspaceMountsRow from "./agent_workspace_mounts_table";
 import AgentsRow from "./agents_table";
@@ -147,6 +154,7 @@ import ComponentSecretsRow from "./component_secrets_table";
 import ComponentsRow from "./components_table";
 import ConversationMessagesRow from "./conversation_messages_table";
 import ConversationsRow from "./conversations_table";
+import DatabaseConnectionsRow from "./database_connections_table";
 import EmbeddingModelsRow from "./embedding_models_table";
 import EnvironmentApproversRow from "./environment_approvers_table";
 import EnvironmentHistoryRow from "./environment_history_table";
@@ -186,6 +194,17 @@ const tablesSchema = __schema({
       { name: 'agent_channels_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, AgentChannelsRow),
+  agent_database_access: __table({
+    name: 'agent_database_access',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'agent_database_access_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, AgentDatabaseAccessRow),
   agent_prompt_fragments: __table({
     name: 'agent_prompt_fragments',
     indexes: [
@@ -318,6 +337,17 @@ const tablesSchema = __schema({
       { name: 'conversations_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ConversationsRow),
+  database_connections: __table({
+    name: 'database_connections',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'database_connections_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, DatabaseConnectionsRow),
   embeddingModels: __table({
     name: 'embedding_models',
     indexes: [
@@ -577,9 +607,11 @@ const tablesSchema = __schema({
 const reducersSchema = __reducers(
   __reducerSchema("add_agent", AddAgentReducer),
   __reducerSchema("add_agent_channel", AddAgentChannelReducer),
+  __reducerSchema("add_agent_database_access", AddAgentDatabaseAccessReducer),
   __reducerSchema("add_agent_mount", AddAgentMountReducer),
   __reducerSchema("add_agent_prompt_fragment", AddAgentPromptFragmentReducer),
   __reducerSchema("add_conversation_message", AddConversationMessageReducer),
+  __reducerSchema("add_database_connection", AddDatabaseConnectionReducer),
   __reducerSchema("add_mcp_server", AddMcpServerReducer),
   __reducerSchema("add_model", AddModelReducer),
   __reducerSchema("add_prompt_fragment", AddPromptFragmentReducer),
@@ -606,10 +638,12 @@ const reducersSchema = __reducers(
   __reducerSchema("deduplicate_models", DeduplicateModelsReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
   __reducerSchema("delete_agent_channels_for_agent", DeleteAgentChannelsForAgentReducer),
+  __reducerSchema("delete_agent_database_access", DeleteAgentDatabaseAccessReducer),
   __reducerSchema("delete_agent_mounts_for_agent", DeleteAgentMountsForAgentReducer),
   __reducerSchema("delete_agent_prompt_fragment", DeleteAgentPromptFragmentReducer),
   __reducerSchema("delete_conversation", DeleteConversationReducer),
   __reducerSchema("delete_conversation_message", DeleteConversationMessageReducer),
+  __reducerSchema("delete_database_connection", DeleteDatabaseConnectionReducer),
   __reducerSchema("delete_embedding_model", DeleteEmbeddingModelReducer),
   __reducerSchema("delete_mcp_server", DeleteMcpServerReducer),
   __reducerSchema("delete_prompt_fragment", DeletePromptFragmentReducer),
@@ -660,7 +694,9 @@ const reducersSchema = __reducers(
   __reducerSchema("set_provider_api_key", SetProviderApiKeyReducer),
   __reducerSchema("set_setting", SetSettingReducer),
   __reducerSchema("update_agent", UpdateAgentReducer),
+  __reducerSchema("update_agent_database_access", UpdateAgentDatabaseAccessReducer),
   __reducerSchema("update_conversation", UpdateConversationReducer),
+  __reducerSchema("update_database_connection", UpdateDatabaseConnectionReducer),
   __reducerSchema("update_mcp_server", UpdateMcpServerReducer),
   __reducerSchema("update_provider", UpdateProviderReducer),
   __reducerSchema("update_work_item", UpdateWorkItemReducer),
