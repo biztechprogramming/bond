@@ -87,6 +87,167 @@ function mapAgentRows(agentRows: import("@/lib/spacetimedb-client").AgentRow[]):
   });
 }
 
+interface AgentDatabase {
+  id: string;
+  database_id: string;
+  database_name: string;
+  driver: string;
+  access_tier: string;
+  status: string;
+  assigned_at: string;
+}
+
+interface AvailableDb {
+  id: string;
+  name: string;
+  driver: string;
+}
+
+function AgentDatabasesSection({ agentId }: { agentId: string }) {
+  const [dbs, setDbs] = useState<AgentDatabase[]>([]);
+  const [availableDbs, setAvailableDbs] = useState<AvailableDb[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [selectedDbId, setSelectedDbId] = useState("");
+  const [accessTier, setAccessTier] = useState("read_only");
+  const [sectionMsg, setSectionMsg] = useState("");
+
+  const fetchDbs = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${BACKEND_API}/agents/${agentId}/databases`);
+      if (res.ok) setDbs(await res.json());
+    } catch {}
+  }, [agentId]);
+
+  const fetchAvailable = useCallback(async () => {
+    try {
+      const res = await apiFetch(`${BACKEND_API}/databases`);
+      if (res.ok) setAvailableDbs(await res.json());
+    } catch {}
+  }, []);
+
+  useEffect(() => { fetchDbs(); fetchAvailable(); }, [fetchDbs, fetchAvailable]);
+
+  const handleAdd = async () => {
+    if (!selectedDbId) { setSectionMsg("Select a database."); return; }
+    try {
+      const res = await apiFetch(`${BACKEND_API}/agents/${agentId}/databases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ database_id: selectedDbId, access_tier: accessTier }),
+      });
+      if (res.ok) {
+        setSectionMsg("Assigned.");
+        setAdding(false);
+        await fetchDbs();
+      } else {
+        const data = await res.json();
+        setSectionMsg(`Error: ${data.detail || "Failed"}`);
+      }
+    } catch (e: any) {
+      setSectionMsg(`Error: ${e.message}`);
+    }
+  };
+
+  const handleRemove = async (dbId: string) => {
+    try {
+      const res = await apiFetch(`${BACKEND_API}/agents/${agentId}/databases/${dbId}`, { method: "DELETE" });
+      if (res.ok) {
+        setSectionMsg("Removed.");
+        await fetchDbs();
+      }
+    } catch { setSectionMsg("Failed to remove."); }
+  };
+
+  return (
+    <div style={{ ...agentDbStyles.field, gridColumn: "1 / -1" }}>
+      <label style={agentDbStyles.label}>
+        Databases{" "}
+        <button style={agentDbStyles.smallButton} onClick={() => setAdding(!adding)}>+ Add</button>
+      </label>
+      {sectionMsg && <div style={{ fontSize: "0.8rem", color: "#6cffa0", marginBottom: "8px" }}>{sectionMsg}</div>}
+      {adding && (
+        <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "center", flexWrap: "wrap" }}>
+          <select
+            style={{ ...agentDbStyles.select, width: "auto", minWidth: "160px" }}
+            value={selectedDbId}
+            onChange={(e) => setSelectedDbId(e.target.value)}
+          >
+            <option value="">Select database...</option>
+            {availableDbs.map((db) => (
+              <option key={db.id} value={db.id}>{db.name} ({db.driver})</option>
+            ))}
+          </select>
+          <select
+            style={{ ...agentDbStyles.select, width: "auto" }}
+            value={accessTier}
+            onChange={(e) => setAccessTier(e.target.value)}
+          >
+            <option value="read_only">Read Only</option>
+            <option value="full_control">Full Control</option>
+          </select>
+          <button style={agentDbStyles.addBtn} onClick={handleAdd}>Assign</button>
+          <button style={agentDbStyles.cancelBtn} onClick={() => setAdding(false)}>Cancel</button>
+        </div>
+      )}
+      {dbs.length === 0 && !adding && (
+        <div style={{ fontSize: "0.8rem", color: "#5a5a6e" }}>No databases assigned.</div>
+      )}
+      {dbs.map((db) => (
+        <div key={db.id} style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "6px", fontSize: "0.85rem" }}>
+          <span style={{
+            width: "8px", height: "8px", borderRadius: "50%",
+            backgroundColor: db.status === "active" ? "#22c55e" : "#ef4444",
+            display: "inline-block",
+          }} />
+          <span style={{ color: "#e0e0e8", fontWeight: 500 }}>{db.database_name}</span>
+          <span style={{ color: "#8888a0" }}>({db.driver})</span>
+          <span style={{
+            fontSize: "0.75rem",
+            backgroundColor: db.access_tier === "read_only" ? "#1a2a3a" : "#2a1a3a",
+            color: db.access_tier === "read_only" ? "#6c8aff" : "#c06cff",
+            padding: "2px 6px",
+            borderRadius: "4px",
+          }}>
+            {db.access_tier}
+          </span>
+          <button
+            style={{ backgroundColor: "transparent", border: "none", color: "#ff6c8a", cursor: "pointer", fontSize: "0.8rem" }}
+            onClick={() => handleRemove(db.database_id)}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const agentDbStyles: Record<string, React.CSSProperties> = {
+  field: { flex: 1 },
+  label: {
+    display: "block", fontSize: "0.85rem", color: "#8888a0", marginBottom: "6px", fontWeight: 500,
+  },
+  smallButton: {
+    backgroundColor: "#2a2a3e", color: "#6c8aff",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
+    borderRadius: "4px", padding: "2px 8px", fontSize: "0.75rem", cursor: "pointer", marginLeft: "8px",
+  },
+  select: {
+    backgroundColor: "#1e1e2e", borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
+    borderRadius: "8px", padding: "8px 10px", color: "#e0e0e8", fontSize: "0.85rem", outline: "none",
+  },
+  addBtn: {
+    backgroundColor: "#6c8aff", color: "#fff",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
+    borderRadius: "6px", padding: "8px 14px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
+  },
+  cancelBtn: {
+    backgroundColor: "#2a2a3e", color: "#e0e0e8",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#3a3a4e",
+    borderRadius: "6px", padding: "8px 14px", fontSize: "0.85rem", cursor: "pointer",
+  },
+};
+
 export default function AgentsTab() {
   // Live subscriptions from SpacetimeDB — auto-updates on any table change
   const agents = useSpacetimeDB(() => mapAgentRows(getAgentRows()));
@@ -547,6 +708,11 @@ export default function AgentsTab() {
             {/* Prompt fragment checkboxes removed (Doc 027 Phase 1).
                 Fragments are now loaded automatically from disk via manifest.yaml.
                 Tier 1 (always-on), Tier 2 (lifecycle), Tier 3 (context-dependent). */}
+
+            {/* Database Assignments (Design Doc 107) */}
+            {!isNew && (
+              <AgentDatabasesSection agentId={editing.id} />
+            )}
 
             {!isNew && !editing.is_default && (
               <div style={styles.buttonRow}>

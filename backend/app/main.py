@@ -33,6 +33,7 @@ from backend.app.api.v1.optimization import router as optimization_router
 from backend.app.api.v1.llm import router as llm_router
 from backend.app.api.v1.hosts import router as hosts_router
 from backend.app.api.v1.test_spacetimedb import router as test_spacetimedb_router
+from backend.app.api.v1.databases import router as databases_router
 
 
 @asynccontextmanager
@@ -71,7 +72,22 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger("bond.mcp").error(f"Failed to load MCP servers on startup: {e}")
 
+    # Faucet database gateway (Design Doc 107) — optional
+    from backend.app.services.faucet_manager import faucet_manager
+    try:
+        if await faucet_manager.ensure_installed():
+            await faucet_manager.start()
+    except Exception as e:
+        import logging
+        logging.getLogger("bond.faucet").warning(f"Faucet not started: {e}")
+
     yield
+
+    # Shutdown Faucet
+    try:
+        await faucet_manager.stop()
+    except Exception:
+        pass
 
     await mcp_manager.stop_all()
     await scheduler.stop()
@@ -146,3 +162,4 @@ app.include_router(optimization_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
 app.include_router(hosts_router, prefix="/api/v1")
 app.include_router(test_spacetimedb_router, prefix="/api/v1")
+app.include_router(databases_router, prefix="/api/v1")

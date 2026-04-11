@@ -587,6 +587,38 @@ const spacetimedb = schema({
       created_at: t.u64(),
     }
   ),
+
+  // ─── Faucet Database Integration (Design Doc 107) ─────────────────────────
+
+  // -- Database Connections --
+  database_connections: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      name: t.string(),           // unique, pattern: ^[a-z][a-z0-9_]{1,62}$
+      driver: t.string(),         // postgres, mysql, mariadb, mssql, oracle, snowflake, sqlite
+      description: t.string(),
+      status: t.string(),         // active, error, disconnected
+      dsnVaultRef: t.string(),    // vault key reference (never plaintext DSN)
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
+  // -- Agent Database Access --
+  agent_database_access: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agentId: t.string(),
+      databaseId: t.string(),
+      accessTier: t.string(),     // read_only, full_control
+      faucetApiKeyVaultRef: t.string(),
+      faucetRoleName: t.string(),
+      status: t.string(),         // active, error
+      assignedAt: t.u64(),
+    }
+  ),
 });
 
 export default spacetimedb;
@@ -1005,6 +1037,105 @@ export const deleteMcpServer = spacetimedb.reducer(
   },
   (ctx, args) => {
     ctx.db.mcp_servers.id.delete(args.id);
+  }
+);
+
+// -- Database Connections (Design Doc 107) --
+
+export const addDatabaseConnection = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    driver: t.string(),
+    description: t.string(),
+    status: t.string(),
+    dsnVaultRef: t.string(),
+  },
+  (ctx, conn) => {
+    const now = BigInt(Date.now());
+    ctx.db.database_connections.insert({
+      ...conn,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+);
+
+export const updateDatabaseConnection = spacetimedb.reducer(
+  {
+    id: t.string(),
+    name: t.string(),
+    driver: t.string(),
+    description: t.string(),
+    status: t.string(),
+    dsnVaultRef: t.string(),
+  },
+  (ctx, conn) => {
+    const existing = ctx.db.database_connections.id.find(conn.id);
+    if (!existing) return;
+    ctx.db.database_connections.id.update({
+      ...existing,
+      ...conn,
+      createdAt: existing.createdAt,
+      updatedAt: BigInt(Date.now()),
+    });
+  }
+);
+
+export const deleteDatabaseConnection = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    // Cascade delete agent_database_access rows
+    for (const access of ctx.db.agent_database_access.iter()) {
+      if (access.databaseId === id) ctx.db.agent_database_access.id.delete(access.id);
+    }
+    ctx.db.database_connections.id.delete(id);
+  }
+);
+
+export const addAgentDatabaseAccess = spacetimedb.reducer(
+  {
+    id: t.string(),
+    agentId: t.string(),
+    databaseId: t.string(),
+    accessTier: t.string(),
+    faucetApiKeyVaultRef: t.string(),
+    faucetRoleName: t.string(),
+    status: t.string(),
+  },
+  (ctx, access) => {
+    ctx.db.agent_database_access.insert({
+      ...access,
+      assignedAt: BigInt(Date.now()),
+    });
+  }
+);
+
+export const updateAgentDatabaseAccess = spacetimedb.reducer(
+  {
+    id: t.string(),
+    accessTier: t.string(),
+    faucetApiKeyVaultRef: t.string(),
+    faucetRoleName: t.string(),
+    status: t.string(),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.agent_database_access.id.find(args.id);
+    if (!existing) return;
+    ctx.db.agent_database_access.id.update({
+      ...existing,
+      accessTier: args.accessTier,
+      faucetApiKeyVaultRef: args.faucetApiKeyVaultRef,
+      faucetRoleName: args.faucetRoleName,
+      status: args.status,
+    });
+  }
+);
+
+export const deleteAgentDatabaseAccess = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    ctx.db.agent_database_access.id.delete(id);
   }
 );
 

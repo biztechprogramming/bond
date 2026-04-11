@@ -10,6 +10,7 @@ import OptimizationTab from "./optimization/OptimizationTab";
 import ImagesTab from "./images/ImagesTab";
 import ContainerHostsTab from "./containers/ContainerHostsTab";
 import McpTab from "./mcp/McpTab";
+import DatabasesTab from "./databases/DatabasesTab";
 import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
@@ -21,6 +22,7 @@ const TABS = [
   { id: "containers", label: "Container Hosts" },
   { id: "deployment", label: "Deployment" },
   { id: "channels", label: "Channels" },
+  { id: "databases", label: "Databases" },
   { id: "mcp", label: "MCP Servers" },
   { id: "prompts", label: "Prompts" },
   { id: "images", label: "Images" },
@@ -248,6 +250,8 @@ export default function SettingsPage() {
         {activeTab === "deployment" && <DeploymentTab />}
 
         {activeTab === "channels" && <ChannelsTab />}
+
+        {activeTab === "databases" && <DatabasesTab />}
 
         {activeTab === "mcp" && <McpTab />}
 
