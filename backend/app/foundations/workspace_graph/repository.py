@@ -386,6 +386,97 @@ class WorkspaceGraphRepository:
 
         return results
 
+    # ── Provenance ──
+
+    async def record_provenance(
+        self,
+        workspace_id: str,
+        *,
+        edge_id: str | None = None,
+        node_id: str | None = None,
+        provenance_type: str,
+        source_path: str | None = None,
+        source_line_start: int | None = None,
+        source_line_end: int | None = None,
+        source_ref: str | None = None,
+        excerpt: str | None = None,
+    ) -> str:
+        """Record a provenance entry for a node or edge."""
+        prov_id = str(ULID())
+        now = datetime.now(timezone.utc).isoformat()
+        await self._session.execute(
+            text(
+                "INSERT INTO workspace_graph_provenance "
+                "(id, workspace_id, edge_id, node_id, provenance_type, "
+                "source_path, source_line_start, source_line_end, source_ref, "
+                "excerpt, created_at) "
+                "VALUES (:id, :ws, :edge_id, :node_id, :ptype, :spath, "
+                ":sls, :sle, :sref, :excerpt, :created_at)"
+            ),
+            {
+                "id": prov_id,
+                "ws": workspace_id,
+                "edge_id": edge_id,
+                "node_id": node_id,
+                "ptype": provenance_type,
+                "spath": source_path,
+                "sls": source_line_start,
+                "sle": source_line_end,
+                "sref": source_ref,
+                "excerpt": excerpt,
+                "created_at": now,
+            },
+        )
+        await self._session.flush()
+        return prov_id
+
+    # ── Impact analysis ──
+
+    async def impact_analysis(
+        self,
+        workspace_id: str,
+        seed_node_ids: list[str],
+        max_depth: int = 3,
+        edge_types: list[str] | None = None,
+    ) -> GraphSubgraph:
+        """BFS from multiple seed nodes to find all impacted artifacts."""
+        visited: set[str] = set()
+        queue: list[tuple[str, int]] = [(nid, 0) for nid in seed_node_ids]
+        nodes: dict[str, GraphNode] = {}
+        edges: list[GraphEdge] = []
+        seen_edges: set[str] = set()
+
+        while queue:
+            current_id, current_depth = queue.pop(0)
+            if current_id in visited or current_depth > max_depth:
+                continue
+            visited.add(current_id)
+
+            node = await self.get_node_by_id(current_id)
+            if node:
+                nodes[current_id] = node
+
+            if current_depth < max_depth:
+                node_edges = await self.get_edges_for_node(
+                    workspace_id, current_id, edge_types=edge_types
+                )
+                for e in node_edges:
+                    if e.id not in seen_edges:
+                        seen_edges.add(e.id)
+                        edges.append(e)
+                        next_id = (
+                            e.target_node_id
+                            if e.source_node_id == current_id
+                            else e.source_node_id
+                        )
+                        queue.append((next_id, current_depth + 1))
+
+        return GraphSubgraph(
+            nodes=nodes,
+            edges=edges,
+            center_id=seed_node_ids[0] if seed_node_ids else "",
+        )
+
     # ── Runs ──
 
     async def record_run(self, run: GraphRun) -> str:
