@@ -272,28 +272,67 @@ def handle_early_termination(
     messages: list[dict],
     tool_defs: list[dict],
 ):
-    """Phase 2B: Early termination nudges for read-only tasks."""
+    """Phase 2B: Early termination nudges for read-only tasks.
+
+    For coding tasks (adaptive_budget >= 40), we nudge the agent to START
+    implementing rather than responding — the user asked for code changes,
+    not a summary of findings.
+    """
     from backend.app.agent.tool_selection import compact_tool_schema
 
     if loop_state.has_made_consequential_call:
         return
 
+    # A large adaptive budget means the task likely requires code changes.
+    # Don't force the agent to stop and respond — nudge it to start implementing.
+    _likely_coding = (
+        loop_state.is_coding_task
+        or loop_state.adaptive_budget >= 40
+    )
+
     if iteration == 10:
-        messages.append({
-            "role": "user",
-            "content": (
-                "SYSTEM: You've gathered substantial context over 10 iterations without making "
-                "any changes. Synthesize your findings and respond to the user now. "
-                "Do not read more files."
-            ),
-        })
+        if _likely_coding:
+            messages.append({
+                "role": "user",
+                "content": (
+                    "SYSTEM: You've spent 10 iterations reading files without making changes. "
+                    "The user asked you to do work, not report findings. "
+                    "START IMPLEMENTING NOW — make file edits, or delegate to coding_agent. "
+                    "Do NOT summarize what you found and ask if the user wants you to proceed. "
+                    "Do NOT ask for permission — the user already asked you to do this."
+                ),
+            })
+        else:
+            messages.append({
+                "role": "user",
+                "content": (
+                    "SYSTEM: You've gathered substantial context over 10 iterations without making "
+                    "any changes. Synthesize your findings and respond to the user now. "
+                    "Do not read more files."
+                ),
+            })
     elif iteration >= 15:
-        from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
-        forced = [compact_tool_schema(_FULL_TOOL_MAP[t]) for t in ("respond", "say") if t in _FULL_TOOL_MAP]
-        if forced:
-            tool_defs.clear()
-            tool_defs.extend(forced)
-        logger.info("Phase 2B: forced respond+say tool set at iteration %d", iteration)
+        if _likely_coding:
+            # For coding tasks, nudge harder but do NOT restrict to respond+say.
+            # Allow file_edit, file_write, coding_agent so the agent can still implement.
+            messages.append({
+                "role": "user",
+                "content": (
+                    "SYSTEM: You have spent 15+ iterations without making any code changes. "
+                    "This is unacceptable for a coding task. You MUST either: "
+                    "(1) start making file edits RIGHT NOW, or "
+                    "(2) delegate ALL remaining work to coding_agent immediately. "
+                    "Do NOT respond to the user with a plan or summary. Do the work."
+                ),
+            })
+            logger.info("Phase 2B: coding task nudge (no tool restriction) at iteration %d", iteration)
+        else:
+            from backend.app.agent.tools import TOOL_MAP as _FULL_TOOL_MAP
+            forced = [compact_tool_schema(_FULL_TOOL_MAP[t]) for t in ("respond", "say") if t in _FULL_TOOL_MAP]
+            if forced:
+                tool_defs.clear()
+                tool_defs.extend(forced)
+            logger.info("Phase 2B: forced respond+say tool set at iteration %d", iteration)
 
 
 def handle_batching_nudge(
