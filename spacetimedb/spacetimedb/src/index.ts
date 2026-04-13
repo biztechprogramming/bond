@@ -619,6 +619,138 @@ const spacetimedb = schema({
       assignedAt: t.u64(),
     }
   ),
+
+  // ─── Workspace Knowledge Graph (Design Doc 110) ────────────────────────────
+
+  // -- WKG Nodes --
+  workspace_graph_nodes: table(
+    {
+      public: true,
+      indexes: [
+        { name: 'wgn_workspace_type', algorithm: 'btree', columns: ['workspaceId'] },
+      ],
+    },
+    {
+      id: t.string().primaryKey(),
+      workspaceId: t.string(),
+      repoId: t.string().default(''),
+      nodeType: t.string(),           // workspace, repository, directory, file, symbol, route, config_key, migration, test, document, plan_item, checkpoint, service, table, column
+      stableKey: t.string(),          // workspace-relative semantic key
+      displayName: t.string(),
+      path: t.string().default(''),
+      language: t.string().default(''),
+      signature: t.string().default(''),
+      contentHash: t.string().default(''),
+      isDeleted: t.bool().default(false),
+      metadata: t.string().default('{}'),   // JSON object
+      embeddingModel: t.string().default(''),
+      processedAt: t.u64().default(0n),
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
+  // -- WKG Edges --
+  workspace_graph_edges: table(
+    {
+      public: true,
+      indexes: [
+        { name: 'wge_workspace_source', algorithm: 'btree', columns: ['workspaceId'] },
+        { name: 'wge_source_node', algorithm: 'btree', columns: ['sourceNodeId'] },
+        { name: 'wge_target_node', algorithm: 'btree', columns: ['targetNodeId'] },
+      ],
+    },
+    {
+      id: t.string().primaryKey(),
+      workspaceId: t.string(),
+      repoId: t.string().default(''),
+      sourceNodeId: t.string(),
+      targetNodeId: t.string(),
+      edgeType: t.string(),           // contains, defines, imports, exports, calls, references, inherits, implements, tests, routes_to, handles, persists_to, reads_from, writes_to, configured_by, documents, mentions, related_to, generated_from, changed_by, covered_by, depends_on, blocks, belongs_to_repo, belongs_to_workspace
+      mode: t.string(),               // extracted, inferred, ambiguous
+      confidence: t.f64().default(1.0),
+      sourceKind: t.string(),         // ast, regex, llm, tool_output, manual, imported
+      runId: t.string().default(''),
+      isDeleted: t.bool().default(false),
+      metadata: t.string().default('{}'),   // JSON object
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+      lastConfirmedAt: t.u64().default(0n),
+    }
+  ),
+
+  // -- WKG Provenance --
+  workspace_graph_provenance: table(
+    {
+      public: true,
+      indexes: [
+        { name: 'wgp_edge', algorithm: 'btree', columns: ['edgeId'] },
+        { name: 'wgp_node', algorithm: 'btree', columns: ['nodeId'] },
+      ],
+    },
+    {
+      id: t.string().primaryKey(),
+      workspaceId: t.string(),
+      edgeId: t.string().default(''),
+      nodeId: t.string().default(''),
+      provenanceType: t.string(),
+      sourcePath: t.string().default(''),
+      sourceLineStart: t.u32().default(0),
+      sourceLineEnd: t.u32().default(0),
+      sourceRef: t.string().default(''),
+      excerpt: t.string().default(''),
+      createdAt: t.u64(),
+    }
+  ),
+
+  // -- WKG Indexing Runs --
+  workspace_graph_runs: table(
+    {
+      public: true,
+      indexes: [
+        { name: 'wgr_workspace', algorithm: 'btree', columns: ['workspaceId'] },
+      ],
+    },
+    {
+      id: t.string().primaryKey(),
+      workspaceId: t.string(),
+      repoId: t.string().default(''),
+      runType: t.string(),            // full, incremental, on_demand
+      status: t.string(),             // pending, running, success, failed, partial
+      trigger: t.string(),            // workspace_mount, file_change, git_change, manual, tool_intercept, continuation, startup
+      filesScanned: t.u32().default(0),
+      nodesWritten: t.u32().default(0),
+      edgesWritten: t.u32().default(0),
+      startedAt: t.u64(),
+      completedAt: t.u64().default(0n),
+      error: t.string().default(''),
+    }
+  ),
+
+  // -- WKG File State Ledger --
+  workspace_graph_file_state: table(
+    {
+      public: true,
+      indexes: [
+        { name: 'wgfs_workspace', algorithm: 'btree', columns: ['workspaceId'] },
+      ],
+    },
+    {
+      id: t.string().primaryKey(),
+      workspaceId: t.string(),
+      repoId: t.string().default(''),
+      path: t.string(),
+      contentHash: t.string(),
+      language: t.string().default(''),
+      mtimeNs: t.u64().default(0n),
+      sizeBytes: t.u64().default(0n),
+      lastIndexedAt: t.u64().default(0n),
+      lastRunId: t.string().default(''),
+      status: t.string(),             // indexed, skipped, error, deleted
+      lastError: t.string().default(''),
+      metadata: t.string().default('{}'),   // JSON object
+    }
+  ),
 });
 
 export default spacetimedb;
@@ -2631,6 +2763,389 @@ export const remove_component_secret = spacetimedb.reducer(
     const existing = ctx.db.component_secrets.id.find(id);
     if (existing) {
       ctx.db.component_secrets.id.delete(id);
+    }
+  }
+);
+
+// ===============================================================
+// Workspace Knowledge Graph Reducers (Design Doc 110)
+// ===============================================================
+
+// -- WKG Nodes --
+
+export const upsert_wkg_node = spacetimedb.reducer(
+  {
+    id: t.string(),
+    workspaceId: t.string(),
+    repoId: t.string().default(''),
+    nodeType: t.string(),
+    stableKey: t.string(),
+    displayName: t.string(),
+    path: t.string().default(''),
+    language: t.string().default(''),
+    signature: t.string().default(''),
+    contentHash: t.string().default(''),
+    metadata: t.string().default('{}'),
+    embeddingModel: t.string().default(''),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    const existing = ctx.db.workspace_graph_nodes.id.find(args.id);
+    if (existing) {
+      ctx.db.workspace_graph_nodes.id.update({
+        ...existing,
+        ...args,
+        isDeleted: false,
+        updatedAt: now,
+        createdAt: existing.createdAt,
+      });
+    } else {
+      ctx.db.workspace_graph_nodes.insert({
+        ...args,
+        isDeleted: false,
+        processedAt: 0n,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+);
+
+export const soft_delete_wkg_node = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.workspace_graph_nodes.id.find(id);
+    if (!existing) return;
+    ctx.db.workspace_graph_nodes.id.update({
+      ...existing,
+      isDeleted: true,
+      updatedAt: BigInt(Date.now()),
+    });
+  }
+);
+
+export const batch_upsert_wkg_nodes = spacetimedb.reducer(
+  { nodesJson: t.string() },
+  (ctx, { nodesJson }) => {
+    const nodes: Array<{
+      id: string; workspaceId: string; repoId?: string; nodeType: string;
+      stableKey: string; displayName: string; path?: string; language?: string;
+      signature?: string; contentHash?: string; metadata?: string; embeddingModel?: string;
+    }> = JSON.parse(nodesJson);
+    const now = BigInt(Date.now());
+    for (const n of nodes) {
+      const existing = ctx.db.workspace_graph_nodes.id.find(n.id);
+      if (existing) {
+        ctx.db.workspace_graph_nodes.id.update({
+          ...existing,
+          workspaceId: n.workspaceId,
+          repoId: n.repoId ?? existing.repoId,
+          nodeType: n.nodeType,
+          stableKey: n.stableKey,
+          displayName: n.displayName,
+          path: n.path ?? existing.path,
+          language: n.language ?? existing.language,
+          signature: n.signature ?? existing.signature,
+          contentHash: n.contentHash ?? existing.contentHash,
+          metadata: n.metadata ?? existing.metadata,
+          embeddingModel: n.embeddingModel ?? existing.embeddingModel,
+          isDeleted: false,
+          updatedAt: now,
+          createdAt: existing.createdAt,
+        });
+      } else {
+        ctx.db.workspace_graph_nodes.insert({
+          id: n.id,
+          workspaceId: n.workspaceId,
+          repoId: n.repoId ?? '',
+          nodeType: n.nodeType,
+          stableKey: n.stableKey,
+          displayName: n.displayName,
+          path: n.path ?? '',
+          language: n.language ?? '',
+          signature: n.signature ?? '',
+          contentHash: n.contentHash ?? '',
+          metadata: n.metadata ?? '{}',
+          embeddingModel: n.embeddingModel ?? '',
+          isDeleted: false,
+          processedAt: 0n,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+  }
+);
+
+// -- WKG Edges --
+
+export const upsert_wkg_edge = spacetimedb.reducer(
+  {
+    id: t.string(),
+    workspaceId: t.string(),
+    repoId: t.string().default(''),
+    sourceNodeId: t.string(),
+    targetNodeId: t.string(),
+    edgeType: t.string(),
+    mode: t.string(),
+    confidence: t.f64().default(1.0),
+    sourceKind: t.string(),
+    runId: t.string().default(''),
+    metadata: t.string().default('{}'),
+  },
+  (ctx, args) => {
+    const now = BigInt(Date.now());
+    const existing = ctx.db.workspace_graph_edges.id.find(args.id);
+    if (existing) {
+      ctx.db.workspace_graph_edges.id.update({
+        ...existing,
+        ...args,
+        isDeleted: false,
+        updatedAt: now,
+        lastConfirmedAt: now,
+        createdAt: existing.createdAt,
+      });
+    } else {
+      ctx.db.workspace_graph_edges.insert({
+        ...args,
+        isDeleted: false,
+        createdAt: now,
+        updatedAt: now,
+        lastConfirmedAt: now,
+      });
+    }
+  }
+);
+
+export const soft_delete_wkg_edge = spacetimedb.reducer(
+  { id: t.string() },
+  (ctx, { id }) => {
+    const existing = ctx.db.workspace_graph_edges.id.find(id);
+    if (!existing) return;
+    ctx.db.workspace_graph_edges.id.update({
+      ...existing,
+      isDeleted: true,
+      updatedAt: BigInt(Date.now()),
+    });
+  }
+);
+
+export const batch_upsert_wkg_edges = spacetimedb.reducer(
+  { edgesJson: t.string() },
+  (ctx, { edgesJson }) => {
+    const edges: Array<{
+      id: string; workspaceId: string; repoId?: string; sourceNodeId: string;
+      targetNodeId: string; edgeType: string; mode: string; confidence?: number;
+      sourceKind: string; runId?: string; metadata?: string;
+    }> = JSON.parse(edgesJson);
+    const now = BigInt(Date.now());
+    for (const e of edges) {
+      const existing = ctx.db.workspace_graph_edges.id.find(e.id);
+      if (existing) {
+        ctx.db.workspace_graph_edges.id.update({
+          ...existing,
+          workspaceId: e.workspaceId,
+          repoId: e.repoId ?? existing.repoId,
+          sourceNodeId: e.sourceNodeId,
+          targetNodeId: e.targetNodeId,
+          edgeType: e.edgeType,
+          mode: e.mode,
+          confidence: e.confidence ?? existing.confidence,
+          sourceKind: e.sourceKind,
+          runId: e.runId ?? existing.runId,
+          metadata: e.metadata ?? existing.metadata,
+          isDeleted: false,
+          updatedAt: now,
+          lastConfirmedAt: now,
+          createdAt: existing.createdAt,
+        });
+      } else {
+        ctx.db.workspace_graph_edges.insert({
+          id: e.id,
+          workspaceId: e.workspaceId,
+          repoId: e.repoId ?? '',
+          sourceNodeId: e.sourceNodeId,
+          targetNodeId: e.targetNodeId,
+          edgeType: e.edgeType,
+          mode: e.mode,
+          confidence: e.confidence ?? 1.0,
+          sourceKind: e.sourceKind,
+          runId: e.runId ?? '',
+          metadata: e.metadata ?? '{}',
+          isDeleted: false,
+          createdAt: now,
+          updatedAt: now,
+          lastConfirmedAt: now,
+        });
+      }
+    }
+  }
+);
+
+// -- WKG Provenance --
+
+export const add_wkg_provenance = spacetimedb.reducer(
+  {
+    id: t.string(),
+    workspaceId: t.string(),
+    edgeId: t.string().default(''),
+    nodeId: t.string().default(''),
+    provenanceType: t.string(),
+    sourcePath: t.string().default(''),
+    sourceLineStart: t.u32().default(0),
+    sourceLineEnd: t.u32().default(0),
+    sourceRef: t.string().default(''),
+    excerpt: t.string().default(''),
+  },
+  (ctx, args) => {
+    ctx.db.workspace_graph_provenance.insert({
+      ...args,
+      createdAt: BigInt(Date.now()),
+    });
+  }
+);
+
+// -- WKG Runs --
+
+export const create_wkg_run = spacetimedb.reducer(
+  {
+    id: t.string(),
+    workspaceId: t.string(),
+    repoId: t.string().default(''),
+    runType: t.string(),
+    trigger: t.string(),
+  },
+  (ctx, args) => {
+    ctx.db.workspace_graph_runs.insert({
+      ...args,
+      status: 'pending',
+      filesScanned: 0,
+      nodesWritten: 0,
+      edgesWritten: 0,
+      startedAt: BigInt(Date.now()),
+      completedAt: 0n,
+      error: '',
+    });
+  }
+);
+
+export const update_wkg_run = spacetimedb.reducer(
+  {
+    id: t.string(),
+    status: t.string(),
+    filesScanned: t.u32().default(0),
+    nodesWritten: t.u32().default(0),
+    edgesWritten: t.u32().default(0),
+    error: t.string().default(''),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.workspace_graph_runs.id.find(args.id);
+    if (!existing) return;
+    ctx.db.workspace_graph_runs.id.update({
+      ...existing,
+      status: args.status,
+      filesScanned: args.filesScanned || existing.filesScanned,
+      nodesWritten: args.nodesWritten || existing.nodesWritten,
+      edgesWritten: args.edgesWritten || existing.edgesWritten,
+      error: args.error || existing.error,
+      completedAt: (args.status === 'success' || args.status === 'failed' || args.status === 'partial')
+        ? BigInt(Date.now()) : existing.completedAt,
+    });
+  }
+);
+
+// -- WKG File State --
+
+export const upsert_wkg_file_state = spacetimedb.reducer(
+  {
+    id: t.string(),
+    workspaceId: t.string(),
+    repoId: t.string().default(''),
+    path: t.string(),
+    contentHash: t.string(),
+    language: t.string().default(''),
+    mtimeNs: t.u64().default(0n),
+    sizeBytes: t.u64().default(0n),
+    lastRunId: t.string().default(''),
+    status: t.string(),
+    lastError: t.string().default(''),
+    metadata: t.string().default('{}'),
+  },
+  (ctx, args) => {
+    const existing = ctx.db.workspace_graph_file_state.id.find(args.id);
+    if (existing) {
+      ctx.db.workspace_graph_file_state.id.update({
+        ...existing,
+        ...args,
+        lastIndexedAt: BigInt(Date.now()),
+      });
+    } else {
+      ctx.db.workspace_graph_file_state.insert({
+        ...args,
+        lastIndexedAt: BigInt(Date.now()),
+      });
+    }
+  }
+);
+
+// -- WKG Cleanup --
+
+export const purge_wkg_workspace = spacetimedb.reducer(
+  { workspaceId: t.string() },
+  (ctx, { workspaceId }) => {
+    for (const row of ctx.db.workspace_graph_provenance.iter()) {
+      if (row.workspaceId === workspaceId) ctx.db.workspace_graph_provenance.id.delete(row.id);
+    }
+    for (const row of ctx.db.workspace_graph_edges.iter()) {
+      if (row.workspaceId === workspaceId) ctx.db.workspace_graph_edges.id.delete(row.id);
+    }
+    for (const row of ctx.db.workspace_graph_nodes.iter()) {
+      if (row.workspaceId === workspaceId) ctx.db.workspace_graph_nodes.id.delete(row.id);
+    }
+    for (const row of ctx.db.workspace_graph_runs.iter()) {
+      if (row.workspaceId === workspaceId) ctx.db.workspace_graph_runs.id.delete(row.id);
+    }
+    for (const row of ctx.db.workspace_graph_file_state.iter()) {
+      if (row.workspaceId === workspaceId) ctx.db.workspace_graph_file_state.id.delete(row.id);
+    }
+  }
+);
+
+// -- WKG Soft-delete stale artifacts for a run --
+
+export const mark_wkg_stale_for_run = spacetimedb.reducer(
+  { workspaceId: t.string(), runId: t.string() },
+  (ctx, { workspaceId, runId }) => {
+    const now = BigInt(Date.now());
+    // Mark edges from previous runs as deleted if they weren't confirmed in this run
+    for (const row of ctx.db.workspace_graph_edges.iter()) {
+      if (row.workspaceId === workspaceId && row.runId !== runId && !row.isDeleted) {
+        ctx.db.workspace_graph_edges.id.update({
+          ...row,
+          isDeleted: true,
+          updatedAt: now,
+        });
+      }
+    }
+    // Mark nodes that have no remaining live edges as deleted
+    const liveNodeIds = new Set<string>();
+    for (const row of ctx.db.workspace_graph_edges.iter()) {
+      if (row.workspaceId === workspaceId && !row.isDeleted) {
+        liveNodeIds.add(row.sourceNodeId);
+        liveNodeIds.add(row.targetNodeId);
+      }
+    }
+    for (const row of ctx.db.workspace_graph_nodes.iter()) {
+      if (row.workspaceId === workspaceId && !row.isDeleted && !liveNodeIds.has(row.id)) {
+        // Keep workspace and repository root nodes alive
+        if (row.nodeType !== 'workspace' && row.nodeType !== 'repository') {
+          ctx.db.workspace_graph_nodes.id.update({
+            ...row,
+            isDeleted: true,
+            updatedAt: now,
+          });
+        }
+      }
     }
   }
 );
