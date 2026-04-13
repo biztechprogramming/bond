@@ -174,9 +174,23 @@ def handle_budget_escalation(
     overbudget_by = iteration - effective_threshold
 
     # If the agent hasn't made any consequential calls (no edits, no writes,
-    # no meaningful actions), it's been spinning on info-gathering. Don't
-    # escalate to coding_agent — force it to report back to the user.
-    _no_progress = not loop_state.has_made_consequential_call
+    # no meaningful actions), check whether it did substantial discovery work
+    # (file reads, searches). Discovery IS progress on coding tasks — the agent
+    # may need to explore before it can implement. Only treat it as "no progress"
+    # if there's genuinely nothing useful done.
+    _DISCOVERY_TOOLS = {"file_read", "search_memory", "web_search", "web_read",
+                        "shell_find", "file_search", "git_info", "file_list",
+                        "shell_ls", "shell_tree", "project_search", "code_execute"}
+    _discovery_count = 0
+    for _msg in messages:
+        if _msg.get("role") == "assistant" and _msg.get("tool_calls"):
+            for _tc in _msg.get("tool_calls", []):
+                _fn = _tc.get("function", {}) if isinstance(_tc, dict) else getattr(_tc, "function", None)
+                _fn_name = _fn.get("name", "") if isinstance(_fn, dict) else getattr(_fn, "name", "")
+                if _fn_name in _DISCOVERY_TOOLS:
+                    _discovery_count += 1
+    _has_discovery = _discovery_count >= 3
+    _no_progress = not loop_state.has_made_consequential_call and not _has_discovery
 
     if loop_state.is_coding_task and not _no_progress:
         try:

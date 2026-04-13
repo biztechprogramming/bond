@@ -190,6 +190,48 @@ Changed `sendToConversation` from `private` to `public` so the completion handle
 
 ---
 
+## 4.7 Iteration-Exhaustion Handoff to coding_agent
+
+When the main agent exhausts its iteration budget, three code paths attempt to
+delegate remaining work to `coding_agent`:
+
+1. **Budget escalation** (`iteration_handlers.py:handle_budget_escalation`) — at
+   80% of adaptive budget, injects a system message nudging the agent to spawn
+   `coding_agent`. At 4+ iterations overbudget, restricts available tools to
+   `coding_agent + respond + say`.
+
+2. **Worker fallback** (`worker.py` post-loop) — after the loop exits, if the
+   task is a coding task and `coding_agent` was never called, auto-spawns it
+   with a handoff context summary.
+
+3. **loop.py fallback** — same as (2) but for the simpler `agent_turn` path.
+
+### What counts as "meaningful work" for handoff
+
+Prior to the fix in `fix/iteration-exhaustion-coding-agent-handoff`, handoff
+only triggered when the agent had made **consequential calls** (file edits,
+writes). This missed a common failure mode: the agent spends its entire budget
+on discovery (reading files, searching code, exploring the repo) and never
+reaches the implementation phase.
+
+**Current rule**: handoff triggers when the agent has done *either*:
+- Made consequential calls (file_edit, file_write, code_execute), **OR**
+- Made **3 or more discovery tool calls** (file_read, search_memory, web_search,
+  file_search, git_info, shell_find, shell_ls, shell_tree, project_search, etc.)
+
+The threshold of 3 discovery calls avoids spurious handoff when the agent made
+only trivial progress (e.g., one failed search).
+
+### Constraints
+
+- The handoff message includes files already read and edits already made
+  (via `build_handoff_context`) so the coding agent doesn't repeat work.
+- `coding_agent` is never spawned if it was already called in the session.
+- Tasks with genuinely no progress (<3 discovery calls, no edits) still force
+  a report-back to the user instead of blindly delegating.
+
+---
+
 ## 5. Guard Rails
 
 | Guard | Implementation |
