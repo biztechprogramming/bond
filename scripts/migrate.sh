@@ -28,13 +28,50 @@ else
     exit 1
 fi
 
+TARGET_VERSION="$1"
+DB_URL="sqlite3://$DB_FILE"
+
 echo "Running migrations..."
 echo "  Using: $MIGRATE"
 echo "  Path: $MIGRATIONS_PATH"
 echo "  Database: $DB_FILE"
 
-# Run SQLite migrations
-$MIGRATE -path "$MIGRATIONS_PATH" -database "sqlite3://$DB_FILE" up
+if [ -n "$TARGET_VERSION" ]; then
+    # Validate target is a positive integer
+    if ! echo "$TARGET_VERSION" | grep -qE '^[0-9]+$'; then
+        echo "Error: Target version must be a positive integer, got '$TARGET_VERSION'"
+        exit 1
+    fi
+
+    # Get current version (returns "X" or "X (dirty)")
+    CURRENT_OUTPUT=$($MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" version 2>&1 || true)
+    CURRENT_VERSION=$(echo "$CURRENT_OUTPUT" | grep -oE '^[0-9]+' || echo "")
+
+    if [ -z "$CURRENT_VERSION" ]; then
+        echo "Error: Could not determine current migration version."
+        echo "  Output: $CURRENT_OUTPUT"
+        echo "  If no migrations have been applied yet, run 'make migrate' first."
+        exit 1
+    fi
+
+    MIN_ALLOWED=$((CURRENT_VERSION - 3))
+    MAX_ALLOWED=$((CURRENT_VERSION + 2))
+    [ "$MIN_ALLOWED" -lt 1 ] && MIN_ALLOWED=1
+
+    if [ "$TARGET_VERSION" -lt "$MIN_ALLOWED" ] || [ "$TARGET_VERSION" -gt "$MAX_ALLOWED" ]; then
+        echo "Error: Target version $TARGET_VERSION is out of safe range."
+        echo "  Current version: $CURRENT_VERSION"
+        echo "  Allowed range:   $MIN_ALLOWED .. $MAX_ALLOWED (current -3 to current +2)"
+        exit 1
+    fi
+
+    echo "  Current version: $CURRENT_VERSION"
+    echo "  Forcing to version: $TARGET_VERSION"
+    $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" force "$TARGET_VERSION"
+else
+    # Normal: run all pending up migrations
+    $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" up
+fi
 
 echo "SQLite migrations complete."
 

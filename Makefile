@@ -55,10 +55,11 @@ lint:
 	cd gateway && pnpm lint
 	cd frontend && pnpm lint
 
-# Run migrations (Docker)
 # Run migrations (tries local first, falls back to Docker)
+# Usage: make migrate              — run all pending up migrations
+#        make migrate VERSION=30   — force migration to version 30 (must be within ±3/+2 of current)
 migrate:
-	@./scripts/migrate.sh
+	@./scripts/migrate.sh $(VERSION)
 
 # Run migrations via Docker
 migrate-docker:
