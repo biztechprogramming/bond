@@ -69,6 +69,7 @@ if [ -n "$TARGET_VERSION" ]; then
     echo "  Forcing to version: $TARGET_VERSION"
     $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" force "$TARGET_VERSION"
 else
+    echo "  Skipping version check — running all pending migrations up to latest. $0"
     # Normal: run all pending up migrations
     $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" up
 fi

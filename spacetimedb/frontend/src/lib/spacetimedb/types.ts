@@ -492,3 +492,90 @@ export const WorkPlans = __t.object("WorkPlans", {
 });
 export type WorkPlans = __Infer<typeof WorkPlans>;
 
+export const WorkspaceGraphEdges = __t.object("WorkspaceGraphEdges", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  sourceNodeId: __t.string(),
+  targetNodeId: __t.string(),
+  edgeType: __t.string(),
+  mode: __t.string(),
+  confidence: __t.f64(),
+  sourceKind: __t.string(),
+  runId: __t.string(),
+  isDeleted: __t.bool(),
+  metadata: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+  lastConfirmedAt: __t.u64(),
+});
+export type WorkspaceGraphEdges = __Infer<typeof WorkspaceGraphEdges>;
+
+export const WorkspaceGraphFileState = __t.object("WorkspaceGraphFileState", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  path: __t.string(),
+  contentHash: __t.string(),
+  language: __t.string(),
+  mtimeNs: __t.u64(),
+  sizeBytes: __t.u64(),
+  lastIndexedAt: __t.u64(),
+  lastRunId: __t.string(),
+  status: __t.string(),
+  lastError: __t.string(),
+  metadata: __t.string(),
+});
+export type WorkspaceGraphFileState = __Infer<typeof WorkspaceGraphFileState>;
+
+export const WorkspaceGraphNodes = __t.object("WorkspaceGraphNodes", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  nodeType: __t.string(),
+  stableKey: __t.string(),
+  displayName: __t.string(),
+  path: __t.string(),
+  language: __t.string(),
+  signature: __t.string(),
+  contentHash: __t.string(),
+  isDeleted: __t.bool(),
+  metadata: __t.string(),
+  embeddingModel: __t.string(),
+  processedAt: __t.u64(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type WorkspaceGraphNodes = __Infer<typeof WorkspaceGraphNodes>;
+
+export const WorkspaceGraphProvenance = __t.object("WorkspaceGraphProvenance", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  edgeId: __t.string(),
+  nodeId: __t.string(),
+  provenanceType: __t.string(),
+  sourcePath: __t.string(),
+  sourceLineStart: __t.u32(),
+  sourceLineEnd: __t.u32(),
+  sourceRef: __t.string(),
+  excerpt: __t.string(),
+  createdAt: __t.u64(),
+});
+export type WorkspaceGraphProvenance = __Infer<typeof WorkspaceGraphProvenance>;
+
+export const WorkspaceGraphRuns = __t.object("WorkspaceGraphRuns", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  runType: __t.string(),
+  status: __t.string(),
+  trigger: __t.string(),
+  filesScanned: __t.u32(),
+  nodesWritten: __t.u32(),
+  edgesWritten: __t.u32(),
+  startedAt: __t.u64(),
+  completedAt: __t.u64(),
+  error: __t.string(),
+});
+export type WorkspaceGraphRuns = __Infer<typeof WorkspaceGraphRuns>;
+

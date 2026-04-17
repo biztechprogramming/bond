@@ -54,6 +54,9 @@ import AddComponentScriptReducer from "./add_component_script_reducer";
 import AddComponentSecretReducer from "./add_component_secret_reducer";
 import AddDeploymentApproverReducer from "./add_deployment_approver_reducer";
 import AddResourceEnvironmentReducer from "./add_resource_environment_reducer";
+import AddWkgProvenanceReducer from "./add_wkg_provenance_reducer";
+import BatchUpsertWkgEdgesReducer from "./batch_upsert_wkg_edges_reducer";
+import BatchUpsertWkgNodesReducer from "./batch_upsert_wkg_nodes_reducer";
 import ConsumeSystemEventReducer from "./consume_system_event_reducer";
 import CreateConversationReducer from "./create_conversation_reducer";
 import CreateWorkPlanReducer from "./create_work_plan_reducer";
@@ -63,6 +66,7 @@ import CreateDeploymentEnvironmentReducer from "./create_deployment_environment_
 import CreateDeploymentResourceReducer from "./create_deployment_resource_reducer";
 import CreateDeploymentTriggerReducer from "./create_deployment_trigger_reducer";
 import CreateMonitoringAlertReducer from "./create_monitoring_alert_reducer";
+import CreateWkgRunReducer from "./create_wkg_run_reducer";
 import DeactivateComponentReducer from "./deactivate_component_reducer";
 import DeduplicateModelsReducer from "./deduplicate_models_reducer";
 import DeleteAgentReducer from "./delete_agent_reducer";
@@ -108,6 +112,8 @@ import ImportWorkItemReducer from "./import_work_item_reducer";
 import ImportWorkPlanReducer from "./import_work_plan_reducer";
 import InitiatePromotionReducer from "./initiate_promotion_reducer";
 import LogToolReducer from "./log_tool_reducer";
+import MarkWkgStaleForRunReducer from "./mark_wkg_stale_for_run_reducer";
+import PurgeWkgWorkspaceReducer from "./purge_wkg_workspace_reducer";
 import RecordApprovalReducer from "./record_approval_reducer";
 import RemoveComponentResourceReducer from "./remove_component_resource_reducer";
 import RemoveComponentScriptReducer from "./remove_component_script_reducer";
@@ -122,6 +128,8 @@ import SetEmbeddingModelReducer from "./set_embedding_model_reducer";
 import SetProviderAliasReducer from "./set_provider_alias_reducer";
 import SetProviderApiKeyReducer from "./set_provider_api_key_reducer";
 import SetSettingReducer from "./set_setting_reducer";
+import SoftDeleteWkgEdgeReducer from "./soft_delete_wkg_edge_reducer";
+import SoftDeleteWkgNodeReducer from "./soft_delete_wkg_node_reducer";
 import UpdateAgentReducer from "./update_agent_reducer";
 import UpdateAgentDatabaseAccessReducer from "./update_agent_database_access_reducer";
 import UpdateConversationReducer from "./update_conversation_reducer";
@@ -136,6 +144,10 @@ import UpdateDeploymentEnvironmentReducer from "./update_deployment_environment_
 import UpdateDeploymentResourceReducer from "./update_deployment_resource_reducer";
 import UpdateDeploymentTriggerReducer from "./update_deployment_trigger_reducer";
 import UpdatePromotionStatusReducer from "./update_promotion_status_reducer";
+import UpdateWkgRunReducer from "./update_wkg_run_reducer";
+import UpsertWkgEdgeReducer from "./upsert_wkg_edge_reducer";
+import UpsertWkgFileStateReducer from "./upsert_wkg_file_state_reducer";
+import UpsertWkgNodeReducer from "./upsert_wkg_node_reducer";
 
 // Import all procedure arg schemas
 
@@ -178,6 +190,11 @@ import ToolLogsRow from "./tool_logs_table";
 import TriggersRow from "./triggers_table";
 import WorkItemsRow from "./work_items_table";
 import WorkPlansRow from "./work_plans_table";
+import WorkspaceGraphEdgesRow from "./workspace_graph_edges_table";
+import WorkspaceGraphFileStateRow from "./workspace_graph_file_state_table";
+import WorkspaceGraphNodesRow from "./workspace_graph_nodes_table";
+import WorkspaceGraphProvenanceRow from "./workspace_graph_provenance_table";
+import WorkspaceGraphRunsRow from "./workspace_graph_runs_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -601,6 +618,61 @@ const tablesSchema = __schema({
       { name: 'work_plans_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, WorkPlansRow),
+  workspace_graph_edges: __table({
+    name: 'workspace_graph_edges',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'workspace_graph_edges_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WorkspaceGraphEdgesRow),
+  workspace_graph_file_state: __table({
+    name: 'workspace_graph_file_state',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'workspace_graph_file_state_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WorkspaceGraphFileStateRow),
+  workspace_graph_nodes: __table({
+    name: 'workspace_graph_nodes',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'workspace_graph_nodes_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WorkspaceGraphNodesRow),
+  workspace_graph_provenance: __table({
+    name: 'workspace_graph_provenance',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'workspace_graph_provenance_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WorkspaceGraphProvenanceRow),
+  workspace_graph_runs: __table({
+    name: 'workspace_graph_runs',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'workspace_graph_runs_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WorkspaceGraphRunsRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -625,6 +697,9 @@ const reducersSchema = __reducers(
   __reducerSchema("add_component_secret", AddComponentSecretReducer),
   __reducerSchema("add_deployment_approver", AddDeploymentApproverReducer),
   __reducerSchema("add_resource_environment", AddResourceEnvironmentReducer),
+  __reducerSchema("add_wkg_provenance", AddWkgProvenanceReducer),
+  __reducerSchema("batch_upsert_wkg_edges", BatchUpsertWkgEdgesReducer),
+  __reducerSchema("batch_upsert_wkg_nodes", BatchUpsertWkgNodesReducer),
   __reducerSchema("consume_system_event", ConsumeSystemEventReducer),
   __reducerSchema("create_conversation", CreateConversationReducer),
   __reducerSchema("create_work_plan", CreateWorkPlanReducer),
@@ -634,6 +709,7 @@ const reducersSchema = __reducers(
   __reducerSchema("create_deployment_resource", CreateDeploymentResourceReducer),
   __reducerSchema("create_deployment_trigger", CreateDeploymentTriggerReducer),
   __reducerSchema("create_monitoring_alert", CreateMonitoringAlertReducer),
+  __reducerSchema("create_wkg_run", CreateWkgRunReducer),
   __reducerSchema("deactivate_component", DeactivateComponentReducer),
   __reducerSchema("deduplicate_models", DeduplicateModelsReducer),
   __reducerSchema("delete_agent", DeleteAgentReducer),
@@ -679,6 +755,8 @@ const reducersSchema = __reducers(
   __reducerSchema("import_work_plan", ImportWorkPlanReducer),
   __reducerSchema("initiate_promotion", InitiatePromotionReducer),
   __reducerSchema("log_tool", LogToolReducer),
+  __reducerSchema("mark_wkg_stale_for_run", MarkWkgStaleForRunReducer),
+  __reducerSchema("purge_wkg_workspace", PurgeWkgWorkspaceReducer),
   __reducerSchema("record_approval", RecordApprovalReducer),
   __reducerSchema("remove_component_resource", RemoveComponentResourceReducer),
   __reducerSchema("remove_component_script", RemoveComponentScriptReducer),
@@ -693,6 +771,8 @@ const reducersSchema = __reducers(
   __reducerSchema("set_provider_alias", SetProviderAliasReducer),
   __reducerSchema("set_provider_api_key", SetProviderApiKeyReducer),
   __reducerSchema("set_setting", SetSettingReducer),
+  __reducerSchema("soft_delete_wkg_edge", SoftDeleteWkgEdgeReducer),
+  __reducerSchema("soft_delete_wkg_node", SoftDeleteWkgNodeReducer),
   __reducerSchema("update_agent", UpdateAgentReducer),
   __reducerSchema("update_agent_database_access", UpdateAgentDatabaseAccessReducer),
   __reducerSchema("update_conversation", UpdateConversationReducer),
@@ -707,6 +787,10 @@ const reducersSchema = __reducers(
   __reducerSchema("update_deployment_resource", UpdateDeploymentResourceReducer),
   __reducerSchema("update_deployment_trigger", UpdateDeploymentTriggerReducer),
   __reducerSchema("update_promotion_status", UpdatePromotionStatusReducer),
+  __reducerSchema("update_wkg_run", UpdateWkgRunReducer),
+  __reducerSchema("upsert_wkg_edge", UpsertWkgEdgeReducer),
+  __reducerSchema("upsert_wkg_file_state", UpsertWkgFileStateReducer),
+  __reducerSchema("upsert_wkg_node", UpsertWkgNodeReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

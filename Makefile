@@ -7,6 +7,8 @@ SPACETIMEDB_URL := $(shell python3 -c "import json; print(json.load(open('bond.j
 SPACETIMEDB_MODULE := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('module', 'bond-core-v2'))" 2>/dev/null || echo "bond-core-v2")
 SPACETIMEDB_TOKEN := $(shell grep -oP '^SPACETIMEDB_TOKEN\s*=\s*"?\K[^"]+' .env 2>/dev/null || grep -oP 'spacetimedb_token\s*=\s*"\K[^"]+' $(HOME)/.config/spacetime/cli.toml 2>/dev/null)
 
+ARGS = $(filter-out $@,$(MAKECMDGOALS))
+
 # Start all services for development
 dev:
 	@echo "Starting Bond development servers..."
@@ -59,7 +61,7 @@ lint:
 # Usage: make migrate              — run all pending up migrations
 #        make migrate VERSION=30   — force migration to version 30 (must be within ±3/+2 of current)
 migrate:
-	@./scripts/migrate.sh $(VERSION)
+	@./scripts/migrate.sh $(ARGS)
 
 # Run migrations via Docker
 migrate-docker:
