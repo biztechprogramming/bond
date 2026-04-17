@@ -1,4 +1,9 @@
-"""Tests for workspace knowledge graph — repository, extraction, migration."""
+"""Tests for workspace knowledge graph — repository, extraction, migration.
+
+NOTE (2026-04-17): The SQLite-backed repository tests are skipped because
+migration 000030 is now a no-op (WKG lives in SpacetimeDB, not SQLite).
+Extractor-only tests (which don't need a database) still run.
+"""
 
 from __future__ import annotations
 
@@ -31,9 +36,19 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent.parent.parent / "migrations"
 WS_ID = "ws-test-1"
 REPO_ID = "test-repo"
 
+# SQLite WKG tables no longer exist (migration 30 is a no-op).
+# Repository tests require the old DDL which has been removed in favour of
+# SpacetimeDB.  Skip them until a SpacetimeDB-backed test harness is wired up.
+_SKIP_SQLITE_REPO = pytest.mark.skip(
+    reason="WKG SQLite tables removed — migration 30 is a no-op (see Design Doc 018)"
+)
+
 
 async def _setup_db(db_path: Path) -> None:
-    """Apply migrations needed for workspace graph."""
+    """Apply migrations needed for workspace graph.
+
+    DEPRECATED: migration 30 is a no-op so this only creates the base schema.
+    """
     async with aiosqlite.connect(db_path) as db:
         await db.execute("PRAGMA foreign_keys = ON")
         for name in [
@@ -64,6 +79,7 @@ async def repo(tmp_path):
 # ── Node CRUD ──
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_upsert_and_get_node(repo):
     node = GraphNode(
@@ -86,6 +102,7 @@ async def test_upsert_and_get_node(repo):
     assert fetched.id == result.id
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_upsert_node_updates_existing(repo):
     node = GraphNode(
@@ -104,11 +121,13 @@ async def test_upsert_node_updates_existing(repo):
     assert second.content_hash == "abc123"
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_get_node_nonexistent(repo):
     assert await repo.get_node(WS_ID, "does-not-exist") is None
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_get_nodes_by_type(repo):
     for i in range(3):
@@ -130,6 +149,7 @@ async def test_get_nodes_by_type(repo):
     assert len(files) == 1
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_soft_delete_nodes(repo):
     await repo.upsert_node(GraphNode(
@@ -147,6 +167,7 @@ async def test_soft_delete_nodes(repo):
 # ── Edges ──
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_upsert_edge(repo):
     n1 = await repo.upsert_node(GraphNode(
@@ -166,6 +187,7 @@ async def test_upsert_edge(repo):
     assert edge.edge_type == "defines"
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_get_edges_for_node(repo):
     n1 = await repo.upsert_node(GraphNode(
@@ -194,6 +216,7 @@ async def test_get_edges_for_node(repo):
 # ── Graph traversal ──
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_neighbors_depth_1(repo):
     ws = await repo.upsert_node(GraphNode(
@@ -227,6 +250,7 @@ async def test_neighbors_depth_1(repo):
     assert f.id not in sub.nodes
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_neighbors_depth_2(repo):
     ws = await repo.upsert_node(GraphNode(
@@ -257,6 +281,7 @@ async def test_neighbors_depth_2(repo):
     assert f.id in sub.nodes
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_find_path(repo):
     n1 = await repo.upsert_node(GraphNode(
@@ -296,6 +321,7 @@ async def test_find_path(repo):
     assert no_path is None
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_find_path_same_node(repo):
     n = await repo.upsert_node(GraphNode(
@@ -309,6 +335,7 @@ async def test_find_path_same_node(repo):
 # ── Search ──
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_fts_search(repo):
     await repo.upsert_node(GraphNode(
@@ -339,6 +366,7 @@ async def test_fts_search(repo):
 # ── Runs ──
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_record_and_update_run(repo):
     run = GraphRun(
@@ -359,6 +387,7 @@ async def test_record_and_update_run(repo):
 # ── File state ──
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_file_state_upsert_and_change_detection(repo):
     fs = FileState(
@@ -479,6 +508,7 @@ async def test_extractor_produces_symbols(tmp_path):
             assert sn.stable_key.startswith("symbol:")
 
 
+@_SKIP_SQLITE_REPO
 @pytest.mark.asyncio
 async def test_extraction_into_repository(repo, tmp_path):
     """End-to-end: extract a sample repo and persist into the repository."""

@@ -1,4 +1,11 @@
-"""Workspace knowledge graph repository — CRUD, graph traversal, search."""
+"""Workspace knowledge graph repository — CRUD, graph traversal, search.
+
+DEPRECATED (2026-04-17): This SQLite-backed repository is superseded by SpacetimeDB
+tables and reducers.  Migration 000030 is a no-op; the WKG schema now lives in
+SpacetimeDB (see spacetimedb/spacetimedb/src/index.ts and Design Doc 018).
+Do NOT invest further in this module — it will be removed once the SpacetimeDB
+repository adapter is in place.
+"""
 
 from __future__ import annotations
 
