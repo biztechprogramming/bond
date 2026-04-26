@@ -637,17 +637,28 @@ export default function AgentsTab() {
     } catch { /* Can't reach backend — save anyway */ }
     await doSave();
   };
-
   const doSave = async () => {
     if (!editing) return;
-    setMsg("");
-    setShowContainerWarning(false);
     try {
       const conn = getConnection();
       if (!conn) { setMsg("Not connected to database"); return; }
+      const agentId = editing.id || generateId();
 
-      const agentId = isNew ? generateId() : editing.id;
+      // Protect workspace mounts from implicit removal on save.
+      // If any existing mount would be dropped, fail the save instead of
+      // deleting mounts silently. Intentional removal must use a dedicated UX.
+      if (!isNew) {
+        const originalMountKeys = new Set((selected?.workspace_mounts || []).map(m => `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`));
+        const editedMountKeys = new Set((editing.workspace_mounts || []).map(m => `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`));
+        const missingMounts = [...originalMountKeys].filter(key => !editedMountKeys.has(key));
+        if (missingMounts.length > 0) {
+          setMsg("Error: Save would remove one or more existing workspace mounts. Workspace mounts cannot be removed implicitly by Save. Please restore the missing mounts or use an explicit remove workflow.");
+          return;
+        }
+      }
+
       const toolsJson = JSON.stringify(editing.tools || []);
+
 
       if (isNew) {
         conn.reducers.addAgent({
