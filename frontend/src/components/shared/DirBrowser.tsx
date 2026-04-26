@@ -2,16 +2,19 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { BACKEND_API, apiFetch } from "@/lib/config";
 
 interface DirBrowserProps {
+  hostId: string;
   onSelect: (path: string) => void;
   onClose: () => void;
 }
 
-export default function DirBrowser({ onSelect, onClose }: DirBrowserProps) {
-  const [currentPath, setCurrentPath] = useState("/home");
+export default function DirBrowser({ hostId, onSelect, onClose }: DirBrowserProps) {
+  const [currentPath, setCurrentPath] = useState("");
   const [dirs, setDirs] = useState<{ name: string; path: string }[]>([]);
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [homePath, setHomePath] = useState<string | null>(null);
 
   const showHiddenRef = useRef(showHidden);
   showHiddenRef.current = showHidden;
@@ -21,22 +24,31 @@ export default function DirBrowser({ onSelect, onClose }: DirBrowserProps) {
     setLoading(true);
     try {
       const res = await apiFetch(
-        `${BACKEND_API}/agents/browse-dirs?path=${encodeURIComponent(path)}&show_hidden=${h}`
+        `${BACKEND_API}/agents/browse-dirs?host_id=${encodeURIComponent(hostId)}&path=${encodeURIComponent(path)}&show_hidden=${h}`
       );
       if (res.ok) {
         const data = await res.json();
-        setCurrentPath(data.current);
-        setParentPath(data.parent);
-        setDirs(data.directories);
+        setCurrentPath(data.current || "");
+        setParentPath(data.parent || null);
+        setDirs(data.directories || []);
+        setHomePath(data.home || null);
+        setError(data.error || null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setDirs([]);
+        setParentPath(null);
+        setError(data.detail || "Directory browsing is unavailable.");
       }
     } catch {
-      // ignore
+      setDirs([]);
+      setParentPath(null);
+      setError("Directory browsing is unavailable.");
     }
     setLoading(false);
   }, []);
 
   useEffect(() => {
-    browse(currentPath, false);
+    browse("", false);
   }, []);
 
   return (
@@ -47,6 +59,10 @@ export default function DirBrowser({ onSelect, onClose }: DirBrowserProps) {
           <button style={modalStyles.close} onClick={onClose}>✕</button>
         </div>
         <div style={modalStyles.pathBar}>
+          {homePath && (
+            <button style={{ ...modalStyles.selectBtn, backgroundColor: "#2a2a3e", color: "#cfd3ff" }} onClick={() => browse(homePath)}>Home</button>
+          )}
+          <button style={{ ...modalStyles.selectBtn, backgroundColor: "#2a2a3e", color: "#cfd3ff" }} onClick={() => browse("/")}>Root</button>
           <span style={{ color: "#6c8aff", fontSize: "0.85rem", wordBreak: "break-all", flex: 1 }}>
             {currentPath}
           </span>
@@ -62,20 +78,10 @@ export default function DirBrowser({ onSelect, onClose }: DirBrowserProps) {
             />
             Hidden
           </label>
-          <button
-            style={{ ...modalStyles.selectBtn, flexShrink: 0 }}
-            onClick={() => onSelect(currentPath)}
-          >
-            Select This
-          </button>
         </div>
         <div style={modalStyles.dirList}>
-          {parentPath && (
-            <div style={modalStyles.dirItem} onClick={() => browse(parentPath)}>
-              📁 ..
-            </div>
-          )}
           {loading && <div style={{ color: "#8888a0", padding: "12px" }}>Loading...</div>}
+          {!loading && error && <div style={{ color: "#ff8a8a", padding: "12px", fontSize: "0.9rem", lineHeight: 1.5 }}>{error}</div>}
           {dirs.map((d) => (
             <div
               key={d.path}
@@ -85,7 +91,7 @@ export default function DirBrowser({ onSelect, onClose }: DirBrowserProps) {
               📁 {d.name}
             </div>
           ))}
-          {!loading && dirs.length === 0 && (
+          {!loading && !error && dirs.length === 0 && (
             <div style={{ color: "#8888a0", padding: "12px", fontSize: "0.85rem" }}>
               No subdirectories
             </div>

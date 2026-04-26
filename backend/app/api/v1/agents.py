@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import httpx
+
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import time
 
@@ -249,32 +252,37 @@ async def list_sandbox_images():
 
 
 @router.get("/browse-dirs")
-async def browse_directories(path: str = "/", show_hidden: bool = False):
-    """List directories at the given path for the workspace mount picker."""
-    from pathlib import Path as P
+async def browse_directories(host_id: str = "local", path: str | None = None, show_hidden: bool = False):
+    """Browse directories on the selected container host.
 
-    target = P(path).resolve()
-    if not target.is_dir():
-        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+    Localhost-only for now. This proxies to a host-side daemon so the UI sees the
+    real host filesystem instead of the Bond container filesystem.
+    """
+    if host_id != "local":
+        raise HTTPException(status_code=501, detail="Workspace mount browsing is currently implemented for the local host only.")
 
-    dirs = []
+    daemon_url = os.environ.get("BOND_HOST_DAEMON_URL", "http://host.docker.internal:18795")
+    params = {"path": path or "", "show_hidden": str(show_hidden).lower()}
     try:
-        for entry in sorted(target.iterdir()):
-            if not show_hidden and entry.name.startswith("."):
-                continue
-            if entry.is_dir():
-                dirs.append({
-                    "name": entry.name,
-                    "path": str(entry),
-                })
-    except PermissionError:
-        pass
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{daemon_url}/fs/browse", params=params)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Workspace mount browsing is unavailable because the local Bond host daemon could not be reached at "
+                f"{daemon_url}. Start the host daemon or configure BOND_HOST_DAEMON_URL. Underlying error: {e}"
+            ),
+        )
 
-    return {
-        "current": str(target),
-        "parent": str(target.parent) if target != target.parent else None,
-        "directories": dirs,
-    }
+    if resp.status_code != 200:
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:
+            detail = resp.text
+        raise HTTPException(status_code=resp.status_code, detail=f"Host daemon browse failed: {detail}")
+
+    return resp.json()
 
 
 @router.get("/{agent_id}")

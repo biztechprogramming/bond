@@ -394,6 +394,42 @@ async def exec_in_container(key: str, req: ExecRequest):
 # ---------------------------------------------------------------------------
 
 
+@app.get("/fs/browse")
+async def browse_filesystem(path: str = "", show_hidden: bool = False):
+    """Browse the real host filesystem for workspace mount selection."""
+    requested = (path or "").strip()
+    if not requested:
+        requested = os.path.expanduser("~")
+    elif requested.startswith("~"):
+        requested = os.path.expanduser(requested)
+
+    target = Path(requested).resolve()
+    if not target.exists():
+        raise HTTPException(status_code=400, detail=f"Path does not exist: {requested}")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {requested}")
+
+    directories: list[dict[str, str]] = []
+    try:
+        for entry in sorted(target.iterdir(), key=lambda e: e.name.lower()):
+            if not show_hidden and entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                directories.append({"name": entry.name, "path": str(entry)})
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {target}")
+
+    current = str(target)
+    parent = None if current == "/" else str(target.parent)
+    return {
+        "current": current,
+        "parent": parent,
+        "directories": directories,
+        "home": os.path.expanduser("~"),
+        "host_id": "local",
+    }
+
+
 @app.get("/health")
 async def host_health():
     """Report this machine's resource availability."""

@@ -996,6 +996,7 @@ export default function AgentsTab() {
 
             {browsingMountIndex !== null && (
               <DirBrowser
+                hostId="local"
                 onSelect={(path) => {
                   const idx = browsingMountIndex;
                   const name = path.split("/").filter(Boolean).pop() || "";
