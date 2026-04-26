@@ -1,13 +1,19 @@
+FROM node:22-bookworm-slim AS node-base
+
 FROM python:3.12-slim AS backend-base
 
 WORKDIR /app
 
-# Install Node.js 22 for the gateway
-RUN apt-get update && apt-get install -y curl git && \
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g pnpm && \
+# Install git and copy Node.js 22 + npm from the official Node image for the gateway
+RUN apt-get update && apt-get install -y --no-install-recommends git && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=node-base /usr/local/bin /usr/local/bin
+COPY --from=node-base /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node-base /usr/local/include /usr/local/include
+COPY --from=node-base /usr/local/share /usr/local/share
+RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
+    npm install -g pnpm
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
