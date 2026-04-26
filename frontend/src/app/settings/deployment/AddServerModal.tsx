@@ -1,3 +1,4 @@
+import { randomId } from "@/lib/random-id";
 import React, { useState } from "react";
 import { GATEWAY_API , apiFetch } from "@/lib/config";
 import { callReducer } from "@/hooks/useSpacetimeDB";
@@ -48,7 +49,7 @@ export default function AddServerModal({ environments, onComplete, onCancel }: A
     else connection.password = password;
 
     try {
-      const rid = crypto.randomUUID().replace(/-/g, "");
+      const rid = randomId();
       const now = BigInt(Date.now());
       callReducer(conn => conn.reducers.createDeploymentResource({
         id: rid,

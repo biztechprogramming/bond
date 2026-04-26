@@ -1,5 +1,6 @@
 "use client";
 
+import { randomId } from "@/lib/random-id";
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAgentsWithRelations } from "@/hooks/useSpacetimeDB";
 import AgentDiscoveryView from "@/components/discovery/AgentDiscoveryView";
@@ -493,7 +494,7 @@ export default function OneClickShipWizard({ onComplete, onCancel }: Props) {
               return String(v);
             };
             const newPlan: DeploymentPlan = {
-              id: crypto.randomUUID(),
+              id: randomId(),
               agentId: selectedAgentId,
               repoPath: selectedRepoPath,
               framework: str(f.framework) || "unknown",

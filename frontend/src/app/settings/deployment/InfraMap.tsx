@@ -1,3 +1,4 @@
+import { randomId } from "@/lib/random-id";
 import React, { useMemo, useState } from "react";
 import { useResources, useEnvironments, useResourceEnvironments, callReducer } from "@/hooks/useSpacetimeDB";
 import { GATEWAY_API , apiFetch } from "@/lib/config";
@@ -63,7 +64,7 @@ export default function InfraMap({ onAddServer }: InfraMapProps) {
       if (row) callReducer(conn => conn.reducers.removeResourceEnvironment({ id: row.id }));
     } else {
       callReducer(conn => conn.reducers.addResourceEnvironment({
-        id: crypto.randomUUID().replace(/-/g, ""),
+        id: randomId(),
         resourceId,
         environmentName: envName,
         createdAt: BigInt(Date.now()),
@@ -79,7 +80,7 @@ export default function InfraMap({ onAddServer }: InfraMapProps) {
         if (row) callReducer(conn => conn.reducers.removeResourceEnvironment({ id: row.id }));
       } else if (!isAssigned(s.id, envName)) {
         callReducer(conn => conn.reducers.addResourceEnvironment({
-          id: crypto.randomUUID().replace(/-/g, ""),
+          id: randomId(),
           resourceId: s.id,
           environmentName: envName,
           createdAt: BigInt(Date.now()),
@@ -96,7 +97,7 @@ export default function InfraMap({ onAddServer }: InfraMapProps) {
         if (row) callReducer(conn => conn.reducers.removeResourceEnvironment({ id: row.id }));
       } else if (!isAssigned(resourceId, e.name)) {
         callReducer(conn => conn.reducers.addResourceEnvironment({
-          id: crypto.randomUUID().replace(/-/g, ""),
+          id: randomId(),
           resourceId,
           environmentName: e.name,
           createdAt: BigInt(Date.now()),

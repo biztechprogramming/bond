@@ -3,9 +3,10 @@ import DirBrowser from "@/components/shared/DirBrowser";
 import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useAvailableModels, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
 import { getAgents as getAgentRows, getAgentChannels, getAgentMounts, getConnection } from "@/lib/spacetimedb-client";
+import { randomId } from "@/lib/random-id";
 
 function generateId(): string {
-  return crypto.randomUUID().replace(/-/g, '');
+  return randomId();
 }
 
 interface WorkspaceMount {
