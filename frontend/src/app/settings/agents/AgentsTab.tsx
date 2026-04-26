@@ -648,7 +648,7 @@ export default function AgentsTab() {
       // If any existing mount would be dropped, fail the save instead of
       // deleting mounts silently. Intentional removal must use a dedicated UX.
       if (!isNew) {
-        const originalMountKeys = new Set((selected?.workspace_mounts || []).map(m => `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`));
+        const originalMountKeys = new Set((originalAgentRef.current?.workspace_mounts || []).map(m => `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`));
         const editedMountKeys = new Set((editing.workspace_mounts || []).map(m => `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`));
         const missingMounts = [...originalMountKeys].filter(key => !editedMountKeys.has(key));
         if (missingMounts.length > 0) {
