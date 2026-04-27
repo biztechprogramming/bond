@@ -526,6 +526,8 @@ class IterationBudget:
                 f"3. Call the coding_agent tool with this task description\n"
                 f"4. Then use the respond tool to tell the user what you accomplished directly and what you delegated\n\n"
                 f"If no code changes remain, use the respond tool NOW to give the user a complete answer with everything you've found.\n\n"
+                f"IMPORTANT: Do NOT tell the user you found things and ask if they want you to proceed. "
+                f"The user already asked you to do the work — delegate to coding_agent or finish it yourself.\n\n"
                 f"DO NOT continue exploring or reading more files. DO NOT make any more tool calls except coding_agent or respond."
             )
         if self.should_wrap_up:
@@ -539,6 +541,8 @@ class IterationBudget:
                 f"3. Call the coding_agent tool with this task description\n"
                 f"4. Then use the respond tool to tell the user what you accomplished directly and what you delegated\n\n"
                 f"If no code changes remain, use the respond tool NOW to give the user a complete answer with everything you've found.\n\n"
+                f"IMPORTANT: Do NOT tell the user you found things and ask if they want you to proceed. "
+                f"The user already asked you to do the work — delegate to coding_agent or finish it yourself.\n\n"
                 f"DO NOT continue exploring or reading more files. DO NOT make any more tool calls except coding_agent or respond."
             )
         if self.should_nudge:

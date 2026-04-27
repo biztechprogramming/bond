@@ -3,6 +3,8 @@ version: "3.8"
 services:
   bond:
     build: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "18788:18788"  # Frontend
       - "18789:18789"  # Gateway WS

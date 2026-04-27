@@ -292,6 +292,13 @@ def select_tools(
     if mcp_tools:
         selected.update(mcp_tools)
 
+    # Always include database_* tools — these are Bond-native virtual tools
+    # backed by Faucet (Doc 109). They are only present in enabled_tools when
+    # the agent has attached databases, so no keyword gating is needed.
+    db_tools = {t for t in enabled_tools if t.startswith("database_")}
+    if db_tools:
+        selected.update(db_tools)
+
     # Text to match against
     match_text = user_message
     if last_assistant_content:

@@ -102,10 +102,19 @@ def check_mcp_acl(agent_id: str, tool_name: str) -> bool:
 
 @router.get("/proxy/tools")
 async def proxy_list_tools(agent_id: str):
-    """List available MCP tools for an agent. Called by Gateway broker."""
+    """List available MCP tools for an agent. Called by Gateway broker.
+
+    Bond-native virtual database tools are injected based on the agent's
+    current database assignments (Design Doc 109).  Raw faucet_* tools
+    are excluded from the response — the virtual tools take precedence.
+    """
     await mcp_manager.ensure_servers_loaded(agent_id=agent_id)
+
+    # Attempt to register Faucet MCP if not already done (best-effort)
+    await mcp_manager.ensure_faucet_registered()
+
     tools = await mcp_manager.list_tools(scope=agent_id)
-    # Also include global-scope tools
+    # Also include global-scope tools (excludes managed/hidden by default)
     global_tools = await mcp_manager.list_tools(scope="global")
 
     # Merge, dedup by name
@@ -115,14 +124,71 @@ async def proxy_list_tools(agent_id: str):
             tools.append(t)
             seen.add(t["name"])
 
+    # Inject Bond-native virtual database tools based on current assignments
+    from backend.app.mcp.database_capability import (
+        resolve_agent_databases,
+        get_effective_tools,
+    )
+    assignments = await resolve_agent_databases(agent_id)
+    db_tools = get_effective_tools(assignments)
+    for dt in db_tools:
+        func = dt["function"]
+        tool_entry = {
+            "name": func["name"],
+            "server": "bond-database",
+            "mcp_name": func["name"],
+            "description": func.get("description", ""),
+            "parameters": func.get("parameters", {}),
+        }
+        if func["name"] not in seen:
+            tools.append(tool_entry)
+            seen.add(func["name"])
+
     return {"tools": tools}
 
 
 @router.post("/proxy/call", response_model=MCPProxyCallResponse)
 async def proxy_call_tool(req: MCPProxyCallRequest):
-    """Execute an MCP tool. Called by Gateway broker."""
+    """Execute an MCP tool. Called by Gateway broker.
+
+    Handles both Bond-native virtual database tools (database_*)
+    and standard mcp_* prefixed tools.
+    """
     if not check_mcp_acl(req.agent_id, req.tool_name):
         raise HTTPException(status_code=403, detail=f"Agent {req.agent_id} not allowed to use {req.tool_name}")
+
+    # Handle Bond-native virtual database tools (Design Doc 109)
+    if req.tool_name.startswith("database_"):
+        from backend.app.mcp.database_capability import authorize_and_resolve, BOND_TO_FAUCET
+
+        if req.tool_name not in BOND_TO_FAUCET:
+            raise HTTPException(status_code=404, detail=f"Unknown database tool: {req.tool_name}")
+
+        assignment, error, faucet_args = await authorize_and_resolve(
+            req.agent_id, req.tool_name, req.arguments,
+        )
+        if error:
+            return MCPProxyCallResponse(error=error)
+
+        # database_list_databases is handled inline
+        if req.tool_name == "database_list_databases":
+            from backend.app.mcp.database_capability import resolve_agent_databases
+            assignments = await resolve_agent_databases(req.agent_id)
+            import json
+            result_str = json.dumps([
+                {"name": a.database_name, "driver": a.driver,
+                 "access_tier": a.access_tier, "status": a.status}
+                for a in assignments
+            ])
+            return MCPProxyCallResponse(result=result_str)
+
+        # Delegate to Faucet MCP
+        await mcp_manager.ensure_faucet_registered()
+        faucet_tool = BOND_TO_FAUCET[req.tool_name]
+        result = await mcp_manager.call_tool("faucet", faucet_tool, faucet_args, scope="global")
+        if "error" in result:
+            return MCPProxyCallResponse(error=result["error"])
+        return MCPProxyCallResponse(result=result.get("result", ""))
 
     await mcp_manager.ensure_servers_loaded(agent_id=req.agent_id)
 
@@ -258,7 +324,11 @@ async def test_mcp_server(config: MCPServerTestRequest):
 
 @router.get("/servers", response_model=List[MCPServerRead])
 async def list_servers(agent_id: Optional[str] = None):
-    """List configured MCP servers. If agent_id is provided, returns global + agent-specific."""
+    """List configured MCP servers. If agent_id is provided, returns global + agent-specific.
+
+    Managed/hidden servers (e.g. Faucet) are excluded from this list.
+    They are internal to Bond and not user-configurable (Design Doc 109).
+    """
     stdb = get_stdb()
 
     rows = await stdb.query("SELECT * FROM mcp_servers")

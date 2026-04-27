@@ -73,6 +73,30 @@ class TestSelectTools:
         result = select_tools("what's in config.yaml?", ALL_TOOLS)
         assert "file_read" in result
 
+    def test_database_tools_always_included(self):
+        """database_* tools should be auto-included like mcp_* tools."""
+        tools_with_db = ALL_TOOLS + [
+            "database_list_databases", "database_list_tables",
+            "database_describe_table", "database_query",
+        ]
+        result = select_tools("hi there, how are you?", tools_with_db)
+        assert "database_list_databases" in result
+        assert "database_list_tables" in result
+        assert "database_describe_table" in result
+        assert "database_query" in result
+
+    def test_database_tools_not_included_when_not_enabled(self):
+        """database_* tools should not appear if not in enabled_tools."""
+        result = select_tools("query the database", ALL_TOOLS)
+        assert not any(t.startswith("database_") for t in result)
+
+    def test_mcp_tools_always_included(self):
+        """mcp_* tools should be auto-included regardless of message."""
+        tools_with_mcp = ALL_TOOLS + ["mcp_faucet_query", "mcp_solidtime_timer"]
+        result = select_tools("hi there, how are you?", tools_with_mcp)
+        assert "mcp_faucet_query" in result
+        assert "mcp_solidtime_timer" in result
+
 
 class TestCompactToolSchema:
     def test_strips_long_description(self):

@@ -46,8 +46,9 @@ class FaucetManager:
 
         self._process = await asyncio.create_subprocess_exec(
             str(self.faucet_bin),
+            "--data-dir", str(self.faucet_config_dir),
             "serve",
-            "--config-dir", str(self.faucet_config_dir),
+            "--foreground",
             "--port", str(self.port),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -82,8 +83,8 @@ class FaucetManager:
 
         proc = await asyncio.create_subprocess_exec(
             str(self.faucet_bin),
+            "--data-dir", str(self.faucet_config_dir),
             *args,
-            "--config-dir", str(self.faucet_config_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -92,7 +93,9 @@ class FaucetManager:
 
     async def add_database(self, name: str, driver: str, dsn: str) -> dict:
         """Register a database with Faucet via CLI."""
-        stdout, stderr, rc = await self._run_cli("db", "add", name, "--driver", driver, "--dsn", dsn)
+        stdout, stderr, rc = await self._run_cli(
+            "db", "add", "--name", name, "--driver", driver, "--dsn", dsn
+        )
         if rc != 0:
             raise RuntimeError(f"faucet db add failed: {stderr}")
         return {"status": "ok", "output": stdout}
@@ -105,27 +108,47 @@ class FaucetManager:
         return {"status": "ok", "output": stdout}
 
     async def create_role(self, name: str, permissions: list[str]) -> dict:
-        """Create a Faucet role via CLI."""
-        cmd = ["role", "create", name]
-        for perm in permissions:
-            cmd.extend(["--permission", perm])
-        stdout, stderr, rc = await self._run_cli(*cmd)
+        """Create a Faucet role via CLI.
+
+        NOTE: faucetdb/faucet's `role create` CLI only accepts --name and
+        --description; it has no flag for attaching permissions. Permissions
+        passed here are recorded in the role description as a fallback so the
+        role exists and carries the intent, but actual permission enforcement
+        must be configured via faucet.yaml or a different mechanism.
+        """
+        description = f"bond-managed; permissions={','.join(permissions)}" if permissions else "bond-managed"
+        stdout, stderr, rc = await self._run_cli(
+            "role", "create", "--name", name, "--description", description
+        )
         if rc != 0:
             raise RuntimeError(f"faucet role create failed: {stderr}")
+        if permissions:
+            logger.warning(
+                "faucet role %s created without CLI permission attachment; "
+                "permissions %s stored in description only",
+                name, permissions,
+            )
         return {"status": "ok", "output": stdout}
 
     async def create_api_key(self, role_name: str, key_name: str) -> dict:
         """Create a Faucet API key via CLI. Returns the key value."""
-        stdout, stderr, rc = await self._run_cli("key", "create", key_name, "--role", role_name)
+        stdout, stderr, rc = await self._run_cli(
+            "key", "create", "--role", role_name, "--label", key_name
+        )
         if rc != 0:
             raise RuntimeError(f"faucet key create failed: {stderr}")
         return {"status": "ok", "key": stdout.strip()}
 
-    async def delete_api_key(self, key_name: str) -> dict:
-        """Delete a Faucet API key via CLI."""
-        stdout, stderr, rc = await self._run_cli("key", "delete", key_name)
+    async def delete_api_key(self, key_prefix: str) -> dict:
+        """Revoke a Faucet API key by prefix.
+
+        NOTE: faucetdb/faucet revokes keys by prefix, not by label. Callers
+        must pass the key prefix (shown when the key was created), not the
+        human-readable label.
+        """
+        stdout, stderr, rc = await self._run_cli("key", "revoke", key_prefix)
         if rc != 0:
-            raise RuntimeError(f"faucet key delete failed: {stderr}")
+            raise RuntimeError(f"faucet key revoke failed: {stderr}")
         return {"status": "ok", "output": stdout}
 
 

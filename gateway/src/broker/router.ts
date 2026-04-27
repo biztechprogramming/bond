@@ -12,6 +12,7 @@ import { MCPPolicyEngine } from "./mcp-policy.js";
 import { executeCommand } from "./executor.js";
 import { handleDeploy } from "./deploy-handler.js";
 import type { GatewayConfig } from "../config/index.js";
+import { filterFaucetTools, isFaucetTool, isBondDatabaseTool } from "../mcp/faucet-filter.js";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -196,10 +197,16 @@ export function createBrokerRouter(config: BrokerConfig, gatewayConfig?: Gateway
       const data = await resp.json() as { tools: Array<{ name: string }> };
 
       // Apply MCP policy filter
-      const filteredTools = data.tools.filter((tool: { name: string }) => {
+      let filteredTools = data.tools.filter((tool: { name: string }) => {
         const decision = mcpPolicy.evaluate(tool.name, agentId);
         return decision.decision === "allow";
       });
+
+      // Prefer Bond-native database_* tools over raw faucet_* tools (Doc 109 §4)
+      const hasBondDbTools = filteredTools.some((t: { name: string }) => isBondDatabaseTool(t.name));
+      if (hasBondDbTools) {
+        filteredTools = filteredTools.filter((t: { name: string }) => !isFaucetTool(t.name));
+      }
 
       audit.log({
         timestamp: new Date().toISOString(),
