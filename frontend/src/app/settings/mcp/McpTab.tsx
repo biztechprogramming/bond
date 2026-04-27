@@ -1,10 +1,11 @@
+import { randomId } from "@/lib/random-id";
 import React, { useState, useEffect } from "react";
 import { useMcpServers, useAgents, useSpacetimeConnection, callReducer } from "@/hooks/useSpacetimeDB";
 import { type McpServerRow, type AgentRow } from "@/lib/spacetimedb-client";
 import { BACKEND_API, apiFetch } from "@/lib/config";
 
 function generateId(): string {
-  return crypto.randomUUID().replace(/-/g, '');
+  return randomId();
 }
 
 interface EnvVar {

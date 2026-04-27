@@ -1,3 +1,4 @@
+import { randomId } from "@/lib/random-id";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { GATEWAY_API , apiFetch } from "@/lib/config";
 import { useResources, useComponents, callReducer, useSettingsMap, useAgents, useAgentMounts } from "@/hooks/useSpacetimeDB";
@@ -432,7 +433,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
     try {
       let parentId: string | null = null;
       if (parentSystem === "new" && newSystemName.trim()) {
-        const sysId = crypto.randomUUID().replace(/-/g, "");
+        const sysId = randomId();
         callReducer(conn => conn.reducers.createComponent({
           id: sysId,
           name: newSystemName.trim().toLowerCase().replace(/[^a-z0-9-]/g, "-"),
@@ -453,7 +454,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
       }
 
       for (const draft of enabled) {
-        const compId = crypto.randomUUID().replace(/-/g, "");
+        const compId = randomId();
         callReducer(conn => conn.reducers.createComponent({
           id: compId,
           name: draft.name,
@@ -470,7 +471,7 @@ export default function DiscoverStackWizard({ environments, onComplete, onCancel
         }));
 
         if (selectedServerId) {
-          const crId = crypto.randomUUID().replace(/-/g, "");
+          const crId = randomId();
           callReducer(conn => conn.reducers.addComponentResource({
             id: crId,
             componentId: compId,

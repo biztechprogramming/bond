@@ -1,8 +1,9 @@
+import { randomId } from "@/lib/random-id";
 import React, { useState, useEffect, useCallback } from "react";
 import { BACKEND_API, apiFetch } from "@/lib/config";
 
 function generateId(): string {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  return randomId().slice(0, 16);
 }
 
 interface DatabaseConnection {

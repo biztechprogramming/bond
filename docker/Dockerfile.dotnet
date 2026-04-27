@@ -44,10 +44,8 @@ RUN apt-get update && apt-get install -y libicu-dev libodbc2 unixodbc-dev \
     && chmod +x /opt/sqlpackage/sqlpackage \
     && rm /tmp/sqlpackage.zip
 
-# Install Node.js 22 (for frontend tooling, bun, etc.)
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+# Node.js 22 is inherited from bond-agent-worker:latest.
+# Keep Node centralized in the base image so all derived containers stay aligned.
 
 # Install bun for web projects
 RUN curl -fsSL https://bun.sh/install | bash \
