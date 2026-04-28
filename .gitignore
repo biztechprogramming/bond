@@ -28,6 +28,8 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
 
 # Lockfiles generated on install
 gateway/pnpm-lock.yaml

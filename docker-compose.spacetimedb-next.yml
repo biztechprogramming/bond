@@ -1,0 +1,25 @@
+version: '3.8'
+
+# Local SpacetimeDB instance for validating version upgrades before
+# rolling them out to prod. Runs on localhost:18787 against a dedicated
+# data volume; prod runs on loki:18787 (same port, different host).
+#
+# Workflow: pin the new image tag here, validate locally, then copy the
+# tag into docker-compose.spacetimedb-simple.yml (and -spacetimedb.yml)
+# and delete this file until the next upgrade.
+services:
+  spacetimedb-next:
+    image: clockworklabs/spacetime:v2.1.0
+    container_name: bond-spacetimedb-next
+    restart: unless-stopped
+    ports:
+      - "18787:3000"
+    volumes:
+      - ~/.bond/spacetimedb-next:/home/spacetime/.local/share/spacetime/data
+    command: start
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

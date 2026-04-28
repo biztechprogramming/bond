@@ -627,7 +627,7 @@ const spacetimedb = schema({
     {
       public: true,
       indexes: [
-        { name: 'wgn_workspace_type', algorithm: 'btree', columns: ['workspaceId'] },
+        { accessor: 'wgn_workspace_type', algorithm: 'btree', columns: ['workspaceId'] },
       ],
     },
     {
@@ -655,9 +655,9 @@ const spacetimedb = schema({
     {
       public: true,
       indexes: [
-        { name: 'wge_workspace_source', algorithm: 'btree', columns: ['workspaceId'] },
-        { name: 'wge_source_node', algorithm: 'btree', columns: ['sourceNodeId'] },
-        { name: 'wge_target_node', algorithm: 'btree', columns: ['targetNodeId'] },
+        { accessor: 'wge_workspace_source', algorithm: 'btree', columns: ['workspaceId'] },
+        { accessor: 'wge_source_node', algorithm: 'btree', columns: ['sourceNodeId'] },
+        { accessor: 'wge_target_node', algorithm: 'btree', columns: ['targetNodeId'] },
       ],
     },
     {
@@ -684,8 +684,8 @@ const spacetimedb = schema({
     {
       public: true,
       indexes: [
-        { name: 'wgp_edge', algorithm: 'btree', columns: ['edgeId'] },
-        { name: 'wgp_node', algorithm: 'btree', columns: ['nodeId'] },
+        { accessor: 'wgp_edge', algorithm: 'btree', columns: ['edgeId'] },
+        { accessor: 'wgp_node', algorithm: 'btree', columns: ['nodeId'] },
       ],
     },
     {
@@ -708,7 +708,7 @@ const spacetimedb = schema({
     {
       public: true,
       indexes: [
-        { name: 'wgr_workspace', algorithm: 'btree', columns: ['workspaceId'] },
+        { accessor: 'wgr_workspace', algorithm: 'btree', columns: ['workspaceId'] },
       ],
     },
     {
@@ -732,7 +732,7 @@ const spacetimedb = schema({
     {
       public: true,
       indexes: [
-        { name: 'wgfs_workspace', algorithm: 'btree', columns: ['workspaceId'] },
+        { accessor: 'wgfs_workspace', algorithm: 'btree', columns: ['workspaceId'] },
       ],
     },
     {
