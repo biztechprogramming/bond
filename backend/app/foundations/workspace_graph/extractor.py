@@ -22,7 +22,7 @@ from backend.app.agent.workspace_map import (
     discover_repos,
 )
 
-from .models import FileState, GraphEdge, GraphNode, GraphRun
+from .models import FileState, GraphEdge, GraphNode, GraphRun, Provenance
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,7 @@ class WorkspaceGraphExtractor:
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
         file_states: list[FileState] = []
+        provenance: list[Provenance] = []
 
         # Workspace node
         ws_node = GraphNode(
@@ -98,12 +99,14 @@ class WorkspaceGraphExtractor:
             nodes.extend(repo_result.nodes)
             edges.extend(repo_result.edges)
             file_states.extend(repo_result.file_states)
+            provenance.extend(repo_result.provenance)
 
         return ExtractionResult(
             nodes=nodes,
             edges=edges,
             file_states=file_states,
             files_scanned=len(file_states),
+            provenance=provenance,
         )
 
     def extract_repo(
@@ -117,6 +120,7 @@ class WorkspaceGraphExtractor:
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
         file_states: list[FileState] = []
+        provenance: list[Provenance] = []
 
         # Repository node
         repo_node = GraphNode(
@@ -217,7 +221,7 @@ class WorkspaceGraphExtractor:
                     symbol_ids[tag.name] = sym_node.id
 
                     # file -> defines -> symbol
-                    edges.append(GraphEdge(
+                    define_edge = GraphEdge(
                         id=str(ULID()),
                         workspace_id=workspace_id,
                         repo_id=repo_id,
@@ -227,6 +231,18 @@ class WorkspaceGraphExtractor:
                         mode="extracted",
                         source_kind="ast",
                         metadata={"line": tag.line},
+                    )
+                    edges.append(define_edge)
+
+                    # Provenance for the definition edge
+                    provenance.append(Provenance(
+                        workspace_id=workspace_id,
+                        provenance_type="ast_extraction",
+                        edge_id=define_edge.id,
+                        node_id=sym_node.id,
+                        source_path=rel_path,
+                        source_line_start=tag.line,
+                        excerpt=tag.signature or tag.name,
                     ))
 
             # Second pass: references
@@ -250,6 +266,7 @@ class WorkspaceGraphExtractor:
             edges=edges,
             file_states=file_states,
             files_scanned=len(file_states),
+            provenance=provenance,
         )
 
 
@@ -262,8 +279,10 @@ class ExtractionResult:
         edges: list[GraphEdge],
         file_states: list[FileState],
         files_scanned: int = 0,
+        provenance: list[Provenance] | None = None,
     ):
         self.nodes = nodes
         self.edges = edges
         self.file_states = file_states
         self.files_scanned = files_scanned
+        self.provenance = provenance or []

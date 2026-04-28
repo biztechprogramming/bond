@@ -172,6 +172,21 @@ class FileState:
 
 
 @dataclass
+class Provenance:
+    """A provenance record linking a node or edge to its source."""
+
+    workspace_id: str
+    provenance_type: str  # e.g. "ast_extraction", "regex_extraction", "import"
+    edge_id: str | None = None
+    node_id: str | None = None
+    source_path: str | None = None
+    source_line_start: int | None = None
+    source_line_end: int | None = None
+    source_ref: str | None = None
+    excerpt: str | None = None
+
+
+@dataclass
 class GraphSubgraph:
     """A subgraph result from neighborhood or path queries."""
 
