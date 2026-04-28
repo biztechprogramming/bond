@@ -1,8 +1,9 @@
 # 110 — Workspace Knowledge Graph
 
-**Status:** Draft  
-**Author:** Sage  
+**Status:** Draft (Revised)
+**Author:** Sage
 **Date:** 2026-04-13
+**Revised:** 2026-04-13 — Storage layer changed from SQLite to SpacetimeDB per project standards (Design Doc 018)
 
 ## Depends on
 
@@ -189,12 +190,12 @@ Bond already has a knowledge-store direction in Doc 001 and an entity-graph dire
 Reviewing the current Bond implementation suggests the WKG should be designed as a composition of existing patterns rather than a brand-new subsystem:
 
 - `backend/app/foundations/entity_graph/repository.py` already provides the right repository shape for graph traversal primitives such as `get_neighborhood`, `find_path`, `search`, and `resolve`
-- `backend/app/agent/context_store.py` already demonstrates a pragmatic local SQLite pattern for durable, queryable, per-scope indexing with FTS5 and WAL mode
+- `backend/app/agent/context_store.py` demonstrates a local SQLite pattern for durable indexing, but WKG should follow the project's SpacetimeDB direction instead
 - `backend/app/agent/workspace_map.py` already discovers workspace and repo boundaries and gives us a natural source for `workspace` and `repository` nodes
 - `backend/app/agent/repomap/tags.py` and `backend/app/agent/repomap/ranking.py` already extract symbol definitions/references and rank files by structural importance, which is a strong Phase 1 seed for deterministic graph extraction
-- `migrations/000002_knowledge_store.up.sql` and `000003_entity_graph.up.sql` show Bond’s current migration style, trigger patterns, FTS side tables, JSON metadata columns, and runtime-created vector tables
+- Bond’s SpacetimeDB module (`spacetimedb/spacetimedb/src/index.ts`) already defines 40+ tables covering agents, conversations, work plans, providers, deployments, and database integration — the WKG tables follow the same patterns
 
-That review changes the recommendation slightly: WKG should be a dedicated schema, but it should intentionally mirror Bond’s existing repository, migration, and indexing patterns so it can be implemented incrementally with low architectural risk.
+That review changes the recommendation: WKG should be a dedicated set of SpacetimeDB tables, following the same table/reducer patterns used by the rest of the Bond module, so it can be implemented incrementally with low architectural risk and full real-time capability.
 
 ### Recommendation
 
@@ -211,152 +212,67 @@ Reason:
 
 ### Recommended persistence approach
 
-Use the existing Bond relational store for the source of truth in Phase 1 and Phase 2.
+Use SpacetimeDB as the canonical store for WKG data from Phase 1.
 
 Specifically:
 
-- store WKG nodes, edges, provenance, runs, and file state in SQLite/libsql tables alongside the current knowledge-store tables
-- add FTS5 tables for node search and provenance search, following the same trigger-based pattern already used by `memories`, `content_chunks`, and `session_summaries`
-- keep embeddings in a side table created at runtime, matching the current vec-table pattern described in migration `000002_knowledge_store.up.sql`
-- defer any SpacetimeDB projection to a read model for UI/streaming use, not the canonical write path
+- store WKG nodes, edges, provenance, runs, and file state as SpacetimeDB tables in the Bond module (`spacetimedb/spacetimedb/src/index.ts`)
+- use SpacetimeDB indexes for efficient lookups (workspace-scoped, source/target node, edge/node provenance)
+- expose mutations through reducers following Bond's existing SpacetimeDB patterns (upsert, soft-delete, batch import)
+- frontend and gateway get real-time subscriptions to graph state for free
+- keep embeddings as a future extension (side table or external sidecar)
 
-Why this is the best fit for Bond today:
+Why SpacetimeDB is the right fit:
 
-- the existing entity graph and memory systems already assume relational persistence and repository-mediated access
-- `ContextStore` shows Bond is comfortable using SQLite for local-first indexed retrieval with WAL enabled
-- graph indexing is an internal backend concern first; it does not need realtime sync semantics to be useful
-- this avoids introducing a second storage system before the query model and extraction model are proven
+- Bond's migration direction (Design Doc 018) is toward SpacetimeDB as the unified state store
+- all other major subsystems (agents, conversations, work plans, providers, deployments) already live in SpacetimeDB
+- adding WKG to SQLite would create a divergent storage path that contradicts the dual-write migration strategy
+- SpacetimeDB's real-time subscriptions give the UI graph explorer (Phase 3) reactivity without additional plumbing
+- the Gateway already mediates SpacetimeDB access, so backend graph queries use the same infrastructure as everything else
 
 ### Proposed schema
 
+All WKG tables are defined as SpacetimeDB tables in `spacetimedb/spacetimedb/src/index.ts`.
+
 #### `workspace_graph_nodes`
 
-- `id TEXT PRIMARY KEY`
-- `workspace_id TEXT NOT NULL`
-- `repo_id TEXT`
-- `node_type TEXT NOT NULL`
-- `stable_key TEXT NOT NULL`
-- `display_name TEXT NOT NULL`
-- `path TEXT`
-- `language TEXT`
-- `signature TEXT`
-- `content_hash TEXT`
-- `is_deleted INTEGER NOT NULL DEFAULT 0`
-- `metadata JSON DEFAULT '{}' CHECK(json_valid(metadata))`
-- `embedding_model TEXT`
-- `processed_at TIMESTAMP`
-- `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL`
-- `updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL`
+SpacetimeDB table with BTree index on `workspaceId`.
 
-Unique:
-
-- `(workspace_id, stable_key)`
-
-Indexes:
-
-- `(workspace_id, node_type)`
-- `(workspace_id, path)`
-- `(workspace_id, repo_id, node_type)`
+Fields: `id` (PK), `workspaceId`, `repoId`, `nodeType`, `stableKey`, `displayName`, `path`, `language`, `signature`, `contentHash`, `isDeleted`, `metadata` (JSON string), `embeddingModel`, `processedAt`, `createdAt`, `updatedAt`.
 
 #### `workspace_graph_edges`
 
-- `id TEXT PRIMARY KEY`
-- `workspace_id TEXT NOT NULL`
-- `repo_id TEXT`
-- `source_node_id TEXT NOT NULL`
-- `target_node_id TEXT NOT NULL`
-- `edge_type TEXT NOT NULL`
-- `mode TEXT NOT NULL CHECK(mode IN ('extracted','inferred','ambiguous'))`
-- `confidence REAL NOT NULL DEFAULT 1.0`
-- `source_kind TEXT NOT NULL`
-- `run_id TEXT`
-- `is_deleted INTEGER NOT NULL DEFAULT 0`
-- `metadata JSON DEFAULT '{}' CHECK(json_valid(metadata))`
-- `created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL`
-- `updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL`
-- `last_confirmed_at TIMESTAMP`
+SpacetimeDB table with BTree indexes on `workspaceId`, `sourceNodeId`, `targetNodeId`.
 
-Constraints:
-
-- unique `(workspace_id, source_node_id, target_node_id, edge_type, source_kind)`
-
-Indexes:
-
-- `(workspace_id, source_node_id)`
-- `(workspace_id, target_node_id)`
-- `(workspace_id, edge_type)`
-- `(workspace_id, mode, confidence)`
+Fields: `id` (PK), `workspaceId`, `repoId`, `sourceNodeId`, `targetNodeId`, `edgeType`, `mode` (extracted/inferred/ambiguous), `confidence`, `sourceKind`, `runId`, `isDeleted`, `metadata` (JSON string), `createdAt`, `updatedAt`, `lastConfirmedAt`.
 
 #### `workspace_graph_provenance`
 
-- `id TEXT PRIMARY KEY`
-- `workspace_id TEXT NOT NULL`
-- `edge_id TEXT`
-- `node_id TEXT`
-- `provenance_type TEXT NOT NULL`
-- `source_path TEXT`
-- `source_line_start INT`
-- `source_line_end INT`
-- `source_ref TEXT`
-- `excerpt TEXT`
-- `created_at TIMESTAMP NOT NULL`
+SpacetimeDB table with BTree indexes on `edgeId`, `nodeId`.
+
+Fields: `id` (PK), `workspaceId`, `edgeId`, `nodeId`, `provenanceType`, `sourcePath`, `sourceLineStart`, `sourceLineEnd`, `sourceRef`, `excerpt`, `createdAt`.
 
 #### `workspace_graph_runs`
 
-- `id TEXT PRIMARY KEY`
-- `workspace_id TEXT NOT NULL`
-- `repo_id TEXT`
-- `run_type TEXT NOT NULL CHECK(run_type IN ('full','incremental','on_demand'))`
-- `status TEXT NOT NULL CHECK(status IN ('pending','running','success','failed','partial'))`
-- `trigger TEXT NOT NULL CHECK(trigger IN ('workspace_mount','file_change','git_change','manual','tool_intercept','continuation','startup'))`
-- `files_scanned INT NOT NULL DEFAULT 0`
-- `nodes_written INT NOT NULL DEFAULT 0`
-- `edges_written INT NOT NULL DEFAULT 0`
-- `started_at TIMESTAMP NOT NULL`
-- `completed_at TIMESTAMP`
-- `error TEXT`
+SpacetimeDB table with BTree index on `workspaceId`.
+
+Fields: `id` (PK), `workspaceId`, `repoId`, `runType` (full/incremental/on_demand), `status` (pending/running/success/failed/partial), `trigger`, `filesScanned`, `nodesWritten`, `edgesWritten`, `startedAt`, `completedAt`, `error`.
 
 #### `workspace_graph_file_state`
 
-- `id TEXT PRIMARY KEY`
-- `workspace_id TEXT NOT NULL`
-- `repo_id TEXT`
-- `path TEXT NOT NULL`
-- `content_hash TEXT NOT NULL`
-- `language TEXT`
-- `mtime_ns INTEGER`
-- `size_bytes INTEGER`
-- `last_indexed_at TIMESTAMP`
-- `last_run_id TEXT`
-- `status TEXT NOT NULL CHECK(status IN ('indexed','skipped','error','deleted'))`
-- `last_error TEXT`
-- `metadata JSON DEFAULT '{}' CHECK(json_valid(metadata))`
+SpacetimeDB table with BTree index on `workspaceId`.
 
-Unique:
+Fields: `id` (PK), `workspaceId`, `repoId`, `path`, `contentHash`, `language`, `mtimeNs`, `sizeBytes`, `lastIndexedAt`, `lastRunId`, `status` (indexed/skipped/error/deleted), `lastError`, `metadata` (JSON string).
 
-- `(workspace_id, path)`
+#### Search capabilities
 
-#### Search side tables
-
-Add FTS side tables for:
-
-- `workspace_graph_nodes_fts`
-- `workspace_graph_provenance_fts`
-
-These should index fields like:
-
-- `display_name`
-- `stable_key`
-- `path`
-- `signature`
-- selected metadata summaries
-- provenance excerpts
+Full-text search is handled at the application layer (Gateway/backend) by querying SpacetimeDB tables via subscriptions and filtering on `displayName`, `stableKey`, `path`, `signature`, and provenance `excerpt` fields. For heavy search workloads, a future phase may add an external search index (e.g., tantivy sidecar) fed by SpacetimeDB subscriptions.
 
 Optional later:
 
-- `workspace_graph_embeddings`
-- `workspace_graph_communities`
-- `workspace_graph_materialized_paths`
+- `workspace_graph_embeddings` (side table or external vector store)
+- `workspace_graph_communities` (Graphify-derived clustering)
+- `workspace_graph_materialized_paths` (precomputed traversals)
 
 ### Stable key guidance
 
@@ -430,7 +346,7 @@ A practical first implementation should reuse current Bond modules directly, whi
    - add a dedicated import path for external extraction batches so Graphify-originated metadata and provenance are preserved instead of flattened away
 
 5. `Search surface`
-   - follow the local SQLite + FTS pattern from `ContextStore`
+   - query SpacetimeDB tables via Gateway client using index lookups and subscription-based filtering
    - keep node search cheap and deterministic before adding embeddings or LLM inference
    - expose both exact/stable-key lookup and text search over labels, paths, signatures, and provenance summaries
 
@@ -737,11 +653,12 @@ If inferred edges are low confidence:
 
 ### Phase 1
 
-- canonical storage in SQLite/libsql tables
+- canonical storage in SpacetimeDB tables (workspace_graph_nodes, edges, provenance, runs, file_state)
+- reducers for upsert, soft-delete, batch import, run lifecycle, and workspace purge
 - deterministic workspace, repository, file, and symbol graph
 - incremental hashing and file-state ledger
 - native Bond extractor path using workspace-map and repo-map tags
-- basic graph tools and repository APIs
+- basic graph tools and repository APIs (via Gateway SpacetimeDB client)
 - no UI required
 
 ### Phase 2
@@ -751,20 +668,21 @@ If inferred edges are low confidence:
 - Graphify-backed docs/media ingestion where useful
 - context pipeline integration
 - continuation integration
+- frontend subscriptions to graph tables for live views
 
 ### Phase 3
 
 - inferred semantic edges
 - impact analysis and path explainability
 - optional clustering/community side tables
-- UI graph explorer
-- optional SpacetimeDB projections for frontend/live views
+- UI graph explorer with real-time SpacetimeDB subscriptions
+- optional external search index for heavy FTS workloads
 
 ## Open Questions
 
 - Should graph embeddings be stored with nodes or in a side table?
 - How much of repo-map generation should become a WKG view?
-- Should extracted graph data sync to the frontend via SpacetimeDB projections?
+- ~~Should extracted graph data sync to the frontend via SpacetimeDB projections?~~ **Resolved:** Yes — WKG tables live in SpacetimeDB natively, frontend subscribes directly.
 - How should multi-repo workspaces model cross-repo edges?
 - What is the minimal graph schema that still supports impact analysis well?
 - How should Bond represent dangling external references imported from Graphify: dropped with counters, stored as unresolved nodes, or preserved only in provenance?

@@ -1714,10 +1714,24 @@ async def _run_agent_loop(
                 if _tc_name == "coding_agent":
                     _coding_agent_called = True
 
+    # Count discovery tool calls — the agent may exhaust budget on exploration
+    # without making edits, but that's still meaningful work worth handing off.
+    _DISCOVERY_TOOLS = {"file_read", "search_memory", "web_search", "web_read",
+                        "shell_find", "file_search", "git_info", "file_list",
+                        "shell_ls", "shell_tree", "project_search", "code_execute"}
+    _discovery_count = sum(
+        1 for name in tool_summary_parts if name in _DISCOVERY_TOOLS
+    )
+    _has_meaningful_work = (
+        loop.has_made_consequential_call
+        or _explicit_delegation
+        or _discovery_count >= 3
+    )
+
     _should_auto_delegate = (
         loop.is_coding_task
         and not _coding_agent_called
-        and (loop.has_made_consequential_call or _explicit_delegation)
+        and _has_meaningful_work
         and "coding_agent" in agent_tools
     )
 

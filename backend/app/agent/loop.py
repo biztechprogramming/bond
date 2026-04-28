@@ -814,25 +814,30 @@ async def agent_turn(
     
     logger.warning("Agent hit max iterations (%d)", max_iterations)
 
-    # Auto-delegate to coding agent if we made edits but ran out of time
-    _has_edits = any(
-        any(
-            tc.get("function", {}).get("name") in ("file_edit", "file_write")
-            for tc in msg.get("tool_calls", [])
-        )
-        for msg in messages
-        if msg.get("role") == "assistant" and msg.get("tool_calls")
-    )
-    _called_coding_agent = any(
-        any(
-            tc.get("function", {}).get("name") == "coding_agent"
-            for tc in msg.get("tool_calls", [])
-        )
-        for msg in messages
-        if msg.get("role") == "assistant" and msg.get("tool_calls")
-    )
+    # Auto-delegate to coding agent if we did meaningful work but ran out of time.
+    # "Meaningful work" includes both edits AND substantial discovery (file reads,
+    # searches) — the agent may exhaust its budget exploring before making edits.
+    _has_edits = False
+    _called_coding_agent = False
+    _discovery_tool_count = 0
+    _DISCOVERY_TOOLS = {"file_read", "search_memory", "web_search", "web_read",
+                        "shell_find", "file_search", "git_info", "file_list",
+                        "shell_ls", "shell_tree", "project_search", "code_execute"}
+    for msg in messages:
+        if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+            continue
+        for tc in msg.get("tool_calls", []):
+            fn_name = tc.get("function", {}).get("name", "")
+            if fn_name in ("file_edit", "file_write"):
+                _has_edits = True
+            elif fn_name == "coding_agent":
+                _called_coding_agent = True
+            elif fn_name in _DISCOVERY_TOOLS:
+                _discovery_tool_count += 1
 
-    if _has_edits and not _called_coding_agent and "coding_agent" in all_enabled_tools:
+    _has_meaningful_work = _has_edits or _discovery_tool_count >= 3
+
+    if _has_meaningful_work and not _called_coding_agent and "coding_agent" in all_enabled_tools:
         try:
             from backend.app.agent.pre_gather import build_handoff_context
             handoff_ctx = build_handoff_context(messages)
