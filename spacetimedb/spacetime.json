@@ -1,4 +1,4 @@
 {
-  "server": "http://localhost:18787",
+  "server": "http://loki:18787",
   "module-path": "./spacetimedb"
 }
