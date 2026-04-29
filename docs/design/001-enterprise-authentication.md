@@ -21,13 +21,13 @@ Add enterprise-grade authentication to Bond so that:
 
 | Component | Technology | Auth Today |
 |-----------|-----------|------------|
-| Backend | Python / FastAPI / SQLAlchemy + SQLite (aiosqlite) | None |
+| Backend | Python / FastAPI | None |
 | Gateway | TypeScript / Hono + WebSocket | None — ephemeral sessions |
 | Frontend | Next.js (App Router) + SpacetimeDB client | None |
 | Secrets | Fernet-encrypted vault (`core/vault.py`) | No user scoping |
-| Database | SQLite with WAL mode, migrations in `migrations/` | No `user_id` columns |
+| Database | SpacetimeDB for Bond operational state | No `user_id` columns |
 
-**Key finding:** The `agents`, `conversations`, and `conversation_messages` tables have no `user_id` column. The gateway `Session` type is purely a WebSocket session with no identity.
+**Key finding:** The current Bond operational model needs explicit user scoping for agents, conversations, and related state. The gateway `Session` type is purely a WebSocket session with no identity.
 
 ---
 
@@ -415,7 +415,7 @@ On first startup after migration, if no users exist:
 
 1. **First-user experience:** Should the first user to register automatically become admin, or require env var setup? (Proposed: env var for security)
 
-2. **SpacetimeDB integration:** Some data is in SpacetimeDB. Should users/auth also live there, or stay in SQLite? (Proposed: SQLite — auth is backend-owned, SpacetimeDB is for real-time sync)
+2. **SpacetimeDB integration:** Bond operational state lives in SpacetimeDB. Should users/auth also live there, or should auth keep any separate backend-local secrets/session concerns where explicitly needed? (Proposed: keep Bond user/auth state aligned with SpacetimeDB-backed operational state, while allowing narrowly scoped local secret handling where appropriate)
 
 3. **OAuth/SSO:** Should we design the schema to support future Google/GitHub OAuth? (Proposed: yes — add `auth_provider` and `external_id` columns to `users` table in a future migration)
 
@@ -439,8 +439,7 @@ On first startup after migration, if no users exist:
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Breaking existing single-user workflows | High | Default user migration preserves all data |
-| SQLite concurrent writes during auth | Medium | WAL mode already enabled; session updates are simple |
+| SpacetimeDB auth/data model changes during rollout | Medium | Stage schema changes carefully and preserve compatibility during migration |
 | Cookie not sent with WebSocket | Medium | Use `credentials: 'include'` on WS connection |
 | Password in transit | Low | Localhost only; HTTPS recommended for remote |
 

@@ -30,11 +30,11 @@ class TestParseCommand:
         assert cmd == "node /path/to/script.js -s user"
         assert args == ["-s", "user"]
 
-    def test_windows_path(self):
-        """Windows-style paths are handled correctly."""
-        cmd, args = parse_command("node /mnt/c/dev/automation/solidtime/mcp-solidtime/dist/index.js -s user", [])
-        assert cmd == "node"
-        assert args == ["/mnt/c/dev/automation/solidtime/mcp-solidtime/dist/index.js", "-s", "user"]
+    def test_npx_solidtime_command(self):
+        """Modern solidtime MCP commands are handled correctly."""
+        cmd, args = parse_command("npx -y solidtime-mcp-server", [])
+        assert cmd == "npx"
+        assert args == ["-y", "solidtime-mcp-server"]
 
     def test_empty_command(self):
         """Empty command returns empty."""

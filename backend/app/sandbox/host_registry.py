@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from backend.app.services.settings_service import SettingsService
+
 logger = logging.getLogger("bond.sandbox.host_registry")
 
 _DB_CACHE_TTL = 30  # seconds
@@ -143,13 +145,11 @@ class HostRegistry:
 
                 self._hosts = new_hosts
 
-                # Load placement strategy from settings
-                strat_result = await db.execute(
-                    sql_text("SELECT value FROM settings WHERE key = 'container.placement_strategy'")
-                )
-                strat_row = strat_result.fetchone()
-                if strat_row:
-                    self._strategy = strat_row[0]
+                # Load placement strategy from SpaceTimeDB-backed settings
+                container_settings = await SettingsService().get_prefix("container.")
+                strategy = container_settings.get("container.placement_strategy")
+                if strategy:
+                    self._strategy = strategy
 
             self._cache_ts = time.time()
             self._db_loaded = True

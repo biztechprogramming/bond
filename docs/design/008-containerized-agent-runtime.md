@@ -120,10 +120,10 @@ Gateway ──► Container Worker
 | Component | Location | Why |
 |-----------|----------|-----|
 | Frontend + Gateway | Host | Serves UI, manages WebSocket connections |
-| Backend (settings, config) | Host | Agent config, API key management, shared DB |
+| Backend (settings, config) | Host | Agent config, API key management, shared operational state access |
 | Agent loop | Container | Native file/code access, isolated execution |
 | Agent's own memories | Container (`/data/agent.db`) | Fast local access, no network round-trip |
-| Shared memories | Host (`bond.db`) + snapshot in container | All agents need common context |
+| Shared memories / operational state | SpacetimeDB-backed services | All agents need common context without treating SQLite as the source of truth |
 | LLM API calls | Container (direct) | No proxy needed, agent has API keys |
 | File I/O | Container (native) | `/workspace/...` via bind mounts |
 | Code/shell execution | Container (native) | `subprocess.run()` |
@@ -138,37 +138,36 @@ Gateway ──► Container Worker
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  SHARED MEMORY (host — bond.db)                              │
-│                                                              │
-│  Who you are, preferences, people, projects, recurring       │
-│  context that ALL agents need.                               │
-│                                                              │
-│  Written by: gateway (from agent SSE memory events)          │
-│  Read by: agents (snapshot at startup / periodic sync)       │
-│                                                              │
-│  Examples:                                                   │
-│  - "User prefers dark mode and concise responses"            │
-│  - "Andrew works on Bond and EcoInspector projects"          │
-│  - Entity: Andrew → works_at → BizTech                      │
-│  - "Use uv for Python, pnpm for Node"                       │
+│  SHARED OPERATIONAL STATE (SpacetimeDB-backed)             │
+│                                                             │
+│  Who you are, preferences, people, projects, recurring     │
+│  context that ALL agents need.                              │
+│                                                             │
+│  Written by: Bond backend/gateway services                  │
+│  Read by: agents via Bond services and runtime sync flows   │
+│                                                             │
+│  Examples:                                                  │
+│  - "User prefers dark mode and concise responses"           │
+│  - "Andrew works on Bond and EcoInspector projects"         │
+│  - Entity: Andrew → works_at → BizTech                     │
+│  - "Use uv for Python, pnpm for Node"                      │
 └──────────────────────────────┬──────────────────────────────┘
                                │
-                     snapshot at startup
-                     + periodic sync
+                     runtime sync / API access
                                │
 ┌──────────────────────────────┼──────────────────────────────┐
-│  AGENT MEMORY (container — /data/agent.db)                   │
-│                                                              │
-│  What THIS agent learned during its tasks. Working context,  │
-│  session-specific knowledge, tool results.                   │
-│                                                              │
-│  Written by: agent (locally, no network)                     │
-│  Read by: this agent only                                    │
-│                                                              │
-│  Examples:                                                   │
-│  - "ecoinspector-portal uses Next.js 15 with app router"     │
-│  - "The auth module is in src/lib/auth.ts"                   │
-│  - "Last test run had 3 failures in api.test.ts"             │
+│  AGENT MEMORY (container — /data/agent.db)                 │
+│                                                             │
+│  What THIS agent learned during its tasks. Working context, │
+│  session-specific knowledge, tool results.                  │
+│                                                             │
+│  Written by: agent (locally, no network)                    │
+│  Read by: this agent only                                   │
+│                                                             │
+│  Examples:                                                  │
+│  - "ecoinspector-portal uses Next.js 15 with app router"   │
+│  - "The auth module is in src/lib/auth.ts"                 │
+│  - "Last test run had 3 failures in api.test.ts"           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -186,24 +185,23 @@ Agent Turn (inside container)
     │         emit SSE event: { event: "memory", data: { ... } }
     │
     ▼
-Gateway (host)
+Gateway / Backend Services
     │
-    │  Receives SSE memory event
-    │  Writes to shared bond.db
+    │  Receives promoted memory or state update
+    │  Persists shared operational data via SpacetimeDB-backed services
     │
     ▼
-Shared Memory (bond.db)
+Shared Operational State (SpacetimeDB-backed)
     │
-    │  Available to all agents on next startup/sync
+    │  Available to all agents through Bond runtime sync paths
     │
     ▼
 Other Agent Containers
     │
-    │  On startup: mount /data/shared/ with snapshot
-    │  Periodic: gateway pushes updates (optional)
+    │  On startup/runtime: fetch or receive shared context through Bond services
     │
     ▼
-  Agent has shared context without any callback
+  Agent has shared context without assuming a shared SQLite source of truth
 ```
 
 ### 3.3 What Gets Promoted to Shared
@@ -214,7 +212,7 @@ Not everything an agent learns should be shared. Promotion criteria:
 |-------------|----------|---------|
 | `preference` | ✅ Always | "User prefers concise responses" |
 | `fact` (about user) | ✅ Always | "Andrew's timezone is EST" |
-| `fact` (about project) | ✅ If general | "Bond uses SQLite + FastAPI" |
+| `fact` (about project) | ✅ If general | "Bond uses SpacetimeDB for operational state" |
 | `fact` (about code) | ❌ Agent-local | "Line 42 of auth.ts has a race condition" |
 | `solution` | ⚠️ Maybe | "Use `--legacy-peer-deps` for npm conflicts" — useful if general |
 | `instruction` | ✅ If from user | "Always run tests before committing" |
@@ -223,22 +221,17 @@ Not everything an agent learns should be shared. Promotion criteria:
 
 The agent marks memories as `promote: true/false` when saving. The SSE stream only includes promotable memories.
 
-### 3.4 Shared Memory Snapshot
+### 3.4 Shared Memory Access
 
-On container startup, shared memories are available as a read-only SQLite file:
+On container startup or during runtime sync, shared context is obtained through Bond's SpacetimeDB-backed services.
 
-```
-/data/
-  agent.db          ← agent's own DB (read-write, persisted volume)
-  shared/
-    shared.db       ← snapshot of shared memories (read-only mount)
-```
+The agent may still use local SQLite for agent-local state such as:
+1. Local `agent.db` — agent-specific context
+2. Other explicitly local caches or indexes where implemented
 
-The agent's search_memory tool queries **both** databases:
-1. Local agent.db — agent-specific context
-2. shared.db — cross-agent shared knowledge
+Shared operational state should not be modeled here as `shared.db` or `bond.db` source-of-truth storage.
 
-Results are merged by relevance (same RRF merge we already built).
+Results from local and shared sources can still be merged by relevance where the runtime supports that behavior.
 
 ### 3.5 Sync Schedule
 

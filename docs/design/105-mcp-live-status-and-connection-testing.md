@@ -22,8 +22,8 @@ Additionally, agent workers cache the MCP tool list at startup. Even if the serv
 
 ### Real-world example
 
-The `solidtime` MCP server was configured with command `node /mnt/c/dev/automation/solidtime/mcp-solidtime/dist/index.js -s user`. The UI showed it as enabled. But:
-- The backend couldn't start the node process (path issue or missing file)
+The `solidtime` MCP server was configured incorrectly. A modern Bond setup should use a command like `npx -y solidtime-mcp-server`, but the configured command/args were invalid for the runtime environment. The UI showed it as enabled. But:
+- The backend couldn't start the process
 - The status was "stopped" — only visible via a direct REST API call
 - No agent could see solidtime tools
 - The user had no indication anything was wrong
@@ -144,8 +144,8 @@ Accepts a server configuration (not necessarily saved yet) and attempts a one-sh
 // Request
 {
   "name": "solidtime",
-  "command": "node",
-  "args": ["/path/to/mcp-solidtime/dist/index.js", "-s", "user"],
+  "command": "npx",
+  "args": ["-y", "solidtime-mcp-server"],
   "env": {
     "SOLIDTIME_API_TOKEN": "sk-..."
   }
@@ -174,7 +174,7 @@ Accepts a server configuration (not necessarily saved yet) and attempts a one-sh
   "status": "error",
   "tools": [],
   "connect_time_ms": 5000,
-  "error": "Process exited with code 1: Error: Cannot find module '/path/to/mcp-solidtime/dist/index.js'"
+  "error": "Process exited with code 1: solidtime-mcp-server failed to start"
 }
 ```
 

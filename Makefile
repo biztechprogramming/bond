@@ -69,14 +69,14 @@ migrate-docker:
 
 # Roll back last migration (Docker)
 migrate-down:
-	~/go/bin/migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" down 1
+	~/go/bin/migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" down 1  # local vector storage only
 
 migrate-down-docker:
 	docker compose -f docker-compose.dev.yml run --rm migrate -path=/migrations -database="sqlite3:///home/bond/.bond/data/knowledge.db" down 1
 
 # Show current migration version
 migrate-version:
-	migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" version
+	migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" version  # local vector storage only
 
 # Install golang-migrate with SQLite support (requires Go)
 install-migrate:

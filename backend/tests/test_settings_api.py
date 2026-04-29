@@ -31,7 +31,7 @@ async def settings_client(_clear_settings_cache, mock_stdb):
 
     tmpdir = tempfile.mkdtemp(prefix="bond_settings_test_")
     db_path = Path(tmpdir) / "test.db"
-    os.environ["BOND_DATABASE_PATH"] = str(db_path)
+    os.environ["BOND_VECTOR_DB_PATH"] = str(db_path)
 
     # Apply migrations to create tables
     async with aiosqlite.connect(db_path) as db:
