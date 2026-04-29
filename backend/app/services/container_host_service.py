@@ -13,12 +13,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.crypto import decrypt_value, encrypt_value
+from backend.app.services.settings_service import SettingsService
 
 logger = logging.getLogger("bond.services.container_hosts")
 
 
 class ContainerHostService:
-    """Database-backed CRUD for container hosts and container settings."""
+    """Database-backed CRUD for container hosts and SpaceTimeDB-backed container settings."""
 
     async def list_all(self, db: AsyncSession) -> list[dict]:
         result = await db.execute(text("SELECT * FROM container_hosts ORDER BY is_local DESC, name ASC"))
@@ -109,22 +110,15 @@ class ContainerHostService:
         return result.rowcount > 0  # type: ignore[union-attr]
 
     async def get_container_settings(self, db: AsyncSession) -> dict[str, str]:
-        result = await db.execute(text("SELECT key, value FROM settings WHERE key LIKE 'container.%'"))
-        return {row.key: row.value for row in result}
+        return await SettingsService().get_prefix("container.")
 
     async def update_container_settings(self, db: AsyncSession, data: dict[str, str]) -> dict[str, str]:
+        settings_service = SettingsService()
         for key, value in data.items():
             if not key.startswith("container."):
                 continue
-            await db.execute(
-                text("""
-                    INSERT INTO settings (key, value) VALUES (:key, :value)
-                    ON CONFLICT(key) DO UPDATE SET value = :value
-                """),
-                {"key": key, "value": value},
-            )
-        await db.commit()
-        return await self.get_container_settings(db)
+            await settings_service.upsert(key, value)
+        return await settings_service.get_prefix("container.")
 
     async def import_from_config(self, db: AsyncSession, config: dict) -> list[dict]:
         """One-time import from bond.json / env vars."""

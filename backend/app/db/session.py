@@ -1,4 +1,4 @@
-"""SQLAlchemy async session factory for SQLite."""
+"""SQLAlchemy async session factory for local SQLite vector storage."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def get_engine():
     global _engine
     if _engine is None:
         settings = get_settings()
-        db_path = Path(settings.database_path)
+        db_path = Path(settings.vector_db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
         _engine = create_async_engine(
@@ -66,7 +66,7 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db() -> None:
-    """Initialize the database (enable WAL mode, create vec0 tables)."""
+    """Initialize local SQLite vector storage (enable WAL mode, create vec0 tables)."""
     from backend.app.foundations.knowledge.capabilities import ensure_vec_tables
 
     engine = get_engine()
@@ -77,7 +77,8 @@ async def init_db() -> None:
         await conn.exec_driver_sql("PRAGMA busy_timeout=5000")
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
 
-    # Ensure default embedding settings exist (engine requires them)
+    # Ensure default embedding settings exist for local vector storage if this SQLite DB
+    # is being used for embeddings. This is not Bond operational application state.
     try:
         async with engine.begin() as conn:
             for key, value in [
@@ -91,9 +92,9 @@ async def init_db() -> None:
                     (key, value),
                 )
     except Exception:
-        logger.debug("Could not seed embedding defaults (settings table may not exist yet)")
+        logger.debug("Could not seed embedding defaults for local vector storage")
 
-    # Read embedding dimension from settings (default 1024)
+    # Read embedding dimension from local embedding settings (default 1024)
     dimension = 1024
     try:
         async with engine.begin() as conn:
@@ -104,6 +105,6 @@ async def init_db() -> None:
             if row:
                 dimension = int(row[0])
     except Exception:
-        logger.debug("Could not read embedding dimension from settings, using default 1024")
+        logger.debug("Could not read local embedding dimension, using default 1024")
 
     await ensure_vec_tables(engine, dimension=dimension)

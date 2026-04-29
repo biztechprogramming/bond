@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run database migrations using golang-migrate
+# Run local SQLite vector-storage migrations and SpacetimeDB module publish steps
 # Requires: migrate CLI with SQLite support
 # Install: make install-migrate
 
@@ -31,10 +31,10 @@ fi
 TARGET_VERSION="$1"
 DB_URL="sqlite3://$DB_FILE"
 
-echo "Running migrations..."
+echo "Running local SQLite vector-storage migrations..."
 echo "  Using: $MIGRATE"
 echo "  Path: $MIGRATIONS_PATH"
-echo "  Database: $DB_FILE"
+echo "  SQLite file: $DB_FILE"
 
 if [ -n "$TARGET_VERSION" ]; then
     # Validate target is a positive integer
@@ -69,12 +69,11 @@ if [ -n "$TARGET_VERSION" ]; then
     echo "  Forcing to version: $TARGET_VERSION"
     $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" force "$TARGET_VERSION"
 else
-    echo "  Skipping version check — running all pending migrations up to latest. $0"
-    # Normal: run all pending up migrations
+    echo "  Skipping version check — running all pending migrations up to latest."
     $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" up
 fi
 
-echo "SQLite migrations complete."
+echo "Local SQLite vector-storage migrations complete."
 
 # Run SpacetimeDB migrations (publish module)
 SPACETIMEDB_URL="${SPACETIMEDB_URL:-$(python3 -c "import json; print(json.load(open('$PROJECT_ROOT/bond.json')).get('spacetimedb', {}).get('url', 'http://localhost:18787'))" 2>/dev/null || echo "http://localhost:18787")}"
