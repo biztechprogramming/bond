@@ -1,0 +1,16 @@
+[Unit]
+Description=Bond Host Daemon
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/environments/dev/bond
+ExecStart=/usr/bin/env python3 -m backend.app.sandbox.bond_host_daemon --host 0.0.0.0 --port 18795
+Restart=always
+RestartSec=5
+Environment=PYTHONPATH=/srv/environments/dev/bond
+Environment=BOND_DAEMON_PORT=18795
+
+[Install]
+WantedBy=multi-user.target
