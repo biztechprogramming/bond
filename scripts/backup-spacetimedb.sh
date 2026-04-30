@@ -7,6 +7,7 @@ set -e
 
 BACKUP_DIR="$HOME/.bond/backups/spacetimedb"
 DATA_DIR="$HOME/.bond/spacetimedb"
+CONFIG_DIR="$HOME/.bond/spacetimedb-config"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Guard: check that the database has data before backing up.
@@ -33,36 +34,54 @@ fi
 
 echo "Database has $AGENT_COUNT agents, $CONV_COUNT conversations — proceeding with backup"
 
-# Ensure backup directory exists
+# Ensure backup directories exist
 mkdir -p "$BACKUP_DIR/daily"
 mkdir -p "$BACKUP_DIR/weekly"
 mkdir -p "$BACKUP_DIR/monthly"
 
-# 1. Perform Backup (tar the data directory)
-# We use -C to change directory so the tarball doesn't contain absolute paths
-tar -czf "$BACKUP_DIR/daily/spacetimedb_$TIMESTAMP.tar.gz" -C "$DATA_DIR" .
+# 1. Perform Backups
+# Data and config are written as separate tarballs so they can be restored
+# independently — the keys (id_ecdsa) sometimes need to be restored alone
+# after a logout/reset, without rolling back data.
+# We use -C to change directory so the tarballs don't contain absolute paths.
+DATA_BACKUP="$BACKUP_DIR/daily/spacetimedb_$TIMESTAMP.tar.gz"
+CONFIG_BACKUP="$BACKUP_DIR/daily/spacetimedb-config_$TIMESTAMP.tar.gz"
 
-echo "Backup created: $BACKUP_DIR/daily/spacetimedb_$TIMESTAMP.tar.gz"
+tar -czf "$DATA_BACKUP" -C "$DATA_DIR" .
+echo "Data backup created: $DATA_BACKUP"
 
-# 2. Rotation Logic (Keep last 5)
+if [ -d "$CONFIG_DIR" ]; then
+    tar -czf "$CONFIG_BACKUP" -C "$CONFIG_DIR" .
+    echo "Config backup created: $CONFIG_BACKUP"
+else
+    echo "Warning: $CONFIG_DIR not found — skipping config backup"
+fi
+
+# 2. Rotation Logic (Keep last 5 of each prefix)
 rotate_backups() {
     local folder=$1
-    local count=$2
+    local prefix=$2
+    local count=$3
     cd "$folder"
-    ls -t | tail -n +$((count + 1)) | xargs -r rm
+    ls -t ${prefix}_*.tar.gz 2>/dev/null | tail -n +$((count + 1)) | xargs -r rm
 }
 
 # Daily rotation
-rotate_backups "$BACKUP_DIR/daily" 5
+rotate_backups "$BACKUP_DIR/daily" "spacetimedb" 5
+rotate_backups "$BACKUP_DIR/daily" "spacetimedb-config" 5
 
 # Weekly Promotion (Run on Sundays)
 if [ "$(date +%u)" -eq 7 ]; then
-    cp "$BACKUP_DIR/daily/spacetimedb_$TIMESTAMP.tar.gz" "$BACKUP_DIR/weekly/"
-    rotate_backups "$BACKUP_DIR/weekly" 5
+    cp "$DATA_BACKUP" "$BACKUP_DIR/weekly/"
+    [ -f "$CONFIG_BACKUP" ] && cp "$CONFIG_BACKUP" "$BACKUP_DIR/weekly/"
+    rotate_backups "$BACKUP_DIR/weekly" "spacetimedb" 5
+    rotate_backups "$BACKUP_DIR/weekly" "spacetimedb-config" 5
 fi
 
 # Monthly Promotion (Run on the 1st)
 if [ "$(date +%d)" -eq 01 ]; then
-    cp "$BACKUP_DIR/daily/spacetimedb_$TIMESTAMP.tar.gz" "$BACKUP_DIR/monthly/"
-    rotate_backups "$BACKUP_DIR/monthly" 5
+    cp "$DATA_BACKUP" "$BACKUP_DIR/monthly/"
+    [ -f "$CONFIG_BACKUP" ] && cp "$CONFIG_BACKUP" "$BACKUP_DIR/monthly/"
+    rotate_backups "$BACKUP_DIR/monthly" "spacetimedb" 5
+    rotate_backups "$BACKUP_DIR/monthly" "spacetimedb-config" 5
 fi
