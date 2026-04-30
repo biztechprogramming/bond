@@ -8,5 +8,6 @@ services:
     ports:
       - "18787:3000"
     volumes:
-      - ~/.bond/spacetimedb/data:/var/lib/spacetimedb
+      - ~/.bond/spacetimedb:/home/spacetime/.local/share/spacetime/data
+      - ~/.bond/spacetimedb-config:/home/spacetime/.config/spacetime
     command: start
