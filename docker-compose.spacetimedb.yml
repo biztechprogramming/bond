@@ -33,7 +33,8 @@ services:
     ports:
       - "18787:3000"
     volumes:
-      - /srv/environments/dev/bond/.data/spacetimedb:/home/spacetime/.local/share/spacetime/data
+      - ~/.bond/spacetimedb:/home/spacetime/.local/share/spacetime/data
+      - ~/.bond/spacetimedb-config:/home/spacetime/.config/spacetime
     command: start
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/v1/health"]
