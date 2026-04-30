@@ -429,6 +429,9 @@ class LocalContainerAdapter:
         # Credentials + SSH
         self._append_credential_mounts(cmd, workspace_mounts)
 
+        # Agent repos: per-repo named volumes + /config/repos.json (Design Doc 113)
+        await self._prepare_agent_repos(agent_id, cmd)
+
         # Agent config file
         cmd.extend(["-v", f"{config_path}:/config/agent.json:ro"])
 
@@ -512,6 +515,100 @@ class LocalContainerAdapter:
         )
 
     # -- Agent config helper --
+
+    async def _prepare_agent_repos(self, agent_id: str, cmd: list[str]) -> None:
+        """Prepare agent_repos clones (Design Doc 113).
+
+        Fetches the agent's repo rows + resolved credentials, writes a config
+        file at data/agent-configs/{agent_id}.repos.json, mounts it read-only
+        at /config/repos.json, and creates one Docker named volume per repo
+        mounted at /workspace/{name}.
+
+        Robust to a not-yet-deployed schema: if the agent_repos table does
+        not exist, logs a warning and returns without altering cmd.
+        """
+        from backend.app.core.spacetimedb import get_stdb
+        from backend.app.core.vault import Vault
+        from backend.app.sandbox.git_credentials import resolve_credential
+
+        stdb = get_stdb()
+        try:
+            repo_rows = await stdb.query(
+                f"SELECT * FROM agent_repos WHERE agentId = '{agent_id}'"
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not fetch agent_repos for %s (table may not be deployed yet): %s",
+                agent_id, e,
+            )
+            return
+
+        if not repo_rows:
+            return
+
+        try:
+            cred_rows = await stdb.query("SELECT * FROM git_credentials")
+        except Exception:
+            cred_rows = []
+
+        vault = Vault()
+        repos_config: list[dict] = []
+
+        for repo in repo_rows:
+            cred = resolve_credential(
+                repo["url"], repo.get("credentialId", ""), cred_rows
+            )
+            cred_block: dict | None = None
+            if cred:
+                secret = vault.get(cred["secretRef"]) or ""
+                if secret:
+                    cred_block = {
+                        "auth_type": cred["authType"],
+                        "secret": secret,
+                        "username": cred.get("username") or "",
+                    }
+                else:
+                    logger.warning(
+                        "Credential %s has no secret in vault; clone for %s will be unauthenticated",
+                        cred["id"], repo["url"],
+                    )
+
+            repos_config.append({
+                "id": repo["id"],
+                "name": repo["name"],
+                "url": repo["url"],
+                "default_branch": repo["defaultBranch"] or "main",
+                "active_branch": repo.get("activeBranch") or "",
+                "credential": cred_block,
+            })
+
+            # Create the named volume for this repo (idempotent)
+            volume_name = f"bond-repo-{agent_id}-{repo['id']}"
+            await asyncio.create_subprocess_exec(
+                "docker", "volume", "create", volume_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            cmd.extend(["-v", f"{volume_name}:/workspace/{repo['name']}:rw"])
+
+        # Write the repos config file
+        config_dir = _PROJECT_ROOT / "data" / "agent-configs"
+        os.makedirs(str(config_dir), mode=0o700, exist_ok=True)
+        repos_path = config_dir / f"{agent_id}.repos.json"
+
+        if repos_path.is_dir():
+            shutil.rmtree(repos_path)
+
+        fd = os.open(str(repos_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, json.dumps({"repos": repos_config}, indent=2).encode())
+        finally:
+            os.close(fd)
+
+        cmd.extend(["-v", f"{repos_path}:/config/repos.json:ro"])
+        logger.info(
+            "Prepared %d agent_repos clone(s) for agent %s", len(repos_config), agent_id,
+        )
 
     def _write_agent_config(self, agent: dict) -> Path:
         agent_id = agent["id"]

@@ -43,6 +43,107 @@ else
     fi
 fi
 
+# --- Agent repos (Design Doc 113) ---
+# Read /config/repos.json (written by the host adapter) and clone each repo
+# into /workspace/{name}, fetching on subsequent runs. HTTPS PAT credentials
+# are stored in ~/.git-credentials with a `store` helper; SSH key support is
+# deferred to Phase 2.
+if [ -f /config/repos.json ]; then
+    echo "[entrypoint] Processing agent_repos config..."
+    mkdir -p /workspace
+    HOME_DIR="${HOME:-/root}"
+
+    if ! python3 - "$HOME_DIR" <<'PYEOF'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import quote, urlparse
+
+home = Path(sys.argv[1])
+cfg = json.loads(Path("/config/repos.json").read_text())
+repos = cfg.get("repos", [])
+
+# Set up the credential helper once if any repo uses HTTPS PAT.
+https_repos = [r for r in repos if (r.get("credential") or {}).get("auth_type") == "https_pat"]
+if https_repos:
+    subprocess.run(["git", "config", "--global", "credential.helper", "store"], check=True)
+    creds_path = home / ".git-credentials"
+    lines = []
+    for r in https_repos:
+        cred = r["credential"]
+        secret = cred.get("secret") or ""
+        if not secret:
+            continue
+        url = r.get("url", "")
+        parsed = urlparse(url if url.startswith(("http://", "https://")) else f"https://{url}")
+        if not parsed.netloc:
+            continue
+        username = cred.get("username") or "x-access-token"
+        lines.append(f"{parsed.scheme}://{quote(username, safe='')}:{quote(secret, safe='')}@{parsed.netloc}")
+    creds_path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    creds_path.chmod(0o600)
+
+# Clone (or fetch) each repo.
+exit_code = 0
+for r in repos:
+    name = r.get("name") or ""
+    url = r.get("url") or ""
+    if not name or not url:
+        continue
+    dest = Path("/workspace") / name
+    default_branch = r.get("default_branch") or "main"
+    active_branch = r.get("active_branch") or ""
+
+    subprocess.run(
+        ["git", "config", "--global", "--add", "safe.directory", str(dest)],
+        check=False,
+    )
+
+    if (dest / ".git").is_dir():
+        print(f"[entrypoint] Repo '{name}' already cloned — fetching...")
+        rc = subprocess.run(["git", "fetch", "--all", "--prune"], cwd=dest).returncode
+        if rc != 0:
+            print(f"[entrypoint] WARN: fetch failed for {name}")
+        if active_branch:
+            rc = subprocess.run(["git", "checkout", active_branch], cwd=dest).returncode
+            if rc != 0:
+                rc = subprocess.run(
+                    ["git", "checkout", "-b", active_branch, f"origin/{active_branch}"],
+                    cwd=dest,
+                ).returncode
+            if rc != 0:
+                print(f"[entrypoint] WARN: could not checkout {active_branch} on {name}")
+    else:
+        branch = active_branch or default_branch
+        print(f"[entrypoint] Cloning {name} ({url}) into {dest}...")
+        rc = subprocess.run(["git", "clone", "--branch", branch, url, str(dest)]).returncode
+        if rc != 0:
+            # Branch didn't exist on remote — clone default and try to switch
+            rc = subprocess.run(["git", "clone", url, str(dest)]).returncode
+            if rc != 0:
+                print(f"[entrypoint] ERROR: clone failed for {name}")
+                exit_code = 1
+                continue
+            if active_branch:
+                subprocess.run(["git", "checkout", active_branch], cwd=dest)
+
+    # Chown the cloned repo to bond-agent so the worker can write to it
+    # after privilege drop. Volumes are docker-managed so this is safe
+    # (no host-side ownership impact).
+    subprocess.run(["chown", "-R", "bond-agent:bond-agent", str(dest)], check=False)
+
+sys.exit(exit_code)
+PYEOF
+    then
+        echo "[entrypoint] ERROR: one or more repo clones failed; refusing to start agent."
+        exit 1
+    fi
+
+    echo "[entrypoint] agent_repos processing complete."
+fi
+
 # --- OpenSandbox execd (code execution daemon) ---
 # Start execd in background if the binary is present.
 # Provides structured command execution, file ops, and code interpreter
@@ -139,6 +240,14 @@ if [ -d /root/.ssh ]; then
 fi
 cp /root/.gitconfig /home/bond-agent/.gitconfig 2>/dev/null || true
 chown bond-agent:bond-agent /home/bond-agent/.gitconfig 2>/dev/null || true
+
+# Copy git credentials store (Design Doc 113) so bond-agent can fetch/push
+# from cloned repos after privilege drop.
+if [ -f /root/.git-credentials ]; then
+    cp /root/.git-credentials /home/bond-agent/.git-credentials
+    chown bond-agent:bond-agent /home/bond-agent/.git-credentials
+    chmod 600 /home/bond-agent/.git-credentials
+fi
 
 # Mark /bond and /workspace as safe for git under the bond-agent user too
 # Write directly instead of spawning su + git subprocesses (~0.5s saved)

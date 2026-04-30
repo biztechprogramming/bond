@@ -34,6 +34,8 @@ from backend.app.api.v1.llm import router as llm_router
 from backend.app.api.v1.hosts import router as hosts_router
 from backend.app.api.v1.test_spacetimedb import router as test_spacetimedb_router
 from backend.app.api.v1.databases import router as databases_router
+from backend.app.api.v1.git_credentials import router as git_credentials_router
+from backend.app.api.v1.agent_repos import router as agent_repos_router
 
 
 @asynccontextmanager
@@ -163,3 +165,5 @@ app.include_router(llm_router, prefix="/api/v1")
 app.include_router(hosts_router, prefix="/api/v1")
 app.include_router(test_spacetimedb_router, prefix="/api/v1")
 app.include_router(databases_router, prefix="/api/v1")
+app.include_router(git_credentials_router, prefix="/api/v1")
+app.include_router(agent_repos_router, prefix="/api/v1")
