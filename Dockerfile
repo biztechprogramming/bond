@@ -52,6 +52,6 @@ EXPOSE 18788 18789 18790
 CMD ["sh", "-c", "\
   bash scripts/first-run.sh && \
   uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 & \
-  cd gateway && pnpm start & \
+  cd gateway && NODE_OPTIONS='--experimental-global-webcrypto' pnpm exec tsx src/index.ts & \
   cd frontend && pnpm start & \
   wait"]
