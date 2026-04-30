@@ -90,17 +90,22 @@ async def _agent_exists(agent_id: str) -> bool:
 
 
 def _row_to_dict(row: dict) -> dict:
+    """Map an STDB row to API response shape.
+
+    Note: SpacetimeDB SQL returns column names in snake_case (the schema
+    declares them in camelCase but the SQL layer normalizes).
+    """
     return {
         "id": row["id"],
-        "agent_id": row["agentId"],
+        "agent_id": row["agent_id"],
         "url": row["url"],
         "name": row["name"],
-        "default_branch": row["defaultBranch"],
-        "active_branch": row["activeBranch"] or "",
-        "credential_id": row["credentialId"] or "",
-        "last_synced_at": int(row["lastSyncedAt"]) if row.get("lastSyncedAt") else 0,
-        "created_at": int(row.get("createdAt") or 0),
-        "updated_at": int(row.get("updatedAt") or row.get("createdAt") or 0),
+        "default_branch": row["default_branch"],
+        "active_branch": row["active_branch"] or "",
+        "credential_id": row["credential_id"] or "",
+        "last_synced_at": int(row["last_synced_at"]) if row.get("last_synced_at") else 0,
+        "created_at": int(row.get("created_at") or 0),
+        "updated_at": int(row.get("updated_at") or row.get("created_at") or 0),
     }
 
 
@@ -113,7 +118,7 @@ async def list_repos(agent_id: str):
         raise HTTPException(404, "Agent not found")
     stdb = get_stdb()
     rows = await stdb.query(
-        f"SELECT * FROM agent_repos WHERE agentId = '{agent_id}'"
+        f"SELECT * FROM agent_repos WHERE agent_id = '{agent_id}'"
     )
     rows.sort(key=lambda r: r["name"].lower())
     return [_row_to_dict(r) for r in rows]
@@ -130,7 +135,7 @@ async def create_repo(agent_id: str, body: RepoCreate):
 
     # Reject duplicate mount names within an agent — they'd collide on /workspace/{name}
     existing = await stdb.query(
-        f"SELECT id FROM agent_repos WHERE agentId = '{agent_id}' AND name = '{_escape_sql(name)}'"
+        f"SELECT id FROM agent_repos WHERE agent_id = '{agent_id}' AND name = '{_escape_sql(name)}'"
     )
     if existing:
         raise HTTPException(409, f"Agent already has a repo named '{name}'")
@@ -147,8 +152,8 @@ async def create_repo(agent_id: str, body: RepoCreate):
 
     await stdb.query(f"""
         INSERT INTO agent_repos (
-            id, agentId, url, name, defaultBranch, activeBranch, credentialId,
-            lastSyncedAt, createdAt, updatedAt
+            id, agent_id, url, name, default_branch, active_branch, credential_id,
+            last_synced_at, created_at, updated_at
         ) VALUES (
             '{repo_id}',
             '{agent_id}',
@@ -171,7 +176,7 @@ async def create_repo(agent_id: str, body: RepoCreate):
 async def update_repo(agent_id: str, repo_id: str, body: RepoUpdate):
     stdb = get_stdb()
     rows = await stdb.query(
-        f"SELECT * FROM agent_repos WHERE id = '{repo_id}' AND agentId = '{agent_id}'"
+        f"SELECT * FROM agent_repos WHERE id = '{repo_id}' AND agent_id = '{agent_id}'"
     )
     if not rows:
         raise HTTPException(404, "Repo not found for this agent")
@@ -191,21 +196,21 @@ async def update_repo(agent_id: str, repo_id: str, body: RepoUpdate):
         _validate_mount_name(new_name)
         # Don't collide with another repo on the same agent
         clash = await stdb.query(
-            f"SELECT id FROM agent_repos WHERE agentId = '{agent_id}' "
+            f"SELECT id FROM agent_repos WHERE agent_id = '{agent_id}' "
             f"AND name = '{_escape_sql(new_name)}' AND id != '{repo_id}'"
         )
         if clash:
             raise HTTPException(409, f"Agent already has a repo named '{new_name}'")
         updates.append(f"name = '{_escape_sql(new_name)}'")
     if body.default_branch is not None:
-        updates.append(f"defaultBranch = '{_escape_sql(body.default_branch)}'")
+        updates.append(f"default_branch = '{_escape_sql(body.default_branch)}'")
     if body.active_branch is not None:
-        updates.append(f"activeBranch = '{_escape_sql(body.active_branch)}'")
+        updates.append(f"active_branch = '{_escape_sql(body.active_branch)}'")
     if body.credential_id is not None:
-        updates.append(f"credentialId = '{_escape_sql(body.credential_id)}'")
+        updates.append(f"credential_id = '{_escape_sql(body.credential_id)}'")
 
     if updates:
-        updates.append(f"updatedAt = {int(time.time() * 1000)}")
+        updates.append(f"updated_at = {int(time.time() * 1000)}")
         await stdb.query(
             f"UPDATE agent_repos SET {', '.join(updates)} WHERE id = '{repo_id}'"
         )
@@ -218,7 +223,7 @@ async def update_repo(agent_id: str, repo_id: str, body: RepoUpdate):
 async def delete_repo(agent_id: str, repo_id: str):
     stdb = get_stdb()
     rows = await stdb.query(
-        f"SELECT id FROM agent_repos WHERE id = '{repo_id}' AND agentId = '{agent_id}'"
+        f"SELECT id FROM agent_repos WHERE id = '{repo_id}' AND agent_id = '{agent_id}'"
     )
     if not rows:
         raise HTTPException(404, "Repo not found for this agent")

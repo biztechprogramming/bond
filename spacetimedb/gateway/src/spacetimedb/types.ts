@@ -42,6 +42,20 @@ export const AgentPromptFragments = __t.object("AgentPromptFragments", {
 });
 export type AgentPromptFragments = __Infer<typeof AgentPromptFragments>;
 
+export const AgentRepos = __t.object("AgentRepos", {
+  id: __t.string(),
+  agentId: __t.string(),
+  url: __t.string(),
+  name: __t.string(),
+  defaultBranch: __t.string(),
+  activeBranch: __t.string(),
+  credentialId: __t.string(),
+  lastSyncedAt: __t.u64(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type AgentRepos = __Infer<typeof AgentRepos>;
+
 export const AgentWorkspaceMounts = __t.object("AgentWorkspaceMounts", {
   id: __t.string(),
   agentId: __t.string(),
@@ -255,6 +269,19 @@ export const Environments = __t.object("Environments", {
   updatedAt: __t.u64(),
 });
 export type Environments = __Infer<typeof Environments>;
+
+export const GitCredentials = __t.object("GitCredentials", {
+  id: __t.string(),
+  name: __t.string(),
+  authType: __t.string(),
+  secretRef: __t.string(),
+  hostPattern: __t.string(),
+  username: __t.string(),
+  isDefault: __t.bool(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type GitCredentials = __Infer<typeof GitCredentials>;
 
 export const LlmModels = __t.object("LlmModels", {
   id: __t.string(),

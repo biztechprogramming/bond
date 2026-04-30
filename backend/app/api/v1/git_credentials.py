@@ -56,17 +56,21 @@ def _escape_sql(value):
 
 
 def _row_to_dict(row: dict) -> dict:
-    """Format a git_credentials row for API response. Never returns the secret."""
-    secret = Vault().get(row["secretRef"]) or ""
+    """Format a git_credentials row for API response. Never returns the secret.
+
+    Note: SpacetimeDB SQL returns column names in snake_case (the schema
+    declares them in camelCase but the SQL layer normalizes).
+    """
+    secret = Vault().get(row["secret_ref"]) or ""
     return {
         "id": row["id"],
         "name": row["name"],
-        "auth_type": row["authType"],
-        "host_pattern": row["hostPattern"],
+        "auth_type": row["auth_type"],
+        "host_pattern": row["host_pattern"],
         "username": row["username"] or "",
-        "is_default": bool(row["isDefault"]),
-        "created_at": int(row["createdAt"]),
-        "updated_at": int(row.get("updatedAt") or row["createdAt"]),
+        "is_default": bool(row["is_default"]),
+        "created_at": int(row["created_at"]),
+        "updated_at": int(row.get("updated_at") or row["created_at"]),
         # Reveal only the last 4 chars so the UI can confirm "yes, this is the right one"
         "secret_hint": secret[-4:] if len(secret) >= 4 else "",
         "secret_set": bool(secret),
@@ -80,10 +84,9 @@ def _row_to_dict(row: dict) -> dict:
 async def list_credentials():
     stdb = get_stdb()
     rows = await stdb.query(
-        "SELECT id, name, authType, secretRef, hostPattern, username, isDefault, createdAt "
-        "FROM git_credentials"
+        "SELECT * FROM git_credentials"
     )
-    rows.sort(key=lambda r: (not bool(r["isDefault"]), r["name"].lower()))
+    rows.sort(key=lambda r: (not bool(r["is_default"]), r["name"].lower()))
     return [_row_to_dict(r) for r in rows]
 
 
@@ -103,11 +106,11 @@ async def create_credential(body: CredentialCreate):
 
     # If this is being set as default, clear any other defaults.
     if body.is_default:
-        await stdb.query("UPDATE git_credentials SET isDefault = false WHERE isDefault = true")
+        await stdb.query("UPDATE git_credentials SET is_default = false WHERE is_default = true")
 
     await stdb.query(f"""
         INSERT INTO git_credentials (
-            id, name, authType, secretRef, hostPattern, username, isDefault, createdAt, updatedAt
+            id, name, auth_type, secret_ref, host_pattern, username, is_default, created_at, updated_at
         ) VALUES (
             '{cred_id}',
             '{_escape_sql(body.name)}',
@@ -138,27 +141,27 @@ async def update_credential(credential_id: str, body: CredentialUpdate):
 
     # Update vault secret if a new one was provided
     if body.secret is not None:
-        Vault().set(existing["secretRef"], body.secret)
+        Vault().set(existing["secret_ref"], body.secret)
 
     updates = []
     if body.name is not None:
         updates.append(f"name = '{_escape_sql(body.name)}'")
     if body.auth_type is not None:
-        updates.append(f"authType = '{body.auth_type}'")
+        updates.append(f"auth_type = '{body.auth_type}'")
     if body.host_pattern is not None:
-        updates.append(f"hostPattern = '{_escape_sql(body.host_pattern)}'")
+        updates.append(f"host_pattern = '{_escape_sql(body.host_pattern)}'")
     if body.username is not None:
         updates.append(f"username = '{_escape_sql(body.username)}'")
     if body.is_default is not None:
         if body.is_default:
             await stdb.query(
-                f"UPDATE git_credentials SET isDefault = false WHERE isDefault = true AND id != '{credential_id}'"
+                f"UPDATE git_credentials SET is_default = false WHERE is_default = true AND id != '{credential_id}'"
             )
-        updates.append(f"isDefault = {str(body.is_default).lower()}")
+        updates.append(f"is_default = {str(body.is_default).lower()}")
 
-    # Bump updatedAt whenever any field (including the secret) changes
+    # Bump updated_at whenever any field (including the secret) changes
     if updates or body.secret is not None:
-        updates.append(f"updatedAt = {int(time.time() * 1000)}")
+        updates.append(f"updated_at = {int(time.time() * 1000)}")
         await stdb.query(
             f"UPDATE git_credentials SET {', '.join(updates)} WHERE id = '{credential_id}'"
         )
@@ -171,14 +174,14 @@ async def update_credential(credential_id: str, body: CredentialUpdate):
 async def delete_credential(credential_id: str):
     stdb = get_stdb()
     rows = await stdb.query(
-        f"SELECT secretRef FROM git_credentials WHERE id = '{credential_id}'"
+        f"SELECT secret_ref FROM git_credentials WHERE id = '{credential_id}'"
     )
     if not rows:
         raise HTTPException(404, "Credential not found")
 
     # Refuse to delete if any agent_repos row references this credential
     refs = await stdb.query(
-        f"SELECT id FROM agent_repos WHERE credentialId = '{credential_id}'"
+        f"SELECT id FROM agent_repos WHERE credential_id = '{credential_id}'"
     )
     if refs:
         raise HTTPException(
@@ -186,7 +189,7 @@ async def delete_credential(credential_id: str):
             f"Credential is referenced by {len(refs)} repo(s); detach them first or change their credential.",
         )
 
-    secret_ref = rows[0]["secretRef"]
+    secret_ref = rows[0]["secret_ref"]
     await stdb.query(f"DELETE FROM git_credentials WHERE id = '{credential_id}'")
     Vault().delete(secret_ref)
     return {"success": True}

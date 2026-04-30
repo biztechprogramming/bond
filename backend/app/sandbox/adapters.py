@@ -534,7 +534,7 @@ class LocalContainerAdapter:
         stdb = get_stdb()
         try:
             repo_rows = await stdb.query(
-                f"SELECT * FROM agent_repos WHERE agentId = '{agent_id}'"
+                f"SELECT * FROM agent_repos WHERE agent_id = '{agent_id}'"
             )
         except Exception as e:
             logger.warning(
@@ -556,14 +556,14 @@ class LocalContainerAdapter:
 
         for repo in repo_rows:
             cred = resolve_credential(
-                repo["url"], repo.get("credentialId", ""), cred_rows
+                repo["url"], repo.get("credential_id", ""), cred_rows
             )
             cred_block: dict | None = None
             if cred:
-                secret = vault.get(cred["secretRef"]) or ""
+                secret = vault.get(cred["secret_ref"]) or ""
                 if secret:
                     cred_block = {
-                        "auth_type": cred["authType"],
+                        "auth_type": cred["auth_type"],
                         "secret": secret,
                         "username": cred.get("username") or "",
                     }
@@ -577,8 +577,8 @@ class LocalContainerAdapter:
                 "id": repo["id"],
                 "name": repo["name"],
                 "url": repo["url"],
-                "default_branch": repo["defaultBranch"] or "main",
-                "active_branch": repo.get("activeBranch") or "",
+                "default_branch": repo["default_branch"] or "main",
+                "active_branch": repo.get("active_branch") or "",
                 "credential": cred_block,
             })
 

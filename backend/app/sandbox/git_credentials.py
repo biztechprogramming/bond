@@ -82,8 +82,8 @@ def resolve_credential(
 
     Args:
         repo_url: the clone URL.
-        repo_credential_id: value of agent_repos.credentialId; empty for no override.
-        all_credentials: list of git_credentials rows (dicts with id, hostPattern, isDefault, ...).
+        repo_credential_id: value of agent_repos.credential_id; empty for no override.
+        all_credentials: list of git_credentials rows from STDB (snake_case keys).
 
     Returns:
         The matching credential dict, or None if no match.
@@ -95,7 +95,7 @@ def resolve_credential(
                 return cred
         # Configured override missing — log and fall through to host match
         logger.warning(
-            "agent_repos.credentialId=%s not found in git_credentials; "
+            "agent_repos.credential_id=%s not found in git_credentials; "
             "falling back to host pattern match",
             repo_credential_id,
         )
@@ -105,15 +105,15 @@ def resolve_credential(
     if not host:
         return None
 
-    matches = [c for c in all_credentials if _pattern_matches(c["hostPattern"], host)]
+    matches = [c for c in all_credentials if _pattern_matches(c["host_pattern"], host)]
     if not matches:
         return None
 
     # Sort: most-specific pattern first, then is_default, then by name for determinism
     matches.sort(
         key=lambda c: (
-            -_pattern_specificity(c["hostPattern"]),
-            not bool(c.get("isDefault")),
+            -_pattern_specificity(c["host_pattern"]),
+            not bool(c.get("is_default")),
             c["name"],
         )
     )
