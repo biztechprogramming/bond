@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bond — Architecture Review (2026-04-30)</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --fg: #e6e6e6;
+    --muted: #9aa3b2;
+    --accent: #7dd3fc;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --good: #86efac;
+    --card: #161b22;
+    --border: #2a323d;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 24px 64px; }
+  h1, h2, h3 { color: #fff; font-weight: 600; }
+  h1 { font-size: 28px; margin-bottom: 4px; }
+  h2 { font-size: 22px; margin-top: 48px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 17px; color: var(--accent); margin-top: 28px; }
+  .lead { color: var(--muted); margin-top: 0; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 16px 0;
+  }
+  .mermaid {
+    background: #fff;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 16px 0;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #1f2733; color: #fff; font-weight: 600; }
+  tr:nth-child(even) td { background: #131820; }
+  code { background: #1f2733; padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  pre { background: #1f2733; padding: 12px 14px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+  .pill {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 12px; font-weight: 600; margin-right: 4px;
+  }
+  .pill.req  { background: #1e3a3a; color: var(--good); }
+  .pill.opt  { background: #3a3320; color: var(--warn); }
+  .pill.miss { background: #3a1e1e; color: var(--bad); }
+  .pill.host { background: #1e2a3a; color: var(--accent); }
+  .pill.cont { background: #2e1e3a; color: #c4b5fd; }
+  .pill.proc { background: #2a3a1e; color: #bef264; }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: #131820;
+    padding: 12px 16px;
+    margin: 14px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .callout.warn { border-color: var(--warn); }
+  .callout.bad  { border-color: var(--bad); }
+  .callout.good { border-color: var(--good); }
+  .small { font-size: 13px; color: var(--muted); }
+  ul { margin: 8px 0 8px 18px; }
+  li { margin: 4px 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Bond — Architecture Review</h1>
+<p class="lead">Current state, what's actually running, where the complexity comes from, and a path to simpler. Snapshot taken 2026-04-30.</p>
+
+<div class="callout warn">
+  <strong>Why this exists:</strong> Concern that containerizing the bond service and adding a host-side daemon introduced complexity that may not be earning its keep — especially for single-machine solo use. This doc audits what's <em>actually running</em> vs. what the code <em>can</em> run, and lays out three viable architectures.
+</div>
+
+<!-- ============================================================ -->
+<h2>1. The Headline Findings</h2>
+
+<div class="grid2">
+  <div class="card">
+    <h3 style="margin-top:0;">What's actually running</h3>
+    <ul>
+      <li><span class="pill cont">container</span> <code>bond-bond-1</code> — single container running <strong>three processes</strong>: backend (uvicorn), gateway (tsx watch), frontend (pnpm)</li>
+      <li><span class="pill cont">container</span> <code>bond-spacetimedb</code> — database</li>
+      <li><span class="pill opt">optional</span> <code>bond-langfuse-*</code> — six containers, observability stack</li>
+      <li><span class="pill miss">missing</span> bond host daemon (port 18795) — env var points to it, but <strong>nothing is listening</strong></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0;">Surprises in the audit</h3>
+    <ul>
+      <li>The "gateway in a container" worry: gateway is <em>not</em> a separate container — it's a process inside <code>bond-bond-1</code> alongside backend &amp; frontend.</li>
+      <li>The host daemon (<code>bond_host_daemon.py</code>) <em>exists in code</em> but is not deployed. Agent containers are spawned via the docker socket mounted into <code>bond-bond-1</code>, not via the daemon.</li>
+      <li>The clone failure you hit is a <strong>credential-passthrough bug</strong>: <code>bond-bond-1</code> has no SSH key mounted, so when it spawns an agent container it can't pass one through.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2>2. Diagram: What's Actually Running Today</h2>
+<p class="small">Solid arrows = active connection. Dashed = referenced but daemon not running. Boxes inside <code>bond-bond-1</code> are processes in one container.</p>
+
+<div class="mermaid">
+flowchart LR
+  user((Browser))
+
+  subgraph Host["Host (LOKI)"]
+    direction TB
+
+    subgraph BondCt["bond-bond-1 container"]
+      FE[Frontend<br/>pnpm start<br/>:18788]
+      GW[Gateway<br/>tsx watch<br/>:18789]
+      BE[Backend<br/>uvicorn<br/>:18790]
+    end
+
+    subgraph StdbCt["bond-spacetimedb container"]
+      STDB[SpacetimeDB<br/>:3000 → :18787]
+    end
+
+    Docker[(docker.sock)]
+
+    subgraph AgCt["agent container (spawned per turn)"]
+      AGENT[worker<br/>:18791 → dyn]
+    end
+
+    Daemon[/host daemon<br/>:18795<br/>NOT RUNNING/]
+  end
+
+  user -- ":18788 HTML/JS" --> FE
+  user -- ":18789 WS" --> GW
+  user -- ":18790 REST" --> BE
+
+  FE -.WS.-> GW
+  FE -- REST --> BE
+
+  BE -- REST :18787 --> STDB
+  BE -- spawns via socket --> Docker
+  Docker -- creates --> AGENT
+  BE -. env says talk to .-> Daemon
+
+  GW -- SSE --> AGENT
+  AGENT -- REST :18790 --> BE
+  AGENT -- REST :18787 --> STDB
+
+  classDef proc fill:#dbeafe,stroke:#1e40af;
+  classDef cont fill:#ede9fe,stroke:#5b21b6;
+  classDef miss fill:#fee2e2,stroke:#b91c1c,stroke-dasharray:5 5;
+  classDef ext  fill:#fef9c3,stroke:#a16207;
+  class FE,GW,BE,STDB,AGENT proc;
+  class BondCt,StdbCt,AgCt cont;
+  class Daemon miss;
+  class Docker ext;
+</div>
+
+<!-- ============================================================ -->
+<h2>3. Diagram: Communication Paths (Common Flows)</h2>
+
+<h3>Flow A — Spawning an agent (the path that's failing)</h3>
+<div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as Browser
+  participant BE as Backend (in bond-bond-1)
+  participant DK as docker.sock
+  participant AG as agent container
+  participant GH as github.com
+  U->>BE: POST /api/v1/agents/{id}/invoke
+  BE->>BE: build docker run command<br/>(LocalContainerAdapter)
+  Note over BE: tries to mount ~/.ssh →<br/>but Path.home() inside container<br/>is /home/bond, no keys there
+  BE->>DK: docker run -e BOND_REPO_URL=git@... bond-agent-node
+  DK->>AG: start container
+  AG->>AG: agent-entrypoint.sh runs<br/>git clone git@github.com:.../bond.git
+  AG--xGH: SSH auth fails<br/>(no key mounted)
+  AG-->>BE: container exits, health check times out
+  BE-->>U: 503 Permission denied (publickey)
+</div>
+
+<h3>Flow B — Frontend ↔ Backend ↔ DB (the everyday path)</h3>
+<div class="mermaid">
+sequenceDiagram
+  participant U as Browser
+  participant FE as Frontend
+  participant GW as Gateway
+  participant BE as Backend
+  participant DB as SpacetimeDB
+  U->>FE: load app
+  FE->>GW: WS subscribe (agents, conversations)
+  FE->>BE: REST /api/v1/agents
+  BE->>DB: SQL query
+  DB-->>BE: rows
+  BE-->>FE: JSON
+  Note over GW,DB: GW also subscribes<br/>to STDB and pushes<br/>updates to FE via WS
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Service Inventory</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Service</th><th>Where it runs</th><th>Port(s)</th><th>Talks to</th><th>Required?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Frontend</strong> (React + pnpm)</td>
+      <td><span class="pill proc">process in</span> <code>bond-bond-1</code></td>
+      <td>18788</td>
+      <td>Backend, Gateway</td>
+      <td><span class="pill req">required</span></td>
+    </tr>
+    <tr>
+      <td><strong>Gateway</strong> (Node + tsx)</td>
+      <td><span class="pill proc">process in</span> <code>bond-bond-1</code></td>
+      <td>18789</td>
+      <td>Frontend (WS), Backend, agent SSE, MCP servers</td>
+      <td><span class="pill req">required</span></td>
+    </tr>
+    <tr>
+      <td><strong>Backend</strong> (FastAPI/uvicorn)</td>
+      <td><span class="pill proc">process in</span> <code>bond-bond-1</code></td>
+      <td>18790</td>
+      <td>SpacetimeDB, docker.sock, host daemon (env), agents</td>
+      <td><span class="pill req">required</span></td>
+    </tr>
+    <tr>
+      <td><strong>SpacetimeDB</strong></td>
+      <td><span class="pill cont">container</span> <code>bond-spacetimedb</code></td>
+      <td>3000 → 18787</td>
+      <td>Backend, Gateway, agents</td>
+      <td><span class="pill req">required</span></td>
+    </tr>
+    <tr>
+      <td><strong>Agent worker</strong></td>
+      <td><span class="pill cont">container</span> per invocation</td>
+      <td>18791 → dynamic</td>
+      <td>Backend, Gateway (SSE in), STDB, MCP, optional execd:44772 / jupyter:44771</td>
+      <td><span class="pill req">required</span> (spawned on demand)</td>
+    </tr>
+    <tr>
+      <td><strong>Host daemon / "faucet"</strong></td>
+      <td><span class="pill host">would be host process</span></td>
+      <td>18795</td>
+      <td>Backend (receives), local docker, FS browse</td>
+      <td><span class="pill miss">not running</span> — env points at it but nothing listens</td>
+    </tr>
+    <tr>
+      <td><strong>Langfuse stack</strong> (6 containers)</td>
+      <td><span class="pill cont">containers</span></td>
+      <td>18786</td>
+      <td>Optional LLM tracing</td>
+      <td><span class="pill opt">optional</span></td>
+    </tr>
+    <tr>
+      <td><strong>OpenSandbox server</strong></td>
+      <td><span class="pill cont">container</span></td>
+      <td>8090</td>
+      <td>Agent containers (sandbox exec)</td>
+      <td><span class="pill opt">optional</span> (profile-gated)</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>5. Why Each Layer Exists</h2>
+
+<div class="card">
+  <h3 style="margin-top:0;">Gateway as a separate process</h3>
+  <p><strong>Real reason it exists:</strong> Python is poor at long-lived multiplexed SSE/WS connections; Node excels at it. The gateway holds open connections to the browser and to each running agent, and routes events. Backend stays focused on REST orchestration.</p>
+  <p><strong>Cost:</strong> One more language runtime to manage. Mostly invisible because it shares a container with the backend today.</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Putting backend + gateway + frontend in one container</h3>
+  <p><strong>Real reason:</strong> Reproducible setup. Anyone running <code>docker compose up</code> gets a known-good environment without installing pnpm + uv + node + python locally. Docs/onboarding becomes trivial.</p>
+  <p><strong>Cost:</strong> Three processes share one container's lifecycle. <code>Path.home()</code> inside it is <code>/home/bond</code>, not your real home — so any code that auto-discovers SSH keys, Claude config, etc. silently misses them. <strong>This is the root cause of the clone failure.</strong> The fix is design doc 112 (credential passthrough) — partially built, not fully wired.</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Host daemon ("faucet")</h3>
+  <p><strong>Real reason:</strong> Two future capabilities: (1) bond on machine A spawning agents on machine B (design doc 089 — remote container hosts), and (2) browsing the host's filesystem from the bond UI when bond itself is in a container (design doc 112). The daemon is a thin REST shim around docker + filesystem.</p>
+  <p><strong>Cost today:</strong> Zero — it's not running. <strong>Cost tomorrow:</strong> One more service to install/start/monitor per host. It's only earning its keep in scenarios you don't currently have.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>6. Three Viable Architectures</h2>
+
+<h3>Option A — Native single-host (simplest, "before")</h3>
+<p class="small">Backend, gateway, frontend run as host processes. SpacetimeDB stays in a container (it's a binary you don't want on host). Agent containers spawned via host docker. No host daemon. <code>~/.ssh</code> just works.</p>
+<div class="mermaid">
+flowchart LR
+  U((Browser)) --> FE[Frontend :18788]
+  U --> GW[Gateway :18789]
+  U --> BE[Backend :18790]
+  BE --> STDB[(SpacetimeDB<br/>:18787 container)]
+  GW --> STDB
+  BE -- docker CLI --> AG[agent container]
+  AG -- mounts host ~/.ssh --> AG
+  classDef proc fill:#dbeafe,stroke:#1e40af;
+  classDef cont fill:#ede9fe,stroke:#5b21b6;
+  class FE,GW,BE proc;
+  class STDB,AG cont;
+</div>
+<p class="small"><strong>Pros:</strong> Fewest moving parts. Credentials work out of the box. Edits to backend code don't require a rebuild — uvicorn's reload sees them. <strong>Cons:</strong> Onboarding requires installing the right runtimes.</p>
+
+<h3>Option B — Containerized single-host (current)</h3>
+<p class="small">All three bond processes in one container, mounting docker.sock to spawn agents. The host daemon is defined but not running. Credential passthrough is the recurring tax.</p>
+<div class="mermaid">
+flowchart LR
+  U((Browser)) --> Bond[bond-bond-1<br/>FE+GW+BE]
+  Bond --> STDB[(SpacetimeDB)]
+  Bond -- docker.sock --> AG[agent container]
+  Bond -. ssh keys NOT visible .-> AG
+  classDef cont fill:#ede9fe,stroke:#5b21b6;
+  class Bond,STDB,AG cont;
+</div>
+<p class="small"><strong>Pros:</strong> One-command setup. Same container shape on dev and prod. <strong>Cons:</strong> Credential discipline (Path.home() trap), agents born blind to your SSH keys unless 112 is fully wired. Backend code changes require a container rebuild or volume-mounted source.</p>
+
+<h3>Option C — Multi-host scaled-out</h3>
+<p class="small">Bond runs anywhere; each worker host runs a host daemon at :18795; bond calls daemons over HTTP/SSH tunnel. Agents are git-cloned on the remote host instead of bind-mounted. Designed for: shared bond instance, multiple GPU/CPU pools.</p>
+<div class="mermaid">
+flowchart LR
+  U((Browser)) --> Bond[bond container]
+  Bond --> STDB[(SpacetimeDB)]
+  Bond -- HTTP :18795 --> D1[host daemon<br/>worker A]
+  Bond -- HTTP :18795 --> D2[host daemon<br/>worker B]
+  D1 --> A1[agent A.1]
+  D1 --> A2[agent A.2]
+  D2 --> A3[agent B.1]
+  classDef cont fill:#ede9fe,stroke:#5b21b6;
+  classDef host fill:#fef3c7,stroke:#a16207;
+  class Bond,STDB,A1,A2,A3 cont;
+  class D1,D2 host;
+</div>
+<p class="small"><strong>Pros:</strong> Real horizontal scale, no docker socket exposed publicly. <strong>Cons:</strong> Real operational work — daemon installs, auth tokens, tunnel management.</p>
+
+<!-- ============================================================ -->
+<h2>7. Necessary vs. Ideal</h2>
+
+<table>
+  <thead><tr><th>Component</th><th>Necessary?</th><th>Ideal for solo dev</th><th>Ideal for shared/prod</th></tr></thead>
+  <tbody>
+    <tr><td>Frontend</td><td>Yes</td><td>Native (pnpm dev)</td><td>Containerized</td></tr>
+    <tr><td>Gateway</td><td>Yes</td><td>Native (tsx watch)</td><td>Containerized</td></tr>
+    <tr><td>Backend</td><td>Yes</td><td>Native (uvicorn --reload)</td><td>Containerized</td></tr>
+    <tr><td>SpacetimeDB</td><td>Yes</td><td>Container (it's a binary)</td><td>Container</td></tr>
+    <tr><td>Agent containers</td><td>Yes</td><td>Container (isolation needed)</td><td>Container</td></tr>
+    <tr><td>Host daemon</td><td>Only if multi-host or containerized-bond + need host FS browse</td><td><strong>Skip</strong></td><td>One per worker host</td></tr>
+    <tr><td>Langfuse</td><td>No</td><td>Skip unless tracing</td><td>Optional</td></tr>
+    <tr><td>OpenSandbox</td><td>No</td><td>Skip</td><td>Skip unless using nested sandbox</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>8. Specific Recommendations</h2>
+
+<div class="callout good">
+  <strong>For your immediate "fix the clone" problem:</strong> two viable fixes, smallest first.
+  <ol>
+    <li><strong>Switch the agent's clone URL to HTTPS.</strong> The bond repo is public (<code>git ls-remote</code> works without auth). One-line change in <code>backend/app/sandbox/adapters.py:278</code> and <code>scripts/agent-entrypoint.sh:28</code>. No SSH plumbing needed. Pushes from agents would still need a token via <code>GITHUB_TOKEN</code> (already exported from vault).</li>
+    <li><strong>Wire credential passthrough properly (Doc 112).</strong> Mount <code>~/.ssh:/home/bond/.ssh:ro</code> into <code>bond-bond-1</code>, make sure local adapter sees it, propagate to agent containers via <code>/tmp/.ssh</code> as the entrypoint expects. Bigger change but unlocks SSH-based pushes from agents.</li>
+  </ol>
+</div>
+
+<div class="callout">
+  <strong>For your bigger "is this too complex" question:</strong>
+  <ul>
+    <li>The host daemon is <strong>aspirational right now</strong>. It's not running, not earning its keep. Don't feel obligated to make it work — defer until you actually need multi-host scale.</li>
+    <li>Containerizing bond was the choice that <em>introduced</em> credential passthrough. If you regret it, dropping back to native processes for backend/gateway/frontend (Option A) eliminates an entire class of problems and is a 1–2 hour change.</li>
+    <li>If you keep bond containerized (Option B), <strong>finish Doc 112</strong>. Half-built credential passthrough is worse than either fully native or fully wired — silent failures (clone, token, claude config) are hard to debug.</li>
+    <li>Agents staying in containers is non-negotiable — that isolation is the point. The question is only where the bond <em>orchestrator</em> lives.</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2>9. The Path I'd Take</h2>
+
+<ol>
+  <li><strong>Today:</strong> Switch agent clone URL to HTTPS (5-min change, fixes the immediate breakage). Capture the SSH-key route as a known follow-up if/when agents need to push.</li>
+  <li><strong>This week:</strong> Decide between Option A (revert bond to native) and Option B (finish containerized). The decision driver is: do you onboard others to this stack often? If yes, Option B + finish Doc 112. If no, Option A is materially simpler.</li>
+  <li><strong>Defer:</strong> Host daemon. Don't deploy it until either (a) you containerize bond <em>and</em> need host filesystem browsing in the UI, or (b) you actually want multi-host execution. The code can stay in the repo as a future feature.</li>
+  <li><strong>Cleanup:</strong> Remove or gate the <code>BOND_HOST_DAEMON_URL</code> env var so it isn't quietly pointing at a service that doesn't exist — that's a debugging trap.</li>
+</ol>
+
+<p class="small" style="margin-top:48px; border-top:1px solid var(--border); padding-top:16px;">
+  Generated 2026-04-30 · sources: <code>docker-compose.yml</code>, <code>backend/app/sandbox/{bond_host_daemon,adapters}.py</code>, <code>scripts/agent-entrypoint.sh</code>, <code>docs/design/{089,107,112}*.md</code>, live <code>docker ps</code> + <code>ss -tlnp</code> output.
+</p>
+
+</main>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    flowchart: { htmlLabels: true, curve: 'basis' },
+    securityLevel: 'loose'
+  });
+</script>
+</body>
+</html>
