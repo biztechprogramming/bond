@@ -645,16 +645,22 @@ export default function AgentsTab() {
       if (!conn) { setMsg("Not connected to database"); return; }
       const agentId = editing.id || generateId();
 
-      // Protect workspace mounts from implicit removal on save.
-      // If any existing mount would be dropped, fail the save instead of
-      // deleting mounts silently. Intentional removal must use a dedicated UX.
+      // Confirm workspace-mount removals — user might have hit the X by
+      // accident. List which ones will go so they can verify.
       if (!isNew) {
-        const originalMountKeys = new Set((originalAgentRef.current?.workspace_mounts || []).map(m => `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`));
-        const editedMountKeys = new Set((editing.workspace_mounts || []).map(m => `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`));
-        const missingMounts = [...originalMountKeys].filter(key => !editedMountKeys.has(key));
-        if (missingMounts.length > 0) {
-          setMsg("Error: Save would remove one or more existing workspace mounts. Workspace mounts cannot be removed implicitly by Save. Please restore the missing mounts or use an explicit remove workflow.");
-          return;
+        const keyOf = (m: WorkspaceMount) =>
+          `${m.host_path}||${m.mount_name}||${m.container_path || `/workspace/${m.mount_name}`}||${m.readonly}`;
+        const editedMountKeys = new Set((editing.workspace_mounts || []).map(keyOf));
+        const removed = (originalAgentRef.current?.workspace_mounts || [])
+          .filter(m => !editedMountKeys.has(keyOf(m)));
+        if (removed.length > 0) {
+          const list = removed
+            .map(m => `  • ${m.host_path} → ${m.container_path || `/workspace/${m.mount_name}`}`)
+            .join("\n");
+          const ok = window.confirm(
+            `This will remove ${removed.length} workspace mount${removed.length === 1 ? "" : "s"} from this agent:\n\n${list}\n\nThe mount data on the host is not affected. Continue?`
+          );
+          if (!ok) return;
         }
       }
 
