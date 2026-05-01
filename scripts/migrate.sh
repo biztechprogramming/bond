@@ -141,9 +141,15 @@ if curl -s "$SPACETIMEDB_URL/v1/health" > /dev/null 2>&1; then
 
     echo ""
     echo "Regenerating SpacetimeDB TypeScript bindings..."
-    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
+    # Three target dirs because the codebase has three consumers:
+    #   - frontend/src/lib/spacetimedb       (the Next.js project — primary)
+    #   - spacetimedb/gateway/src/spacetimedb (gateway in-repo source)
+    #   - spacetimedb/frontend/src/lib/spacetimedb (legacy duplicate; kept
+    #     in sync to avoid stale-build surprises until cleanup lands)
+    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
     spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/gateway/src/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
-    echo "TypeScript bindings regenerated."
+    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
+    echo "TypeScript bindings regenerated (3 targets)."
 else
     echo ""
     echo "SpacetimeDB not running at $SPACETIMEDB_URL — skipping module publish."

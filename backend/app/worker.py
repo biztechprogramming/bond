@@ -99,6 +99,7 @@ class WorkerState:
         self.pending_reload: bool = False
         self.pending_reload_branch: str | None = None
         self.mcp_proxy: Any = None  # MCPProxyClient instance (Design Doc 054)
+        self.branch_heartbeat_task: asyncio.Task | None = None  # Design Doc 113 §3.3
 
 
 _state = WorkerState()
@@ -251,7 +252,19 @@ async def _lifespan(application: FastAPI):
         _state.mcp_proxy = None
         logger.error(f"Failed to initialize MCP proxy client: {e}")
 
+    # Branch heartbeat — Design Doc 113 §3.3
+    _state.branch_heartbeat_task = asyncio.create_task(_branch_heartbeat_loop())
+
     yield
+
+    # Cancel branch heartbeat on shutdown
+    bh_task = getattr(_state, "branch_heartbeat_task", None)
+    if bh_task:
+        bh_task.cancel()
+        try:
+            await bh_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # MCP Proxy Shutdown
     if getattr(_state, 'mcp_proxy', None):
@@ -264,6 +277,102 @@ async def _lifespan(application: FastAPI):
     # Do NOT kill them on shutdown.
 
     await _shutdown()
+
+async def _branch_heartbeat_loop():
+    """Periodically report each agent_repo's current branch back to bond.
+
+    Reads /config/repos.json (written by the host adapter, Design Doc 113)
+    and watches each /workspace/{name} dir. When the branch changes vs. the
+    last observation, POSTs to /api/v1/agents/{agent_id}/repos/{repo_id}/branch.
+
+    Polling rather than tool-call hooking keeps this contained: it doesn't
+    touch the agent loop, can't slow down turns, and survives any tool
+    bypass. Cost is one git command per repo per minute.
+    """
+    import subprocess as _sp
+
+    repos_config_path = Path("/config/repos.json")
+    if not repos_config_path.is_file():
+        return
+
+    bond_api_url = os.environ.get("BOND_API_URL", "").rstrip("/")
+    if not bond_api_url:
+        logger.info("[branch-heartbeat] BOND_API_URL not set; skipping")
+        return
+
+    agent_id = _state.agent_id or os.environ.get("BOND_AGENT_ID", "")
+    if not agent_id:
+        logger.info("[branch-heartbeat] no agent_id; skipping")
+        return
+
+    last_seen: dict[str, str] = {}  # repo_id → last reported branch
+    interval_s = int(os.environ.get("BOND_BRANCH_HEARTBEAT_INTERVAL", "60"))
+
+    logger.info("[branch-heartbeat] started — interval=%ds", interval_s)
+
+    while True:
+        try:
+            cfg = json.loads(repos_config_path.read_text())
+        except Exception as e:
+            logger.warning("[branch-heartbeat] could not read repos config: %s", e)
+            await asyncio.sleep(interval_s)
+            continue
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for repo in cfg.get("repos", []):
+                repo_id = repo.get("id") or ""
+                name = repo.get("name") or ""
+                if not repo_id or not name:
+                    continue
+
+                workdir = Path("/workspace") / name
+                if not (workdir / ".git").is_dir():
+                    continue
+
+                try:
+                    result = _sp.run(
+                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                        cwd=workdir, capture_output=True, text=True, timeout=5,
+                    )
+                except Exception:
+                    continue
+
+                if result.returncode != 0:
+                    continue
+                branch = result.stdout.strip()
+                if not branch or branch == "HEAD":
+                    # Detached HEAD; record as the SHA prefix so STDB knows
+                    sha = _sp.run(
+                        ["git", "rev-parse", "--short", "HEAD"],
+                        cwd=workdir, capture_output=True, text=True, timeout=5,
+                    ).stdout.strip()
+                    branch = f"detached:{sha}" if sha else "detached"
+
+                if last_seen.get(repo_id) == branch:
+                    continue  # unchanged
+
+                # Report
+                try:
+                    resp = await client.post(
+                        f"{bond_api_url}/api/v1/agents/{agent_id}/repos/{repo_id}/branch",
+                        json={"branch": branch},
+                    )
+                    if resp.status_code == 200:
+                        last_seen[repo_id] = branch
+                        logger.info(
+                            "[branch-heartbeat] reported %s/%s → %s",
+                            agent_id, repo_id, branch,
+                        )
+                    else:
+                        logger.warning(
+                            "[branch-heartbeat] %s returned %d: %s",
+                            repo_id, resp.status_code, resp.text[:200],
+                        )
+                except Exception as e:
+                    logger.warning("[branch-heartbeat] post failed for %s: %s", repo_id, e)
+
+        await asyncio.sleep(interval_s)
+
 
 async def _checkout_preferred_branch():
     """Checkout the preferred branch on startup."""

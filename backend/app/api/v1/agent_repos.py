@@ -219,6 +219,39 @@ async def update_repo(agent_id: str, repo_id: str, body: RepoUpdate):
     return _row_to_dict(rows[0])
 
 
+class BranchHeartbeat(BaseModel):
+    branch: str
+
+
+@router.post("/{agent_id}/repos/{repo_id}/branch")
+async def report_branch(agent_id: str, repo_id: str, body: BranchHeartbeat):
+    """Worker → bond: the agent's current branch on this repo (Phase 2).
+
+    Updates active_branch and last_synced_at. Idempotent — calling with the
+    same branch repeatedly only bumps last_synced_at.
+    """
+    stdb = get_stdb()
+    rows = await stdb.query(
+        f"SELECT id FROM agent_repos WHERE id = '{repo_id}' AND agent_id = '{agent_id}'"
+    )
+    if not rows:
+        raise HTTPException(404, "Repo not found for this agent")
+
+    branch = (body.branch or "").strip()
+    if len(branch) > 250:
+        raise HTTPException(400, "branch name too long")
+
+    now = int(time.time() * 1000)
+    await stdb.query(
+        f"UPDATE agent_repos SET "
+        f"active_branch = '{_escape_sql(branch)}', "
+        f"last_synced_at = {now}, "
+        f"updated_at = {now} "
+        f"WHERE id = '{repo_id}'"
+    )
+    return {"success": True, "branch": branch, "last_synced_at": now}
+
+
 @router.delete("/{agent_id}/repos/{repo_id}")
 async def delete_repo(agent_id: str, repo_id: str):
     stdb = get_stdb()

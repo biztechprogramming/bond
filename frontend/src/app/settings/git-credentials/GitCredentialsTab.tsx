@@ -171,7 +171,7 @@ export default function GitCredentialsTab() {
                 style={{ display: "block", width: "100%" }}
               >
                 <option value="https_pat">HTTPS personal access token</option>
-                <option value="ssh_key" disabled>SSH key (Phase 2 — not yet supported)</option>
+                <option value="ssh_key">SSH private key</option>
               </select>
             </label>
             <label>
@@ -184,25 +184,39 @@ export default function GitCredentialsTab() {
                 style={{ display: "block", width: "100%" }}
               />
             </label>
+            {editing.auth_type === "https_pat" && (
+              <label>
+                Username (optional)
+                <input
+                  type="text"
+                  value={editing.username}
+                  onChange={(e) => setEditing({ ...editing, username: e.target.value })}
+                  placeholder="Leave empty for x-access-token"
+                  style={{ display: "block", width: "100%" }}
+                />
+              </label>
+            )}
             <label>
-              Username (optional, for HTTPS PATs)
-              <input
-                type="text"
-                value={editing.username}
-                onChange={(e) => setEditing({ ...editing, username: e.target.value })}
-                placeholder="Leave empty for x-access-token"
-                style={{ display: "block", width: "100%" }}
-              />
-            </label>
-            <label>
-              {isNew ? "Secret" : "Replace secret (leave empty to keep existing)"}
-              <input
-                type="password"
-                value={editing.secret}
-                onChange={(e) => setEditing({ ...editing, secret: e.target.value })}
-                placeholder={isNew ? "Personal access token" : "***"}
-                style={{ display: "block", width: "100%" }}
-              />
+              {isNew
+                ? (editing.auth_type === "ssh_key" ? "Private key" : "Personal access token")
+                : "Replace secret (leave empty to keep existing)"}
+              {editing.auth_type === "ssh_key" ? (
+                <textarea
+                  value={editing.secret}
+                  onChange={(e) => setEditing({ ...editing, secret: e.target.value })}
+                  placeholder={isNew ? "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----" : "***"}
+                  rows={8}
+                  style={{ display: "block", width: "100%", fontFamily: "monospace", fontSize: "12px" }}
+                />
+              ) : (
+                <input
+                  type="password"
+                  value={editing.secret}
+                  onChange={(e) => setEditing({ ...editing, secret: e.target.value })}
+                  placeholder={isNew ? "Personal access token" : "***"}
+                  style={{ display: "block", width: "100%" }}
+                />
+              )}
             </label>
             <label>
               <input
