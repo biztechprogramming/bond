@@ -11,7 +11,12 @@ services:
       - "18790:18790"  # Backend API
     volumes:
       - ~/.bond:/home/bond/.bond
+      # Host home bound at the SAME path inside bond-bond so that any path the
+      # adapter constructs (e.g. ~/.ssh) resolves correctly when passed back to
+      # the host docker daemon as a bind-mount source. Doc 112 §3.
+      - ${HOME}:${HOME}:ro
       - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
       - ./.env.gateway:/app/gateway/.env:ro
       - /a0/usr/workdir/dev/mcp-solidtime:/app/mcp-solidtime:ro
       - /usr/local/bin/spacetimedb-standalone:/home/bond/.local/share/spacetime/bin/2.0.2/spacetimedb-standalone:ro
@@ -19,6 +24,7 @@ services:
     environment:
       - HOME=/home/bond
       - BOND_HOME=/home/bond/.bond
+      - BOND_HOST_HOME=${HOME}  # Doc 112: host-side path for SSH/credentials passthrough
       - BOND_HOST_DAEMON_URL=${BOND_HOST_DAEMON_URL:-http://172.17.0.1:18795}
       - BOND_SPACETIMEDB_URL=${BOND_SPACETIMEDB_URL:-http://172.17.0.1:18787}
       - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}

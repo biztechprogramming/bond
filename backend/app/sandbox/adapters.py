@@ -41,6 +41,25 @@ _WORKER_INTERNAL_PORT = 18791
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+_CLONE_URL_PREFIXES = ("git@", "http://", "https://", "ssh://", "git+", "git://")
+
+
+def _looks_like_clone_url(value: str) -> bool:
+    """True if the string looks like a git clone URL rather than a host path.
+
+    Cheap heuristic — `git@host:owner/repo.git`, `https://...`, etc. would
+    otherwise survive into a `docker -v` arg and break the colon-separated
+    parse with "invalid mode" errors.
+    """
+    if not value:
+        return False
+    if value.startswith(_CLONE_URL_PREFIXES):
+        return True
+    # `git@github.com:owner/repo` form: `<no-slash>@<no-slash>:`
+    head, sep, _ = value.partition(":")
+    return bool(sep) and "@" in head and "/" not in head
+
+
 # ---------------------------------------------------------------------------
 # Data models (Design Doc 089 §4.2)
 # ---------------------------------------------------------------------------
@@ -167,20 +186,28 @@ class LocalContainerAdapter:
         cmd: list[str],
         workspace_mounts: list[dict] | None = None,
     ) -> None:
-        """Append Claude Code credential and SSH mounts to a docker run command."""
-        claude_json = Path.home() / ".claude.json"
+        """Append Claude Code credential and SSH mounts to a docker run command.
+
+        Uses ``BOND_HOST_HOME`` (Doc 112) when set so that paths handed to the
+        host docker daemon as bind-mount sources resolve on the host's
+        filesystem, not on the container's. Falls back to ``Path.home()`` for
+        native bond installs.
+        """
+        host_home = Path(os.environ.get("BOND_HOST_HOME") or str(Path.home()))
+
+        claude_json = host_home / ".claude.json"
         if claude_json.exists():
             cmd.extend(["-v", f"{claude_json}:/home/bond-agent/.claude.json:ro"])
 
-        claude_credentials = Path.home() / ".claude" / ".credentials.json"
+        claude_credentials = host_home / ".claude" / ".credentials.json"
         if claude_credentials.exists():
             cmd.extend(["-v", f"{claude_credentials}:/home/bond-agent/.claude/.credentials.json:rw"])
 
-        claude_settings = Path.home() / ".claude" / "settings.json"
+        claude_settings = host_home / ".claude" / "settings.json"
         if claude_settings.exists():
             cmd.extend(["-v", f"{claude_settings}:/home/bond-agent/.claude/settings.json:ro"])
 
-        ssh_dir = Path.home() / ".ssh"
+        ssh_dir = host_home / ".ssh"
         workspace_targets = {m.get("container_path", "") for m in (workspace_mounts or [])}
         if ssh_dir.exists() and "/tmp/.ssh" not in workspace_targets:
             cmd.extend(["-v", f"{ssh_dir}:/tmp/.ssh:ro"])
@@ -405,6 +432,20 @@ class LocalContainerAdapter:
                     })
                     if dep_install_script is None:
                         dep_install_script = generate_dep_install_script(effective_host_path)
+
+                # Reject anything that isn't a real filesystem path. A leftover
+                # workspace_mounts row with host_path = "git@github.com:foo/bar"
+                # would otherwise get passed to `docker -v` and split as
+                # src=git@github.com / dst=foo/bar / mode=/workspace/... which
+                # docker rejects with "invalid mode". Doc 113 migrates these to
+                # agent_repos; this is the belt-and-suspenders.
+                if not effective_host_path or _looks_like_clone_url(effective_host_path):
+                    logger.warning(
+                        "Skipping workspace_mount %r for agent %s: host_path %r "
+                        "is not a filesystem path (likely a stale pre-doc-113 row)",
+                        mount_name, agent_id, effective_host_path,
+                    )
+                    continue
 
                 mount_str = f"{effective_host_path}:{container_path}"
                 if readonly:
