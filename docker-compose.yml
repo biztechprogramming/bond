@@ -15,6 +15,10 @@ services:
       # adapter constructs (e.g. ~/.ssh) resolves correctly when passed back to
       # the host docker daemon as a bind-mount source. Doc 112 §3.
       - ${HOME}:${HOME}:ro
+      # ~/.bond/agent-data needs to be writable so the adapter can drop
+      # per-agent configs there before bind-mounting them into agent
+      # containers. Specific mount overrides the :ro one above for this path.
+      - ${HOME}/.bond/agent-data:${HOME}/.bond/agent-data:rw
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/bin/docker:/usr/bin/docker:ro
       - ./.env.gateway:/app/gateway/.env:ro
@@ -34,7 +38,18 @@ services:
       cd /app/gateway && NODE_OPTIONS='--experimental-global-webcrypto' ./node_modules/.bin/tsx watch src/index.ts &
       cd /app/frontend && pnpm start &
       wait"
+    # Agent containers are launched with --network bond-network. Bond-bond
+    # must share that network so it can reach them by container name (DNS
+    # resolution between containers only works within a shared user-defined
+    # bridge network).
+    networks:
+      - default
+      - bond-network
     restart: unless-stopped
+
+networks:
+  bond-network:
+    external: true
 
 volumes:
   bond-data:
