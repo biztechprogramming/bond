@@ -498,8 +498,9 @@ async def delete_agent(agent_id: str):
     
     # Delete in transaction-like order
     await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
-    
+
     await stdb.query(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
+    await stdb.query(f"DELETE FROM agent_repos WHERE agent_id = '{agent_id}'")
     await stdb.query(f"DELETE FROM agents WHERE id = '{agent_id}'")
     
     return {"success": True, "message": f"Agent {agent_id} deleted"}

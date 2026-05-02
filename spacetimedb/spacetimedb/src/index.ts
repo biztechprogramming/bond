@@ -51,6 +51,42 @@ const spacetimedb = schema({
     }
   ),
 
+  // -- Git Credentials (Design Doc 113) --
+  // User-level git auth. Resolved by agent_repos.credentialId override OR
+  // by host_pattern fallback (e.g., 'github.com' matches any github URL).
+  git_credentials: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      name: t.string(), // human label, e.g. "GitHub PAT"
+      authType: t.string(), // 'https_pat' | 'ssh_key'
+      secretRef: t.string(), // vault key holding the actual secret
+      hostPattern: t.string(), // 'github.com', '*.gitlab.example.com', '*'
+      username: t.string(), // for HTTPS PATs that need a username; empty otherwise
+      isDefault: t.bool(),
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
+  // -- Agent Repos (Design Doc 113) --
+  // Replaces bind-mounted workspaces with per-agent git clones into Docker volumes.
+  agent_repos: table(
+    { public: true },
+    {
+      id: t.string().primaryKey(),
+      agentId: t.string(),
+      url: t.string(), // canonical clone URL (ssh or https)
+      name: t.string(), // mount name; container path = /workspace/{name}
+      defaultBranch: t.string(), // resolved from HEAD on first clone
+      activeBranch: t.string(), // current branch the agent has checked out
+      credentialId: t.string(), // FK to git_credentials; empty = resolve by host_pattern
+      lastSyncedAt: t.u64(), // 0 = never synced
+      createdAt: t.u64(),
+      updatedAt: t.u64(),
+    }
+  ),
+
   // -- Conversations --
   conversations: table(
     { public: true },
@@ -876,6 +912,10 @@ export const deleteAgent = spacetimedb.reducer(
     // Cascade delete mounts
     for (const m of ctx.db.agent_workspace_mounts.iter()) {
       if (m.agentId === id) ctx.db.agent_workspace_mounts.id.delete(m.id);
+    }
+    // Cascade delete repos (Design Doc 113)
+    for (const r of ctx.db.agent_repos.iter()) {
+      if (r.agentId === id) ctx.db.agent_repos.id.delete(r.id);
     }
     ctx.db.agents.id.delete(id);
   }
