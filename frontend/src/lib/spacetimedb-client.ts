@@ -652,6 +652,7 @@ export interface McpServerRow {
   env: string;
   enabled: boolean;
   agentId: string | null;
+  methodPermissions: string;
   createdAt: bigint;
   updatedAt: bigint;
 }
@@ -669,6 +670,7 @@ export function getMcpServers(): McpServerRow[] {
       env: r.env,
       enabled: r.enabled,
       agentId: r.agentId || null,
+      methodPermissions: r.methodPermissions || "",
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     });

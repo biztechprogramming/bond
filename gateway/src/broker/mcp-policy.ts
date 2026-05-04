@@ -1,7 +1,10 @@
 /**
  * MCP Policy Engine — evaluates whether an agent may call a specific MCP tool.
  *
- * Rules use glob patterns for tool names and are evaluated first-match-wins.
+ * Supports two rule sources:
+ * 1. Static glob-based rules (MCPPolicyRule[]) — first-match-wins.
+ * 2. Per-server method permissions loaded from backend — tool-level allow/deny.
+ *
  * Default rule: allow all (backward compatible).
  */
 
@@ -21,8 +24,15 @@ export interface MCPPolicyDecision {
   rule?: string;
 }
 
+interface ServerMethodPermissions {
+  serverName: string;
+  agentId: string | null;
+  permissions: Record<string, "allow" | "deny">;
+}
+
 export class MCPPolicyEngine {
   private rules: MCPPolicyRule[] = [];
+  private serverPerms: ServerMethodPermissions[] = [];
 
   constructor(rules?: MCPPolicyRule[]) {
     this.rules = rules ?? [];
@@ -33,16 +43,45 @@ export class MCPPolicyEngine {
   }
 
   /**
+   * Load per-server method permissions fetched from backend.
+   */
+  loadServerPermissions(perms: ServerMethodPermissions[]): void {
+    this.serverPerms = perms;
+  }
+
+  /**
    * Evaluate whether an agent may call a specific MCP tool.
-   * First matching rule wins. If no rule matches, allow (default).
+   * 1. Check per-server method permissions first (explicit deny wins).
+   * 2. Then check glob rules (first-match-wins).
+   * 3. Default: allow.
    */
   evaluate(
     toolName: string,
     agentId: string,
     _sessionId?: string,
   ): MCPPolicyDecision {
-    for (const rule of this.rules) {
+    // Check per-server method permissions
+    for (const sp of this.serverPerms) {
+      const prefix = `mcp_${sp.serverName}_`;
+      if (!toolName.startsWith(prefix)) continue;
+
       // Check agent scope
+      if (sp.agentId && sp.agentId !== agentId) continue;
+
+      const methodName = toolName.slice(prefix.length);
+      const decision = sp.permissions[methodName];
+      if (decision === "deny") {
+        return {
+          decision: "deny",
+          reason: `Method '${methodName}' denied on server '${sp.serverName}'`,
+          rule: `server-perm:${sp.serverName}:${methodName}`,
+        };
+      }
+      // If "allow" or not listed, fall through to glob rules then default
+    }
+
+    // Check glob-based rules (first-match-wins)
+    for (const rule of this.rules) {
       if (rule.agent_ids && rule.agent_ids.length > 0) {
         const agentMatch = rule.agent_ids.some((pattern) =>
           globToRegex(pattern).test(agentId),
@@ -50,13 +89,11 @@ export class MCPPolicyEngine {
         if (!agentMatch) continue;
       }
 
-      // Check tool name match
       const toolMatch = rule.tools.some((pattern) =>
         globToRegex(pattern).test(toolName),
       );
       if (!toolMatch) continue;
 
-      // First match wins
       return {
         decision: rule.decision,
         reason: rule.reason,

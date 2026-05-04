@@ -30,6 +30,7 @@ class MCPServerRead(BaseModel):
     env: dict
     enabled: bool
     agent_id: Optional[str] = None
+    method_permissions: dict = {}
     status: str = "stopped"
 
 class MCPServerCreate(BaseModel):
@@ -39,6 +40,7 @@ class MCPServerCreate(BaseModel):
     env: Optional[dict] = {}
     enabled: Optional[bool] = True
     agent_id: Optional[str] = None
+    method_permissions: Optional[dict] = {}
 
 class MCPServerUpdate(BaseModel):
     name: Optional[str] = None
@@ -47,6 +49,7 @@ class MCPServerUpdate(BaseModel):
     env: Optional[dict] = None
     enabled: Optional[bool] = None
     agent_id: Optional[str] = None
+    method_permissions: Optional[dict] = None
 
 
 class MCPServerTestRequest(BaseModel):
@@ -91,12 +94,44 @@ class MCPProxyCallResponse(BaseModel):
     error: Optional[str] = None
 
 
-def check_mcp_acl(agent_id: str, tool_name: str) -> bool:
+async def check_mcp_acl(agent_id: str, tool_name: str) -> bool:
     """Check if an agent is allowed to use a specific MCP tool.
 
-    Currently allows all — ACL enforcement is done at the Gateway broker layer.
-    This is a hook for future backend-side restrictions.
+    Reads per-server method_permissions from SpacetimeDB.
+    If a server has explicit per-method permissions and the tool is denied,
+    returns False.  Otherwise returns True (allow-all default).
     """
+    if not tool_name.startswith("mcp_"):
+        return True  # Non-MCP tools (database_*) not governed here
+
+    stdb = get_stdb()
+    rows = await stdb.query("SELECT name, method_permissions, agent_id FROM mcp_servers WHERE enabled = true")
+    for row in rows:
+        server_name = row["name"]
+        prefix = f"mcp_{server_name}_"
+        if not tool_name.startswith(prefix):
+            continue
+
+        # Check agent scope
+        row_agent_id = row.get("agent_id")
+        if not _is_stdb_none(row_agent_id) and row_agent_id and row_agent_id != agent_id:
+            continue
+
+        perms_raw = row.get("method_permissions", "")
+        if not perms_raw or _is_stdb_none(perms_raw):
+            return True  # No per-method config → allow all
+
+        try:
+            perms = json.loads(perms_raw)
+        except (json.JSONDecodeError, TypeError):
+            return True
+
+        mcp_tool_name = tool_name[len(prefix):]
+        decision = perms.get(mcp_tool_name)
+        if decision == "deny":
+            return False
+        return True
+
     return True
 
 
@@ -144,6 +179,29 @@ async def proxy_list_tools(agent_id: str):
             tools.append(tool_entry)
             seen.add(func["name"])
 
+    # Filter out tools denied by per-server method permissions
+    stdb = get_stdb()
+    perm_rows = await stdb.query("SELECT name, method_permissions, agent_id FROM mcp_servers WHERE enabled = true")
+    deny_set: set[str] = set()
+    for row in perm_rows:
+        perms_raw = row.get("method_permissions", "")
+        if not perms_raw or _is_stdb_none(perms_raw):
+            continue
+        try:
+            perms = json.loads(perms_raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        row_agent_id = row.get("agent_id")
+        if not _is_stdb_none(row_agent_id) and row_agent_id and row_agent_id != agent_id:
+            continue
+        server_name = row["name"]
+        for method_name, decision in perms.items():
+            if decision == "deny":
+                deny_set.add(f"mcp_{server_name}_{method_name}")
+
+    if deny_set:
+        tools = [t for t in tools if t["name"] not in deny_set]
+
     return {"tools": tools}
 
 
@@ -154,7 +212,7 @@ async def proxy_call_tool(req: MCPProxyCallRequest):
     Handles both Bond-native virtual database tools (database_*)
     and standard mcp_* prefixed tools.
     """
-    if not check_mcp_acl(req.agent_id, req.tool_name):
+    if not await check_mcp_acl(req.agent_id, req.tool_name):
         raise HTTPException(status_code=403, detail=f"Agent {req.agent_id} not allowed to use {req.tool_name}")
 
     # Handle Bond-native virtual database tools (Design Doc 109)
@@ -251,6 +309,33 @@ async def get_servers_status():
             })
 
     return {"servers": servers}
+
+
+@router.get("/servers/permissions")
+async def get_servers_permissions():
+    """Return per-server method permissions for gateway policy enforcement."""
+    stdb = get_stdb()
+    rows = await stdb.query("SELECT name, agent_id, method_permissions FROM mcp_servers WHERE enabled = true")
+    result = []
+    for row in rows:
+        mp_raw = row.get("method_permissions", "")
+        if not mp_raw or _is_stdb_none(mp_raw):
+            continue
+        try:
+            perms = json.loads(mp_raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not perms:
+            continue
+        agent_id = row.get("agent_id")
+        if _is_stdb_none(agent_id):
+            agent_id = None
+        result.append({
+            "server_name": row["name"],
+            "agent_id": agent_id or None,
+            "method_permissions": perms,
+        })
+    return {"servers": result}
 
 
 @router.post("/servers/test", response_model=MCPServerTestResponse)
@@ -351,6 +436,8 @@ async def list_servers(agent_id: Optional[str] = None):
 
         server["args"] = json.loads(server["args"]) if server["args"] else []
         server["env"] = json.loads(server["env"]) if server["env"] else {}
+        mp_raw = server.get("method_permissions", "")
+        server["method_permissions"] = json.loads(mp_raw) if mp_raw and not _is_stdb_none(mp_raw) else {}
 
         # Check pool status
         pool_key = f"{server['name']}::global"
@@ -382,7 +469,8 @@ async def create_server(data: MCPServerCreate):
             data.command,
             json.dumps(data.args or []),
             json.dumps(data.env or {}),
-            data.agent_id if data.agent_id else None
+            data.agent_id if data.agent_id else None,
+            json.dumps(data.method_permissions or {}),
         ])
 
         if not success:
@@ -406,6 +494,7 @@ async def create_server(data: MCPServerCreate):
             "env": data.env or {},
             "enabled": data.enabled,
             "agent_id": data.agent_id,
+            "method_permissions": data.method_permissions or {},
             "status": "running" if data.enabled else "stopped"
         }
     except Exception as e:
@@ -454,7 +543,8 @@ async def toggle_server(server_id: str):
         row["args"],
         row["env"],
         new_enabled,
-        row.get("agent_id")
+        row.get("agent_id"),
+        row.get("method_permissions", "{}"),
     ])
 
     if not success:

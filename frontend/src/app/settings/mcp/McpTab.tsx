@@ -14,6 +14,12 @@ interface EnvVar {
   masked: boolean;
 }
 
+interface MethodPermission {
+  name: string;
+  description: string;
+  decision: "allow" | "deny";
+}
+
 interface McpServerForm {
   id: string;
   name: string;
@@ -22,6 +28,7 @@ interface McpServerForm {
   env: EnvVar[];
   enabled: boolean;
   agentId: string | null;
+  methodPermissions: MethodPermission[];
 }
 
 function parseArgs(argsJson: string): string[] {
@@ -35,6 +42,17 @@ function parseEnv(envJson: string): EnvVar[] {
   } catch { return []; }
 }
 
+function parseMethodPermissions(mpJson: string): MethodPermission[] {
+  try {
+    const obj = JSON.parse(mpJson);
+    return Object.entries(obj).map(([name, decision]) => ({
+      name,
+      description: "",
+      decision: decision as "allow" | "deny",
+    }));
+  } catch { return []; }
+}
+
 function serverToForm(s: McpServerRow): McpServerForm {
   return {
     id: s.id,
@@ -44,6 +62,7 @@ function serverToForm(s: McpServerRow): McpServerForm {
     env: parseEnv(s.env),
     enabled: s.enabled,
     agentId: s.agentId,
+    methodPermissions: parseMethodPermissions(s.methodPermissions),
   };
 }
 
@@ -134,6 +153,7 @@ export default function McpTab() {
       env: [],
       enabled: true,
       agentId: null,
+      methodPermissions: [],
     });
     setIsNew(true);
     setMsg("");
@@ -158,6 +178,9 @@ export default function McpTab() {
     const envJson = JSON.stringify(
       Object.fromEntries(editing.env.map(e => [e.key, e.value]))
     );
+    const mpJson = JSON.stringify(
+      Object.fromEntries(editing.methodPermissions.map(mp => [mp.name, mp.decision]))
+    );
 
     const ok = isNew
       ? callReducer(conn => conn.reducers.addMcpServer({
@@ -167,6 +190,7 @@ export default function McpTab() {
           args: argsJson,
           env: envJson,
           agentId: editing.agentId || undefined,
+          methodPermissions: mpJson,
         }))
       : callReducer(conn => conn.reducers.updateMcpServer({
           id: editing.id,
@@ -176,6 +200,7 @@ export default function McpTab() {
           env: envJson,
           enabled: editing.enabled,
           agentId: editing.agentId || undefined,
+          methodPermissions: mpJson,
         }));
 
     if (!ok) { setMsg("Not connected to database. Please wait and try again."); return; }
@@ -200,6 +225,7 @@ export default function McpTab() {
       env: server.env,
       enabled: !server.enabled,
       agentId: server.agentId || undefined,
+      methodPermissions: server.methodPermissions || "{}",
     }));
   };
 
@@ -220,6 +246,19 @@ export default function McpTab() {
       });
       const data = await res.json();
       setTestResult(data);
+      // Populate method permissions from discovered tools
+      if (data.success && data.tools?.length > 0 && editing) {
+        const existingPerms = new Map(editing.methodPermissions.map(mp => [mp.name, mp]));
+        const merged: MethodPermission[] = data.tools.map((tool: { name: string; description: string }) => {
+          const existing = existingPerms.get(tool.name);
+          return {
+            name: tool.name,
+            description: tool.description || "",
+            decision: existing ? existing.decision : "allow" as const,
+          };
+        });
+        setEditing(prev => prev ? { ...prev, methodPermissions: merged } : prev);
+      }
     } catch (e: any) {
       setTestResult({ success: false, status: "error", tools: [], connect_time_ms: 0, error: e.message });
     } finally {
@@ -278,6 +317,14 @@ export default function McpTab() {
                     {toolCount > 0 && (
                       <div style={styles.cardMeta}>Tools: {toolCount} available</div>
                     )}
+                    {(() => {
+                      const mp = parseMethodPermissions(server.methodPermissions);
+                      const denied = mp.filter(m => m.decision === "deny").length;
+                      if (mp.length > 0 && denied > 0) {
+                        return <div style={{ ...styles.cardMeta, color: "#ff6c8a" }}>Permissions: {denied}/{mp.length} denied</div>;
+                      }
+                      return null;
+                    })()}
                     {parseEnv(server.env).length > 0 && (
                       <div style={styles.cardMeta}>
                         Env: {parseEnv(server.env).map(e => `${e.key}=\u2022\u2022\u2022\u2022\u2022\u2022`).join(", ")}
@@ -481,26 +528,72 @@ export default function McpTab() {
                   </span>
                 )}
               </div>
-              {testResult?.success && testResult.tools.length > 0 && (
+              {editing.methodPermissions.length > 0 && (
                 <div style={{ marginTop: "12px", backgroundColor: "#1e1e2e", borderRadius: "8px", padding: "12px" }}>
-                  <div style={{ fontSize: "0.8rem", color: "#8888a0", marginBottom: "8px" }}>
-                    Discovered {testResult.tools.length} tools:
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <span style={{ fontSize: "0.8rem", color: "#8888a0" }}>
+                      {editing.methodPermissions.length} tools &mdash; toggle to allow or deny each method
+                    </span>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <button
+                        style={{ ...styles.smallButton, fontSize: "0.7rem" }}
+                        onClick={() => setEditing({
+                          ...editing,
+                          methodPermissions: editing.methodPermissions.map(mp => ({ ...mp, decision: "allow" })),
+                        })}
+                      >Allow All</button>
+                      <button
+                        style={{ ...styles.smallButton, fontSize: "0.7rem", color: "#ff6c8a" }}
+                        onClick={() => setEditing({
+                          ...editing,
+                          methodPermissions: editing.methodPermissions.map(mp => ({ ...mp, decision: "deny" })),
+                        })}
+                      >Deny All</button>
+                    </div>
                   </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                    {testResult.tools.map((tool) => (
-                      <span
-                        key={tool.name}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "4px", maxHeight: "280px", overflowY: "auto" }}>
+                    {editing.methodPermissions.map((mp) => (
+                      <div
+                        key={mp.name}
                         style={{
-                          fontSize: "0.75rem",
-                          backgroundColor: "#2a2a3e",
-                          color: "#6c8aff",
-                          padding: "3px 8px",
-                          borderRadius: "4px",
+                          display: "flex", alignItems: "center", gap: "10px",
+                          padding: "6px 10px", borderRadius: "6px",
+                          backgroundColor: mp.decision === "allow" ? "#0d1f0d" : "#1f0d0d",
+                          transition: "background-color 0.15s",
                         }}
-                        title={tool.description}
                       >
-                        {tool.name}
-                      </span>
+                        <button
+                          onClick={() => {
+                            const perms = editing.methodPermissions.map(p =>
+                              p.name === mp.name ? { ...p, decision: (p.decision === "allow" ? "deny" : "allow") as "allow" | "deny" } : p
+                            );
+                            setEditing({ ...editing, methodPermissions: perms });
+                          }}
+                          style={{
+                            width: "38px", height: "20px", borderRadius: "10px",
+                            backgroundColor: mp.decision === "allow" ? "#22c55e" : "#4b5563",
+                            border: "none", cursor: "pointer", position: "relative",
+                            transition: "background-color 0.15s",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <span style={{
+                            position: "absolute", top: "2px",
+                            left: mp.decision === "allow" ? "20px" : "2px",
+                            width: "16px", height: "16px", borderRadius: "50%",
+                            backgroundColor: "#fff", transition: "left 0.15s",
+                          }} />
+                        </button>
+                        <span style={{
+                          fontSize: "0.8rem", fontFamily: "monospace",
+                          color: mp.decision === "allow" ? "#4ade80" : "#ff6c8a",
+                        }}>{mp.name}</span>
+                        {mp.description && (
+                          <span style={{ fontSize: "0.7rem", color: "#5a5a6e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                            title={mp.description}
+                          >{mp.description}</span>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>

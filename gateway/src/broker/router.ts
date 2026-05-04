@@ -53,6 +53,34 @@ export function createBrokerRouter(config: BrokerConfig, gatewayConfig?: Gateway
   const mcpPolicy = new MCPPolicyEngine();
   const startTime = Date.now();
 
+  // Periodically load per-server method permissions from backend
+  const loadMcpPermissions = async () => {
+    try {
+      const resp = await fetch(`${BACKEND_BASE}/api/v1/mcp/servers/permissions`);
+      if (resp.ok) {
+        const data = await resp.json() as {
+          servers: Array<{
+            server_name: string;
+            agent_id: string | null;
+            method_permissions: Record<string, "allow" | "deny">;
+          }>;
+        };
+        mcpPolicy.loadServerPermissions(
+          data.servers.map((s) => ({
+            serverName: s.server_name,
+            agentId: s.agent_id,
+            permissions: s.method_permissions,
+          })),
+        );
+      }
+    } catch {
+      // Backend may not be up yet; will retry on next interval
+    }
+  };
+  // Load once at startup, then every 30s
+  loadMcpPermissions();
+  setInterval(loadMcpPermissions, 30_000);
+
   // Health check — no auth
   router.get("/health", (_req: Request, res: Response) => {
     res.json({
