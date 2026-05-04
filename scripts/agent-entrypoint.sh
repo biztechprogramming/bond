@@ -43,6 +43,162 @@ else
     fi
 fi
 
+# --- Agent repos (Design Doc 113) ---
+# Read /config/repos.json (written by the host adapter) and clone each repo
+# into /workspace/{name}, fetching on subsequent runs. Supports both HTTPS
+# PAT (via ~/.git-credentials store) and SSH key (per-repo key file +
+# core.sshCommand on the local repo) auth.
+if [ -f /config/repos.json ]; then
+    echo "[entrypoint] Processing agent_repos config..."
+    mkdir -p /workspace
+    HOME_DIR="${HOME:-/root}"
+
+    if ! python3 - "$HOME_DIR" <<'PYEOF'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import quote, urlparse
+
+home = Path(sys.argv[1])
+cfg = json.loads(Path("/config/repos.json").read_text())
+repos = cfg.get("repos", [])
+
+# ── HTTPS PAT setup ────────────────────────────────────────────
+# One git-credentials store covers all HTTPS repos; git matches by URL.
+https_repos = [r for r in repos if (r.get("credential") or {}).get("auth_type") == "https_pat"]
+if https_repos:
+    subprocess.run(["git", "config", "--global", "credential.helper", "store"], check=True)
+    creds_path = home / ".git-credentials"
+    lines = []
+    for r in https_repos:
+        cred = r["credential"]
+        secret = cred.get("secret") or ""
+        if not secret:
+            continue
+        url = r.get("url", "")
+        parsed = urlparse(url if url.startswith(("http://", "https://")) else f"https://{url}")
+        if not parsed.netloc:
+            continue
+        username = cred.get("username") or "x-access-token"
+        lines.append(f"{parsed.scheme}://{quote(username, safe='')}:{quote(secret, safe='')}@{parsed.netloc}")
+    creds_path.write_text("\n".join(lines) + ("\n" if lines else ""))
+    creds_path.chmod(0o600)
+
+# ── SSH key setup ──────────────────────────────────────────────
+# One key file per repo, written under ~/.ssh/bondrepo_{repo_id}. Using
+# `~` in the SSH command so it works under both root (during this script)
+# and bond-agent (post-privilege-drop) since the privilege-drop section
+# copies /root/.ssh to /home/bond-agent/.ssh.
+ssh_dir = home / ".ssh"
+ssh_dir.mkdir(mode=0o700, exist_ok=True)
+
+
+def ssh_command_for(repo_id: str) -> str:
+    """Build a GIT_SSH_COMMAND that uses only this repo's key."""
+    # accept-new: auto-add unknown hosts to known_hosts on first contact, but
+    # reject changed host keys. Right tradeoff for unattended agents.
+    return (
+        f"ssh -i ~/.ssh/bondrepo_{repo_id} "
+        f"-o IdentitiesOnly=yes "
+        f"-o StrictHostKeyChecking=accept-new "
+        f"-o UserKnownHostsFile=~/.ssh/known_hosts"
+    )
+
+
+for r in repos:
+    cred = r.get("credential") or {}
+    if cred.get("auth_type") != "ssh_key":
+        continue
+    secret = cred.get("secret") or ""
+    if not secret:
+        continue
+    repo_id = r.get("id") or ""
+    if not repo_id:
+        continue
+    key_path = ssh_dir / f"bondrepo_{repo_id}"
+    # SSH is fussy about key formatting — must end with a newline.
+    body = secret if secret.endswith("\n") else secret + "\n"
+    key_path.write_text(body)
+    key_path.chmod(0o600)
+
+# ── Clone (or fetch) each repo ─────────────────────────────────
+exit_code = 0
+for r in repos:
+    name = r.get("name") or ""
+    url = r.get("url") or ""
+    repo_id = r.get("id") or ""
+    if not name or not url:
+        continue
+    dest = Path("/workspace") / name
+    default_branch = r.get("default_branch") or "main"
+    active_branch = r.get("active_branch") or ""
+    cred = r.get("credential") or {}
+    is_ssh = cred.get("auth_type") == "ssh_key" and bool(cred.get("secret")) and bool(repo_id)
+
+    subprocess.run(
+        ["git", "config", "--global", "--add", "safe.directory", str(dest)],
+        check=False,
+    )
+
+    env = os.environ.copy()
+    if is_ssh:
+        env["GIT_SSH_COMMAND"] = ssh_command_for(repo_id)
+
+    if (dest / ".git").is_dir():
+        print(f"[entrypoint] Repo '{name}' already cloned — fetching...")
+        rc = subprocess.run(["git", "fetch", "--all", "--prune"], cwd=dest, env=env).returncode
+        if rc != 0:
+            print(f"[entrypoint] WARN: fetch failed for {name}")
+        if active_branch:
+            rc = subprocess.run(["git", "checkout", active_branch], cwd=dest, env=env).returncode
+            if rc != 0:
+                rc = subprocess.run(
+                    ["git", "checkout", "-b", active_branch, f"origin/{active_branch}"],
+                    cwd=dest, env=env,
+                ).returncode
+            if rc != 0:
+                print(f"[entrypoint] WARN: could not checkout {active_branch} on {name}")
+    else:
+        branch = active_branch or default_branch
+        print(f"[entrypoint] Cloning {name} ({url}) into {dest}...")
+        rc = subprocess.run(
+            ["git", "clone", "--branch", branch, url, str(dest)], env=env,
+        ).returncode
+        if rc != 0:
+            # Branch didn't exist on remote — clone default and try to switch
+            rc = subprocess.run(["git", "clone", url, str(dest)], env=env).returncode
+            if rc != 0:
+                print(f"[entrypoint] ERROR: clone failed for {name}")
+                exit_code = 1
+                continue
+            if active_branch:
+                subprocess.run(["git", "checkout", active_branch], cwd=dest, env=env)
+
+    # Persist the SSH command on the local repo so post-clone fetches and
+    # pushes (run by bond-agent) keep using the right key without env vars.
+    if is_ssh:
+        subprocess.run(
+            ["git", "config", "core.sshCommand", ssh_command_for(repo_id)],
+            cwd=dest, check=False,
+        )
+
+    # Chown the cloned repo to bond-agent so the worker can write to it
+    # after privilege drop. Volumes are docker-managed so this is safe
+    # (no host-side ownership impact).
+    subprocess.run(["chown", "-R", "bond-agent:bond-agent", str(dest)], check=False)
+
+sys.exit(exit_code)
+PYEOF
+    then
+        echo "[entrypoint] ERROR: one or more repo clones failed; refusing to start agent."
+        exit 1
+    fi
+
+    echo "[entrypoint] agent_repos processing complete."
+fi
+
 # --- OpenSandbox execd (code execution daemon) ---
 # Start execd in background if the binary is present.
 # Provides structured command execution, file ops, and code interpreter
@@ -139,6 +295,14 @@ if [ -d /root/.ssh ]; then
 fi
 cp /root/.gitconfig /home/bond-agent/.gitconfig 2>/dev/null || true
 chown bond-agent:bond-agent /home/bond-agent/.gitconfig 2>/dev/null || true
+
+# Copy git credentials store (Design Doc 113) so bond-agent can fetch/push
+# from cloned repos after privilege drop.
+if [ -f /root/.git-credentials ]; then
+    cp /root/.git-credentials /home/bond-agent/.git-credentials
+    chown bond-agent:bond-agent /home/bond-agent/.git-credentials
+    chmod 600 /home/bond-agent/.git-credentials
+fi
 
 # Mark /bond and /workspace as safe for git under the bond-agent user too
 # Write directly instead of spawning su + git subprocesses (~0.5s saved)

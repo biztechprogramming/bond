@@ -29,7 +29,7 @@ async def resolve_client(_clear_settings_cache):
 
     tmpdir = tempfile.mkdtemp(prefix="bond_resolve_test_")
     db_path = Path(tmpdir) / "test.db"
-    os.environ["BOND_DATABASE_PATH"] = str(db_path)
+    os.environ["BOND_VECTOR_DB_PATH"] = str(db_path)
 
     async with aiosqlite.connect(db_path) as db:
         from tests.conftest import apply_all_migrations
@@ -69,7 +69,7 @@ async def test_resolve_host_mode_agent(resolve_client):
 async def test_resolve_container_mode_agent(resolve_client):
     """Agent with sandbox_image should resolve as container mode."""
     # Create a containerized agent
-    async with aiosqlite.connect(os.environ["BOND_DATABASE_PATH"]) as db:
+    async with aiosqlite.connect(os.environ["BOND_VECTOR_DB_PATH"]) as db:
         await db.execute(
             "INSERT INTO agents (id, name, display_name, system_prompt, model, sandbox_image, tools, is_default, is_active) "
             "VALUES ('agent-container-1', 'container-agent', 'Container Agent', 'test', 'anthropic/claude-sonnet-4-20250514', 'bond-sandbox:latest', '[]', 0, 1)"

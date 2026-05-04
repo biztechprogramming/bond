@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 # Set BOND_HOME to a temp dir before any config import
 _tmpdir = tempfile.mkdtemp(prefix="bond_test_")
 os.environ["BOND_HOME"] = _tmpdir
-os.environ["BOND_DATABASE_PATH"] = str(Path(_tmpdir) / "test.db")
+os.environ["BOND_VECTOR_DB_PATH"] = str(Path(_tmpdir) / "test.db")
 
 # Create a minimal bond.json so config loading doesn't fail when Path.exists is patched
 _bond_json = Path(_tmpdir) / "bond.json"

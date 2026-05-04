@@ -176,58 +176,36 @@ pnpm --filter gateway dev 2>&1 | tee gateway.log
 
 ## 4. Database Observability
 
-### Agent DB (SQLite)
+### Bond Operational State (SpacetimeDB)
 
-Each agent has its own SQLite database at `/data/agent.db` (containerized) or a local temp path (host mode).
+Bond operational state lives in SpacetimeDB. Do not assume SQLite for MCP servers, agents, settings, or other primary application state.
 
-**Inspect the agent's memory directly:**
+Use the Bond APIs and SpacetimeDB-backed services to inspect runtime state:
+
+```bash
+# Backend health
+curl http://localhost:18790/api/v1/health
+
+# Agents
+curl http://localhost:18790/api/v1/agents
+
+# MCP servers
+curl http://localhost:18790/api/v1/mcp/servers
+```
+
+### Agent DB (Local SQLite)
+
+Some agent-local storage may still use SQLite for local worker state or specialized local indexing.
+
+**Inspect the agent-local database directly when relevant:**
 
 ```bash
 sqlite3 /data/agent.db
-
--- List all memories
-SELECT id, type, content, created_at, deleted_at FROM memories ORDER BY created_at DESC;
-
--- Check memory versions (audit trail)
-SELECT mv.memory_id, mv.version, mv.previous_content, mv.new_content, mv.changed_by, mv.created_at
-FROM memory_versions mv ORDER BY mv.created_at DESC;
-
--- Verify FTS index is in sync
-SELECT COUNT(*) FROM memories WHERE deleted_at IS NULL;
-SELECT COUNT(*) FROM memories_fts;
--- These should match
-
--- Search FTS directly
-SELECT id, content, rank FROM memories_fts WHERE memories_fts MATCH 'your search term';
-
--- Check for orphaned FTS entries (should return 0)
-SELECT COUNT(*) FROM memories_fts WHERE id NOT IN (SELECT id FROM memories WHERE deleted_at IS NULL);
-
--- Entity graph
-SELECT * FROM entities ORDER BY created_at DESC;
 ```
 
-### Shared DB (Read-Only Snapshot)
+### Shared / Snapshot SQLite Files
 
-The shared database is mounted at `/data/shared/shared.db` and contains promoted memories from the host. To check what's been promoted:
-
-```bash
-sqlite3 /data/shared/shared.db "SELECT id, type, content FROM memories LIMIT 20;"
-```
-
-### Host DB (SQLAlchemy)
-
-The host database uses SQLAlchemy with async SQLite. Connection events are logged by the mediator pipeline. For direct inspection:
-
-```bash
-sqlite3 data/bond.db
-
--- Recent memories
-SELECT id, type, content, importance, sensitivity FROM memories ORDER BY created_at DESC LIMIT 20;
-
--- Memory version history
-SELECT * FROM memory_versions WHERE memory_id = 'some-id' ORDER BY version;
-```
+If a local SQLite snapshot exists, treat it as a local implementation detail or cache, not the source of truth for Bond operational state.
 
 ---
 

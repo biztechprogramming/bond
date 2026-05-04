@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run database migrations using golang-migrate
+# Run local SQLite vector-storage migrations and SpacetimeDB module publish steps
 # Requires: migrate CLI with SQLite support
 # Install: make install-migrate
 
@@ -28,15 +28,52 @@ else
     exit 1
 fi
 
-echo "Running migrations..."
+TARGET_VERSION="$1"
+DB_URL="sqlite3://$DB_FILE"
+
+echo "Running local SQLite vector-storage migrations..."
 echo "  Using: $MIGRATE"
 echo "  Path: $MIGRATIONS_PATH"
-echo "  Database: $DB_FILE"
+echo "  SQLite file: $DB_FILE"
 
-# Run SQLite migrations
-$MIGRATE -path "$MIGRATIONS_PATH" -database "sqlite3://$DB_FILE" up
+if [ -n "$TARGET_VERSION" ]; then
+    # Validate target is a positive integer
+    if ! echo "$TARGET_VERSION" | grep -qE '^[0-9]+$'; then
+        echo "Error: Target version must be a positive integer, got '$TARGET_VERSION'"
+        exit 1
+    fi
 
-echo "SQLite migrations complete."
+    # Get current version (returns "X" or "X (dirty)")
+    CURRENT_OUTPUT=$($MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" version 2>&1 || true)
+    CURRENT_VERSION=$(echo "$CURRENT_OUTPUT" | grep -oE '^[0-9]+' || echo "")
+
+    if [ -z "$CURRENT_VERSION" ]; then
+        echo "Error: Could not determine current migration version."
+        echo "  Output: $CURRENT_OUTPUT"
+        echo "  If no migrations have been applied yet, run 'make migrate' first."
+        exit 1
+    fi
+
+    MIN_ALLOWED=$((CURRENT_VERSION - 3))
+    MAX_ALLOWED=$((CURRENT_VERSION + 2))
+    [ "$MIN_ALLOWED" -lt 1 ] && MIN_ALLOWED=1
+
+    if [ "$TARGET_VERSION" -lt "$MIN_ALLOWED" ] || [ "$TARGET_VERSION" -gt "$MAX_ALLOWED" ]; then
+        echo "Error: Target version $TARGET_VERSION is out of safe range."
+        echo "  Current version: $CURRENT_VERSION"
+        echo "  Allowed range:   $MIN_ALLOWED .. $MAX_ALLOWED (current -3 to current +2)"
+        exit 1
+    fi
+
+    echo "  Current version: $CURRENT_VERSION"
+    echo "  Forcing to version: $TARGET_VERSION"
+    $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" force "$TARGET_VERSION"
+else
+    echo "  Skipping version check — running all pending migrations up to latest."
+    $MIGRATE -path "$MIGRATIONS_PATH" -database "$DB_URL" up
+fi
+
+echo "Local SQLite vector-storage migrations complete."
 
 # Run SpacetimeDB migrations (publish module)
 SPACETIMEDB_URL="${SPACETIMEDB_URL:-$(python3 -c "import json; print(json.load(open('$PROJECT_ROOT/bond.json')).get('spacetimedb', {}).get('url', 'http://localhost:18787'))" 2>/dev/null || echo "http://localhost:18787")}"
@@ -104,9 +141,15 @@ if curl -s "$SPACETIMEDB_URL/v1/health" > /dev/null 2>&1; then
 
     echo ""
     echo "Regenerating SpacetimeDB TypeScript bindings..."
-    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
+    # Three target dirs because the codebase has three consumers:
+    #   - frontend/src/lib/spacetimedb       (the Next.js project — primary)
+    #   - spacetimedb/gateway/src/spacetimedb (gateway in-repo source)
+    #   - spacetimedb/frontend/src/lib/spacetimedb (legacy duplicate; kept
+    #     in sync to avoid stale-build surprises until cleanup lands)
+    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
     spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/gateway/src/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
-    echo "TypeScript bindings regenerated."
+    spacetime generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE"
+    echo "TypeScript bindings regenerated (3 targets)."
 else
     echo ""
     echo "SpacetimeDB not running at $SPACETIMEDB_URL — skipping module publish."

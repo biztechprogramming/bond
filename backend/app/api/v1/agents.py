@@ -223,11 +223,36 @@ async def list_agents():
 
 @router.get("/tools")
 async def list_tools():
-    """List all 14 available tools with name + description."""
-    return [
-        {"name": name, "description": desc}
+    """List native tools plus live-discovered MCP tools (Design Doc 111).
+
+    Returns ``{"native": [...], "mcp": [...]}`` with MCP entries annotated
+    by ``server`` and ``source``.  A flat top-level list is also available
+    at the ``all`` key for backward compatibility.
+    """
+    native = [
+        {"name": name, "description": desc, "source": "native"}
         for name, desc in TOOL_SUMMARIES.items()
     ]
+
+    # Discover live MCP tools via shared helper
+    from backend.app.mcp.discovery import discover_mcp_tools
+    mcp_tools = await discover_mcp_tools()
+
+    mcp_entries = [
+        {
+            "name": t["name"],
+            "description": t.get("description", ""),
+            "server": t.get("server", ""),
+            "source": "mcp",
+        }
+        for t in mcp_tools
+    ]
+
+    return {
+        "native": native,
+        "mcp": mcp_entries,
+        "all": native + mcp_entries,
+    }
 
 
 @router.get("/sandbox-images")
@@ -473,8 +498,9 @@ async def delete_agent(agent_id: str):
     
     # Delete in transaction-like order
     await stdb.query(f"DELETE FROM agent_channels WHERE agent_id = '{agent_id}'")
-    
+
     await stdb.query(f"DELETE FROM agent_workspace_mounts WHERE agent_id = '{agent_id}'")
+    await stdb.query(f"DELETE FROM agent_repos WHERE agent_id = '{agent_id}'")
     await stdb.query(f"DELETE FROM agents WHERE id = '{agent_id}'")
     
     return {"success": True, "message": f"Agent {agent_id} deleted"}

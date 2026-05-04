@@ -29,7 +29,7 @@ async def turn_client(_clear_settings_cache):
 
     tmpdir = tempfile.mkdtemp(prefix="bond_turn_test_")
     db_path = Path(tmpdir) / "test.db"
-    os.environ["BOND_DATABASE_PATH"] = str(db_path)
+    os.environ["BOND_VECTOR_DB_PATH"] = str(db_path)
 
     async with aiosqlite.connect(db_path) as db:
         from tests.conftest import apply_all_migrations

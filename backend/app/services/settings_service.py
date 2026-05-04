@@ -124,14 +124,24 @@ class SettingsService:
     # ── Generic key-value ─────────────────────────────────────
 
     async def get_all(self, db: AsyncSession) -> dict[str, str]:
-        """Return all settings as a key→value dict (masked where appropriate)."""
-        result = await db.execute(text("SELECT key, value FROM settings"))
-        return {row[0]: read_value(row[0], row[1]) for row in result.fetchall()}
+        """Return all settings from SpacetimeDB as a key→value dict (masked where appropriate)."""
+        rows = await self._stdb.query("SELECT key, value FROM settings")
+        return {row["key"]: read_value(row["key"], row["value"]) for row in rows}
+
+    async def get_prefix(self, prefix: str) -> dict[str, str]:
+        """Return all settings with the given prefix from SpacetimeDB."""
+        rows = await self._stdb.query("SELECT key, value FROM settings")
+        result: dict[str, str] = {}
+        for row in rows:
+            key = row["key"]
+            if key.startswith(prefix):
+                result[key] = read_value(key, row["value"])
+        return result
 
     async def get(self, key: str) -> dict[str, str]:
         """Return a single setting by key."""
         rows = await self._stdb.query(
-            f"SELECT value FROM settings WHERE key = '{_escape(key)}'"
+            f"SELECT key, value FROM settings WHERE key = '{_escape(key)}'"
         )
         if not rows:
             return None
@@ -342,35 +352,6 @@ class SettingsService:
             model=settings.llm_model,
             keys_set={row["id"]: row["id"] in key_set for row in providers},
         )
-
-    # ── SQLite crypto helpers (used by tests and legacy paths) ─
-
-    @staticmethod
-    async def get_decrypted(db: AsyncSession, key: str) -> str | None:
-        """Read and decrypt a setting value from SQLite (no masking)."""
-        result = await db.execute(
-            text("SELECT value FROM settings WHERE key = :key"), {"key": key}
-        )
-        row = result.fetchone()
-        if not row or not row[0]:
-            return None
-
-        raw = row[0]
-        if key in ENCRYPTED_KEYS:
-            plaintext = decrypt_value(raw)
-            # Migrate legacy plaintext: re-encrypt and persist
-            if not is_encrypted(raw):
-                encrypted = encrypt_value(plaintext)
-                await db.execute(
-                    text(
-                        "UPDATE settings SET value = :value, updated_at = CURRENT_TIMESTAMP "
-                        "WHERE key = :key"
-                    ),
-                    {"key": key, "value": encrypted},
-                )
-                await db.commit()
-            return plaintext
-        return raw
 
     # ── Private helpers ───────────────────────────────────────
 

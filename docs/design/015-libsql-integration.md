@@ -1,45 +1,46 @@
 # Design Doc 015: LibSQL Integration
 
 ## Goal
-Optimize SQLite with LibSQL-inspired tuning (WAL, synchronous=NORMAL, busy_timeout) to improve concurrency, performance, and reliability for multi-agent workflows while maintaining local-first data ownership.
+Optimize local SQLite-based storage with LibSQL-inspired tuning (WAL, synchronous=NORMAL, busy_timeout) for vector, embedding, and other explicitly local data paths while keeping Bond operational state in SpaceTimeDB.
 
 ## Context
-Bond currently uses standard SQLite via `aiosqlite` and `SQLAlchemy`. As we scale to multiple concurrent agents and real-time frontend updates, we hit "Database is locked" errors and performance bottlenecks in high-frequency logging/memory retrieval.
+Bond operational state lives in **SpaceTimeDB**, not SQLite. However, Bond may still use local SQLite-based storage for explicitly local concerns such as vector / embedding data and certain agent-local stores. Those paths can still benefit from SQLite/LibSQL-style tuning to reduce lock contention and improve local performance.
 
 ## Implementation Strategy
 
-While direct LibSQL integration via SQLAlchemy-LibSQL remains experimental (segmentation faults in `aiolibsql`), we have implemented the performance core of the LibSQL design using tuned SQLite PRAGMAs.
+While direct LibSQL integration via SQLAlchemy-LibSQL remains experimental (segmentation faults in `aiolibsql`), we can still apply the performance core of the LibSQL design using tuned SQLite PRAGMAs for local SQLite-backed storage.
 
 ### 1. Dependency Update
-- Replace `aiosqlite` with `libsql-client` or the `libsql` Python SDK.
-- Update `SQLAlchemy` connection strings to use the `libsql://` or `sqlite+libsql://` dialect.
+- Evaluate replacing `aiosqlite` with `libsql-client` or the `libsql` Python SDK only for explicitly local SQLite-backed storage.
+- Update local SQLite connection code if a LibSQL dialect is adopted for those local/vector paths.
 
 ### 2. Configuration (`bond.json`)
-- Add `database_type` (default: `sqlite`).
-- Support `database_url` for LibSQL remote/sidecar connections (e.g., `libsql://localhost:8080`).
-- Maintain `database_path` for local file mode.
+- Avoid presenting SQLite as Bond's primary datastore.
+- If configurable, use storage-specific names for local SQLite paths rather than generic `database_path` semantics.
+- Keep any local SQLite configuration clearly scoped to vector, embedding, or agent-local storage.
 
 ### 3. Connection Management
-- Configure LibSQL to use **WAL mode** (Write-Ahead Log) by default.
+- Configure local SQLite storage to use **WAL mode** where appropriate.
 - Set `synchronous = NORMAL` for faster writes without sacrificing local safety.
-- Update `backend/app/db/session.py` (or equivalent) to handle the LibSQL engine.
+- Keep this tuning limited to local SQLite-backed components rather than Bond operational state.
 
 ### 4. Vector Search Compatibility
-- Ensure `sqlite-vec` extension remains compatible with the LibSQL engine.
-- LibSQL supports loading extensions via the standard SQLite interface.
+- Ensure `sqlite-vec` extension remains compatible with any tuned SQLite or LibSQL-backed local storage.
+- Preserve compatibility for vector / embedding retrieval paths.
 
 ### 5. Migration Strategy
-- Since LibSQL is a fork of SQLite, existing `knowledge.db` files are compatible.
-- No data migration script required; simply point the new driver at the existing file.
+- Do not treat existing `knowledge.db` usage as Bond operational source of truth.
+- Any retained `knowledge.db` or similar SQLite files should be considered local/specialized storage only.
+- No architecture decision in this doc should imply moving Bond core state away from SpaceTimeDB.
 
-## Why LibSQL?
-1. **Tuned WAL:** Using `journal_mode=WAL` and `synchronous=NORMAL` matches LibSQL's local performance profile. (agents) and readers (UI) simultaneously.
-2. **Local-First:** Keeps the "it's just a file" simplicity Andrew prefers.
-3. **Future-Proof:** Supports Hrana protocol (WebSockets) if we want to move the DB to a separate service/container later.
-4. **Performance:** Significantly faster than standard SQLite for high-volume WAL operations.
+## Why LibSQL-style tuning?
+1. **Reduced local lock contention:** WAL and related tuning can improve local SQLite concurrency.
+2. **Useful for local specialized storage:** Especially relevant for vector or embedding stores.
+3. **Future flexibility:** May help if local SQLite-backed components evolve independently.
+4. **Performance:** Can improve throughput for local SQLite workloads.
 
 ## Success Criteria
-- [ ] No "Database is locked" errors during simultaneous agent activity.
-- [ ] Passing all existing tests in `backend/tests/`.
-- [ ] Real-time board updates remain fluid and responsive.
-- [ ] `sqlite-vec` memory retrieval works correctly.
+- [ ] No avoidable local SQLite lock contention in vector / embedding paths.
+- [ ] Passing all relevant tests for local SQLite-backed components.
+- [ ] SpaceTimeDB remains the source of truth for Bond operational state.
+- [ ] `sqlite-vec` retrieval works correctly where local vector storage is enabled.

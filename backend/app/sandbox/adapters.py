@@ -41,6 +41,74 @@ _WORKER_INTERNAL_PORT = 18791
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+# Inside the agent images the worker runs as bond-agent (uid/gid 1000) after
+# privilege drop. Bond-bond runs as root, so any file/dir it writes for an
+# agent bind-mount is owned by uid 0 with mode 0600/0700 — unreadable by the
+# agent. _agent_readable() chowns/chmods the path so uid 1000 can read.
+_BOND_AGENT_UID = 1000
+_BOND_AGENT_GID = 1000
+
+
+def _agent_readable(path: Path, *, dir_mode: int = 0o755, file_mode: int = 0o644) -> Path:
+    """Make ``path`` readable by the agent's bond-agent user (uid 1000).
+
+    Best-effort: a chown failure (e.g. because the host filesystem doesn't
+    support changing owner) is logged and ignored — the chmod alone is
+    usually enough since 0o644/0o755 grant world-read.
+    """
+    try:
+        if path.is_dir():
+            os.chmod(path, dir_mode)
+        else:
+            os.chmod(path, file_mode)
+    except OSError as e:
+        logger.warning("chmod %s failed: %s", path, e)
+    try:
+        os.chown(path, _BOND_AGENT_UID, _BOND_AGENT_GID)
+    except (OSError, PermissionError) as e:
+        logger.debug("chown %s to %d:%d failed (ok if mode is world-readable): %s",
+                     path, _BOND_AGENT_UID, _BOND_AGENT_GID, e)
+    return path
+
+
+def _agent_bind_data_root() -> Path:
+    """Root for files & dirs that bond-bond bind-mounts into agent containers.
+
+    The bind-mount source has to exist on the *host* docker daemon's filesystem,
+    not just bond-bond's. When bond runs natively, ``_PROJECT_ROOT/data`` works
+    on both. When bond runs containerized, ``_PROJECT_ROOT`` is ``/app`` — a
+    path the host doesn't have, so docker silently materializes empty dirs and
+    breaks the agent (Doc 112). Redirect to a path under ``BOND_HOST_HOME``,
+    bind-mounted at the same path inside bond-bond by docker-compose.
+    """
+    override = os.environ.get("BOND_HOST_HOME")
+    if override:
+        root = Path(override) / ".bond" / "agent-data"
+    else:
+        root = _PROJECT_ROOT / "data"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+_CLONE_URL_PREFIXES = ("git@", "http://", "https://", "ssh://", "git+", "git://")
+
+
+def _looks_like_clone_url(value: str) -> bool:
+    """True if the string looks like a git clone URL rather than a host path.
+
+    Cheap heuristic — `git@host:owner/repo.git`, `https://...`, etc. would
+    otherwise survive into a `docker -v` arg and break the colon-separated
+    parse with "invalid mode" errors.
+    """
+    if not value:
+        return False
+    if value.startswith(_CLONE_URL_PREFIXES):
+        return True
+    # `git@github.com:owner/repo` form: `<no-slash>@<no-slash>:`
+    head, sep, _ = value.partition(":")
+    return bool(sep) and "@" in head and "/" not in head
+
+
 # ---------------------------------------------------------------------------
 # Data models (Design Doc 089 §4.2)
 # ---------------------------------------------------------------------------
@@ -160,6 +228,48 @@ class LocalContainerAdapter:
     def _release_port(self, agent_key: str) -> int | None:
         return self._port_map.pop(agent_key, None)
 
+    async def reconcile_port_map(self) -> int:
+        # Rebuild _port_map from running bond-agent-* containers. Without this,
+        # after bond-bond restarts the in-memory map is empty and _allocate_port's
+        # in-container localhost probe can't see host-side bindings, so it can
+        # hand out a port already bound by another still-running agent.
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning("reconcile_port_map: docker ps failed rc=%d", proc.returncode)
+            return 0
+
+        reconciled = 0
+        for line in stdout.decode().splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            name, image, ports = parts[0], parts[1], parts[2]
+            if not image.startswith("bond-agent-"):
+                continue
+            host_port: int | None = None
+            for entry in ports.split(","):
+                entry = entry.strip()
+                if f"->{_WORKER_INTERNAL_PORT}/tcp" not in entry:
+                    continue
+                left = entry.split("->", 1)[0]
+                if ":" not in left:
+                    continue
+                try:
+                    host_port = int(left.rsplit(":", 1)[1])
+                    break
+                except ValueError:
+                    continue
+            if host_port is not None:
+                self._port_map[name] = host_port
+                reconciled += 1
+                logger.info("reconcile_port_map: %s -> %d", name, host_port)
+        return reconciled
+
     # -- Credential mounts (shared helper) --
 
     @staticmethod
@@ -167,20 +277,28 @@ class LocalContainerAdapter:
         cmd: list[str],
         workspace_mounts: list[dict] | None = None,
     ) -> None:
-        """Append Claude Code credential and SSH mounts to a docker run command."""
-        claude_json = Path.home() / ".claude.json"
+        """Append Claude Code credential and SSH mounts to a docker run command.
+
+        Uses ``BOND_HOST_HOME`` (Doc 112) when set so that paths handed to the
+        host docker daemon as bind-mount sources resolve on the host's
+        filesystem, not on the container's. Falls back to ``Path.home()`` for
+        native bond installs.
+        """
+        host_home = Path(os.environ.get("BOND_HOST_HOME") or str(Path.home()))
+
+        claude_json = host_home / ".claude.json"
         if claude_json.exists():
             cmd.extend(["-v", f"{claude_json}:/home/bond-agent/.claude.json:ro"])
 
-        claude_credentials = Path.home() / ".claude" / ".credentials.json"
+        claude_credentials = host_home / ".claude" / ".credentials.json"
         if claude_credentials.exists():
             cmd.extend(["-v", f"{claude_credentials}:/home/bond-agent/.claude/.credentials.json:rw"])
 
-        claude_settings = Path.home() / ".claude" / "settings.json"
+        claude_settings = host_home / ".claude" / "settings.json"
         if claude_settings.exists():
             cmd.extend(["-v", f"{claude_settings}:/home/bond-agent/.claude/settings.json:ro"])
 
-        ssh_dir = Path.home() / ".ssh"
+        ssh_dir = host_home / ".ssh"
         workspace_targets = {m.get("container_path", "") for m in (workspace_mounts or [])}
         if ssh_dir.exists() and "/tmp/.ssh" not in workspace_targets:
             cmd.extend(["-v", f"{ssh_dir}:/tmp/.ssh:ro"])
@@ -406,28 +524,53 @@ class LocalContainerAdapter:
                     if dep_install_script is None:
                         dep_install_script = generate_dep_install_script(effective_host_path)
 
+                # Reject anything that isn't a real filesystem path. A leftover
+                # workspace_mounts row with host_path = "git@github.com:foo/bar"
+                # would otherwise get passed to `docker -v` and split as
+                # src=git@github.com / dst=foo/bar / mode=/workspace/... which
+                # docker rejects with "invalid mode". Doc 113 migrates these to
+                # agent_repos; this is the belt-and-suspenders.
+                if not effective_host_path or _looks_like_clone_url(effective_host_path):
+                    logger.warning(
+                        "Skipping workspace_mount %r for agent %s: host_path %r "
+                        "is not a filesystem path (likely a stale pre-doc-113 row)",
+                        mount_name, agent_id, effective_host_path,
+                    )
+                    continue
+
                 mount_str = f"{effective_host_path}:{container_path}"
                 if readonly:
                     mount_str += ":ro"
                 cmd.extend(["-v", mount_str])
 
-        # Agent data directory
-        agent_data_dir = _PROJECT_ROOT / "data" / "agents" / agent_id
+        # Agent data directory. Use _agent_bind_data_root() so the source path
+        # resolves on both bond-bond and the host docker daemon (Doc 112).
+        data_root = _agent_bind_data_root()
+
+        agent_data_dir = data_root / "agents" / agent_id
         os.makedirs(str(agent_data_dir), exist_ok=True)
+        # bond-agent (uid 1000) writes the agent sqlite db here at startup —
+        # chown so it can.
+        _agent_readable(agent_data_dir)
         cmd.extend(["-v", f"{agent_data_dir}:/data:rw"])
 
         # Shared memory
-        shared_dir = project_root / "data" / "shared"
+        shared_dir = data_root / "shared"
         os.makedirs(str(shared_dir), exist_ok=True)
+        _agent_readable(shared_dir)
         cmd.extend(["-v", f"{shared_dir}:/data/shared:ro"])
 
         # Skills DB
-        skills_db = project_root / "data" / "skills.db"
+        skills_db = data_root / "skills.db"
         if skills_db.exists():
+            _agent_readable(skills_db)
             cmd.extend(["-v", f"{skills_db}:/data/skills.db:rw"])
 
         # Credentials + SSH
         self._append_credential_mounts(cmd, workspace_mounts)
+
+        # Agent repos: per-repo named volumes + /config/repos.json (Design Doc 113)
+        await self._prepare_agent_repos(agent_id, cmd)
 
         # Agent config file
         cmd.extend(["-v", f"{config_path}:/config/agent.json:ro"])
@@ -513,10 +656,107 @@ class LocalContainerAdapter:
 
     # -- Agent config helper --
 
+    async def _prepare_agent_repos(self, agent_id: str, cmd: list[str]) -> None:
+        """Prepare agent_repos clones (Design Doc 113).
+
+        Fetches the agent's repo rows + resolved credentials, writes a config
+        file at data/agent-configs/{agent_id}.repos.json, mounts it read-only
+        at /config/repos.json, and creates one Docker named volume per repo
+        mounted at /workspace/{name}.
+
+        Robust to a not-yet-deployed schema: if the agent_repos table does
+        not exist, logs a warning and returns without altering cmd.
+        """
+        from backend.app.core.spacetimedb import get_stdb
+        from backend.app.core.vault import Vault
+        from backend.app.sandbox.git_credentials import resolve_credential
+
+        stdb = get_stdb()
+        try:
+            repo_rows = await stdb.query(
+                f"SELECT * FROM agent_repos WHERE agent_id = '{agent_id}'"
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not fetch agent_repos for %s (table may not be deployed yet): %s",
+                agent_id, e,
+            )
+            return
+
+        if not repo_rows:
+            return
+
+        try:
+            cred_rows = await stdb.query("SELECT * FROM git_credentials")
+        except Exception:
+            cred_rows = []
+
+        vault = Vault()
+        repos_config: list[dict] = []
+
+        for repo in repo_rows:
+            cred = resolve_credential(
+                repo["url"], repo.get("credential_id", ""), cred_rows
+            )
+            cred_block: dict | None = None
+            if cred:
+                secret = vault.get(cred["secret_ref"]) or ""
+                if secret:
+                    cred_block = {
+                        "auth_type": cred["auth_type"],
+                        "secret": secret,
+                        "username": cred.get("username") or "",
+                    }
+                else:
+                    logger.warning(
+                        "Credential %s has no secret in vault; clone for %s will be unauthenticated",
+                        cred["id"], repo["url"],
+                    )
+
+            repos_config.append({
+                "id": repo["id"],
+                "name": repo["name"],
+                "url": repo["url"],
+                "default_branch": repo["default_branch"] or "main",
+                "active_branch": repo.get("active_branch") or "",
+                "credential": cred_block,
+            })
+
+            # Create the named volume for this repo (idempotent)
+            volume_name = f"bond-repo-{agent_id}-{repo['id']}"
+            await asyncio.create_subprocess_exec(
+                "docker", "volume", "create", volume_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            cmd.extend(["-v", f"{volume_name}:/workspace/{repo['name']}:rw"])
+
+        # Write the repos config file
+        config_dir = _agent_bind_data_root() / "agent-configs"
+        os.makedirs(str(config_dir), mode=0o755, exist_ok=True)
+        _agent_readable(config_dir)
+        repos_path = config_dir / f"{agent_id}.repos.json"
+
+        if repos_path.is_dir():
+            shutil.rmtree(repos_path)
+
+        fd = os.open(str(repos_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        try:
+            os.write(fd, json.dumps({"repos": repos_config}, indent=2).encode())
+        finally:
+            os.close(fd)
+        _agent_readable(repos_path)
+
+        cmd.extend(["-v", f"{repos_path}:/config/repos.json:ro"])
+        logger.info(
+            "Prepared %d agent_repos clone(s) for agent %s", len(repos_config), agent_id,
+        )
+
     def _write_agent_config(self, agent: dict) -> Path:
         agent_id = agent["id"]
-        config_dir = _PROJECT_ROOT / "data" / "agent-configs"
-        os.makedirs(str(config_dir), mode=0o700, exist_ok=True)
+        config_dir = _agent_bind_data_root() / "agent-configs"
+        os.makedirs(str(config_dir), mode=0o755, exist_ok=True)
+        _agent_readable(config_dir)
         config_path = config_dir / f"{agent_id}.json"
 
         if config_path.is_dir():
@@ -534,16 +774,17 @@ class LocalContainerAdapter:
             "litellm_prefixes": agent.get("litellm_prefixes", {}),
         }
 
-        fd = os.open(str(config_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(config_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
         try:
             os.write(fd, json.dumps(config_data, indent=2).encode())
         finally:
             os.close(fd)
+        _agent_readable(config_path)
 
         return config_path
 
     def _delete_agent_config(self, agent_id: str) -> None:
-        config_path = _PROJECT_ROOT / "data" / "agent-configs" / f"{agent_id}.json"
+        config_path = _agent_bind_data_root() / "agent-configs" / f"{agent_id}.json"
         try:
             if config_path.is_dir():
                 shutil.rmtree(config_path)

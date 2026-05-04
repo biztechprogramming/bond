@@ -28,7 +28,7 @@ async def conv_client(_clear_settings_cache):
 
     tmpdir = tempfile.mkdtemp(prefix="bond_conv_test_")
     db_path = Path(tmpdir) / "test.db"
-    os.environ["BOND_DATABASE_PATH"] = str(db_path)
+    os.environ["BOND_VECTOR_DB_PATH"] = str(db_path)
 
     async with aiosqlite.connect(db_path) as db:
         await _apply_sql(db, MIGRATIONS_DIR / "000001_init.up.sql")

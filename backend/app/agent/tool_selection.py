@@ -210,6 +210,30 @@ for _tool, _keywords in TOOL_KEYWORDS.items():
     ]
 
 
+# Stopwords excluded from auto-derived MCP keyword tokens. These show up
+# in tool names/descriptions but don't help disambiguate which tool the
+# user wants.
+_MCP_STOPWORDS = frozenset({
+    "with", "from", "your", "this", "that", "into", "onto", "than",
+    "have", "been", "will", "what", "when", "where", "which", "their",
+    "them", "they", "there", "these", "those", "about", "also", "some",
+    "more", "most", "other", "such", "only", "tool", "tools",
+    "input", "output", "param", "params", "object", "string", "number",
+    "integer", "boolean", "array", "true", "false", "null",
+})
+
+
+def _mcp_keyword_tokens(name: str, description: str) -> set[str]:
+    """Auto-derive keyword tokens from an MCP tool's name + description."""
+    rest = name[len("mcp_"):] if name.startswith("mcp_") else name
+    name_part = rest.partition("_")[2] or rest
+    source = f"{name_part} {description}".lower()
+    return {
+        tok for tok in re.split(r"[^a-z0-9]+", source)
+        if len(tok) >= 4 and tok not in _MCP_STOPWORDS
+    }
+
+
 # Iteration threshold for mandatory coding agent delegation.
 # After this many iterations of coding work (3+ distinct coding tools),
 # restrict available tools to coding_agent + respond.
@@ -232,6 +256,7 @@ def select_tools(
     has_active_plan: bool = False,
     agent_name: str | None = None,
     iteration: int = 0,
+    mcp_tool_metadata: dict[str, str] | None = None,
 ) -> list[str]:
     """Select relevant tools for this turn.
 
@@ -286,11 +311,10 @@ def select_tools(
     if has_active_plan and "parallel_orchestrate" in enabled_tools:
         selected.add("parallel_orchestrate")
 
-    # Always include MCP tools — they're already curated by the host-side
-    # MCPManager and filtered by broker policy. No keyword gating needed.
-    mcp_tools = {t for t in enabled_tools if t.startswith("mcp_")}
-    if mcp_tools:
-        selected.update(mcp_tools)
+    # MCP tools earn their slot via keyword matching against their own
+    # name + description (handled later in the keyword loop). Don't blanket-
+    # include them here — they get capped and silently dropped, so the LLM
+    # sees them in the catalog but can't actually call them.
 
     # Always include database_* tools — these are Bond-native virtual tools
     # backed by Faucet (Doc 109). They are only present in enabled_tools when
@@ -314,6 +338,25 @@ def select_tools(
             if pattern.search(match_text):
                 keyword_matched.add(tool_name)
                 break
+
+    # MCP tools have no hand-written patterns — derive keyword tokens
+    # from each tool's own name + description and match against the
+    # user/assistant text. Once any MCP tool from a server matches,
+    # the per-server toolkit expansion below pulls in its siblings.
+    if mcp_tool_metadata:
+        match_lower = match_text.lower()
+        for tool_name in enabled_tools:
+            if tool_name in selected or tool_name in keyword_matched:
+                continue
+            if not tool_name.startswith("mcp_"):
+                continue
+            tokens = _mcp_keyword_tokens(
+                tool_name, mcp_tool_metadata.get(tool_name, "")
+            )
+            for tok in tokens:
+                if re.search(rf"\b{re.escape(tok)}\b", match_lower):
+                    keyword_matched.add(tool_name)
+                    break
 
     selected.update(keyword_matched)
 
@@ -346,11 +389,24 @@ def select_tools(
         if "search_memory" in enabled_tools:
             selected.add("search_memory")
 
-    # SolidTime toolkit: if any solidtime tool matched, include the full set
-    # Matches both dynamic (solidtime_*) and MCP (mcp_solidtime_*) tools
-    solidtime_tools = {t for t in enabled_tools if t.startswith("solidtime_") or t.startswith("mcp_solidtime_")}
-    if solidtime_tools & selected:
-        selected.update(solidtime_tools)
+    # MCP per-server toolkit expansion: if any tool from a given MCP server
+    # matched, pull in the rest of that server's enabled tools so the agent
+    # has the full toolkit to work with (e.g. matched list-projects → also
+    # get create-project, list-clients, etc.).
+    mcp_servers_in_selected: set[str] = set()
+    for t in selected:
+        if t.startswith("mcp_"):
+            server = t[len("mcp_"):].partition("_")[0]
+            if server:
+                mcp_servers_in_selected.add(server)
+    for server in mcp_servers_in_selected:
+        prefix = f"mcp_{server}_"
+        selected.update({t for t in enabled_tools if t.startswith(prefix)})
+
+    # Native dynamic solidtime_* tools (non-MCP) follow the same toolkit pattern
+    solidtime_native = {t for t in enabled_tools if t.startswith("solidtime_")}
+    if solidtime_native & selected:
+        selected.update(solidtime_native)
 
     # Filesystem toolkit: if ANY file/coding/search tool matched, include
     # the full toolkit (~2,000 tokens). This is cheaper than one wasted
@@ -370,6 +426,12 @@ def select_tools(
     # Separate tools into exempt (filesystem + role-based) and cappable.
     exempt = (FILESYSTEM_TOOLKIT | SHELL_UTILITY_TOOLS) & selected
     exempt |= role_always  # role-based always-include tools skip the cap
+    # An MCP server whose tools earned their place via keyword match keeps
+    # its full toolkit through the cap — otherwise the agent sees the
+    # catalog but the cap silently drops the schemas it needs to call.
+    for server in mcp_servers_in_selected:
+        prefix = f"mcp_{server}_"
+        exempt |= {t for t in selected if t.startswith(prefix)}
     cappable = selected - exempt
 
     # Cap only non-exempt tools at MAX_TOOLS_PER_TURN

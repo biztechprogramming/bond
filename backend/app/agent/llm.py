@@ -95,25 +95,19 @@ def _resolve_model_string(provider: str, model: str) -> str:
 
 
 async def _get_api_key_from_settings(provider: str) -> str | None:
-    """Read and decrypt an LLM API key from the settings table."""
-    from backend.app.db.session import get_session_factory
+    """Read and decrypt an LLM API key from SpaceTimeDB-backed provider key storage."""
     from backend.app.core.crypto import decrypt_value
+    from backend.app.core.spacetimedb import get_stdb
 
-    setting_key = f"llm.api_key.{provider}"
     try:
-        factory = get_session_factory()
-        async with factory() as session:
-            from sqlalchemy import text
-
-            result = await session.execute(
-                text("SELECT value FROM settings WHERE key = :key"),
-                {"key": setting_key},
-            )
-            row = result.fetchone()
-            if row and row[0]:
-                return decrypt_value(row[0])
+        stdb = get_stdb()
+        rows = await stdb.query(
+            f"SELECT encrypted_key FROM provider_api_keys WHERE provider_id = '{provider}'"
+        )
+        if rows and rows[0].get("encrypted_key"):
+            return decrypt_value(rows[0]["encrypted_key"])
     except Exception:
-        logger.debug("Could not read API key from settings for %s", provider)
+        logger.debug("Could not read API key from provider_api_keys for %s", provider)
     return None
 
 

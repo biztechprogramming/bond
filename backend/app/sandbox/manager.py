@@ -305,7 +305,16 @@ class SandboxManager:
                     container_id, clone_info, dep_script = await self._create_worker_container(
                         agent, key, port, config_path,
                     )
-                    worker_url = f"http://localhost:{port}"
+                    # When bond runs containerized, "localhost" inside bond-bond
+                    # isn't the host or the agent — it's bond-bond itself. The
+                    # agent runs on the bond-network with container name == key,
+                    # so reach it by name on the agent's internal port (18791).
+                    # Native bond installs continue to hit the host-mapped port
+                    # at localhost.
+                    if "BOND_HOST_HOME" in os.environ:
+                        worker_url = f"http://{key}:18791"
+                    else:
+                        worker_url = f"http://localhost:{port}"
 
                     self._containers[key] = {
                         "container_id": container_id,

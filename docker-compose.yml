@@ -10,12 +10,46 @@ services:
       - "18789:18789"  # Gateway WS
       - "18790:18790"  # Backend API
     volumes:
-      - bond-data:/home/bond/.bond
+      - ~/.bond:/home/bond/.bond
+      # Host home bound at the SAME path inside bond-bond so that any path the
+      # adapter constructs (e.g. ~/.ssh) resolves correctly when passed back to
+      # the host docker daemon as a bind-mount source. Doc 112 §3.
+      - ${HOME}:${HOME}:ro
+      # ~/.bond/agent-data needs to be writable so the adapter can drop
+      # per-agent configs there before bind-mounting them into agent
+      # containers. Specific mount overrides the :ro one above for this path.
+      - ${HOME}/.bond/agent-data:${HOME}/.bond/agent-data:rw
       - /var/run/docker.sock:/var/run/docker.sock
+      - /usr/bin/docker:/usr/bin/docker:ro
+      - ./.env.gateway:/app/gateway/.env:ro
+      - /a0/usr/workdir/dev/mcp-solidtime:/app/mcp-solidtime:ro
+      - /usr/local/bin/spacetimedb-standalone:/home/bond/.local/share/spacetime/bin/2.0.2/spacetimedb-standalone:ro
+      - ~/.bond/spacetimedb-config:/home/bond/.config/spacetime:ro
     environment:
+      - HOME=/home/bond
       - BOND_HOME=/home/bond/.bond
+      - BOND_HOST_HOME=${HOME}  # Doc 112: host-side path for SSH/credentials passthrough
+      - BOND_HOST_DAEMON_URL=${BOND_HOST_DAEMON_URL:-http://172.17.0.1:18795}
+      - BOND_SPACETIMEDB_URL=${BOND_SPACETIMEDB_URL:-http://172.17.0.1:18787}
       - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}
+    command: >-
+      sh -lc "bash scripts/first-run.sh &&
+      uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 &
+      cd /app/gateway && NODE_OPTIONS='--experimental-global-webcrypto' ./node_modules/.bin/tsx watch src/index.ts &
+      cd /app/frontend && pnpm start &
+      wait"
+    # Agent containers are launched with --network bond-network. Bond-bond
+    # must share that network so it can reach them by container name (DNS
+    # resolution between containers only works within a shared user-defined
+    # bridge network).
+    networks:
+      - default
+      - bond-network
     restart: unless-stopped
+
+networks:
+  bond-network:
+    external: true
 
 volumes:
   bond-data:

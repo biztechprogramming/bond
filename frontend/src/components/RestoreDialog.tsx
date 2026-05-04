@@ -148,7 +148,14 @@ export default function RestoreDialog({ onDismiss }: RestoreDialogProps) {
 
   return (
     <div style={styles.overlay}>
-      <div style={styles.modal}>
+      <div style={{ ...styles.modal, position: "relative" }}>
+        <button
+          aria-label="Close"
+          onClick={handleDismiss}
+          style={styles.closeBtn}
+        >
+          ×
+        </button>
         <h2 style={styles.heading}>Restore Conversations</h2>
         <p style={{ color: "#8888a0", fontSize: "0.85rem", marginBottom: "16px" }}>
           No conversations found. Would you like to restore from a backup?
@@ -329,5 +336,17 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "10px 20px",
     fontSize: "0.9rem",
     cursor: "pointer",
+  },
+  closeBtn: {
+    position: "absolute" as const,
+    top: "10px",
+    right: "14px",
+    backgroundColor: "transparent",
+    color: "#8888a0",
+    borderWidth: 0, borderStyle: "none", borderColor: "transparent",
+    fontSize: "1.6rem",
+    lineHeight: "1",
+    cursor: "pointer",
+    padding: "4px 8px",
   },
 };

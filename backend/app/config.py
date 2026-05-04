@@ -30,7 +30,7 @@ _DEFAULTS: dict[str, Any] = {
     "frontend": {
         "port": 18788,
     },
-    "database": {
+    "vector_storage": {
         "path": str(BOND_HOME / "data" / "knowledge.db"),
     },
     "sandbox_backend": "opensandbox",
@@ -62,8 +62,8 @@ class Settings(BaseModel):
     # Frontend
     frontend_port: int = 18788
 
-    # Database
-    database_path: str = str(BOND_HOME / "data" / "knowledge.db")
+    # Local vector / embedding storage (not Bond operational state)
+    vector_db_path: str = str(BOND_HOME / "data" / "knowledge.db")
 
     # Vault
     vault_path: str = str(BOND_HOME / "data" / "credentials.enc")
@@ -116,7 +116,7 @@ def get_settings() -> Settings:
     backend = config.get("backend", {})
     gateway = config.get("gateway", {})
     frontend = config.get("frontend", {})
-    database = config.get("database", {})
+    vector_storage = config.get("vector_storage", {})
 
     opensandbox = config.get("opensandbox", {})
 
@@ -130,7 +130,7 @@ def get_settings() -> Settings:
         gateway_host=os.environ.get("BOND_GATEWAY_HOST", gateway.get("host", "127.0.0.1")),
         gateway_port=int(os.environ.get("BOND_GATEWAY_PORT", gateway.get("port", 18789))),
         frontend_port=int(os.environ.get("BOND_FRONTEND_PORT", frontend.get("port", 18788))),
-        database_path=os.environ.get("BOND_DATABASE_PATH", database.get("path", str(BOND_HOME / "data" / "knowledge.db"))),
+        vector_db_path=os.environ.get("BOND_VECTOR_DB_PATH", vector_storage.get("path", str(BOND_HOME / "data" / "knowledge.db"))),
         vault_path=os.environ.get("BOND_VAULT_PATH", str(BOND_HOME / "data" / "credentials.enc")),
         sandbox_backend=os.environ.get("BOND_SANDBOX_BACKEND", config.get("sandbox_backend", "opensandbox")),
         opensandbox_server_url=os.environ.get("OPENSANDBOX_SERVER_URL", opensandbox.get("server_url", "http://localhost:8090")),

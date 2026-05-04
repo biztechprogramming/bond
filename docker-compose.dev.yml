@@ -74,7 +74,7 @@ services:
     command:
       [
         "-path", "/migrations",
-        "-database", "sqlite3:///home/bond/.bond/data/knowledge.db",
+        "-database", "sqlite3:///home/bond/.bond/data/knowledge.db", # local vector storage only
         "up"
       ]
     profiles:

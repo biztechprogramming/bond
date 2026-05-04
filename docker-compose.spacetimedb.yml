@@ -34,6 +34,7 @@ services:
       - "18787:3000"
     volumes:
       - ~/.bond/spacetimedb:/home/spacetime/.local/share/spacetime/data
+      - ~/.bond/spacetimedb-config:/home/spacetime/.config/spacetime
     command: start
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/v1/health"]
@@ -57,6 +58,7 @@ services:
         target: /etc/opensandbox/config.toml
     environment:
       - SANDBOX_CONFIG_PATH=/etc/opensandbox/config.toml
+      - OPENSANDBOX_INSECURE_SERVER=YES
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
       interval: 30s

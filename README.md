@@ -81,11 +81,7 @@ make spacetimedb-health
 make migrate
 ```
 
-This runs SQLite schema migrations and publishes the SpacetimeDB module. If you don't have `golang-migrate` installed:
-
-```bash
-make install-migrate   # Requires Go
-```
+This applies the current Bond migrations and publishes the SpacetimeDB module. Bond operational state is stored in SpacetimeDB. SQLite should only be assumed for explicitly local or vector-storage use cases.
 
 ### Step 5 — Launch Bond
 
@@ -168,7 +164,7 @@ Key variables:
 Bond's local data directory:
 ```
 ~/.bond/
-├── data/          # SQLite databases (knowledge.db)
+├── data/          # Local worker/vector data only when explicitly configured
 ├── logs/          # Application logs
 ├── cache/         # LLM response cache, repo maps
 ├── workspace/     # Agent working directory

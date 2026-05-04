@@ -47,55 +47,103 @@ else
     echo "SpacetimeDB CLI is already installed."
 fi
 
-# 3. Initialize SpacetimeDB Module (TypeScript)
-# The module lives at ./spacetimedb/spacetimedb/ (nested — outer dir is the
-# workspace, inner dir has package.json and src/).
-MODULE_DIR="./spacetimedb"
-MODULE_PKG="$MODULE_DIR/spacetimedb/package.json"
-if [ ! -f "$MODULE_PKG" ] && [ ! -f "$MODULE_DIR/spacetime.json" ]; then
-    echo "Initializing SpacetimeDB TypeScript module in $MODULE_DIR..."
-    mkdir -p "$MODULE_DIR"
-    
-    # In SpacetimeDB CLI 2.0+, 'login' handles authentication/identity.
-    # We use --anonymous to keep everything local and avoid GitHub OAuth.
-    if ! spacetime list 2>/dev/null; then
-        echo "No SpacetimeDB identity detected. Creating an anonymous local identity..."
-        spacetime login --anonymous
-    fi
+# 3. SpacetimeDB Instance
+# Resolve target URL from env override → bond.json (no fallback — fail loud
+# if neither is set so we never silently target the wrong host). Must run
+# before module init because `spacetime login` in CLI 2.0.5+ requires a
+# reachable server (the old `--anonymous` flag was removed).
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -z "${SPACETIMEDB_URL:-}" ]; then
+    SPACETIMEDB_URL=$(python3 -c "import json,sys; v=json.load(open('$PROJECT_ROOT/bond.json')).get('spacetimedb', {}).get('url'); sys.exit(1) if not v else print(v)" 2>/dev/null) || {
+        echo "ERROR: SpacetimeDB URL not configured." >&2
+        echo "  Set \$SPACETIMEDB_URL or add spacetimedb.url to $PROJECT_ROOT/bond.json" >&2
+        exit 1
+    }
+fi
+SPACETIME_HOST=$(python3 -c "from urllib.parse import urlparse; print(urlparse('$SPACETIMEDB_URL').hostname or 'localhost')")
+SPACETIME_PORT=$(python3 -c "from urllib.parse import urlparse; u=urlparse('$SPACETIMEDB_URL'); print(u.port or 18787)")
+echo "Target SpacetimeDB: $SPACETIMEDB_URL"
 
-    cd "$MODULE_DIR"
-    # Exact syntax for v2.0.2: spacetime init --lang <LANG> --project-path <PATH> [PROJECT_NAME]
-    # We pass 'bond-core' as the project name to avoid the random suffix prompt.
-    # We use 'yes' to piped input to handle any remaining interactive prompts.
-    yes "" | spacetime init --lang typescript --project-path . bond-core
-    cd ..
+if ! curl -s "$SPACETIMEDB_URL/v1/health" &> /dev/null; then
+    echo "SpacetimeDB instance not detected at $SPACETIMEDB_URL."
+    # Only offer to start a local Docker container when the configured host
+    # is local — for remote servers (loki, etc.) the container is managed
+    # elsewhere and we should not try to start one here.
+    if [[ "$SPACETIME_HOST" == "localhost" || "$SPACETIME_HOST" == "127.0.0.1" || "$SPACETIME_HOST" == "0.0.0.0" ]]; then
+        read -p "Would you like to start a local SpacetimeDB instance via Docker? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo "Starting SpacetimeDB via Docker on port $SPACETIME_PORT with persistent volume..."
+            mkdir -p "$HOME/.bond/spacetimedb"
+            docker run -d \
+                --name bond-spacetimedb \
+                --pull always \
+                -p $SPACETIME_PORT:3000 \
+                -v "$HOME/.bond/spacetimedb:/var/lib/spacetimedb" \
+                clockworklabs/spacetime:latest \
+                start
+            # Wait for server to become healthy before proceeding to login
+            for i in {1..30}; do
+                curl -s "$SPACETIMEDB_URL/v1/health" &> /dev/null && break
+                sleep 1
+            done
+        else
+            echo "Please ensure a SpacetimeDB instance is running at $SPACETIMEDB_URL before starting Bond."
+        fi
+    else
+        echo "Remote host detected ($SPACETIME_HOST). Start the container on that server — not here."
+        echo "Setup cannot continue without a reachable SpacetimeDB."
+        exit 1
+    fi
 else
-    echo "SpacetimeDB module already exists at $MODULE_DIR."
+    echo "SpacetimeDB instance is reachable at $SPACETIMEDB_URL."
 fi
 
-# 4. SpacetimeDB Instance (Local)
-# Set to 18787, which is one less than any Bond service port currently in use.
-SPACETIME_PORT=18787
+# 4. Initialize SpacetimeDB Module (TypeScript)
+# The module lives at ./spacetimedb/spacetimedb/ (nested — outer dir is the
+# workspace, inner dir has package.json and src/). If either of the two
+# config files is missing, regenerate just the missing ones.
+#
+# In CLI 2.1.0 `spacetime init` refuses to run against a non-empty dir and
+# there's no --force. So we scaffold into a throwaway temp dir and copy
+# only the files we need, leaving the rest of the workspace (AGENTS.md,
+# frontend/, gateway/, spacetimedb/src/, spacetime.local.json, etc.)
+# untouched.
+MODULE_DIR="./spacetimedb"
+MODULE_PKG="$MODULE_DIR/spacetimedb/package.json"
+MODULE_WORKSPACE_JSON="$MODULE_DIR/spacetime.json"
+if [ ! -f "$MODULE_PKG" ] || [ ! -f "$MODULE_WORKSPACE_JSON" ]; then
+    echo "Initializing SpacetimeDB TypeScript module in $MODULE_DIR..."
+    mkdir -p "$MODULE_DIR"
 
-if ! curl -s http://localhost:$SPACETIME_PORT/v1/health &> /dev/null; then
-    echo "Local SpacetimeDB instance not detected on port $SPACETIME_PORT."
-    read -p "Would you like to start a local SpacetimeDB instance via Docker? (y/n) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Starting SpacetimeDB via Docker on port $SPACETIME_PORT with persistent volume..."
-        mkdir -p "$HOME/.bond/spacetimedb"
-        docker run -d \
-            --name bond-spacetimedb \
-            --pull always \
-            -p $SPACETIME_PORT:3000 \
-            -v "$HOME/.bond/spacetimedb:/var/lib/spacetimedb" \
-            clockworklabs/spacetime:latest \
-            start
-    else
-        echo "Please ensure a SpacetimeDB instance is running on port $SPACETIME_PORT before starting Bond."
+    # In SpacetimeDB CLI 2.0.5+, `--anonymous` was removed. Use
+    # `--server-issued-login` against the configured server to mint a token
+    # without going through spacetimedb.com OAuth.
+    if ! spacetime list 2>/dev/null; then
+        echo "No SpacetimeDB identity detected. Logging in against $SPACETIMEDB_URL..."
+        spacetime login --server-issued-login "$SPACETIMEDB_URL"
+    fi
+
+    SCAFFOLD_DIR=$(mktemp -d)
+    trap 'rm -rf "$SCAFFOLD_DIR"' EXIT
+
+    echo "Scaffolding into $SCAFFOLD_DIR (you'll be prompted for project details)..."
+    # Run interactively so the user answers database name / server / etc.
+    # Default --project-path is ./<PROJECT_NAME>, so the scaffold lands at
+    # $SCAFFOLD_DIR/bond-core.
+    (cd "$SCAFFOLD_DIR" && spacetime init --lang typescript bond-core)
+
+    if [ ! -f "$MODULE_WORKSPACE_JSON" ] && [ -f "$SCAFFOLD_DIR/bond-core/spacetime.json" ]; then
+        cp "$SCAFFOLD_DIR/bond-core/spacetime.json" "$MODULE_WORKSPACE_JSON"
+        echo "  Restored $MODULE_WORKSPACE_JSON"
+    fi
+    if [ ! -f "$MODULE_PKG" ] && [ -f "$SCAFFOLD_DIR/bond-core/spacetimedb/package.json" ]; then
+        mkdir -p "$MODULE_DIR/spacetimedb"
+        cp "$SCAFFOLD_DIR/bond-core/spacetimedb/package.json" "$MODULE_PKG"
+        echo "  Restored $MODULE_PKG"
     fi
 else
-    echo "Local SpacetimeDB instance is running on port $SPACETIME_PORT."
+    echo "SpacetimeDB module already exists at $MODULE_DIR."
 fi
 
 # 5. Setup Backup Cron Job

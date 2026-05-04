@@ -7,6 +7,8 @@ SPACETIMEDB_URL := $(shell python3 -c "import json; print(json.load(open('bond.j
 SPACETIMEDB_MODULE := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('module', 'bond-core-v2'))" 2>/dev/null || echo "bond-core-v2")
 SPACETIMEDB_TOKEN := $(shell grep -oP '^SPACETIMEDB_TOKEN\s*=\s*"?\K[^"]+' .env 2>/dev/null || grep -oP 'spacetimedb_token\s*=\s*"\K[^"]+' $(HOME)/.config/spacetime/cli.toml 2>/dev/null)
 
+ARGS = $(filter-out $@,$(MAKECMDGOALS))
+
 # Start all services for development
 dev:
 	@echo "Starting Bond development servers..."
@@ -55,10 +57,11 @@ lint:
 	cd gateway && pnpm lint
 	cd frontend && pnpm lint
 
-# Run migrations (Docker)
 # Run migrations (tries local first, falls back to Docker)
+# Usage: make migrate              — run all pending up migrations
+#        make migrate VERSION=30   — force migration to version 30 (must be within ±3/+2 of current)
 migrate:
-	@./scripts/migrate.sh
+	@./scripts/migrate.sh $(ARGS)
 
 # Run migrations via Docker
 migrate-docker:
@@ -66,14 +69,14 @@ migrate-docker:
 
 # Roll back last migration (Docker)
 migrate-down:
-	~/go/bin/migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" down 1
+	~/go/bin/migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" down 1  # local vector storage only
 
 migrate-down-docker:
 	docker compose -f docker-compose.dev.yml run --rm migrate -path=/migrations -database="sqlite3:///home/bond/.bond/data/knowledge.db" down 1
 
 # Show current migration version
 migrate-version:
-	migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" version
+	migrate -path migrations -database "sqlite3://$$HOME/.bond/data/knowledge.db" version  # local vector storage only
 
 # Install golang-migrate with SQLite support (requires Go)
 install-migrate:

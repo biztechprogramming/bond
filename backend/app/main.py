@@ -34,6 +34,8 @@ from backend.app.api.v1.llm import router as llm_router
 from backend.app.api.v1.hosts import router as hosts_router
 from backend.app.api.v1.test_spacetimedb import router as test_spacetimedb_router
 from backend.app.api.v1.databases import router as databases_router
+from backend.app.api.v1.git_credentials import router as git_credentials_router
+from backend.app.api.v1.agent_repos import router as agent_repos_router
 
 
 @asynccontextmanager
@@ -71,6 +73,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         import logging
         logging.getLogger("bond.mcp").error(f"Failed to load MCP servers on startup: {e}")
+
+    # Reconcile agent container port map (recover from bond-bond restarts)
+    try:
+        from backend.app.sandbox.manager import get_sandbox_manager
+        sm = get_sandbox_manager()
+        n = await sm._local_adapter.reconcile_port_map()
+        import logging as _log
+        _log.getLogger("bond.startup").info("Reconciled %d agent containers into port map", n)
+    except Exception as e:
+        import logging as _log
+        _log.getLogger("bond.startup").warning("Port map reconcile failed: %s", e)
 
     # Faucet database gateway (Design Doc 107) — optional
     from backend.app.services.faucet_manager import faucet_manager
@@ -163,3 +176,5 @@ app.include_router(llm_router, prefix="/api/v1")
 app.include_router(hosts_router, prefix="/api/v1")
 app.include_router(test_spacetimedb_router, prefix="/api/v1")
 app.include_router(databases_router, prefix="/api/v1")
+app.include_router(git_credentials_router, prefix="/api/v1")
+app.include_router(agent_repos_router, prefix="/api/v1")

@@ -8,19 +8,19 @@
 
 ## Problem
 
-When a user configures an MCP server with a full command string like `node /mnt/c/dev/automation/solidtime/mcp-solidtime/dist/index.js -s user` in the command field and clicks "Test Connection", they get:
+When a user configures an MCP server with a full command string like `npx -y solidtime-mcp-server` in the command field and clicks "Test Connection", they get:
 
 ```
 [Errno 2] No such file or directory
 ```
 
-This happens because users naturally paste the entire command line into the `command` field, but the backend expects `command` to be just the executable (e.g., `node`) with everything else in the `args` array. Python's `subprocess` then tries to find an executable literally named `"node /mnt/c/dev/automation/solidtime/mcp-solidtime/dist/index.js -s user"` — which doesn't exist.
+This happens because users naturally paste the entire command line into the `command` field, but the backend expects `command` to be just the executable (e.g., `npx`) with everything else in the `args` array. Python's `subprocess` then tries to find an executable literally named `"npx -y solidtime-mcp-server"` — which doesn't exist.
 
 ### Root Causes
 
-**Bug 1: No smart command/args splitting.** The frontend form has separate fields for `command` and `args[]`, but neither the frontend nor the backend attempts to split a full command string when args is empty. `StdioServerParameters(command="node /path/to/script.js -s user", args=[])` fails because `command` must be a single executable.
+**Bug 1: No smart command/args splitting.** The frontend form has separate fields for `command` and `args[]`, but neither the frontend nor the backend attempts to split a full command string when args is empty. `StdioServerParameters(command="npx -y solidtime-mcp-server", args=[])` fails because `command` must be a single executable.
 
-**Bug 2: Unhelpful error message.** The `[Errno 2] No such file or directory` error gives no indication that the problem is command parsing. Users assume the path is wrong when the real issue is that the entire string is being treated as the executable name.
+**Bug 2: Unhelpful error message.** The `[Errno 2] No such file or directory` error gives no indication that the problem is command parsing. Users assume the path or package is wrong when the real issue is that the entire string is being treated as the executable name.
 
 ### Affected Code Paths
 
@@ -40,10 +40,10 @@ Agent (container) → broker/mcp/tools (Gateway :18789) → Backend :18790/api/v
 ```
 
 Key points:
-- **The Backend runs on the host**, not in a container. It spawns MCP server processes as child processes. Host paths like `/mnt/c/dev/...` are valid.
+- **The Backend is responsible for spawning MCP server processes** and must use command/args that are valid in its own runtime environment.
 - **Agents never spawn MCP processes directly** — they go through the broker proxy (`gateway/src/broker/router.ts` lines 190-284), which routes to the backend's API.
 - **The broker proxy is correct and needs no changes.** It routes `GET /broker/mcp/tools` → Backend `/api/v1/mcp/proxy/tools` and `POST /broker/mcp` → Backend `/api/v1/mcp/proxy/call`, with policy filtering applied.
-- **Future consideration:** If the Backend were ever containerized, host paths would break. This is out of scope but worth noting.
+- **Current preferred SolidTime form:** `command: npx`, `args: ["-y", "solidtime-mcp-server"]`.
 
 ---
 
@@ -146,7 +146,7 @@ This fires when the user tabs/clicks away from the command field. If the command
 
 ```
 ✅ Connected in 340ms — 3 tools discovered
-   Resolved: node /mnt/c/dev/.../dist/index.js -s user
+   Resolved: npx -y solidtime-mcp-server
    • create_time_entry
    • list_projects
    • list_tasks
@@ -154,9 +154,9 @@ This fires when the user tabs/clicks away from the command field. If the command
 
 On error:
 ```
-❌ Executable not found: 'node /mnt/c/dev/.../dist/index.js -s user'
-   Resolved command: "node /mnt/c/dev/.../dist/index.js -s user" (no splitting applied)
-   Hint: The command field should contain only the executable (e.g., "node").
+❌ Executable not found: 'npx -y solidtime-mcp-server'
+   Resolved command: "npx -y solidtime-mcp-server" (no splitting applied)
+   Hint: The command field should contain only the executable (e.g., "npx").
          Use the Args fields for additional arguments.
 ```
 
