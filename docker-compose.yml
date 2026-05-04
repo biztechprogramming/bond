@@ -2,7 +2,12 @@ version: "3.8"
 
 services:
   bond:
-    build: .
+    build:
+      context: .
+      args:
+        BOND_SPACETIMEDB_URL: ${BOND_SPACETIMEDB_URL:-http://172.17.0.1:18787}
+        NEXT_PUBLIC_STDB_HOST: ${NEXT_PUBLIC_STDB_HOST:-}
+        NEXT_PUBLIC_STDB_PORT: ${NEXT_PUBLIC_STDB_PORT:-18787}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
