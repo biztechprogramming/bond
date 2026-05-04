@@ -228,9 +228,9 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
     }
   });
 
-  // Helper: resolve worker URL for an agent (returns null to use default)
-  async function resolveWorkerUrl(agentId?: string): Promise<{ workerUrl: string | null; containerId: string }> {
-    if (!agentId) return { workerUrl: null, containerId: "default" };
+  // Helper: resolve worker URL + auth token for an agent (returns null to use default)
+  async function resolveWorkerUrl(agentId?: string): Promise<{ workerUrl: string | null; workerToken: string | null; containerId: string }> {
+    if (!agentId) return { workerUrl: null, workerToken: null, containerId: "default" };
     try {
       const resp = await fetch(`${config.backendUrl}/api/v1/agent/resolve?agent_id=${encodeURIComponent(agentId)}`, {
         headers: { "Authorization": `Bearer ${config.apiKey}` },
@@ -238,22 +238,26 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
       if (resp.ok) {
         const resolved = await resp.json();
         if (resolved.mode === "container" && resolved.worker_url) {
-          return { workerUrl: resolved.worker_url, containerId: agentId };
+          return {
+            workerUrl: resolved.worker_url,
+            workerToken: resolved.worker_token || null,
+            containerId: agentId,
+          };
         }
       }
     } catch (err) {
       console.warn("[branches] Failed to resolve agent worker:", (err as Error).message);
     }
-    return { workerUrl: null, containerId: "default" };
+    return { workerUrl: null, workerToken: null, containerId: "default" };
   }
 
   app.get("/api/v1/container/branch", async (req: any, res: any) => {
     try {
       const agentId = req.query?.agent_id as string | undefined;
-      const { workerUrl, containerId: resolvedId } = await resolveWorkerUrl(agentId);
+      const { workerUrl, workerToken, containerId: resolvedId } = await resolveWorkerUrl(agentId);
       const containerId = agentId || resolvedId;
       const branch = branchManager.getPreference(containerId);
-      const status = await branchManager.getWorkerStatus(workerUrl || undefined);
+      const status = await branchManager.getWorkerStatus(workerUrl || undefined, workerToken || undefined);
       res.json({
         container_id: containerId,
         branch,
@@ -273,7 +277,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
       if (!branch || typeof branch !== "string") {
         return res.status(400).json({ error: "branch is required" });
       }
-      const { workerUrl, containerId: resolvedId } = await resolveWorkerUrl(agentId);
+      const { workerUrl, workerToken, containerId: resolvedId } = await resolveWorkerUrl(agentId);
       // Use agent_id as the preference key even if resolve failed —
       // falling back to "default" would save the preference under the wrong key.
       const containerId = agentId || resolvedId;
@@ -283,6 +287,7 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
         workerUrl || undefined,
         config.backendUrl,
         agentId || undefined,
+        workerToken || undefined,
       );
       webchat.broadcast({
         type: "branch_changed" as any,

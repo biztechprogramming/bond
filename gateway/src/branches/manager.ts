@@ -161,57 +161,43 @@ export class BranchManager {
     workerUrl?: string,
     backendUrl?: string,
     agentId?: string,
+    workerToken?: string,
   ): Promise<{ deferred: boolean; activeTurns: number | null }> {
     this.prefs[containerId] = branch;
     this.savePrefs();
 
-    // If we don't have a worker URL, we can't notify the worker.
-    // Just destroy any lingering container and save preference for next startup.
+    // If we don't have a worker URL, save preference for the next container start.
+    // (Design Doc 116 §3.6: no more proactive destroy — the worker self-replaces
+    // via os.execv when it gets the /reload, so the container stays up.)
     if (!workerUrl) {
-      if (backendUrl && agentId) {
-        await this.destroyContainer(backendUrl, agentId);
-      }
       return { deferred: false, activeTurns: null };
     }
 
-    // Try to notify the worker
+    // Notify the worker. Auth is required when the worker has BOND_AGENT_TOKEN set
+    // (Design Doc 116 §3.8). We pass it through.
     try {
-      const status = await this.getWorkerStatus(workerUrl);
+      const status = await this.getWorkerStatus(workerUrl, workerToken);
       if (!status.online) {
-        // Worker offline — destroy any lingering container
-        if (backendUrl && agentId) {
-          await this.destroyContainer(backendUrl, agentId);
-        }
         return { deferred: false, activeTurns: null };
       }
 
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (workerToken) headers["Authorization"] = `Bearer ${workerToken}`;
       const resp = await fetch(`${workerUrl}/reload`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ branch }),
       });
 
       if (resp.ok) {
         const data = await resp.json();
-        const deferred = data.deferred || false;
-
-        // If the worker is shutting down (idle case), proactively destroy the container
-        if (!deferred && data.shutting_down && backendUrl && agentId) {
-          // Give the worker a moment to exit cleanly before destroying
-          setTimeout(() => this.destroyContainer(backendUrl!, agentId!), 3000);
-        }
-
         return {
-          deferred,
+          deferred: data.deferred || false,
           activeTurns: data.active_turns ?? null,
         };
       }
     } catch {
       // Worker unreachable — preference saved for next startup.
-      // Try to destroy the container anyway.
-      if (backendUrl && agentId) {
-        await this.destroyContainer(backendUrl, agentId);
-      }
     }
 
     return { deferred: false, activeTurns: null };
@@ -243,14 +229,17 @@ export class BranchManager {
   /**
    * Check worker health and current branch.
    */
-  async getWorkerStatus(workerUrl?: string): Promise<WorkerStatus> {
+  async getWorkerStatus(workerUrl?: string, workerToken?: string): Promise<WorkerStatus> {
     const targetUrl = workerUrl || this.workerUrl;
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 3000);
 
+      const headers: Record<string, string> = {};
+      if (workerToken) headers["Authorization"] = `Bearer ${workerToken}`;
       const resp = await fetch(`${targetUrl}/branch`, {
         signal: controller.signal,
+        headers,
       });
       clearTimeout(timeout);
 
@@ -273,11 +262,13 @@ export class BranchManager {
   /**
    * Notify worker to reload (used by webhook handlers).
    */
-  async notifyWorkerReload(branch?: string): Promise<boolean> {
+  async notifyWorkerReload(branch?: string, workerToken?: string): Promise<boolean> {
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (workerToken) headers["Authorization"] = `Bearer ${workerToken}`;
       const resp = await fetch(`${this.workerUrl}/reload`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ branch: branch || this.getPreference() }),
       });
       return resp.ok;
