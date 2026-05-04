@@ -1076,6 +1076,12 @@ async def _run_agent_loop(
                     if fn.get("name"):
                         recent_tools.append(fn["name"])
 
+    mcp_metadata: dict[str, str] | None = None
+    if mcp_proxy and mcp_proxy._tool_cache:
+        mcp_metadata = {
+            t["name"]: t.get("description", "") for t in mcp_proxy._tool_cache
+        }
+
     selected_tool_names = select_tools(
         user_message=user_message,
         enabled_tools=agent_tools,
@@ -1083,6 +1089,7 @@ async def _run_agent_loop(
         last_assistant_content=last_assistant,
         has_active_plan=_has_active_plan,
         agent_name=agent_name,
+        mcp_tool_metadata=mcp_metadata,
     )
 
     # Use compact schemas to further reduce token usage.

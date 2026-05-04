@@ -228,6 +228,48 @@ class LocalContainerAdapter:
     def _release_port(self, agent_key: str) -> int | None:
         return self._port_map.pop(agent_key, None)
 
+    async def reconcile_port_map(self) -> int:
+        # Rebuild _port_map from running bond-agent-* containers. Without this,
+        # after bond-bond restarts the in-memory map is empty and _allocate_port's
+        # in-container localhost probe can't see host-side bindings, so it can
+        # hand out a port already bound by another still-running agent.
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning("reconcile_port_map: docker ps failed rc=%d", proc.returncode)
+            return 0
+
+        reconciled = 0
+        for line in stdout.decode().splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            name, image, ports = parts[0], parts[1], parts[2]
+            if not image.startswith("bond-agent-"):
+                continue
+            host_port: int | None = None
+            for entry in ports.split(","):
+                entry = entry.strip()
+                if f"->{_WORKER_INTERNAL_PORT}/tcp" not in entry:
+                    continue
+                left = entry.split("->", 1)[0]
+                if ":" not in left:
+                    continue
+                try:
+                    host_port = int(left.rsplit(":", 1)[1])
+                    break
+                except ValueError:
+                    continue
+            if host_port is not None:
+                self._port_map[name] = host_port
+                reconciled += 1
+                logger.info("reconcile_port_map: %s -> %d", name, host_port)
+        return reconciled
+
     # -- Credential mounts (shared helper) --
 
     @staticmethod
