@@ -84,6 +84,8 @@ The conversation header currently shows: agent name, branch, worker status, cont
 
 The dropdown reflects only what the local clone has seen. Branches created on origin since the last fetch will not appear until the user hits the fetch button (or pulls, which also fetches).
 
+**Scope: per-agent, not per-conversation.** Even though these controls appear in the conversation header, they target the underlying agent. An agent serving multiple conversations has one container, one worker, one `/bond` checkout — pulling or switching from any conversation's header restarts the worker for *all* conversations the agent is participating in. The header surfaces the controls because it is the most direct affordance, but the operation is always agent-scoped.
+
 ### 3.5 In-flight turn handling
 
 Both `pull` and `checkout_branch` end with a worker restart. If the worker is mid-turn, restarting kills the user's request.
@@ -174,4 +176,4 @@ Steps 1, 2, and 4 can land independently behind the existing worker-status gatin
 
 ## 6. Open Questions
 
-1. **Multi-conversation agents.** If an agent serves multiple conversations, a pull from one conversation's header affects all of them. Confirm this is the intended UX; if not, the controls move to a per-agent (not per-conversation) settings panel.
+None at time of writing.
