@@ -607,16 +607,67 @@ async def _checkout_preferred_branch():
         logger.warning("Startup branch checkout failed: %s", e)
 
 
-async def _shutdown_for_branch_change():
-    """Shut down the worker so the container gets destroyed and recreated on the new branch.
+def _bond_root() -> Path:
+    """Return the bond library checkout path inside the container."""
+    return Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
 
-    Waits briefly to let the current SSE response stream finish, then exits.
-    The gateway saves the branch preference; the next container start will
-    checkout the correct branch via _checkout_preferred_branch().
+
+def _git_branch(root: Path) -> str:
+    """Current branch name, or 'unknown' on failure."""
+    import subprocess as _sp
+    try:
+        out = _sp.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=root, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        return out or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _git_head_sha(root: Path) -> str:
+    """Current HEAD sha, or '' on failure."""
+    import subprocess as _sp
+    try:
+        return _sp.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except Exception:
+        return ""
+
+
+def _persist_branch_choice(branch: str) -> None:
+    """Persist the chosen branch so a fresh container clone (volume wipe)
+    starts on the right branch. Best-effort — never fatal."""
+    try:
+        data_dir = Path(os.environ.get("BOND_WORKER_DATA_DIR", "/data"))
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "bond-branch").write_text(branch + "\n")
+    except Exception as e:
+        logger.warning("Failed to persist bond-branch: %s", e)
+
+
+def _self_replace() -> None:
+    """Replace the worker process in place via os.execv (Design Doc 116 §3.6).
+
+    PID 1 stays stable; Python's import cache is wiped because it's a new
+    process. Container does not exit.
     """
-    await asyncio.sleep(2)  # Give SSE stream time to flush
-    logger.info("Exiting for branch change — container will be recreated")
-    os._exit(0)
+    import sys as _sys
+    logger.info("Worker self-replacing via os.execv — picking up new code")
+    os.execv(_sys.executable, [_sys.executable, "-m", "backend.app.worker", *_sys.argv[1:]])
+
+
+async def _shutdown_for_branch_change():
+    """Schedule an os.execv self-replace, giving any in-flight SSE a moment to flush.
+
+    Pre-116 this exited the process and relied on the container being
+    recreated. Now the worker re-execs itself in place — same PID, fresh
+    imports, no container lifecycle change.
+    """
+    await asyncio.sleep(2)
+    _self_replace()
 
 
 async def _do_branch_reload(branch: str):
@@ -625,7 +676,7 @@ async def _do_branch_reload(branch: str):
     from backend.app.agent.tools.dynamic_loader import generate_manifest as _gen_manifest
     global _prompt_manifest_cache
 
-    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
+    bond_root = _bond_root()
     if not bond_root.exists():
         return
 
@@ -633,6 +684,7 @@ async def _do_branch_reload(branch: str):
     _sp.run(["git", "checkout", branch], cwd=bond_root, capture_output=True, timeout=10)
     _sp.run(["git", "pull", "--ff-only"], cwd=bond_root, capture_output=True, timeout=30)
     os.environ["BOND_GIT_BRANCH"] = branch
+    _persist_branch_choice(branch)
 
     prompts_dir = bond_root / "prompts"
     if prompts_dir.exists():
@@ -643,6 +695,25 @@ app = FastAPI(title="Bond Agent Worker", lifespan=_lifespan)
 
 # Module-level manifest cache (updated by /reload)
 _prompt_manifest_cache: str | None = None
+
+
+@app.middleware("http")
+async def _auth_middleware(request: Request, call_next):
+    """Bearer-token auth (Design Doc 116 §3.8).
+
+    Requires `Authorization: Bearer $BOND_AGENT_TOKEN` on every path except
+    /health. If BOND_AGENT_TOKEN is empty (test/dev runs that didn't get a
+    token injected), the middleware is bypassed so existing harnesses keep
+    working.
+    """
+    if request.url.path == "/health":
+        return await call_next(request)
+    expected = os.environ.get("BOND_AGENT_TOKEN", "")
+    if expected:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {expected}":
+            return JSONResponse(status_code=401, content={"detail": "Invalid auth token"})
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -669,19 +740,11 @@ async def interrupt(request: Request) -> dict:
 
 @app.get("/branch")
 async def get_branch():
-    """Return current branch and turn status."""
-    import subprocess as _sp
-    bond_root = Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
-    branch = "unknown"
-    try:
-        branch = _sp.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=bond_root, capture_output=True, text=True, timeout=5,
-        ).stdout.strip() or "unknown"
-    except Exception:
-        pass
+    """Return current branch, head sha, and turn status (Design Doc 116 §3.2)."""
+    bond_root = _bond_root()
     return {
-        "branch": branch,
+        "branch": _git_branch(bond_root),
+        "head_sha": _git_head_sha(bond_root),
         "active_turns": _state.active_turns,
         "pending_reload": _state.pending_reload,
     }
@@ -689,11 +752,11 @@ async def get_branch():
 
 @app.post("/reload")
 async def reload_prompts(request: Request):
-    """Called by Gateway to switch branch.
+    """Switch branch and reload (Design Doc 116 §3.6).
 
-    Instead of hot-reloading, the worker exits so the container gets
-    destroyed and recreated on the correct branch.  If a turn is active,
-    the exit is deferred until the turn completes.
+    Self-replaces via os.execv (in place; PID stays stable, container does
+    not exit). If a turn is active, the reload is deferred until the turn
+    completes.
     """
     body = {}
     try:
@@ -713,10 +776,154 @@ async def reload_prompts(request: Request):
                 "active_turns": _state.active_turns,
             }
 
-    # No active turns — schedule shutdown for container recreation
-    logger.info("Branch change to '%s' requested (idle) — shutting down for container recreation", branch)
+    logger.info("Reload to branch '%s' requested (idle) — checkout + self-replace", branch)
+    try:
+        await _do_branch_reload(branch)
+    except Exception as e:
+        logger.warning("Reload checkout failed: %s", e)
     asyncio.create_task(_shutdown_for_branch_change())
-    return {"ok": True, "deferred": False, "shutting_down": True}
+    return {"ok": True, "deferred": False, "restarted": True}
+
+
+@app.post("/pull")
+async def pull_endpoint():
+    """Pull latest of the current branch and self-restart (Design Doc 116 §3.7).
+
+    Refuses with 409 if a turn is active. On success, fetches origin, hard-
+    resets to origin/<current-branch>, persists the branch choice, schedules
+    an os.execv self-replace, and returns {branch, head_sha, restarted: true}.
+    """
+    import subprocess as _sp
+
+    async with _state.turn_lock:
+        if _state.active_turns > 0:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "Worker busy", "active_turns": _state.active_turns},
+            )
+
+    bond_root = _bond_root()
+    if not bond_root.exists():
+        return JSONResponse(status_code=500, content={"detail": "/bond not found"})
+
+    branch = _git_branch(bond_root)
+    if branch == "unknown":
+        return JSONResponse(status_code=500, content={"detail": "Could not determine current branch"})
+
+    fetch = _sp.run(["git", "fetch", "origin"], cwd=bond_root, capture_output=True, text=True, timeout=30)
+    if fetch.returncode != 0:
+        return JSONResponse(status_code=500, content={"detail": f"git fetch failed: {fetch.stderr.strip()}"})
+
+    reset = _sp.run(
+        ["git", "reset", "--hard", f"origin/{branch}"],
+        cwd=bond_root, capture_output=True, text=True, timeout=30,
+    )
+    if reset.returncode != 0:
+        return JSONResponse(status_code=500, content={"detail": f"git reset failed: {reset.stderr.strip()}"})
+
+    _persist_branch_choice(branch)
+    response = {
+        "branch": branch,
+        "head_sha": _git_head_sha(bond_root),
+        "restarted": True,
+    }
+    asyncio.create_task(_shutdown_for_branch_change())
+    return response
+
+
+@app.post("/checkout")
+async def checkout_endpoint(request: Request):
+    """Checkout a branch and self-restart (Design Doc 116 §3.7).
+
+    No fetch — uses whatever the local clone has for the requested ref.
+    Refuses with 409 if a turn is active.
+    """
+    import subprocess as _sp
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    branch = (body.get("branch") or "").strip()
+    if not branch:
+        return JSONResponse(status_code=400, content={"detail": "branch is required"})
+
+    async with _state.turn_lock:
+        if _state.active_turns > 0:
+            return JSONResponse(
+                status_code=409,
+                content={"detail": "Worker busy", "active_turns": _state.active_turns},
+            )
+
+    bond_root = _bond_root()
+    if not bond_root.exists():
+        return JSONResponse(status_code=500, content={"detail": "/bond not found"})
+
+    checkout = _sp.run(
+        ["git", "checkout", branch],
+        cwd=bond_root, capture_output=True, text=True, timeout=10,
+    )
+    if checkout.returncode != 0:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"git checkout failed: {checkout.stderr.strip()}"},
+        )
+
+    os.environ["BOND_GIT_BRANCH"] = branch
+    _persist_branch_choice(branch)
+
+    response = {
+        "branch": _git_branch(bond_root),
+        "head_sha": _git_head_sha(bond_root),
+        "restarted": True,
+    }
+    asyncio.create_task(_shutdown_for_branch_change())
+    return response
+
+
+@app.post("/fetch")
+async def fetch_endpoint():
+    """Fetch from origin without touching the working tree or worker process
+    (Design Doc 116 §3.7). Always allowed — safe to call while busy."""
+    import subprocess as _sp
+
+    bond_root = _bond_root()
+    if not bond_root.exists():
+        return JSONResponse(status_code=500, content={"detail": "/bond not found"})
+
+    fetch = _sp.run(
+        ["git", "fetch", "--prune", "origin"],
+        cwd=bond_root, capture_output=True, text=True, timeout=30,
+    )
+    if fetch.returncode != 0:
+        return JSONResponse(status_code=500, content={"detail": f"git fetch failed: {fetch.stderr.strip()}"})
+
+    listing = _sp.run(
+        [
+            "git", "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short) %(objectname) %(committerdate:iso8601)",
+            "refs/remotes/origin",
+        ],
+        cwd=bond_root, capture_output=True, text=True, timeout=10,
+    )
+    branches: list[dict] = []
+    seen: set[str] = set()
+    for line in (listing.stdout or "").splitlines():
+        parts = line.strip().split(" ", 2)
+        if len(parts) < 2:
+            continue
+        full_ref = parts[0]
+        sha = parts[1]
+        last_commit = parts[2] if len(parts) > 2 else ""
+        name = full_ref[len("origin/"):] if full_ref.startswith("origin/") else full_ref
+        if name == "HEAD" or name in seen:
+            continue
+        seen.add(name)
+        branches.append({"name": name, "sha": sha, "lastCommit": last_commit})
+
+    return {"branches": branches}
 
 
 
@@ -905,10 +1112,14 @@ async def turn(request: Request) -> StreamingResponse:
                     branch = _state.pending_reload_branch or os.environ.get("BOND_GIT_BRANCH", "main")
                     _state.pending_reload = False
                     _state.pending_reload_branch = None
-                    # Exit the process so the container gets destroyed and recreated
-                    # on the correct branch. The gateway has already saved the branch
-                    # preference; the next container start will checkout that branch.
-                    logger.info("Branch change to '%s' pending — shutting down for container recreation", branch)
+                    # Design Doc 116 §3.6: checkout the new branch, persist the
+                    # choice, then self-replace via os.execv so Python re-imports
+                    # on the new code. Container stays up.
+                    logger.info("Deferred branch change to '%s' firing — checkout + self-replace", branch)
+                    try:
+                        await _do_branch_reload(branch)
+                    except Exception as e:
+                        logger.warning("Deferred branch reload checkout failed: %s", e)
                     asyncio.create_task(_shutdown_for_branch_change())
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

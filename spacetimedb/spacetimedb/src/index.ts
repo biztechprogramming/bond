@@ -215,6 +215,10 @@ const spacetimedb = schema({
       agentId: t.string().optional(), // NULL/empty means global
       createdAt: t.u64(),
       updatedAt: t.u64(),
+      // Appended (not inserted between existing fields) so the publisher
+      // sees a clean ADD COLUMN. Default '' lets 2.1+ backfill existing
+      // rows automatically. JSON object: {"tool_name": "allow"|"deny"}.
+      methodPermissions: t.string().default(''),
     }
   ),
 
@@ -1170,6 +1174,7 @@ export const addMcpServer = spacetimedb.reducer(
     args: t.string(),
     env: t.string(),
     agentId: t.string().optional(),
+    methodPermissions: t.string().default(''),
   },
   (ctx, server) => {
     const now = BigInt(Date.now());
@@ -1191,6 +1196,7 @@ export const updateMcpServer = spacetimedb.reducer(
     env: t.string(),
     enabled: t.bool(),
     agentId: t.string().optional(),
+    methodPermissions: t.string().default(''),
   },
   (ctx, server) => {
     const existing = ctx.db.mcp_servers.id.find(server.id);

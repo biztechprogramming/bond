@@ -429,6 +429,9 @@ class LocalContainerAdapter:
                     agent_token = resp.json().get("token", "")
                     if agent_token:
                         cmd.extend(["-e", f"BOND_AGENT_TOKEN={agent_token}"])
+                        # Persist for bond-bond → worker callbacks (Design Doc 116 §3.8)
+                        from backend.app.sandbox.agent_tokens import save_agent_token
+                        save_agent_token(agent_id, agent_token)
                         logger.info("Injected broker token for agent %s", agent_id)
                 else:
                     logger.warning("Failed to get broker token: %d %s", resp.status_code, resp.text)

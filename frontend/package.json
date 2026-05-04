@@ -17,7 +17,7 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "spacetimedb": "2.0.2"
+    "spacetimedb": "2.2.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.0.0",

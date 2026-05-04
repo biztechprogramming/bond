@@ -303,6 +303,7 @@ export const McpServers = __t.object("McpServers", {
   agentId: __t.option(__t.string()),
   createdAt: __t.u64(),
   updatedAt: __t.u64(),
+  methodPermissions: __t.string(),
 });
 export type McpServers = __Infer<typeof McpServers>;
 

@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   spacetimedb:
-    image: clockworklabs/spacetime:v2.0.2
+    image: clockworklabs/spacetime:v2.2.0
     container_name: bond-spacetimedb
     restart: unless-stopped
     ports:

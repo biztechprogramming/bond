@@ -12,7 +12,6 @@ import ContainerHostsTab from "./containers/ContainerHostsTab";
 import McpTab from "./mcp/McpTab";
 import DatabasesTab from "./databases/DatabasesTab";
 import GitCredentialsTab from "./git-credentials/GitCredentialsTab";
-import AgentReposTab from "./agent-repos/AgentReposTab";
 import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
@@ -26,7 +25,6 @@ const TABS = [
   { id: "channels", label: "Channels" },
   { id: "databases", label: "Databases" },
   { id: "git-credentials", label: "Git Credentials" },
-  { id: "agent-repos", label: "Agent Repos" },
   { id: "mcp", label: "MCP Servers" },
   { id: "prompts", label: "Prompts" },
   { id: "images", label: "Images" },
@@ -258,8 +256,6 @@ export default function SettingsPage() {
         {activeTab === "databases" && <DatabasesTab />}
 
         {activeTab === "git-credentials" && <GitCredentialsTab />}
-
-        {activeTab === "agent-repos" && <AgentReposTab />}
 
         {activeTab === "mcp" && <McpTab />}
 

@@ -20,27 +20,35 @@ if [ -d "/tmp/.ssh" ]; then
     fi
 fi
 
+# If the mounted SSH key authenticates to github.com, rewrite all github.com
+# HTTPS URLs to SSH form. Per-repo HTTPS configs (or missing/expired PATs) can
+# no longer silently shadow the agent's working SSH credentials.
+if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    git config --global url."git@github.com:".insteadOf "https://github.com/"
+    echo "[entrypoint] github.com SSH verified; HTTPS URLs rewritten to SSH."
+fi
+
 # Use the bond repo at /bond.
-# If not present, clone fresh (production/CI).
-# If present and BOND_AUTO_PULL=1, pull latest on startup (non-mounted repos only).
+# If not present, clone fresh. Always pull latest on startup.
 if [ ! -d "/bond/.git" ]; then
     echo "[entrypoint] Cloning bond repo..."
     git clone "${BOND_REPO_URL:-git@github.com:biztechprogramming/bond.git}" /bond
     echo "[entrypoint] Clone complete."
+    # Design Doc 116 §3.3: honor a previously chosen branch on fresh clone
+    # so a docker-recreate (volume wipe) doesn't drop the user's selection.
+    if [ -f /data/bond-branch ]; then
+        SAVED_BRANCH=$(cat /data/bond-branch | tr -d '[:space:]')
+        if [ -n "$SAVED_BRANCH" ]; then
+            echo "[entrypoint] Restoring saved branch: $SAVED_BRANCH"
+            (cd /bond && git checkout "$SAVED_BRANCH" 2>/dev/null) || \
+                echo "[entrypoint] WARN: could not checkout saved branch '$SAVED_BRANCH'"
+        fi
+    fi
 else
     CURRENT_BRANCH=$(cd /bond && git branch --show-current 2>/dev/null || echo "unknown")
-    echo "[entrypoint] Using bond repo (branch: $CURRENT_BRANCH)"
-
-    # Auto-pull if enabled and /bond is NOT a host bind mount.
-    # Detect bind mount: if /bond is on a different device than /, it's mounted from host.
-    _bond_dev=$(stat -c '%d' /bond 2>/dev/null)
-    if [ "${BOND_AUTO_PULL:-0}" = "1" ] && [ "$_bond_dev" = "$_root_dev" ]; then
-        echo "[entrypoint] BOND_AUTO_PULL=1 — pulling latest on branch $CURRENT_BRANCH..."
-        cd /bond && git fetch origin && git reset --hard "origin/$CURRENT_BRANCH" 2>/dev/null || true
-        echo "[entrypoint] Pull complete."
-    elif [ "${BOND_AUTO_PULL:-0}" = "1" ]; then
-        echo "[entrypoint] BOND_AUTO_PULL=1 but /bond is a host mount — skipping pull (would mutate host)"
-    fi
+    echo "[entrypoint] Using bond repo (branch: $CURRENT_BRANCH) — pulling latest..."
+    cd /bond && git fetch origin && git reset --hard "origin/$CURRENT_BRANCH" 2>/dev/null || true
+    echo "[entrypoint] Pull complete."
 fi
 
 # --- Agent repos (Design Doc 113) ---
@@ -314,6 +322,18 @@ if ! grep -q "safe" "$BOND_AGENT_GITCONFIG" 2>/dev/null; then
 	directory = /workspace
 EOF
     chown bond-agent:bond-agent "$BOND_AGENT_GITCONFIG" 2>/dev/null || true
+fi
+
+# Mirror the github.com HTTPS→SSH rewrite into bond-agent's gitconfig so it
+# applies after privilege drop (the worker runs as bond-agent, not root).
+if ! grep -q 'insteadOf = https://github.com/' "$BOND_AGENT_GITCONFIG" 2>/dev/null; then
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+        cat >> "$BOND_AGENT_GITCONFIG" <<'EOF'
+[url "git@github.com:"]
+	insteadOf = https://github.com/
+EOF
+        chown bond-agent:bond-agent "$BOND_AGENT_GITCONFIG" 2>/dev/null || true
+    fi
 fi
 
 # Drop privileges and exec worker as bond-agent
