@@ -32,15 +32,16 @@ We want three things, simultaneously:
 
 ## 3. Proposed Architecture
 
-### 3.1 Three primitive operations
+### 3.1 Four primitive operations
 
-All three target a single agent (identified by `agent_id`); the host-side adapter dispatches the work into the right container.
+All four target a single agent (identified by `agent_id`); the host-side adapter dispatches the work into the right container.
 
 | op | what it does | side effects |
 |----|--------------|--------------|
 | `pull(agent_id)` | `git -C /bond fetch && git -C /bond reset --hard origin/<current-branch>`, then restart the worker | Worker process replaced; in-flight turn aborted (see §3.5) |
 | `checkout_branch(agent_id, branch)` | `git -C /bond checkout <branch>`, then restart the worker | Local checkout only; lands on whatever sha origin had at last fetch |
-| `restart_worker(agent_id)` | Signal the worker to exit; supervisor brings it back | Used internally by the two above; also useful as a standalone debug tool |
+| `fetch_branches(agent_id)` | `git -C /bond fetch --prune origin` | Refreshes `refs/remotes/origin/*` so newly pushed branches appear in the dropdown. No checkout, no reset, no worker restart. Safe to run while the worker is busy. |
+| `restart_worker(agent_id)` | Signal the worker to self-replace via `os.execv` (see §3.6) | Used internally by `pull` and `checkout_branch`; also useful as a standalone debug tool |
 
 Note that we are **not** introducing a combined "switch-and-pull" operation. If telemetry later shows users frequently fire `checkout_branch` followed immediately by `pull`, we will revisit; until then, two clicks is acceptable.
 
@@ -83,12 +84,13 @@ fi
 
 ### 3.4 UI surfaces
 
-The conversation header currently shows: agent name, branch, worker status, container name. We add two interactions, no new layout:
+The conversation header currently shows: agent name, branch, worker status, container name. We add three interactions, no new layout:
 
 - **Pull button.** Small icon (e.g., download-arrow) immediately to the right of the branch. Clicking calls `pull(agent_id)`. Disabled when the worker is busy (see §3.5).
-- **Branch click → dropdown.** Clicking the branch name itself opens a dropdown listing branches the local clone knows about (`git -C /bond for-each-ref --format='%(refname:short)' refs/remotes/origin`). Selecting one calls `checkout_branch(agent_id, branch)`. Also disabled when the worker is busy.
+- **Fetch button.** A second icon next to the pull button (e.g., refresh-cycle). Clicking calls `fetch_branches(agent_id)` and refreshes the dropdown contents on success. **Always enabled** — fetch does not touch the worker or the working tree, so there is no busy state to worry about. This is the path for "a new branch was just pushed and I want to switch to it" without first interrupting the agent.
+- **Branch click → dropdown.** Clicking the branch name opens a dropdown listing branches the local clone knows about (`git -C /bond for-each-ref --format='%(refname:short)' refs/remotes/origin`). Selecting one calls `checkout_branch(agent_id, branch)`. Disabled when the worker is busy.
 
-Branches created on origin since the last fetch are not in the dropdown. This is by design — the user wanting "the truly latest set of branches" hits Pull first, which fetches.
+The dropdown reflects only what the local clone has seen. Branches created on origin since the last fetch will not appear until the user hits the fetch button (or pulls, which also fetches).
 
 ### 3.5 In-flight turn handling
 
@@ -118,14 +120,22 @@ New host-side adapter methods (callable via the existing agent-control RPC chann
 
 - `agent.pull(agent_id) -> {branch, head_sha, restarted: bool}`
 - `agent.checkout_branch(agent_id, branch) -> {branch, head_sha, restarted: bool}`
+- `agent.fetch_branches(agent_id) -> {branches: [string], head_shas: {branch: sha}}`
 - `agent.restart_worker(agent_id) -> {restarted: bool}`
 
-Each method:
-1. Validates the agent exists and the container is up.
-2. Refuses if the worker is currently busy (status != `idle`); returns a structured error the UI can show.
-3. Runs the git operation via `docker exec` with a short timeout (network ops capped at e.g. 30 s).
-4. Sends SIGUSR1 to the worker.
-5. Waits for the next heartbeat (timeout, e.g. 10 s) and returns the new `branch`/`head_sha`.
+`pull`, `checkout_branch`, and `restart_worker`:
+1. Validate the agent exists and the container is up.
+2. Refuse if the worker is currently busy (status != `idle`); return a structured error the UI can show.
+3. Run the git operation via `docker exec` with a short timeout (network ops capped at e.g. 30 s).
+4. Send SIGUSR1 to the worker.
+5. Wait for the next heartbeat (timeout, e.g. 10 s) and return the new `branch`/`head_sha`.
+
+`fetch_branches` is the simpler path:
+1. Validate the agent exists and the container is up.
+2. Run `git -C /bond fetch --prune origin` via `docker exec` (capped, e.g. 30 s).
+3. Read `git -C /bond for-each-ref --format='%(refname:short) %(objectname)' refs/remotes/origin` and return the list.
+
+It does **not** check `idle`, signal the worker, or wait for a heartbeat — none of that is needed since the working tree and worker process are untouched.
 
 Errors from any step propagate; the UI shows them inline near the control that triggered them.
 
@@ -133,11 +143,11 @@ Errors from any step propagate; the UI shows them inline near the control that t
 
 ## 4. Implementation Plan
 
-1. **Backend / adapter:** add the three methods, with `docker exec` plumbing and the SIGUSR1 wait.
+1. **Backend / adapter:** add the four methods, with `docker exec` plumbing and the SIGUSR1 wait (only the three that restart the worker need the wait).
 2. **Worker:** add SIGUSR1 → `os.execv(sys.executable, [...])` handler; ensure the heartbeat already includes `bond_branch` and `bond_head` (add if missing).
 3. **Entrypoint:** read `/data/bond-branch` on fresh-clone path (one block, ~5 lines).
-4. **UI:** add the pull icon and branch-dropdown wiring; replace any other branch source with the heartbeat field.
-5. **Telemetry:** count `pull`, `checkout_branch`, and "back-to-back checkout-then-pull" events. The combo decision in §3.1 depends on this.
+4. **UI:** add the pull icon, the fetch icon, and branch-dropdown wiring; replace any other branch source with the heartbeat field.
+5. **Telemetry:** count `pull`, `checkout_branch`, `fetch_branches`, and "back-to-back checkout-then-pull" events. The combo decision in §3.1 depends on this.
 
 Steps 1, 2, and 4 can land independently behind the existing worker-status gating. Step 3 is a one-line change to the entrypoint and ships with the same PR as step 1.
 
@@ -154,5 +164,4 @@ Steps 1, 2, and 4 can land independently behind the existing worker-status gatin
 
 ## 6. Open Questions
 
-1. **Branch-list freshness.** §3.4 lists branches from `refs/remotes/origin/*` without a fetch. Acceptable, but we should confirm with users that "missing newly created branches" is not surprising in practice. A "refresh branch list" affordance (fetch-only, no checkout, no restart) is cheap to add if it is.
-2. **Multi-conversation agents.** If an agent serves multiple conversations, a pull from one conversation's header affects all of them. Confirm this is the intended UX; if not, the controls move to a per-agent (not per-conversation) settings panel.
+1. **Multi-conversation agents.** If an agent serves multiple conversations, a pull from one conversation's header affects all of them. Confirm this is the intended UX; if not, the controls move to a per-agent (not per-conversation) settings panel.
