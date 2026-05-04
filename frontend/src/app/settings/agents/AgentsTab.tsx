@@ -4,6 +4,7 @@ import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useAvailableModels, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
 import { getAgents as getAgentRows, getAgentChannels, getAgentMounts, getConnection } from "@/lib/spacetimedb-client";
 import { randomId } from "@/lib/random-id";
+import AgentReposTab from "../agent-repos/AgentReposTab";
 
 function generateId(): string {
   return randomId();
@@ -968,68 +969,29 @@ export default function AgentsTab() {
               </div>
             </div>
 
-            <div style={{ ...styles.field, ...styles.formFull }}>
-              <label style={styles.label}>
-                Workspace Mounts{" "}
-                <button style={styles.smallButton} onClick={addMount}>+ Add</button>
-              </label>
-              {editing.workspace_mounts?.map((mount, i) => (
-                <div key={i} style={{ marginBottom: "8px", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <div style={styles.mountRow}>
-                    <input
-                      style={{ ...styles.input, flex: 1 }}
-                      value={mount.host_path}
-                      onChange={(e) => updateMount(i, "host_path", e.target.value)}
-                      placeholder="Host path"
-                    />
-                    <button style={styles.smallButton} onClick={() => setBrowsingMountIndex(i)} title="Browse">📂</button>
-                    <span style={{ color: "#8888a0", fontSize: "0.85rem" }}>→</span>
-                    <input
-                      style={{ ...styles.input, flex: 1 }}
-                      value={mount.container_path || `/workspace/${mount.mount_name}`}
-                      onChange={(e) => updateMount(i, "container_path", e.target.value)}
-                      placeholder="Container path (e.g. /workspace/myproject)"
-                    />
-                    <label style={styles.checkboxLabel}>
-                      <input type="checkbox" checked={mount.readonly} onChange={(e) => updateMount(i, "readonly", e.target.checked)} style={styles.checkbox} />
-                      RO
-                    </label>
-                    <button style={styles.dangerSmall} onClick={() => removeMount(i)}>X</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {browsingMountIndex !== null && (
-              <DirBrowser
-                hostId="local"
-                onSelect={(path) => {
-                  const idx = browsingMountIndex;
-                  const name = path.split("/").filter(Boolean).pop() || "";
-                  setEditing((prev) => {
-                    if (!prev) return prev;
-                    const mounts = [...prev.workspace_mounts];
-                    mounts[idx] = {
-                      ...mounts[idx],
-                      host_path: path,
-                      mount_name: mounts[idx].mount_name || name,
-                      container_path: mounts[idx].container_path || `/workspace/${mounts[idx].mount_name || name}`,
-                    };
-                    return { ...prev, workspace_mounts: mounts };
-                  });
-                  setBrowsingMountIndex(null);
-                }}
-                onClose={() => setBrowsingMountIndex(null)}
-              />
-            )}
-
             {/* Prompt fragment checkboxes removed (Doc 027 Phase 1).
                 Fragments are now loaded automatically from disk via manifest.yaml.
                 Tier 1 (always-on), Tier 2 (lifecycle), Tier 3 (context-dependent). */}
 
-            {/* Database Assignments (Design Doc 107) */}
-            {!isNew && (
-              <AgentDatabasesSection agentId={editing.id} />
+            {/* Databases + Repos: side-by-side on wide screens, stacked on narrow.
+                Each pane needs ~380px to render its cards comfortably; below that
+                we wrap so they stack. (Design Doc 107 + 113.) */}
+            {isNew ? (
+              <div style={{ ...styles.field, ...styles.formFull, color: "#888", fontSize: "13px" }}>
+                Save the agent first, then you can add databases and repos.
+              </div>
+            ) : (
+              <div style={{
+                ...styles.field, ...styles.formFull,
+                display: "flex", flexWrap: "wrap", gap: 24,
+              }}>
+                <div style={{ flex: "1 1 380px", minWidth: 0 }}>
+                  <AgentDatabasesSection agentId={editing.id} />
+                </div>
+                <div style={{ flex: "1 1 380px", minWidth: 0 }}>
+                  <AgentReposTab agentId={editing.id} />
+                </div>
+              </div>
             )}
 
             {!isNew && !editing.is_default && (
