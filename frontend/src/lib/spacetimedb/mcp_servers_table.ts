@@ -18,6 +18,7 @@ export default __t.row({
   env: __t.string(),
   enabled: __t.bool(),
   agentId: __t.option(__t.string()).name("agent_id"),
+  methodPermissions: __t.string().name("method_permissions"),
   createdAt: __t.u64().name("created_at"),
   updatedAt: __t.u64().name("updated_at"),
 });
