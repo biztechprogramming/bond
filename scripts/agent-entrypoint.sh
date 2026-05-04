@@ -21,26 +21,16 @@ if [ -d "/tmp/.ssh" ]; then
 fi
 
 # Use the bond repo at /bond.
-# If not present, clone fresh (production/CI).
-# If present and BOND_AUTO_PULL=1, pull latest on startup (non-mounted repos only).
+# If not present, clone fresh. Always pull latest on startup.
 if [ ! -d "/bond/.git" ]; then
     echo "[entrypoint] Cloning bond repo..."
     git clone "${BOND_REPO_URL:-git@github.com:biztechprogramming/bond.git}" /bond
     echo "[entrypoint] Clone complete."
 else
     CURRENT_BRANCH=$(cd /bond && git branch --show-current 2>/dev/null || echo "unknown")
-    echo "[entrypoint] Using bond repo (branch: $CURRENT_BRANCH)"
-
-    # Auto-pull if enabled and /bond is NOT a host bind mount.
-    # Detect bind mount: if /bond is on a different device than /, it's mounted from host.
-    _bond_dev=$(stat -c '%d' /bond 2>/dev/null)
-    if [ "${BOND_AUTO_PULL:-0}" = "1" ] && [ "$_bond_dev" = "$_root_dev" ]; then
-        echo "[entrypoint] BOND_AUTO_PULL=1 — pulling latest on branch $CURRENT_BRANCH..."
-        cd /bond && git fetch origin && git reset --hard "origin/$CURRENT_BRANCH" 2>/dev/null || true
-        echo "[entrypoint] Pull complete."
-    elif [ "${BOND_AUTO_PULL:-0}" = "1" ]; then
-        echo "[entrypoint] BOND_AUTO_PULL=1 but /bond is a host mount — skipping pull (would mutate host)"
-    fi
+    echo "[entrypoint] Using bond repo (branch: $CURRENT_BRANCH) — pulling latest..."
+    cd /bond && git fetch origin && git reset --hard "origin/$CURRENT_BRANCH" 2>/dev/null || true
+    echo "[entrypoint] Pull complete."
 fi
 
 # --- Agent repos (Design Doc 113) ---
