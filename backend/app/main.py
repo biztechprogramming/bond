@@ -74,6 +74,17 @@ async def lifespan(app: FastAPI):
         import logging
         logging.getLogger("bond.mcp").error(f"Failed to load MCP servers on startup: {e}")
 
+    # Reconcile agent container port map (recover from bond-bond restarts)
+    try:
+        from backend.app.sandbox.manager import get_sandbox_manager
+        sm = get_sandbox_manager()
+        n = await sm._local_adapter.reconcile_port_map()
+        import logging as _log
+        _log.getLogger("bond.startup").info("Reconciled %d agent containers into port map", n)
+    except Exception as e:
+        import logging as _log
+        _log.getLogger("bond.startup").warning("Port map reconcile failed: %s", e)
+
     # Faucet database gateway (Design Doc 107) — optional
     from backend.app.services.faucet_manager import faucet_manager
     try:

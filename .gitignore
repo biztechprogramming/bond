@@ -24,6 +24,7 @@ Thumbs.db
 
 # Bond runtime data (not in repo)
 .bond/
+.data/
 
 # Environment
 .env

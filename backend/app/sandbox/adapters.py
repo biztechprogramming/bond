@@ -41,6 +41,55 @@ _WORKER_INTERNAL_PORT = 18791
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+# Inside the agent images the worker runs as bond-agent (uid/gid 1000) after
+# privilege drop. Bond-bond runs as root, so any file/dir it writes for an
+# agent bind-mount is owned by uid 0 with mode 0600/0700 — unreadable by the
+# agent. _agent_readable() chowns/chmods the path so uid 1000 can read.
+_BOND_AGENT_UID = 1000
+_BOND_AGENT_GID = 1000
+
+
+def _agent_readable(path: Path, *, dir_mode: int = 0o755, file_mode: int = 0o644) -> Path:
+    """Make ``path`` readable by the agent's bond-agent user (uid 1000).
+
+    Best-effort: a chown failure (e.g. because the host filesystem doesn't
+    support changing owner) is logged and ignored — the chmod alone is
+    usually enough since 0o644/0o755 grant world-read.
+    """
+    try:
+        if path.is_dir():
+            os.chmod(path, dir_mode)
+        else:
+            os.chmod(path, file_mode)
+    except OSError as e:
+        logger.warning("chmod %s failed: %s", path, e)
+    try:
+        os.chown(path, _BOND_AGENT_UID, _BOND_AGENT_GID)
+    except (OSError, PermissionError) as e:
+        logger.debug("chown %s to %d:%d failed (ok if mode is world-readable): %s",
+                     path, _BOND_AGENT_UID, _BOND_AGENT_GID, e)
+    return path
+
+
+def _agent_bind_data_root() -> Path:
+    """Root for files & dirs that bond-bond bind-mounts into agent containers.
+
+    The bind-mount source has to exist on the *host* docker daemon's filesystem,
+    not just bond-bond's. When bond runs natively, ``_PROJECT_ROOT/data`` works
+    on both. When bond runs containerized, ``_PROJECT_ROOT`` is ``/app`` — a
+    path the host doesn't have, so docker silently materializes empty dirs and
+    breaks the agent (Doc 112). Redirect to a path under ``BOND_HOST_HOME``,
+    bind-mounted at the same path inside bond-bond by docker-compose.
+    """
+    override = os.environ.get("BOND_HOST_HOME")
+    if override:
+        root = Path(override) / ".bond" / "agent-data"
+    else:
+        root = _PROJECT_ROOT / "data"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 _CLONE_URL_PREFIXES = ("git@", "http://", "https://", "ssh://", "git+", "git://")
 
 
@@ -178,6 +227,48 @@ class LocalContainerAdapter:
 
     def _release_port(self, agent_key: str) -> int | None:
         return self._port_map.pop(agent_key, None)
+
+    async def reconcile_port_map(self) -> int:
+        # Rebuild _port_map from running bond-agent-* containers. Without this,
+        # after bond-bond restarts the in-memory map is empty and _allocate_port's
+        # in-container localhost probe can't see host-side bindings, so it can
+        # hand out a port already bound by another still-running agent.
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning("reconcile_port_map: docker ps failed rc=%d", proc.returncode)
+            return 0
+
+        reconciled = 0
+        for line in stdout.decode().splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            name, image, ports = parts[0], parts[1], parts[2]
+            if not image.startswith("bond-agent-"):
+                continue
+            host_port: int | None = None
+            for entry in ports.split(","):
+                entry = entry.strip()
+                if f"->{_WORKER_INTERNAL_PORT}/tcp" not in entry:
+                    continue
+                left = entry.split("->", 1)[0]
+                if ":" not in left:
+                    continue
+                try:
+                    host_port = int(left.rsplit(":", 1)[1])
+                    break
+                except ValueError:
+                    continue
+            if host_port is not None:
+                self._port_map[name] = host_port
+                reconciled += 1
+                logger.info("reconcile_port_map: %s -> %d", name, host_port)
+        return reconciled
 
     # -- Credential mounts (shared helper) --
 
@@ -452,19 +543,27 @@ class LocalContainerAdapter:
                     mount_str += ":ro"
                 cmd.extend(["-v", mount_str])
 
-        # Agent data directory
-        agent_data_dir = _PROJECT_ROOT / "data" / "agents" / agent_id
+        # Agent data directory. Use _agent_bind_data_root() so the source path
+        # resolves on both bond-bond and the host docker daemon (Doc 112).
+        data_root = _agent_bind_data_root()
+
+        agent_data_dir = data_root / "agents" / agent_id
         os.makedirs(str(agent_data_dir), exist_ok=True)
+        # bond-agent (uid 1000) writes the agent sqlite db here at startup —
+        # chown so it can.
+        _agent_readable(agent_data_dir)
         cmd.extend(["-v", f"{agent_data_dir}:/data:rw"])
 
         # Shared memory
-        shared_dir = project_root / "data" / "shared"
+        shared_dir = data_root / "shared"
         os.makedirs(str(shared_dir), exist_ok=True)
+        _agent_readable(shared_dir)
         cmd.extend(["-v", f"{shared_dir}:/data/shared:ro"])
 
         # Skills DB
-        skills_db = project_root / "data" / "skills.db"
+        skills_db = data_root / "skills.db"
         if skills_db.exists():
+            _agent_readable(skills_db)
             cmd.extend(["-v", f"{skills_db}:/data/skills.db:rw"])
 
         # Credentials + SSH
@@ -633,18 +732,20 @@ class LocalContainerAdapter:
             cmd.extend(["-v", f"{volume_name}:/workspace/{repo['name']}:rw"])
 
         # Write the repos config file
-        config_dir = _PROJECT_ROOT / "data" / "agent-configs"
-        os.makedirs(str(config_dir), mode=0o700, exist_ok=True)
+        config_dir = _agent_bind_data_root() / "agent-configs"
+        os.makedirs(str(config_dir), mode=0o755, exist_ok=True)
+        _agent_readable(config_dir)
         repos_path = config_dir / f"{agent_id}.repos.json"
 
         if repos_path.is_dir():
             shutil.rmtree(repos_path)
 
-        fd = os.open(str(repos_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(repos_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
         try:
             os.write(fd, json.dumps({"repos": repos_config}, indent=2).encode())
         finally:
             os.close(fd)
+        _agent_readable(repos_path)
 
         cmd.extend(["-v", f"{repos_path}:/config/repos.json:ro"])
         logger.info(
@@ -653,8 +754,9 @@ class LocalContainerAdapter:
 
     def _write_agent_config(self, agent: dict) -> Path:
         agent_id = agent["id"]
-        config_dir = _PROJECT_ROOT / "data" / "agent-configs"
-        os.makedirs(str(config_dir), mode=0o700, exist_ok=True)
+        config_dir = _agent_bind_data_root() / "agent-configs"
+        os.makedirs(str(config_dir), mode=0o755, exist_ok=True)
+        _agent_readable(config_dir)
         config_path = config_dir / f"{agent_id}.json"
 
         if config_path.is_dir():
@@ -672,16 +774,17 @@ class LocalContainerAdapter:
             "litellm_prefixes": agent.get("litellm_prefixes", {}),
         }
 
-        fd = os.open(str(config_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(config_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
         try:
             os.write(fd, json.dumps(config_data, indent=2).encode())
         finally:
             os.close(fd)
+        _agent_readable(config_path)
 
         return config_path
 
     def _delete_agent_config(self, agent_id: str) -> None:
-        config_path = _PROJECT_ROOT / "data" / "agent-configs" / f"{agent_id}.json"
+        config_path = _agent_bind_data_root() / "agent-configs" / f"{agent_id}.json"
         try:
             if config_path.is_dir():
                 shutil.rmtree(config_path)
