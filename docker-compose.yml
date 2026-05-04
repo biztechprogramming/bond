@@ -22,7 +22,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/bin/docker:/usr/bin/docker:ro
       - ./.env.gateway:/app/gateway/.env:ro
-      - /a0/usr/workdir/dev/mcp-solidtime:/app/mcp-solidtime:ro
+      # Solidtime MCP server source. Mounted at the same path on both sides
+      # so any command/args we register in the mcp_servers table (e.g.
+      # node /srv/environments/dev/mcp-solidtime/dist/index.js) resolves
+      # identically inside bond-bond.
+      - /srv/environments/dev/mcp-solidtime:/srv/environments/dev/mcp-solidtime:ro
       - /usr/local/bin/spacetimedb-standalone:/home/bond/.local/share/spacetime/bin/2.0.2/spacetimedb-standalone:ro
       - ~/.bond/spacetimedb-config:/home/bond/.config/spacetime:ro
     environment:

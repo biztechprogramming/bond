@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { BACKEND_API, apiFetch } from "@/lib/config";
 
-/** Design Doc 113 — per-agent repo management. */
+/** Design Doc 113 — per-agent repo management. Embedded inside the agent
+ * edit screen; can also render standalone with its own agent picker. */
 
 interface Agent {
   id: string;
@@ -54,9 +55,14 @@ function deriveName(url: string): string {
   return s || "repo";
 }
 
-export default function AgentReposTab() {
+interface Props {
+  agentId?: string;
+}
+
+export default function AgentReposTab({ agentId }: Props = {}) {
+  const embedded = !!agentId;
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(agentId || "");
   const [repos, setRepos] = useState<AgentRepo[]>([]);
   const [creds, setCreds] = useState<GitCredential[]>([]);
   const [editing, setEditing] = useState<RepoForm | null>(null);
@@ -64,6 +70,7 @@ export default function AgentReposTab() {
   const [isNew, setIsNew] = useState(false);
   const [msg, setMsg] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
 
   const fetchAgents = useCallback(async () => {
     try {
@@ -87,25 +94,36 @@ export default function AgentReposTab() {
     } catch {}
   }, []);
 
-  const fetchRepos = useCallback(async (agentId: string) => {
-    if (!agentId) {
+  const fetchRepos = useCallback(async (id: string) => {
+    if (!id) {
       setRepos([]);
       return;
     }
     try {
-      const res = await apiFetch(`${BACKEND_API}/agents/${agentId}/repos`);
+      const res = await apiFetch(`${BACKEND_API}/agents/${id}/repos`);
       if (res.ok) setRepos(await res.json());
     } catch {}
   }, []);
 
   useEffect(() => {
-    fetchAgents();
+    if (!embedded) fetchAgents();
     fetchCreds();
-  }, [fetchAgents, fetchCreds]);
+  }, [embedded, fetchAgents, fetchCreds]);
+
+  useEffect(() => {
+    if (agentId !== undefined) setSelectedAgentId(agentId);
+  }, [agentId]);
 
   useEffect(() => {
     fetchRepos(selectedAgentId);
   }, [selectedAgentId, fetchRepos]);
+
+  // Auto-clear messages
+  useEffect(() => {
+    if (!msg) return;
+    const t = setTimeout(() => setMsg(""), 3000);
+    return () => clearTimeout(t);
+  }, [msg]);
 
   const startCreate = () => {
     setEditing(empty());
@@ -136,7 +154,6 @@ export default function AgentReposTab() {
 
   const onUrlChange = (url: string) => {
     if (!editing) return;
-    // Auto-fill name from URL basename if name is currently empty
     const update: RepoForm = { ...editing, url };
     if (!editing.name.trim() && url.trim()) {
       update.name = deriveName(url);
@@ -147,7 +164,7 @@ export default function AgentReposTab() {
   const save = async () => {
     if (!editing || !selectedAgentId) return;
     if (!editing.url.trim()) {
-      setMsg("URL is required.");
+      setMsg("Error: URL is required.");
       return;
     }
     const payload = {
@@ -167,11 +184,12 @@ export default function AgentReposTab() {
       body: JSON.stringify(payload),
     });
     if (res.ok) {
+      setMsg(isNew ? "Repo added." : "Repo updated.");
       await fetchRepos(selectedAgentId);
       cancel();
     } else {
       const text = await res.text();
-      setMsg(`Save failed: ${text}`);
+      setMsg(`Error: ${text}`);
     }
   };
 
@@ -180,157 +198,272 @@ export default function AgentReposTab() {
       method: "DELETE",
     });
     if (res.ok) {
+      setMsg("Repo removed.");
       await fetchRepos(selectedAgentId);
       setConfirmDelete(null);
     } else {
       const text = await res.text();
-      setMsg(`Delete failed: ${text}`);
+      setMsg(`Error: ${text}`);
       setConfirmDelete(null);
     }
   };
 
+  // ── Field styles ─────────────────────────────────────────────
+  const fieldLabel: React.CSSProperties = {
+    display: "block",
+    fontSize: "0.78rem",
+    color: "#8888a0",
+    marginBottom: 6,
+    fontWeight: 500,
+  };
+  const fieldInput: React.CSSProperties = {
+    width: "100%",
+    background: "#1e1e2e",
+    border: "1px solid #2a2a3e",
+    borderRadius: 8,
+    padding: "9px 12px",
+    color: "#e0e0e8",
+    fontSize: "0.85rem",
+    outline: "none",
+    boxSizing: "border-box",
+  };
+
   return (
-    <div style={{ padding: "16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-        <div>
-          <h2 style={{ margin: 0 }}>Agent Repos</h2>
-          <p style={{ margin: "4px 0 0", color: "#666", fontSize: "13px" }}>
-            Per-agent git clones. Each repo is cloned into a Docker volume mounted at <code>/workspace/&#123;name&#125;</code>.
-          </p>
+    <div style={{ gridColumn: "1 / -1" }}>
+      {/* Section header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: "0.95rem", fontWeight: 600, color: "#8888a0", letterSpacing: "0.02em" }}>Repos</span>
+          <span style={{ fontSize: "0.8rem", color: "#5a5a6e", background: "#1e1e2e", padding: "2px 8px", borderRadius: 10 }}>{repos.length}</span>
         </div>
-        <div>
-          <label style={{ marginRight: "8px" }}>Agent:</label>
-          <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)}>
-            <option value="">— Pick one —</option>
+
+        {!embedded && (
+          <select
+            value={selectedAgentId}
+            onChange={(e) => setSelectedAgentId(e.target.value)}
+            style={{ ...fieldInput, width: "auto" }}
+          >
+            <option value="">— Pick agent —</option>
             {agents.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.display_name || a.name}{a.is_default ? " (default)" : ""}
               </option>
             ))}
           </select>
-        </div>
+        )}
+
+        {selectedAgentId && repos.length > 0 && !editing && (
+          <button onClick={startCreate} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "rgba(108,138,255,0.12)", color: "#6c8aff",
+            border: "1px solid transparent", borderRadius: 6, padding: "6px 14px",
+            fontSize: "0.82rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+          }}>
+            <span style={{ fontSize: "1rem", lineHeight: 1 }}>+</span> Add Repo
+          </button>
+        )}
       </div>
 
-      {msg && <div style={{ color: "#b91c1c", marginBottom: "8px" }}>{msg}</div>}
-
-      {selectedAgentId && !editing && (
-        <button onClick={startCreate} style={{ marginBottom: "12px" }}>+ Add repo</button>
+      {/* Toast */}
+      {msg && (
+        <div style={{ fontSize: "0.8rem", color: msg.startsWith("Error") ? "#ff6c8a" : "#6cffa0", marginBottom: 12 }}>
+          {msg}
+        </div>
       )}
 
+      {/* Edit form */}
       {editing && (
-        <div style={{ border: "1px solid #ccc", padding: "16px", marginBottom: "16px", borderRadius: "4px" }}>
-          <h3 style={{ marginTop: 0 }}>{isNew ? "New repo" : "Edit repo"}</h3>
-          <div style={{ display: "grid", gap: "10px", maxWidth: "640px" }}>
-            <label>
-              Clone URL
+        <div style={{
+          background: "#12121a", border: "1px solid #2a2a3e", borderRadius: 10,
+          padding: 16, marginBottom: 12,
+        }}>
+          <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "#e0e0e8", marginBottom: 12 }}>
+            {isNew ? "New Repo" : "Edit Repo"}
+          </div>
+          <div style={{ display: "grid", gap: 12 }}>
+            <div>
+              <label style={fieldLabel}>Clone URL</label>
               <input
                 type="text"
                 value={editing.url}
                 onChange={(e) => onUrlChange(e.target.value)}
                 placeholder="git@github.com:foo/bar.git or https://github.com/foo/bar.git"
-                style={{ display: "block", width: "100%" }}
+                style={fieldInput}
               />
-            </label>
-            <label>
-              Mount name (defaults to repo basename)
-              <input
-                type="text"
-                value={editing.name}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                placeholder="will mount at /workspace/<name>"
-                style={{ display: "block", width: "100%" }}
-              />
-            </label>
-            <label>
-              Default branch
-              <input
-                type="text"
-                value={editing.default_branch}
-                onChange={(e) => setEditing({ ...editing, default_branch: e.target.value })}
-                placeholder="main"
-                style={{ display: "block", width: "100%" }}
-              />
-            </label>
-            <label>
-              Active branch (leave empty to start on default)
-              <input
-                type="text"
-                value={editing.active_branch}
-                onChange={(e) => setEditing({ ...editing, active_branch: e.target.value })}
-                placeholder="e.g. fix/some-bug"
-                style={{ display: "block", width: "100%" }}
-              />
-            </label>
-            <label>
-              Credential override (optional — defaults to host_pattern match)
-              <select
-                value={editing.credential_id}
-                onChange={(e) => setEditing({ ...editing, credential_id: e.target.value })}
-                style={{ display: "block", width: "100%" }}
-              >
-                <option value="">— Use default for host —</option>
-                {creds.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.host_pattern})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-              <button onClick={save}>Save</button>
-              <button onClick={cancel}>Cancel</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={fieldLabel}>Mount name</label>
+                <input
+                  type="text"
+                  value={editing.name}
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  placeholder="defaults to repo basename"
+                  style={fieldInput}
+                />
+              </div>
+              <div>
+                <label style={fieldLabel}>Default branch</label>
+                <input
+                  type="text"
+                  value={editing.default_branch}
+                  onChange={(e) => setEditing({ ...editing, default_branch: e.target.value })}
+                  placeholder="main"
+                  style={fieldInput}
+                />
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <label style={fieldLabel}>Active branch (optional)</label>
+                <input
+                  type="text"
+                  value={editing.active_branch}
+                  onChange={(e) => setEditing({ ...editing, active_branch: e.target.value })}
+                  placeholder="e.g. fix/some-bug"
+                  style={fieldInput}
+                />
+              </div>
+              <div>
+                <label style={fieldLabel}>Credential override</label>
+                <select
+                  value={editing.credential_id}
+                  onChange={(e) => setEditing({ ...editing, credential_id: e.target.value })}
+                  style={fieldInput}
+                >
+                  <option value="">— Use default for host —</option>
+                  {creds.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.host_pattern})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+              <button onClick={cancel} style={{
+                background: "none", border: "1px solid #2a2a3e", color: "#8888a0",
+                borderRadius: 6, padding: "8px 16px", fontSize: "0.82rem", cursor: "pointer",
+              }}>Cancel</button>
+              <button onClick={save} style={{
+                background: "#6c8aff", color: "#fff", border: "none",
+                borderRadius: 6, padding: "8px 18px", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
+              }}>Save</button>
             </div>
           </div>
         </div>
       )}
 
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "14px" }}>
-        <thead>
-          <tr style={{ background: "#f5f5f5", textAlign: "left" }}>
-            <th style={{ padding: "8px" }}>Name</th>
-            <th style={{ padding: "8px" }}>URL</th>
-            <th style={{ padding: "8px" }}>Branch</th>
-            <th style={{ padding: "8px" }}>Credential</th>
-            <th style={{ padding: "8px" }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {!selectedAgentId && (
-            <tr><td colSpan={5} style={{ padding: "12px", color: "#888" }}>Pick an agent above.</td></tr>
-          )}
-          {selectedAgentId && repos.length === 0 && (
-            <tr><td colSpan={5} style={{ padding: "12px", color: "#888" }}>No repos for this agent.</td></tr>
-          )}
-          {repos.map((r) => {
-            const cred = creds.find((c) => c.id === r.credential_id);
-            return (
-              <tr key={r.id} style={{ borderTop: "1px solid #eee" }}>
-                <td style={{ padding: "8px" }}>{r.name}</td>
-                <td style={{ padding: "8px" }}><code style={{ fontSize: "12px" }}>{r.url}</code></td>
-                <td style={{ padding: "8px" }}>
-                  {r.active_branch ? (
-                    <><strong>{r.active_branch}</strong> <span style={{ color: "#888" }}>(default: {r.default_branch})</span></>
-                  ) : (
-                    r.default_branch
-                  )}
-                </td>
-                <td style={{ padding: "8px" }}>{cred ? cred.name : <span style={{ color: "#888" }}>auto</span>}</td>
-                <td style={{ padding: "8px" }}>
-                  <button onClick={() => startEdit(r)}>Edit</button>{" "}
-                  {confirmDelete === r.id ? (
-                    <>
-                      <button onClick={() => remove(r.id)} style={{ color: "#b91c1c" }}>Confirm delete</button>{" "}
-                      <button onClick={() => setConfirmDelete(null)}>Cancel</button>
-                    </>
-                  ) : (
-                    <button onClick={() => setConfirmDelete(r.id)}>Delete</button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      {/* Empty state */}
+      {selectedAgentId && repos.length === 0 && !editing && (
+        <div style={{
+          textAlign: "center", padding: "40px 20px",
+          border: "1px dashed #2a2a3e", borderRadius: 10, background: "#12121a",
+        }}>
+          <div style={{ fontSize: "2rem", marginBottom: 12, opacity: 0.4 }}>&#x1f4c1;</div>
+          <p style={{ color: "#5a5a6e", fontSize: "0.85rem", marginBottom: 16, lineHeight: 1.5 }}>
+            No repos yet.<br />
+            Add a clone URL and the agent will get it at <code style={{ background: "#1e1e2e", padding: "1px 6px", borderRadius: 3 }}>/workspace/&#123;name&#125;</code>.
+          </p>
+          <button onClick={startCreate} style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            background: "#6c8aff", color: "#fff", border: "none", borderRadius: 6,
+            padding: "9px 20px", fontSize: "0.85rem", fontWeight: 600, cursor: "pointer",
+          }}>
+            <span>+</span> Add Repo
+          </button>
+        </div>
+      )}
+
+      {/* Empty state — no agent selected (standalone only) */}
+      {!selectedAgentId && (
+        <div style={{
+          textAlign: "center", padding: "30px 20px",
+          color: "#5a5a6e", fontSize: "0.85rem",
+        }}>
+          Pick an agent above to manage its repos.
+        </div>
+      )}
+
+      {/* Repo cards */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {repos.map((r) => {
+          const cred = creds.find((c) => c.id === r.credential_id);
+          const branch = r.active_branch || r.default_branch;
+          const isHover = hoveredCard === r.id;
+          return (
+            <div
+              key={r.id}
+              onMouseEnter={() => setHoveredCard(r.id)}
+              onMouseLeave={() => setHoveredCard(null)}
+              style={{
+                display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+                background: "#12121a", border: `1px solid ${isHover ? "#3a3a4e" : "#2a2a3e"}`,
+                borderRadius: 10, padding: "14px 16px", transition: "border-color 0.15s",
+              }}
+            >
+              <div style={{
+                width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+                background: "#1e1e2e", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: "1.1rem",
+              }} aria-hidden>
+                &#x1f4e6;
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "#e0e0e8", marginBottom: 3, display: "flex", alignItems: "center", gap: 8 }}>
+                  {r.name}
+                  <span style={{
+                    fontSize: "0.72rem", color: "#8888a0", background: "#1e1e2e",
+                    padding: "1px 7px", borderRadius: 4, fontWeight: 500,
+                  }}>{branch}</span>
+                </div>
+                <div style={{ fontSize: "0.76rem", color: "#5a5a6e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <code>{r.url}</code>
+                  {cred && <span> &middot; {cred.name}</span>}
+                </div>
+              </div>
+              <button
+                onClick={() => startEdit(r)}
+                style={{
+                  background: "none", border: "none", color: "#8888a0", cursor: "pointer",
+                  padding: 6, borderRadius: 6, fontSize: "0.8rem", flexShrink: 0,
+                  opacity: isHover ? 1 : 0.5, transition: "opacity 0.15s",
+                }}
+              >Edit</button>
+              {confirmDelete === r.id ? (
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => remove(r.id)}
+                    style={{
+                      background: "rgba(255,108,138,0.12)", color: "#ff6c8a",
+                      border: "none", borderRadius: 6, padding: "5px 10px",
+                      fontSize: "0.76rem", fontWeight: 600, cursor: "pointer",
+                    }}
+                  >Confirm</button>
+                  <button
+                    onClick={() => setConfirmDelete(null)}
+                    style={{
+                      background: "none", border: "1px solid #2a2a3e", color: "#8888a0",
+                      borderRadius: 6, padding: "5px 10px", fontSize: "0.76rem", cursor: "pointer",
+                    }}
+                  >X</button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDelete(r.id)}
+                  title="Remove"
+                  aria-label={`Remove ${r.name}`}
+                  style={{
+                    background: "none", border: "none", color: "#5a5a6e", cursor: "pointer",
+                    padding: 6, borderRadius: 6, fontSize: "1rem", lineHeight: 1, flexShrink: 0,
+                    opacity: isHover ? 1 : 0.15, transition: "all 0.15s",
+                  }}
+                >&#x2715;</button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
