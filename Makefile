@@ -1,9 +1,12 @@
 .PHONY: dev backend gateway frontend setup install test lint clean images \
+	migrate migrate-staging \
 	webhook-secret webhook-setup webhook-test webhook-status \
 	langfuse-up langfuse-down langfuse-logs langfuse-ps langfuse-restart langfuse-stop langfuse-start langfuse-health langfuse-reset \
 	opensandbox-health opensandbox-logs
 
-SPACETIMEDB_URL := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('url', 'http://localhost:18787'))" 2>/dev/null || echo "http://localhost:18787")
+# Service URLs and tokens come from .env (the source of truth — see scripts/migrate.sh).
+# Targets that need them at make-time read from .env directly.
+SPACETIMEDB_URL := $(shell grep -oP '^BOND_SPACETIMEDB_URL\s*=\s*"?\K[^"]+' .env 2>/dev/null || echo "http://localhost:18787")
 SPACETIMEDB_MODULE := $(shell python3 -c "import json; print(json.load(open('bond.json')).get('spacetimedb', {}).get('module', 'bond-core-v2'))" 2>/dev/null || echo "bond-core-v2")
 SPACETIMEDB_TOKEN := $(shell grep -oP '^SPACETIMEDB_TOKEN\s*=\s*"?\K[^"]+' .env 2>/dev/null || grep -oP 'spacetimedb_token\s*=\s*"\K[^"]+' $(HOME)/.config/spacetime/cli.toml 2>/dev/null)
 
@@ -62,6 +65,16 @@ lint:
 #        make migrate VERSION=30   — force migration to version 30 (must be within ±3/+2 of current)
 migrate:
 	@./scripts/migrate.sh $(ARGS)
+
+# Publish to the staging SpacetimeDB (docker-compose.spacetimedb-next.yml).
+# Uses the v2.2.0 CLI; for `spacetime generate` to work it requires the
+# matching v2.2.0 standalone at ~/.local/share/spacetime/bin/2.2.0/spacetimedb-standalone
+# (install with `cp <release>/spacetimedb-standalone ~/.local/share/spacetime/bin/2.2.0/`).
+# Module SDK should also be on 2.2.0 to match. Prod is untouched.
+migrate-staging:
+	@SPACETIME_BIN="$(HOME)/.local/bin/spacetime-2.2.0" \
+		BOND_SPACETIMEDB_URL="http://172.17.0.1:18797" \
+		./scripts/migrate.sh $(ARGS)
 
 # Run migrations via Docker
 migrate-docker:
