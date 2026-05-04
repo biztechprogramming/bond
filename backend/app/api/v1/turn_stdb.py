@@ -19,6 +19,7 @@ async def _stream_container_turn_stdb(
     plan_id: str | None,
     agent_id: str,
     user_message: str,
+    worker_token: str | None = None,
 ):
     """Proxy SSE from a container worker, using SpacetimeDB for persistence."""
     stdb = get_stdb()
@@ -28,16 +29,18 @@ async def _stream_container_turn_stdb(
 
     try:
         logger.info(f"[TURN_STDB] Starting container turn for conversation={conversation_id}, agent={agent_id}, worker={worker_url}")
-        register_turn(conversation_id, worker_url=worker_url)
+        register_turn(conversation_id, worker_url=worker_url, worker_token=worker_token)
         yield _sse("status", {"state": "thinking", "conversation_id": conversation_id})
 
         interrupted = False
         timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
+        headers = {"Authorization": f"Bearer {worker_token}"} if worker_token else {}
         async with httpx.AsyncClient(timeout=timeout) as client:
             logger.info(f"[TURN_STDB] Calling worker at {worker_url}/turn")
             async with client.stream(
                 "POST",
                 f"{worker_url}/turn",
+                headers=headers,
                 json={
                     "message": user_message,
                     "history": history,
