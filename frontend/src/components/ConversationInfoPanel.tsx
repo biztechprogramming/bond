@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { GATEWAY_API , apiFetch } from "@/lib/config";
+import { GATEWAY_API, BACKEND_API, apiFetch } from "@/lib/config";
 
 interface BranchInfo {
   name: string;
@@ -15,6 +15,7 @@ interface BranchStatus {
   worker_branch: string | null;
   active_turns: number | null;
   pending_reload: boolean;
+  head_sha?: string | null;
 }
 
 interface ConversationInfoPanelProps {
@@ -41,12 +42,38 @@ export default function ConversationInfoPanel({
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [status, setStatus] = useState<BranchStatus | null>(null);
   const [switching, setSwitching] = useState(false);
+  const [pulling, setPulling] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [pendingBranch, setPendingBranch] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const branchRef = useRef<HTMLDivElement>(null);
 
+  // Prefer the worker's view of branch + head sha when we know the agent_id
+  // (Design Doc 116 §3.2: worker is the source of truth). Falls back to the
+  // gateway's container-branch endpoint for non-container or pre-spawn cases.
   const fetchStatus = useCallback(async () => {
     try {
+      if (agentId) {
+        const resp = await apiFetch(`${BACKEND_API}/agents/${encodeURIComponent(agentId)}/branch`);
+        if (resp.ok) {
+          const data = await resp.json();
+          setStatus({
+            container_id: data.container_id || agentId,
+            branch: data.branch || "main",
+            worker_online: !!data.online,
+            worker_branch: data.branch,
+            active_turns: data.active_turns,
+            pending_reload: !!data.pending_reload,
+            head_sha: data.head_sha || null,
+          });
+          if (pendingBranch && !data.pending_reload && data.branch === pendingBranch) {
+            setPendingBranch(null);
+          }
+          return;
+        }
+      }
+      // Fallback path
       const params = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
       const resp = await apiFetch(`${GATEWAY_API}/container/branch${params}`);
       if (resp.ok) {
@@ -68,6 +95,53 @@ export default function ConversationInfoPanel({
       }
     } catch { /* ignore */ }
   }, []);
+
+  // Pull the worker's /bond to latest of its current branch (Design Doc 116 §3.7).
+  const doPull = useCallback(async () => {
+    if (!agentId || pulling) return;
+    setPulling(true);
+    setActionError(null);
+    try {
+      const resp = await apiFetch(`${BACKEND_API}/agents/${encodeURIComponent(agentId)}/pull`, {
+        method: "POST",
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        setActionError(data.detail || `Pull failed (${resp.status})`);
+      }
+      // Restart is in flight; status refresh will reflect the new sha once /branch responds
+      await fetchStatus();
+    } catch (e) {
+      setActionError(`Pull failed: ${(e as Error).message}`);
+    }
+    setPulling(false);
+  }, [agentId, pulling, fetchStatus]);
+
+  // Fetch (no checkout, no restart) — refreshes the local branch list so
+  // newly pushed branches appear in the dropdown without interrupting the agent.
+  const doFetch = useCallback(async () => {
+    if (!agentId || fetching) return;
+    setFetching(true);
+    setActionError(null);
+    try {
+      const resp = await apiFetch(`${BACKEND_API}/agents/${encodeURIComponent(agentId)}/fetch`, {
+        method: "POST",
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const list = (data.branches || []) as Array<{ name: string; sha: string; lastCommit: string }>;
+        setBranches(list.map((b) => ({ name: b.name, lastCommit: b.lastCommit })));
+      } else {
+        // Fall back to gateway-side list
+        await fetchBranches();
+        const data = await resp.json().catch(() => ({}));
+        setActionError(data.detail || `Fetch failed (${resp.status})`);
+      }
+    } catch (e) {
+      setActionError(`Fetch failed: ${(e as Error).message}`);
+    }
+    setFetching(false);
+  }, [agentId, fetching, fetchBranches]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus, branchChangedSignal, turnCompleted]);
 
@@ -103,20 +177,54 @@ export default function ConversationInfoPanel({
   const switchBranch = async (branch: string) => {
     if (switching) return;
     setSwitching(true);
+    setActionError(null);
     try {
-      const resp = await apiFetch(`${GATEWAY_API}/container/branch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch, ...(agentId ? { agent_id: agentId } : {}) }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.deferred) {
-          setPendingBranch(branch);
+      // Prefer the worker /checkout path when we have an agent_id (Design Doc 116 §3.7):
+      // no fetch, instant local checkout, in-place worker restart.
+      if (agentId) {
+        const resp = await apiFetch(
+          `${BACKEND_API}/agents/${encodeURIComponent(agentId)}/checkout`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ branch }),
+          },
+        );
+        if (resp.ok) {
+          await fetchStatus();
+        } else {
+          const data = await resp.json().catch(() => ({}));
+          if (resp.status === 409) {
+            // Worker busy — fall back to deferred-reload path so the switch happens after the turn
+            const fallback = await apiFetch(`${GATEWAY_API}/container/branch`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ branch, agent_id: agentId }),
+            });
+            if (fallback.ok) {
+              const fb = await fallback.json();
+              if (fb.deferred) setPendingBranch(branch);
+              await fetchStatus();
+            }
+          } else {
+            setActionError(data.detail || `Checkout failed (${resp.status})`);
+          }
         }
-        await fetchStatus();
+      } else {
+        const resp = await apiFetch(`${GATEWAY_API}/container/branch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ branch }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.deferred) setPendingBranch(branch);
+          await fetchStatus();
+        }
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      setActionError(`Checkout failed: ${(e as Error).message}`);
+    }
     setSwitching(false);
     setBranchDropdownOpen(false);
   };
@@ -219,7 +327,7 @@ export default function ConversationInfoPanel({
           {/* Section: Branch */}
           <div style={sectionStyle}>
             <div style={labelStyle}>Branch</div>
-            <div ref={branchRef} style={{ position: "relative" }}>
+            <div ref={branchRef} style={{ position: "relative", display: "flex", gap: "6px", alignItems: "stretch" }}>
               <button
                 onClick={() => setBranchDropdownOpen(!branchDropdownOpen)}
                 style={{
@@ -234,11 +342,12 @@ export default function ConversationInfoPanel({
                   alignItems: "center",
                   gap: "6px",
                   fontFamily: "monospace",
-                  width: "100%",
+                  flex: 1,
+                  minWidth: 0,
                 }}
               >
                 <span style={{ fontSize: "0.8rem" }}>🔀</span>
-                <span style={{ flex: 1, textAlign: "left" }}>{currentBranch}</span>
+                <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentBranch}</span>
                 {workerOffline && (
                   <span
                     title="Worker offline"
@@ -258,6 +367,49 @@ export default function ConversationInfoPanel({
                 <span style={{ fontSize: "0.65rem", color: "#5a5a6e" }}>{branchDropdownOpen ? "▲" : "▼"}</span>
               </button>
 
+              {/* Pull button — refreshes /bond to latest of current branch and self-restarts the worker */}
+              <button
+                onClick={doPull}
+                disabled={!agentId || pulling || workerOffline || (activeTurns ?? 0) > 0}
+                title={
+                  !agentId ? "No agent context"
+                    : workerOffline ? "Agent is offline"
+                    : (activeTurns ?? 0) > 0 ? "Agent is working — wait for the turn to finish"
+                    : pulling ? "Pulling…"
+                    : `Pull latest of ${currentBranch} and reload`
+                }
+                style={iconButtonStyle(!agentId || pulling || workerOffline || (activeTurns ?? 0) > 0)}
+              >
+                {pulling ? "…" : "⤓"}
+              </button>
+
+              {/* Fetch button — refreshes the local branch list (always safe, even mid-turn) */}
+              <button
+                onClick={doFetch}
+                disabled={!agentId || fetching || workerOffline}
+                title={
+                  !agentId ? "No agent context"
+                    : workerOffline ? "Agent is offline"
+                    : fetching ? "Fetching…"
+                    : "Fetch from origin (refresh branch list)"
+                }
+                style={iconButtonStyle(!agentId || fetching || workerOffline)}
+              >
+                {fetching ? "…" : "⟳"}
+              </button>
+            </div>
+
+            {actionError && (
+              <div style={{ marginTop: "6px", fontSize: "0.7rem", color: "#ff6c8a" }}>{actionError}</div>
+            )}
+            {status?.head_sha && (
+              <div style={{ marginTop: "6px", fontSize: "0.68rem", color: "#5a5a6e", fontFamily: "monospace" }}>
+                {status.head_sha.slice(0, 12)}
+              </div>
+            )}
+
+            {/* Dropdown — anchored to branch button container */}
+            <div style={{ position: "relative" }}>
               {branchDropdownOpen && (
                 <div
                   style={{
@@ -378,6 +530,25 @@ const sectionStyle: React.CSSProperties = {
   marginBottom: "10px",
   borderBottomWidth: "1px", borderBottomStyle: "solid", borderBottomColor: "#1e1e2e",
 };
+
+function iconButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    backgroundColor: "#1e1e2e",
+    borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
+    borderRadius: "6px",
+    padding: "4px 9px",
+    color: disabled ? "#5a5a6e" : "#e0e0e8",
+    fontSize: "0.95rem",
+    cursor: disabled ? "not-allowed" : "pointer",
+    fontFamily: "monospace",
+    flexShrink: 0,
+    opacity: disabled ? 0.55 : 1,
+    minWidth: "30px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+}
 
 const labelStyle: React.CSSProperties = {
   fontSize: "0.68rem",

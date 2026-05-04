@@ -34,6 +34,16 @@ if [ ! -d "/bond/.git" ]; then
     echo "[entrypoint] Cloning bond repo..."
     git clone "${BOND_REPO_URL:-git@github.com:biztechprogramming/bond.git}" /bond
     echo "[entrypoint] Clone complete."
+    # Design Doc 116 §3.3: honor a previously chosen branch on fresh clone
+    # so a docker-recreate (volume wipe) doesn't drop the user's selection.
+    if [ -f /data/bond-branch ]; then
+        SAVED_BRANCH=$(cat /data/bond-branch | tr -d '[:space:]')
+        if [ -n "$SAVED_BRANCH" ]; then
+            echo "[entrypoint] Restoring saved branch: $SAVED_BRANCH"
+            (cd /bond && git checkout "$SAVED_BRANCH" 2>/dev/null) || \
+                echo "[entrypoint] WARN: could not checkout saved branch '$SAVED_BRANCH'"
+        fi
+    fi
 else
     CURRENT_BRANCH=$(cd /bond && git branch --show-current 2>/dev/null || echo "unknown")
     echo "[entrypoint] Using bond repo (branch: $CURRENT_BRANCH) — pulling latest..."

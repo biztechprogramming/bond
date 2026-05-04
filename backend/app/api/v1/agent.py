@@ -407,9 +407,14 @@ async def resolve_agent(
                 "litellm_prefixes": litellm_prefixes,
             }
             info = await sandbox_manager.ensure_running(agent_dict)
+            # Design Doc 116 §3.8: callers (gateway, etc.) need the worker
+            # auth token to hit /reload, /pull, /checkout, /fetch, /branch.
+            from backend.app.sandbox.agent_tokens import load_agent_token
+            worker_token = load_agent_token(agent_row["id"])
             return {
                 "mode": "container",
                 "worker_url": info["worker_url"],
+                "worker_token": worker_token,
                 "agent_id": agent_row["id"],
                 "agent_name": agent_row["name"],
                 "agent_display_name": agent_row.get("display_name", agent_row["name"]),

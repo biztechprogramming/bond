@@ -524,6 +524,140 @@ async def get_container_status(agent_id: str):
         return {"running": False}
 
 
+# ---------------------------------------------------------------------------
+# Code refresh + branch control (Design Doc 116)
+# ---------------------------------------------------------------------------
+
+def _get_running_worker(agent_id: str) -> dict | None:
+    """Return {worker_url, container_id} for a running container, or None.
+
+    Does NOT spawn a container — these endpoints operate on a worker that's
+    already up (per design 116 §3.7).
+    """
+    try:
+        from backend.app.sandbox.manager import get_sandbox_manager
+        manager = get_sandbox_manager()
+        for key, info in manager._containers.items():
+            if key.endswith(agent_id):
+                worker_url = info.get("worker_url", "")
+                cid = info.get("container_id", "")
+                if worker_url and cid:
+                    return {"worker_url": worker_url, "container_id": cid}
+        return None
+    except Exception:
+        return None
+
+
+async def _call_worker(
+    agent_id: str,
+    method: str,
+    path: str,
+    json_body: dict | None = None,
+    timeout: float = 35.0,
+):
+    """Call an authenticated worker endpoint for an agent.
+
+    Returns a tuple ``(status_code, payload)`` where payload is the parsed
+    JSON body when available, else the raw text wrapped as
+    ``{"detail": "..."}``. Returns ``(503, {...})`` if the container is not
+    running.
+    """
+    info = _get_running_worker(agent_id)
+    if not info:
+        return 503, {"detail": "No running container for agent"}
+
+    from backend.app.sandbox.agent_tokens import load_agent_token
+    token = load_agent_token(agent_id)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+    url = f"{info['worker_url'].rstrip('/')}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if method == "GET":
+                resp = await client.get(url, headers=headers)
+            else:
+                resp = await client.request(
+                    method, url, headers=headers, json=json_body or {},
+                )
+    except Exception as e:
+        return 502, {"detail": f"Worker unreachable: {e}"}
+
+    try:
+        return resp.status_code, resp.json()
+    except Exception:
+        return resp.status_code, {"detail": resp.text}
+
+
+@router.get("/{agent_id}/branch")
+async def agent_branch_status(agent_id: str):
+    """Live branch / head_sha / busy state from the worker (Design Doc 116 §3.2)."""
+    info = _get_running_worker(agent_id)
+    if not info:
+        return {
+            "online": False,
+            "container_id": None,
+            "branch": None,
+            "head_sha": None,
+            "active_turns": None,
+            "pending_reload": False,
+        }
+
+    status, payload = await _call_worker(agent_id, "GET", "/branch", timeout=5.0)
+    if status != 200:
+        return {
+            "online": False,
+            "container_id": info["container_id"],
+            "branch": None,
+            "head_sha": None,
+            "active_turns": None,
+            "pending_reload": False,
+            "error": payload.get("detail"),
+        }
+    return {
+        "online": True,
+        "container_id": info["container_id"],
+        "branch": payload.get("branch"),
+        "head_sha": payload.get("head_sha"),
+        "active_turns": payload.get("active_turns"),
+        "pending_reload": payload.get("pending_reload", False),
+    }
+
+
+@router.post("/{agent_id}/pull")
+async def agent_pull(agent_id: str):
+    """Pull latest of the agent's current branch and self-restart its worker."""
+    status, payload = await _call_worker(agent_id, "POST", "/pull", json_body={}, timeout=45.0)
+    if status >= 400:
+        raise HTTPException(status_code=status, detail=payload.get("detail", "Pull failed"))
+    return payload
+
+
+class _CheckoutRequest(BaseModel):
+    branch: str
+
+
+@router.post("/{agent_id}/checkout")
+async def agent_checkout(agent_id: str, req: _CheckoutRequest):
+    """Checkout a branch on the agent's /bond and self-restart its worker.
+    No fetch — uses the local clone."""
+    status, payload = await _call_worker(
+        agent_id, "POST", "/checkout", json_body={"branch": req.branch}, timeout=20.0,
+    )
+    if status >= 400:
+        raise HTTPException(status_code=status, detail=payload.get("detail", "Checkout failed"))
+    return payload
+
+
+@router.post("/{agent_id}/fetch")
+async def agent_fetch(agent_id: str):
+    """Fetch from origin without touching the agent's worker process.
+    Returns the refreshed list of remote-tracking branches."""
+    status, payload = await _call_worker(agent_id, "POST", "/fetch", json_body={}, timeout=45.0)
+    if status >= 400:
+        raise HTTPException(status_code=status, detail=payload.get("detail", "Fetch failed"))
+    return payload
+
+
 @router.post("/{agent_id}/default")
 async def set_default_agent(agent_id: str):
     """Set an agent as the default."""
