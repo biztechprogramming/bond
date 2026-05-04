@@ -32,7 +32,7 @@ services:
       # node /srv/environments/dev/mcp-solidtime/dist/index.js) resolves
       # identically inside bond-bond.
       - /srv/environments/dev/mcp-solidtime:/srv/environments/dev/mcp-solidtime:ro
-      - /usr/local/bin/spacetimedb-standalone:/home/bond/.local/share/spacetime/bin/2.0.2/spacetimedb-standalone:ro
+      - /usr/local/bin/spacetimedb-standalone:/home/bond/.local/share/spacetime/bin/2.2.0/spacetimedb-standalone:ro
       - ~/.bond/spacetimedb-config:/home/bond/.config/spacetime:ro
     environment:
       - HOME=/home/bond

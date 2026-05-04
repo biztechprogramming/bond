@@ -11,7 +11,7 @@ import { sqlQuery } from "../spacetimedb/client.js";
 import { KNOWN_MODULE_NAMES } from "./schema-versions.js";
 
 const SPACETIMEDB_BIN = join(
-  homedir(), ".local", "share", "spacetime", "bin", "2.0.2", "spacetimedb-standalone",
+  homedir(), ".local", "share", "spacetime", "bin", "2.2.0", "spacetimedb-standalone",
 );
 const JWT_PUB_KEY = join(homedir(), ".config", "spacetime", "id_ecdsa.pub");
 const JWT_PRIV_KEY = join(homedir(), ".config", "spacetime", "id_ecdsa");
