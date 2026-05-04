@@ -20,6 +20,14 @@ if [ -d "/tmp/.ssh" ]; then
     fi
 fi
 
+# If the mounted SSH key authenticates to github.com, rewrite all github.com
+# HTTPS URLs to SSH form. Per-repo HTTPS configs (or missing/expired PATs) can
+# no longer silently shadow the agent's working SSH credentials.
+if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    git config --global url."git@github.com:".insteadOf "https://github.com/"
+    echo "[entrypoint] github.com SSH verified; HTTPS URLs rewritten to SSH."
+fi
+
 # Use the bond repo at /bond.
 # If not present, clone fresh. Always pull latest on startup.
 if [ ! -d "/bond/.git" ]; then
@@ -304,6 +312,18 @@ if ! grep -q "safe" "$BOND_AGENT_GITCONFIG" 2>/dev/null; then
 	directory = /workspace
 EOF
     chown bond-agent:bond-agent "$BOND_AGENT_GITCONFIG" 2>/dev/null || true
+fi
+
+# Mirror the github.com HTTPS→SSH rewrite into bond-agent's gitconfig so it
+# applies after privilege drop (the worker runs as bond-agent, not root).
+if ! grep -q 'insteadOf = https://github.com/' "$BOND_AGENT_GITCONFIG" 2>/dev/null; then
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+        cat >> "$BOND_AGENT_GITCONFIG" <<'EOF'
+[url "git@github.com:"]
+	insteadOf = https://github.com/
+EOF
+        chown bond-agent:bond-agent "$BOND_AGENT_GITCONFIG" 2>/dev/null || true
+    fi
 fi
 
 # Drop privileges and exec worker as bond-agent
