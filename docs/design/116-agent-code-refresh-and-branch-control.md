@@ -100,13 +100,17 @@ If users report this as frustrating ("I want to pull *now* and the agent always 
 
 ### 3.6 Worker restart mechanism
 
-The worker is a long-running Python process started by the entrypoint. To restart without recreating the container, we need a supervisor that brings it back after exit. Options:
+Confirmed state today:
 
-1. **Sidecar supervisor in the entrypoint.** Wrap `exec gosu bond-agent python -m backend.app.worker` in a `while true; do ...; sleep 1; done` loop. Trivial; loses the `exec` semantic so PID 1 becomes the loop, not the worker.
-2. **`s6-overlay` or `tini` with restart.** Heavier; requires base image changes.
-3. **Worker self-replaces on signal.** Worker traps `SIGUSR1`, finishes any cleanup, then `os.execv`s itself. Simplest; keeps PID 1 stable; but requires the worker to handle this cleanly.
+- The worker is started as PID 1 via `exec gosu bond-agent python -m backend.app.worker` at the end of `scripts/agent-entrypoint.sh`.
+- Agent containers are spawned by `backend/app/sandbox/bond_host_daemon.py` with no `--restart` flag — `docker inspect` reports `RestartPolicy = "no"`.
+- No `tini`, `s6-overlay`, `dumb-init`, or other supervisor is present in any agent Dockerfile.
 
-Recommendation: option 3 (worker self-replace). The worker is the only thing that needs restarting and it already owns its imports — it is the right place for the logic. `restart_worker` then sends SIGUSR1 and waits for the next heartbeat as confirmation.
+**There is no supervisor. If the worker exits, the container dies and stays dead.** That rules out approaches that depend on a respawn loop — we cannot have the worker exit and expect it to come back.
+
+The right mechanism is **`os.execv` self-replacement**: the worker traps `SIGUSR1`, performs any cleanup it needs (close DB connections, flush state), then calls `os.execv(sys.executable, [sys.executable, "-m", "backend.app.worker", *sys.argv[1:]])`. `execv` replaces the process image *in place* — same PID, same parent, same file descriptors get re-inherited as the new process opens them — so PID 1 stays stable and the container does not exit. Python's import cache is wiped because it's a new process, which is the entire point.
+
+`restart_worker` sends SIGUSR1 and waits for the next heartbeat as confirmation. No supervisor work is needed; no entrypoint change is needed for restart support.
 
 ### 3.7 Backend wiring
 
@@ -150,6 +154,5 @@ Steps 1, 2, and 4 can land independently behind the existing worker-status gatin
 
 ## 6. Open Questions
 
-1. **Is the worker already supervised?** §3.6 assumes we need to add a self-replace. If the entrypoint already wraps the worker in a restart loop, option 1 from §3.6 is essentially free — verify before committing to option 3.
-2. **Branch-list freshness.** §3.4 lists branches from `refs/remotes/origin/*` without a fetch. Acceptable, but we should confirm with users that "missing newly created branches" is not surprising in practice. A "refresh branch list" affordance (fetch-only, no checkout, no restart) is cheap to add if it is.
-3. **Multi-conversation agents.** If an agent serves multiple conversations, a pull from one conversation's header affects all of them. Confirm this is the intended UX; if not, the controls move to a per-agent (not per-conversation) settings panel.
+1. **Branch-list freshness.** §3.4 lists branches from `refs/remotes/origin/*` without a fetch. Acceptable, but we should confirm with users that "missing newly created branches" is not surprising in practice. A "refresh branch list" affordance (fetch-only, no checkout, no restart) is cheap to add if it is.
+2. **Multi-conversation agents.** If an agent serves multiple conversations, a pull from one conversation's header affects all of them. Confirm this is the intended UX; if not, the controls move to a per-agent (not per-conversation) settings panel.
