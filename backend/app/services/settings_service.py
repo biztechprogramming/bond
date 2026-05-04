@@ -196,14 +196,20 @@ class SettingsService:
                 raise
 
     async def get_embedding_models(self) -> list[EmbeddingModel]:
-        """Return all available embedding models from SpacetimeDB."""
+        """Return all available embedding models from SpacetimeDB.
+
+        SpacetimeDB v2.2.0 dropped ORDER BY support in its SQL HTTP API; sort
+        client-side instead. Same result, smaller dataset (~10 rows) — sort
+        cost is negligible.
+        """
         rows = await self._stdb.query(
             "SELECT model_name, family, provider, max_dimension, "
             "supported_dimensions, supports_local, supports_api, is_default "
-            "FROM embedding_models ORDER BY family, model_name"
+            "FROM embedding_models"
         )
         if not rows:
             logger.warning("No embedding models found in SpacetimeDB — was seed_embedding_models() called?")
+        rows = sorted(rows, key=lambda r: (r.get("family", ""), r.get("model_name", "")))
         return [
             EmbeddingModel(
                 model_name=r["model_name"],

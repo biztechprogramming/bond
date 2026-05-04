@@ -9,13 +9,20 @@ version: '3.8'
 # and delete this file until the next upgrade.
 services:
   spacetimedb-next:
-    image: clockworklabs/spacetime:v2.1.0
+    image: clockworklabs/spacetime:v2.2.0
     container_name: bond-spacetimedb-next
     restart: unless-stopped
     ports:
-      - "18787:3000"
+      # Different host port from prod (18787) so both can run side-by-side
+      # while we validate. When 2.2.0 is cleared, copy the tag into
+      # docker-compose.spacetimedb{,-simple}.yml on port 18787 and remove
+      # this file.
+      - "18797:3000"
     volumes:
       - ~/.bond/spacetimedb-next:/home/spacetime/.local/share/spacetime/data
+      # Mount the same signing keys as prod so existing JWT tokens
+      # (cloned data references prod's owner identity) keep working.
+      - ~/.bond/spacetimedb-config-next:/home/spacetime/.config/spacetime
     command: start
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/v1/health"]

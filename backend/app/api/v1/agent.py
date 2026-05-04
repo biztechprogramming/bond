@@ -73,12 +73,13 @@ async def _load_history(conversation_id: str) -> list[dict]:
     """Load delivered message history from conversation_messages table."""
     stdb = get_stdb()
     rows = await stdb.query(
-        f"SELECT role, content, tool_calls, tool_call_id "
+        f"SELECT role, content, tool_calls, tool_call_id, created_at "
         f"FROM conversation_messages "
         f"WHERE conversation_id = '{conversation_id}' "
-        f"AND status = 'delivered' "
-        f"ORDER BY created_at"
+        f"AND status = 'delivered'"
     )
+    # SpacetimeDB v2.2.0 dropped ORDER BY in its SQL HTTP API; sort client-side.
+    rows = sorted(rows, key=lambda r: r.get("created_at") or 0)
     messages = []
     for row in rows:
         msg: dict = {"role": row["role"], "content": row["content"]}
@@ -95,12 +96,13 @@ async def _load_queued_messages(conversation_id: str) -> list[dict]:
     """Load queued messages and mark them as delivered."""
     stdb = get_stdb()
     rows = await stdb.query(
-        f"SELECT id, role, content FROM conversation_messages "
-        f"WHERE conversation_id = '{conversation_id}' AND status = 'queued' "
-        f"ORDER BY created_at"
+        f"SELECT id, role, content, created_at FROM conversation_messages "
+        f"WHERE conversation_id = '{conversation_id}' AND status = 'queued'"
     )
     if not rows:
         return []
+    # SpacetimeDB v2.2.0 dropped ORDER BY in its SQL HTTP API; sort client-side.
+    rows = sorted(rows, key=lambda r: r.get("created_at") or 0)
 
     messages = [{"role": r["role"], "content": r["content"]} for r in rows]
 

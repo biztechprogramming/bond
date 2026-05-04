@@ -22,8 +22,19 @@ class ContainerHostService:
     """Database-backed CRUD for container hosts and SpaceTimeDB-backed container settings."""
 
     async def list_all(self, db: AsyncSession) -> list[dict]:
-        result = await db.execute(text("SELECT * FROM container_hosts ORDER BY is_local DESC, name ASC"))
+        try:
+            result = await db.execute(text("SELECT * FROM container_hosts"))
+        except Exception as e:
+            # SQLite migrations are currently disabled (see scripts/migrate.sh);
+            # the container_hosts table may not exist in knowledge.db. Treat
+            # this as "no remote hosts configured" rather than 500-ing the UI.
+            if "no such table" in str(e).lower():
+                logger.warning("container_hosts table missing — returning empty list")
+                return []
+            raise
         rows = result.mappings().all()
+        # Sort client-side: local hosts first, then alphabetical by name.
+        rows = sorted(rows, key=lambda r: (not bool(r.get("is_local")), (r.get("name") or "").lower()))
         return [self._row_to_dict(r) for r in rows]
 
     async def get(self, db: AsyncSession, host_id: str) -> dict | None:

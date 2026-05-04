@@ -20,6 +20,18 @@ export const AgentChannels = __t.object("AgentChannels", {
 });
 export type AgentChannels = __Infer<typeof AgentChannels>;
 
+export const AgentDatabaseAccess = __t.object("AgentDatabaseAccess", {
+  id: __t.string(),
+  agentId: __t.string(),
+  databaseId: __t.string(),
+  accessTier: __t.string(),
+  faucetApiKeyVaultRef: __t.string(),
+  faucetRoleName: __t.string(),
+  status: __t.string(),
+  assignedAt: __t.u64(),
+});
+export type AgentDatabaseAccess = __Infer<typeof AgentDatabaseAccess>;
+
 export const AgentPromptFragments = __t.object("AgentPromptFragments", {
   id: __t.string(),
   agentId: __t.string(),
@@ -29,6 +41,20 @@ export const AgentPromptFragments = __t.object("AgentPromptFragments", {
   createdAt: __t.u64(),
 });
 export type AgentPromptFragments = __Infer<typeof AgentPromptFragments>;
+
+export const AgentRepos = __t.object("AgentRepos", {
+  id: __t.string(),
+  agentId: __t.string(),
+  url: __t.string(),
+  name: __t.string(),
+  defaultBranch: __t.string(),
+  activeBranch: __t.string(),
+  credentialId: __t.string(),
+  lastSyncedAt: __t.u64(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type AgentRepos = __Infer<typeof AgentRepos>;
 
 export const AgentWorkspaceMounts = __t.object("AgentWorkspaceMounts", {
   id: __t.string(),
@@ -150,6 +176,7 @@ export const Components = __t.object("Components", {
   createdAt: __t.u64(),
   updatedAt: __t.u64(),
   discoveredFrom: __t.string(),
+  sourcePath: __t.string(),
 });
 export type Components = __Infer<typeof Components>;
 
@@ -180,6 +207,31 @@ export const Conversations = __t.object("Conversations", {
   updatedAt: __t.u64(),
 });
 export type Conversations = __Infer<typeof Conversations>;
+
+export const DatabaseConnections = __t.object("DatabaseConnections", {
+  id: __t.string(),
+  name: __t.string(),
+  driver: __t.string(),
+  description: __t.string(),
+  status: __t.string(),
+  dsnVaultRef: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type DatabaseConnections = __Infer<typeof DatabaseConnections>;
+
+export const EmbeddingModels = __t.object("EmbeddingModels", {
+  modelName: __t.string(),
+  family: __t.string(),
+  provider: __t.string(),
+  maxDimension: __t.u32(),
+  supportedDimensions: __t.string(),
+  supportsLocal: __t.bool(),
+  supportsApi: __t.bool(),
+  isDefault: __t.bool(),
+  createdAt: __t.u64(),
+});
+export type EmbeddingModels = __Infer<typeof EmbeddingModels>;
 
 export const EnvironmentApprovers = __t.object("EnvironmentApprovers", {
   id: __t.string(),
@@ -218,6 +270,19 @@ export const Environments = __t.object("Environments", {
 });
 export type Environments = __Infer<typeof Environments>;
 
+export const GitCredentials = __t.object("GitCredentials", {
+  id: __t.string(),
+  name: __t.string(),
+  authType: __t.string(),
+  secretRef: __t.string(),
+  hostPattern: __t.string(),
+  username: __t.string(),
+  isDefault: __t.bool(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type GitCredentials = __Infer<typeof GitCredentials>;
+
 export const LlmModels = __t.object("LlmModels", {
   id: __t.string(),
   provider: __t.string(),
@@ -238,6 +303,7 @@ export const McpServers = __t.object("McpServers", {
   agentId: __t.option(__t.string()),
   createdAt: __t.u64(),
   updatedAt: __t.u64(),
+  methodPermissions: __t.string(),
 });
 export type McpServers = __Infer<typeof McpServers>;
 
@@ -453,4 +519,91 @@ export const WorkPlans = __t.object("WorkPlans", {
   completedAt: __t.option(__t.u64()),
 });
 export type WorkPlans = __Infer<typeof WorkPlans>;
+
+export const WorkspaceGraphEdges = __t.object("WorkspaceGraphEdges", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  sourceNodeId: __t.string(),
+  targetNodeId: __t.string(),
+  edgeType: __t.string(),
+  mode: __t.string(),
+  confidence: __t.f64(),
+  sourceKind: __t.string(),
+  runId: __t.string(),
+  isDeleted: __t.bool(),
+  metadata: __t.string(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+  lastConfirmedAt: __t.u64(),
+});
+export type WorkspaceGraphEdges = __Infer<typeof WorkspaceGraphEdges>;
+
+export const WorkspaceGraphFileState = __t.object("WorkspaceGraphFileState", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  path: __t.string(),
+  contentHash: __t.string(),
+  language: __t.string(),
+  mtimeNs: __t.u64(),
+  sizeBytes: __t.u64(),
+  lastIndexedAt: __t.u64(),
+  lastRunId: __t.string(),
+  status: __t.string(),
+  lastError: __t.string(),
+  metadata: __t.string(),
+});
+export type WorkspaceGraphFileState = __Infer<typeof WorkspaceGraphFileState>;
+
+export const WorkspaceGraphNodes = __t.object("WorkspaceGraphNodes", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  nodeType: __t.string(),
+  stableKey: __t.string(),
+  displayName: __t.string(),
+  path: __t.string(),
+  language: __t.string(),
+  signature: __t.string(),
+  contentHash: __t.string(),
+  isDeleted: __t.bool(),
+  metadata: __t.string(),
+  embeddingModel: __t.string(),
+  processedAt: __t.u64(),
+  createdAt: __t.u64(),
+  updatedAt: __t.u64(),
+});
+export type WorkspaceGraphNodes = __Infer<typeof WorkspaceGraphNodes>;
+
+export const WorkspaceGraphProvenance = __t.object("WorkspaceGraphProvenance", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  edgeId: __t.string(),
+  nodeId: __t.string(),
+  provenanceType: __t.string(),
+  sourcePath: __t.string(),
+  sourceLineStart: __t.u32(),
+  sourceLineEnd: __t.u32(),
+  sourceRef: __t.string(),
+  excerpt: __t.string(),
+  createdAt: __t.u64(),
+});
+export type WorkspaceGraphProvenance = __Infer<typeof WorkspaceGraphProvenance>;
+
+export const WorkspaceGraphRuns = __t.object("WorkspaceGraphRuns", {
+  id: __t.string(),
+  workspaceId: __t.string(),
+  repoId: __t.string(),
+  runType: __t.string(),
+  status: __t.string(),
+  trigger: __t.string(),
+  filesScanned: __t.u32(),
+  nodesWritten: __t.u32(),
+  edgesWritten: __t.u32(),
+  startedAt: __t.u64(),
+  completedAt: __t.u64(),
+  error: __t.string(),
+});
+export type WorkspaceGraphRuns = __Infer<typeof WorkspaceGraphRuns>;
 

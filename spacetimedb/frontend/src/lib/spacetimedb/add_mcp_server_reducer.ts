@@ -17,4 +17,5 @@ export default {
   args: __t.string(),
   env: __t.string(),
   agentId: __t.option(__t.string()),
+  methodPermissions: __t.string(),
 };
