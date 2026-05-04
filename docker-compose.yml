@@ -34,6 +34,10 @@ services:
       - /srv/environments/dev/mcp-solidtime:/srv/environments/dev/mcp-solidtime:ro
       - /usr/local/bin/spacetimedb-standalone:/home/bond/.local/share/spacetime/bin/2.2.0/spacetimedb-standalone:ro
       - ~/.bond/spacetimedb-config:/home/bond/.config/spacetime:ro
+      # Backend source mounted for uvicorn --reload. Edits to ./backend on
+      # the host trigger an in-place restart of the FastAPI app, no rebuild
+      # needed. Frontend and gateway sources stay baked in the image.
+      - ./backend:/app/backend
     environment:
       - HOME=/home/bond
       - BOND_HOME=/home/bond/.bond
@@ -43,7 +47,7 @@ services:
       - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}
     command: >-
       sh -lc "bash scripts/first-run.sh &&
-      uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 &
+      uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload --reload-dir /app/backend &
       cd /app/gateway && NODE_OPTIONS='--experimental-global-webcrypto' ./node_modules/.bin/tsx watch src/index.ts &
       cd /app/frontend && pnpm start &
       wait"
