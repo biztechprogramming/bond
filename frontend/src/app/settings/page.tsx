@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import AgentsTab from "./agents/AgentsTab";
 import DeploymentTab from "./deployment/DeploymentTab";
 import PromptsTab from "./prompts/PromptsTab";
@@ -68,11 +68,28 @@ interface LlmCurrent {
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("agents");
+  const tabBarRef = useRef<HTMLDivElement>(null);
 
   // Read hash after hydration to avoid SSR mismatch
   useEffect(() => {
     const hash = window.location.hash.replace("#", "");
     if (TABS.some((t) => t.id === hash)) setActiveTab(hash as TabId);
+  }, []);
+
+  // Translate vertical mouse-wheel into horizontal scroll on the tab bar.
+  // Attached as a non-passive listener so preventDefault() actually stops the
+  // page from scrolling vertically when the user is over the tab strip.
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return;
+      const delta = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      el.scrollLeft += delta;
+      e.preventDefault();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
   // Embedding state
@@ -229,7 +246,7 @@ export default function SettingsPage() {
 
       {/* Tab bar */}
       <div style={s.tabBarWrapper}>
-        <div className="settings-tab-bar" style={s.tabBar}>
+        <div ref={tabBarRef} className="settings-tab-bar" style={s.tabBar}>
           {TABS.map((tab) => (
             <button
               key={tab.id}

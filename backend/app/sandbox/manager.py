@@ -177,7 +177,7 @@ class SandboxManager:
         container_id = result["container_id"]
 
         try:
-            await self._wait_for_health(worker_url, agent_id, container_id, timeout=5.0)
+            await self._wait_for_health(worker_url, agent_id, container_id, timeout=60.0)
         except RuntimeError:
             logger.warning("Recovered container %s unhealthy, removing", key)
             await asyncio.create_subprocess_exec(
@@ -262,7 +262,7 @@ class SandboxManager:
                     await self.destroy_agent_container(agent_id, keep_clones=True)
                 elif await self._is_running(cid, host_id):
                     try:
-                        await self._wait_for_health(worker_url, agent_id, cid, timeout=5.0)
+                        await self._wait_for_health(worker_url, agent_id, cid, timeout=60.0)
                         self._containers[key]["last_used"] = time.time()
                         return {"worker_url": worker_url, "container_id": cid}
                     except RuntimeError:
