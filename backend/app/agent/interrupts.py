@@ -14,14 +14,21 @@ from dataclasses import dataclass, field
 class _TurnState:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     worker_url: str | None = None
+    worker_token: str | None = None
 
 
 _interrupts: dict[str, _TurnState] = {}
 
 
-def register_turn(conversation_id: str, worker_url: str | None = None) -> None:
+def register_turn(
+    conversation_id: str,
+    worker_url: str | None = None,
+    worker_token: str | None = None,
+) -> None:
     """Register an interrupt slot for a conversation turn."""
-    _interrupts[conversation_id] = _TurnState(worker_url=worker_url)
+    _interrupts[conversation_id] = _TurnState(
+        worker_url=worker_url, worker_token=worker_token
+    )
 
 
 def unregister_turn(conversation_id: str) -> None:
@@ -56,6 +63,12 @@ def get_worker_url(conversation_id: str) -> str | None:
     """Return the worker URL for an active turn, if any."""
     state = _interrupts.get(conversation_id)
     return state.worker_url if state else None
+
+
+def get_worker_token(conversation_id: str) -> str | None:
+    """Return the worker auth token for an active turn, if any."""
+    state = _interrupts.get(conversation_id)
+    return state.worker_token if state else None
 
 
 def is_interrupted(conversation_id: str) -> bool:

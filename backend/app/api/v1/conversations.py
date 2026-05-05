@@ -18,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from ulid import ULID
 
-from backend.app.agent.interrupts import set_interrupt, is_turn_active, get_worker_url, register_turn, unregister_turn
+from backend.app.agent.interrupts import set_interrupt, is_turn_active, get_worker_url, get_worker_token, register_turn, unregister_turn
 from backend.app.agent.loop import agent_turn
 from backend.app.api.v1.turn_stdb import _stream_container_turn_stdb
 from backend.app.core.spacetimedb import get_stdb
@@ -297,9 +297,12 @@ async def interrupt_conversation(
     if worker_url:
         try:
             import httpx
+            worker_token = get_worker_token(conversation_id)
+            headers = {"Authorization": f"Bearer {worker_token}"} if worker_token else {}
             async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
                 await client.post(
                     f"{worker_url}/interrupt",
+                    headers=headers,
                     json={"new_messages": []},
                 )
             logger.info("Interrupt forwarded to worker at %s", worker_url)
@@ -322,12 +325,16 @@ async def coding_agent_events(conversation_id: str):
             media_type="text/event-stream",
         )
 
+    worker_token = get_worker_token(conversation_id)
+    headers = {"Authorization": f"Bearer {worker_token}"} if worker_token else {}
+
     async def proxy_stream():
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(1800.0)) as client:
                 async with client.stream(
                     "GET",
                     f"{worker_url}/coding-agent/events/{conversation_id}",
+                    headers=headers,
                 ) as response:
                     async for chunk in response.aiter_text():
                         yield chunk
@@ -725,9 +732,14 @@ async def conversation_turn(
             logger.error(f"[CONVERSATIONS] Failed to start container: {e}")
             raise HTTPException(status_code=503, detail=str(e))
 
+        # Worker enforces Bearer-token auth (Design Doc 116 §3.8). Load the
+        # per-agent token persisted at container start so /turn doesn't 401.
+        from backend.app.sandbox.agent_tokens import load_agent_token
+        worker_token = load_agent_token(agent_id)
+
         logger.info(f"[CONVERSATIONS] Returning StreamingResponse for conversation {conversation_id}")
         return StreamingResponse(
-            _stream_container_turn_stdb(info["worker_url"], history, conversation_id, req.plan_id, agent_id, user_message),
+            _stream_container_turn_stdb(info["worker_url"], history, conversation_id, req.plan_id, agent_id, user_message, worker_token=worker_token),
             media_type="text/event-stream",
             background=None,  # Disable background tasks that might buffer response
         )
