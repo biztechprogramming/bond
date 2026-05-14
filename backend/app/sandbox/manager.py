@@ -119,6 +119,53 @@ class SandboxManager:
 
     # -- Health wait --
 
+    async def _container_state(
+        self, container_id: str, host_id: str = "local",
+    ) -> dict[str, Any]:
+        """Return container state details (running/status/exit_code/error).
+
+        Used by _wait_for_health to fail-fast when the container exits during
+        startup, so callers don't sit through the full timeout.
+        """
+        if host_id != "local":
+            try:
+                adapter = self._adapter_for_container({"host_id": host_id})
+                running = await adapter.is_running(container_id)
+                return {
+                    "running": running,
+                    "status": "running" if running else "exited",
+                    "exit_code": None,
+                    "error": "",
+                }
+            except Exception as e:
+                return {"running": False, "status": "unknown", "exit_code": None, "error": str(e)}
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "inspect", "-f",
+            "{{.State.Status}}|{{.State.Running}}|{{.State.ExitCode}}|{{.State.Error}}",
+            container_id,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            return {
+                "running": False,
+                "status": "missing",
+                "exit_code": None,
+                "error": stderr.decode(errors="replace").strip(),
+            }
+        parts = stdout.decode().strip().split("|", 3)
+        while len(parts) < 4:
+            parts.append("")
+        status, running_str, exit_str, err_str = parts
+        return {
+            "status": status,
+            "running": running_str.lower() == "true",
+            "exit_code": int(exit_str) if exit_str.lstrip("-").isdigit() else None,
+            "error": err_str,
+        }
+
     async def _wait_for_health(
         self,
         worker_url: str,
@@ -126,10 +173,16 @@ class SandboxManager:
         container_id: str,
         timeout: float = 90.0,
         interval: float = 0.5,
+        host_id: str = "local",
     ) -> None:
-        """Poll worker /health until it responds with correct agent_id, or raise."""
+        """Poll worker /health until it responds with correct agent_id, or raise.
+
+        Also fast-fails if the container itself exits during polling, so callers
+        don't have to wait the full timeout when the worker has already crashed.
+        """
         start = time.monotonic()
         last_error = ""
+        last_state_check = -1.0  # force one check on the first iteration
 
         async with httpx.AsyncClient(timeout=2.0) as client:
             while True:
@@ -163,6 +216,30 @@ class SandboxManager:
                 except httpx.HTTPError as exc:
                     last_error = str(exc)
 
+                # Every ~2s, check whether the container has already exited.
+                # If so, raise immediately instead of waiting the full timeout.
+                if elapsed - last_state_check >= 2.0:
+                    last_state_check = elapsed
+                    state = await self._container_state(container_id, host_id)
+                    if not state["running"]:
+                        logs = await self._capture_container_logs(container_id)
+                        status = state.get("status") or "exited"
+                        exit_code = state.get("exit_code")
+                        err_detail = state.get("error") or ""
+                        exit_desc = (
+                            f"status={status}, exit_code={exit_code}"
+                            if exit_code is not None
+                            else f"status={status}"
+                        )
+                        logger.error(
+                            "Container %s for agent %s exited during startup (%s) — logs:\n%s",
+                            container_id, agent_id, exit_desc, logs,
+                        )
+                        raise RuntimeError(
+                            f"Worker container exited during startup ({exit_desc}). "
+                            f"{err_detail}\nLast error: {last_error}\nContainer logs:\n{logs}"
+                        )
+
                 await asyncio.sleep(interval)
 
     async def _recover_existing_container(
@@ -177,7 +254,9 @@ class SandboxManager:
         container_id = result["container_id"]
 
         try:
-            await self._wait_for_health(worker_url, agent_id, container_id, timeout=60.0)
+            await self._wait_for_health(
+                worker_url, agent_id, container_id, timeout=60.0, host_id="local",
+            )
         except RuntimeError:
             logger.warning("Recovered container %s unhealthy, removing", key)
             await asyncio.create_subprocess_exec(
@@ -262,7 +341,9 @@ class SandboxManager:
                     await self.destroy_agent_container(agent_id, keep_clones=True)
                 elif await self._is_running(cid, host_id):
                     try:
-                        await self._wait_for_health(worker_url, agent_id, cid, timeout=60.0)
+                        await self._wait_for_health(
+                            worker_url, agent_id, cid, timeout=60.0, host_id=host_id,
+                        )
                         self._containers[key]["last_used"] = time.time()
                         return {"worker_url": worker_url, "container_id": cid}
                     except RuntimeError:
@@ -293,84 +374,115 @@ class SandboxManager:
             # Build host-path-independent config
             container_config = self._build_container_config(agent)
 
-            # Create container on target host
-            config_path: Path | None = None
-            port: int | None = None
-            try:
-                if isinstance(host, LocalHost) or host.id == "local":
-                    # Local path: use _create_worker_container (preserves test compat)
-                    port = self._allocate_port(key)
-                    config_path = self._write_agent_config(agent)
+            # Create container on target host. One automatic retry: if the
+            # first attempt fails (container exit or health timeout), tear
+            # down and try once more before surfacing the error.
+            max_attempts = 2
+            last_exc: Exception | None = None
+            for attempt in range(1, max_attempts + 1):
+                config_path: Path | None = None
+                port: int | None = None
+                try:
+                    if isinstance(host, LocalHost) or host.id == "local":
+                        # Local path: use _create_worker_container (preserves test compat)
+                        port = self._allocate_port(key)
+                        config_path = self._write_agent_config(agent)
 
-                    container_id, clone_info, dep_script = await self._create_worker_container(
-                        agent, key, port, config_path,
-                    )
-                    # When bond runs containerized, "localhost" inside bond-bond
-                    # isn't the host or the agent — it's bond-bond itself. The
-                    # agent runs on the bond-network with container name == key,
-                    # so reach it by name on the agent's internal port (18791).
-                    # Native bond installs continue to hit the host-mapped port
-                    # at localhost.
-                    if "BOND_HOST_HOME" in os.environ:
-                        worker_url = f"http://{key}:18791"
+                        container_id, clone_info, dep_script = await self._create_worker_container(
+                            agent, key, port, config_path,
+                        )
+                        # When bond runs containerized, "localhost" inside bond-bond
+                        # isn't the host or the agent — it's bond-bond itself. The
+                        # agent runs on the bond-network with container name == key,
+                        # so reach it by name on the agent's internal port (18791).
+                        # Native bond installs continue to hit the host-mapped port
+                        # at localhost.
+                        if "BOND_HOST_HOME" in os.environ:
+                            worker_url = f"http://{key}:18791"
+                        else:
+                            worker_url = f"http://localhost:{port}"
+
+                        self._containers[key] = {
+                            "container_id": container_id,
+                            "worker_url": worker_url,
+                            "worker_port": port,
+                            "host_id": "local",
+                            "last_used": time.time(),
+                            "mounts": current_mounts,
+                            "config_fingerprint": current_config_fingerprint,
+                            "clone_info": clone_info,
+                            "dep_install_script": dep_script,
+                            "deps_installed": False,
+                        }
+
+                        await self._wait_for_health(
+                            worker_url, agent_id, container_id, host_id="local",
+                        )
+
+                        self._registry.increment_running("local")
+                        return {"worker_url": worker_url, "container_id": container_id}
                     else:
-                        worker_url = f"http://localhost:{port}"
+                        # Remote path
+                        container_info = await adapter.create_container(agent, key, container_config)
 
-                    self._containers[key] = {
-                        "container_id": container_id,
-                        "worker_url": worker_url,
-                        "worker_port": port,
-                        "host_id": "local",
-                        "last_used": time.time(),
-                        "mounts": current_mounts,
-                        "config_fingerprint": current_config_fingerprint,
-                        "clone_info": clone_info,
-                        "dep_install_script": dep_script,
-                        "deps_installed": False,
-                    }
+                        self._containers[key] = {
+                            "container_id": container_info.container_id,
+                            "worker_url": container_info.worker_url,
+                            "host_id": container_info.host_id,
+                            "last_used": time.time(),
+                            "mounts": current_mounts,
+                            "config_fingerprint": current_config_fingerprint,
+                            "clone_info": [],
+                            "dep_install_script": None,
+                            "deps_installed": False,
+                        }
 
-                    await self._wait_for_health(worker_url, agent_id, container_id)
+                        await self._wait_for_health(
+                            container_info.worker_url,
+                            agent_id,
+                            container_info.container_id,
+                            host_id=container_info.host_id,
+                        )
 
-                    self._registry.increment_running("local")
-                    return {"worker_url": worker_url, "container_id": container_id}
-                else:
-                    # Remote path
-                    container_info = await adapter.create_container(agent, key, container_config)
+                        self._registry.increment_running(container_info.host_id)
 
-                    self._containers[key] = {
-                        "container_id": container_info.container_id,
-                        "worker_url": container_info.worker_url,
-                        "host_id": container_info.host_id,
-                        "last_used": time.time(),
-                        "mounts": current_mounts,
-                        "config_fingerprint": current_config_fingerprint,
-                        "clone_info": [],
-                        "dep_install_script": None,
-                        "deps_installed": False,
-                    }
+                        return {
+                            "worker_url": container_info.worker_url,
+                            "container_id": container_info.container_id,
+                        }
 
-                    await self._wait_for_health(
-                        container_info.worker_url, agent_id, container_info.container_id
+                except Exception as exc:
+                    last_exc = exc
+                    is_last = attempt == max_attempts
+                    log = logger.error if is_last else logger.warning
+                    log(
+                        "Worker startup failed for agent %s (attempt %d/%d): %s",
+                        agent_id, attempt, max_attempts, exc,
                     )
+                    # Cleanup partial state for retry / final raise. Use the
+                    # correct key directly — destroy_agent_container guesses
+                    # via docker ps and can pick the wrong key when nothing is
+                    # registered yet.
+                    if key in self._containers:
+                        del self._containers[key]
+                    self._release_port(key)
+                    self._delete_agent_config(agent_id)
+                    # Best-effort remove any partial container by name.
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            "docker", "rm", "-f", key,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        await proc.communicate()
+                    except Exception:
+                        pass
+                    if is_last:
+                        raise
 
-                # Update registry running count
-                self._registry.increment_running(container_info.host_id)
-
-                return {
-                    "worker_url": container_info.worker_url,
-                    "container_id": container_info.container_id,
-                }
-
-            except Exception:
-                logger.error(
-                    "Failed to create container for agent %s: %s",
-                    agent_id, str(asyncio.current_task()),
-                )
-                if key in self._containers:
-                    del self._containers[key]
-                self._release_port(key)
-                self._delete_agent_config(agent_id)
-                raise
+            # Defensive — loop should always either return or raise.
+            assert last_exc is not None
+            raise last_exc
 
     def _build_container_config(self, agent: dict) -> AgentContainerConfig:
         """Build a host-path-independent container config."""
