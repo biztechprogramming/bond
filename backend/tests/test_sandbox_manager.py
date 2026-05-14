@@ -360,7 +360,11 @@ class TestHealthWait:
         manager = SandboxManager()
         call_count = 0
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch.object(
+                manager, "_container_state", new_callable=AsyncMock,
+                return_value={"running": True, "status": "running", "exit_code": 0, "error": ""},
+             ):
             mock_client = AsyncMock()
 
             async def get_side_effect(url):
@@ -390,7 +394,11 @@ class TestHealthWait:
         manager = SandboxManager()
 
         with patch("httpx.AsyncClient") as mock_client_cls, \
-             patch.object(manager, "_capture_container_logs", new_callable=AsyncMock) as mock_logs:
+             patch.object(manager, "_capture_container_logs", new_callable=AsyncMock) as mock_logs, \
+             patch.object(
+                manager, "_container_state", new_callable=AsyncMock,
+                return_value={"running": True, "status": "running", "exit_code": 0, "error": ""},
+             ):
 
             mock_client = AsyncMock()
             mock_client.get.side_effect = httpx.ConnectError("refused")
@@ -411,7 +419,11 @@ class TestHealthWait:
         manager = SandboxManager()
 
         call_count = 0
-        with patch("httpx.AsyncClient") as mock_client_cls:
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch.object(
+                manager, "_container_state", new_callable=AsyncMock,
+                return_value={"running": True, "status": "running", "exit_code": 0, "error": ""},
+             ):
             mock_client = AsyncMock()
 
             async def get_side_effect(url):
@@ -438,6 +450,35 @@ class TestHealthWait:
                 )
 
             assert call_count == 2  # First was wrong agent_id, second correct
+
+    @pytest.mark.asyncio
+    async def test_health_wait_fails_fast_on_container_exit(self):
+        """Worker that crashes during startup should fail before the timeout."""
+        manager = SandboxManager()
+
+        with patch("httpx.AsyncClient") as mock_client_cls, \
+             patch.object(manager, "_capture_container_logs", new_callable=AsyncMock) as mock_logs, \
+             patch.object(
+                manager, "_container_state", new_callable=AsyncMock,
+                return_value={
+                    "running": False, "status": "exited",
+                    "exit_code": 1, "error": "",
+                },
+             ):
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.ConnectError("refused")
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+            mock_logs.return_value = "uvicorn: address already in use"
+
+            with patch("asyncio.sleep", new_callable=AsyncMock), \
+                 pytest.raises(RuntimeError, match="exited during startup"):
+                # Long timeout — should still fail fast because container exited.
+                await manager._wait_for_health(
+                    "http://localhost:18791", "agent1", "container123",
+                    timeout=90.0, interval=0.01,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +594,7 @@ class TestEnsureRunning:
 
         health_check_count = 0
 
-        async def mock_health(url, agent_id, cid, timeout=90.0, interval=0.5):
+        async def mock_health(url, agent_id, cid, timeout=90.0, interval=0.5, host_id="local"):
             nonlocal health_check_count
             health_check_count += 1
             if health_check_count == 1:
