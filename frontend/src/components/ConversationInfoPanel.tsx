@@ -16,6 +16,7 @@ interface BranchStatus {
   active_turns: number | null;
   pending_reload: boolean;
   head_sha?: string | null;
+  dev_mounted?: boolean;
 }
 
 interface ConversationInfoPanelProps {
@@ -44,6 +45,7 @@ export default function ConversationInfoPanel({
   const [switching, setSwitching] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [fetching, setFetching] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingBranch, setPendingBranch] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -66,6 +68,7 @@ export default function ConversationInfoPanel({
             active_turns: data.active_turns,
             pending_reload: !!data.pending_reload,
             head_sha: data.head_sha || null,
+            dev_mounted: !!data.dev_mounted,
           });
           if (pendingBranch && !data.pending_reload && data.branch === pendingBranch) {
             setPendingBranch(null);
@@ -142,6 +145,28 @@ export default function ConversationInfoPanel({
     }
     setFetching(false);
   }, [agentId, fetching, fetchBranches]);
+
+  // Dev-mounted only: reload the worker in place to pick up live host-tree
+  // edits (no git). The single safe code refresh when /bond is the developer's
+  // working tree — Pull/Branch-switch would mutate it.
+  const doReload = useCallback(async () => {
+    if (!agentId || reloading) return;
+    setReloading(true);
+    setActionError(null);
+    try {
+      const resp = await apiFetch(`${BACKEND_API}/agents/${encodeURIComponent(agentId)}/reload`, {
+        method: "POST",
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        setActionError(data.detail || `Reload failed (${resp.status})`);
+      }
+      await fetchStatus();
+    } catch (e) {
+      setActionError(`Reload failed: ${(e as Error).message}`);
+    }
+    setReloading(false);
+  }, [agentId, reloading, fetchStatus]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus, branchChangedSignal, turnCompleted]);
 
@@ -326,7 +351,36 @@ export default function ConversationInfoPanel({
 
           {/* Section: Branch */}
           <div style={sectionStyle}>
-            <div style={labelStyle}>Branch</div>
+            <div style={labelStyle}>{status?.dev_mounted ? "Code" : "Branch"}</div>
+
+            {/* Dev-mounted mode: /bond is the developer's live host tree. Git-based
+                Pull / Branch-switch are unsafe (they'd mutate or reset it), so the
+                only control is an in-place Reload that re-execs the worker. */}
+            {status?.dev_mounted && (
+              <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <span
+                  title="/bond is bind-mounted from your host working tree; edits are live"
+                  style={{ ...valueStyle, fontFamily: "monospace", fontSize: "0.78rem", color: "#6c8aff", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >
+                  📁 dev-mounted (host tree)
+                </span>
+                <button
+                  onClick={doReload}
+                  disabled={!agentId || reloading || (activeTurns ?? 0) > 0}
+                  title={
+                    !agentId ? "No agent context"
+                      : (activeTurns ?? 0) > 0 ? "Agent is working — wait for the turn to finish"
+                      : reloading ? "Reloading…"
+                      : "Reload worker code in place — picks up your local edits, no git"
+                  }
+                  style={iconButtonStyle(!agentId || reloading || (activeTurns ?? 0) > 0)}
+                >
+                  {reloading ? "…" : "↻"}
+                </button>
+              </div>
+            )}
+
+            {!status?.dev_mounted && (
             <div ref={branchRef} style={{ position: "relative", display: "flex", gap: "6px", alignItems: "stretch" }}>
               <button
                 onClick={() => setBranchDropdownOpen(!branchDropdownOpen)}
@@ -398,6 +452,7 @@ export default function ConversationInfoPanel({
                 {fetching ? "…" : "⟳"}
               </button>
             </div>
+            )}
 
             {actionError && (
               <div style={{ marginTop: "6px", fontSize: "0.7rem", color: "#ff6c8a" }}>{actionError}</div>

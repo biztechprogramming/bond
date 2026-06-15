@@ -265,7 +265,7 @@ git reset <span class="b">--hard</span> origin/$branch  </pre>
       <tr><td><strong>Reload</strong></td><td class="mono">checkout → os.execv</td><td>The re-exec is what you want; the checkout step must be skipped</td><td><span class="status s-todo">no-git path</span></td></tr>
     </tbody>
   </table>
-  <div class="callout bad"><div class="h bad">Proposed fix</div>When an agent is in dev-mounted mode, collapse the UI to a single safe <strong>"Reload code"</strong> button (pure <code>os.execv</code>, no git) and hide Pull / Branch-switch. ~3 touch points: a dev flag on the worker <code>/branch</code> status, a no-git path in <code>/reload</code>, and conditional rendering in <code>ConversationInfoPanel.tsx</code>.</div>
+  <div class="callout"><div class="h">Implemented ✓</div>When an agent is in dev-mounted mode the UI now collapses to a single safe <strong>"Reload code"</strong> button (pure <code>os.execv</code>, no git) and hides Pull / Branch-switch. Three layers: the worker exposes <code>dev_mounted</code> on <code>/branch</code>, makes <code>/reload</code> git-free, and refuses <code>/pull</code> + <code>/checkout</code> with 409; the backend surfaces the flag and adds a <code>/reload</code> proxy; <code>ConversationInfoPanel.tsx</code> renders the dev-mounted control. The worker-level 409s are the real backstop — even an un-gated UI can't mutate your tree.</div>
 </section>
 
 <!-- ROADMAP -->
@@ -276,7 +276,7 @@ git reset <span class="b">--hard</span> origin/$branch  </pre>
     <tbody>
       <tr><td><strong>A</strong> — Mount local source into agents</td><td>Kills the commit/push/re-clone tax</td><td><span class="status s-done">done</span></td></tr>
       <tr><td><strong>B</strong> — Native orchestrator in dev</td><td>Removes socket-in-container + path-mirroring complexity</td><td><span class="status s-done">done</span></td></tr>
-      <tr><td><strong>(6/7)</strong> — Gate git-based refresh UI</td><td>Makes dev-mounted mode safe to actually use</td><td><span class="status s-todo">proposed</span></td></tr>
+      <tr><td><strong>(6/7)</strong> — Gate git-based refresh UI</td><td>Makes dev-mounted mode safe to actually use</td><td><span class="status s-done">done</span></td></tr>
       <tr><td><strong>C</strong> — Persist SandboxManager state (Doc 118)</td><td>Makes backend hot-reload non-destructive</td><td><span class="status s-none">next</span></td></tr>
       <tr><td><strong>D</strong> — Consolidate 7 compose files / docs</td><td>Lowers cost of every future change</td><td><span class="status s-none">later</span></td></tr>
     </tbody>
