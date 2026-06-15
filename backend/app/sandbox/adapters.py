@@ -458,7 +458,16 @@ class LocalContainerAdapter:
             cmd.extend(["-e", "BOND_DEV_SKIP_GIT=1"])
             logger.info("Dev mode: mounting host source %s at /bond for agent %s", project_root, agent_id)
         else:
-            bond_volume = f"bond-clone-{agent_id}"
+            # Each instance gets its OWN clone (separate clones, not worktrees —
+            # so replicas can live on different machines). The entrypoint clones
+            # into this volume on first start. Per-instance suffix keeps the
+            # clones isolated; absent _instance it stays the single-agent name.
+            instance = agent.get("_instance")
+            bond_volume = (
+                f"bond-clone-{agent_id}"
+                if instance is None
+                else f"bond-clone-{agent_id}-{instance}"
+            )
             await asyncio.create_subprocess_exec(
                 "docker", "volume", "create", bond_volume,
                 stdout=asyncio.subprocess.DEVNULL,

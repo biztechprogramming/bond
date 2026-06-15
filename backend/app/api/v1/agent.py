@@ -408,7 +408,7 @@ async def resolve_agent(
                 "provider_aliases": provider_aliases,
                 "litellm_prefixes": litellm_prefixes,
             }
-            info = await sandbox_manager.ensure_running(agent_dict)
+            info = await sandbox_manager.ensure_running_for(agent_dict, resolved_conversation_id)
             # Design Doc 116 §3.8: callers (gateway, etc.) need the worker
             # auth token to hit /reload, /pull, /checkout, /fetch, /branch.
             from backend.app.sandbox.agent_tokens import load_agent_token

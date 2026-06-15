@@ -52,6 +52,8 @@ class SandboxManager:
     def __init__(self) -> None:
         self._containers: dict[str, dict[str, Any]] = {}
         self._agent_locks: dict[str, asyncio.Lock] = {}
+        # Round-robin cursor per agent_id for fan-out replica routing.
+        self._rr_counter: dict[str, int] = {}
 
         # Load config for remote hosts
         from backend.app.config import load_bond_json
@@ -295,6 +297,53 @@ class SandboxManager:
     # ensure_running — host-aware (Design Doc 089 §7.1)
     # ------------------------------------------------------------------
 
+    def _replica_count(self, agent: dict) -> int:
+        """How many instances this agent should run.
+
+        Prototype source order: BOND_AGENT_REPLICAS env override (handy for
+        demos without a schema change) → agent["replicas"] → 1.
+        """
+        raw = os.environ.get("BOND_AGENT_REPLICAS") or agent.get("replicas") or 1
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 1
+
+    def _select_instance(self, agent: dict, conversation_id: str | None) -> int | None:
+        """Pick which instance handles this request.
+
+        - replicas <= 1  -> None (no suffix; identical to single-instance path)
+        - conversation_id -> sticky: a stable hash pins a chat to one worker, so
+          its in-memory turn/interrupt state never splits across replicas.
+        - no conversation (fan-out) -> round-robin across the pool.
+        """
+        replicas = self._replica_count(agent)
+        if replicas <= 1:
+            return None
+        if conversation_id:
+            digest = hashlib.sha256(str(conversation_id).encode()).hexdigest()[:8]
+            return int(digest, 16) % replicas
+        idx = self._rr_counter.get(agent["id"], 0)
+        self._rr_counter[agent["id"]] = idx + 1
+        return idx % replicas
+
+    async def ensure_running_for(
+        self, agent: dict, conversation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Replica-aware entry point: route to an instance, then ensure it runs.
+
+        Single-instance agents flow straight through to ensure_running() with no
+        added work. Multi-instance agents get an "_instance" tag that fans out
+        the container name + clone volume (see ensure_running / adapters).
+        """
+        instance = self._select_instance(agent, conversation_id)
+        if instance is None:
+            return await self.ensure_running(agent)
+        scoped = {**agent, "_instance": instance}
+        result = await self.ensure_running(scoped)
+        result["instance"] = instance
+        return result
+
     async def ensure_running(self, agent: dict) -> dict[str, Any]:
         """Ensure agent's containerized worker is running.
 
@@ -304,6 +353,12 @@ class SandboxManager:
         agent_id = agent["id"]
         agent_name = agent.get("name", "agent").lower().replace(" ", "-")
         key = f"bond-{agent_name}-{agent_id}"
+        # Replica instance: when routed via ensure_running_for, the agent dict
+        # carries "_instance" so this becomes a distinct container + clone.
+        # Absent it, the key is unchanged — single-instance behaviour is identical.
+        instance = agent.get("_instance")
+        if instance is not None:
+            key = f"{key}-{instance}"
         lock = self._get_agent_lock(key)
 
         async with lock:
@@ -332,13 +387,13 @@ class SandboxManager:
 
                 if tracked_mounts != current_mounts:
                     logger.info("Agent %s mounts changed, recreating worker container %s", agent_id, key)
-                    await self.destroy_agent_container(agent_id, keep_clones=True)
+                    await self.destroy_agent_container(agent_id, keep_clones=True, key=key)
                 elif tracked_config and tracked_config != current_config_fingerprint:
                     logger.info(
                         "Agent %s config changed (was: %s, now: %s), recreating worker container %s",
                         agent_id, tracked_config, current_config_fingerprint, key,
                     )
-                    await self.destroy_agent_container(agent_id, keep_clones=True)
+                    await self.destroy_agent_container(agent_id, keep_clones=True, key=key)
                 elif await self._is_running(cid, host_id):
                     try:
                         await self._wait_for_health(
@@ -351,13 +406,13 @@ class SandboxManager:
                             "Worker unhealthy in running container %s for agent %s, destroying",
                             cid, agent_id,
                         )
-                        await self.destroy_agent_container(agent_id, keep_clones=True)
+                        await self.destroy_agent_container(agent_id, keep_clones=True, key=key)
                 else:
                     logger.warning(
                         "Container %s for agent %s died, recreating",
                         cid, agent_id,
                     )
-                    await self.destroy_agent_container(agent_id, keep_clones=True)
+                    await self.destroy_agent_container(agent_id, keep_clones=True, key=key)
             else:
                 # Not in memory — check Docker directly (after backend restart)
                 existing = await self._recover_existing_container(key, agent_id)
@@ -672,13 +727,17 @@ class SandboxManager:
     # ------------------------------------------------------------------
 
     async def destroy_agent_container(
-        self, agent_id: str, *, keep_clones: bool = False,
+        self, agent_id: str, *, keep_clones: bool = False, key: str | None = None,
     ) -> bool:
-        key = None
-        for k in list(self._containers.keys()):
-            if k.endswith(agent_id):
-                key = k
-                break
+        # An explicit key targets one specific replica instance. Without it we
+        # fall back to discovering the agent's (single) container by id — note
+        # this endswith match does NOT find instance keys, which is why the
+        # replica recreate paths pass key= explicitly.
+        if key is None:
+            for k in list(self._containers.keys()):
+                if k.endswith(agent_id):
+                    key = k
+                    break
 
         if not key:
             proc = await asyncio.create_subprocess_exec(
