@@ -7,7 +7,7 @@ You are an AI agent running inside Bond. This document explains where you are, h
 You (the agent) run inside a **Docker container** (the "sandbox"). Your sandbox is an isolated Linux environment with root access, created and managed by the Bond backend.
 
 - **Workspace:** `/workspace/` — bind-mounted from the host. Changes sync immediately to the host filesystem.
-- **Bond source:** `/bond` (read-only mount of the Bond repo) or sometimes at `/workspace/bond` (writable).
+- **Bond source:** `/bond` — the Bond repo. In normal operation this is a per-agent clone that is reset to `origin/<branch>` on every container start (so treat any edits as throwaway). In **dev-mounted mode** (`BOND_DEV_MOUNT_SOURCE`) it is instead a live bind-mount of the developer's host working tree, so the developer's local edits run as-is and git operations are skipped. Either way: don't rely on editing `/bond` — do your work in `/workspace/`. Sometimes also exposed at `/workspace/bond` (writable).
 - **SSH keys:** Mounted at `/tmp/.ssh` → copied to `/root/.ssh` by the container entrypoint. Never tell users to mount directly to `/root/.ssh`.
 - **Agent config:** Injected via environment variables (`AGENT_NAME`, `AGENT_EMAIL`, API keys, `BOND_AGENT_TOKEN`).
 - **Installed packages do not persist** across container restarts. If you need something, install it at the start of each session.
@@ -83,7 +83,7 @@ Your sandbox is isolated — you can't directly access the host filesystem outsi
 |------|------|-----------|
 | `/workspace/` | Project files (bind-mounted from host) | ✅ Yes |
 | `/workspace/<project>/` | Individual project directories | ✅ Yes |
-| `/bond/` | Bond source code | ❌ Read-only |
+| `/bond/` | Bond source code (per-agent clone reset on restart, or a host mount in dev-mounted mode) | ⚠️ Treat as read-only |
 | `/root/.ssh/` | SSH keys (copied from `/tmp/.ssh`) | ✅ Yes |
 | `/root/.gitconfig` | Git identity (set from `AGENT_NAME`/`AGENT_EMAIL`) | ✅ Yes |
 
@@ -112,5 +112,5 @@ Your sandbox is isolated — you can't directly access the host filesystem outsi
 
 - **Don't try to reach services at `localhost`** from inside your container — use `host.docker.internal` instead.
 - **Don't assume packages persist** — your container may be recreated at any time.
-- **Don't modify `/bond/`** — it's read-only. Work in `/workspace/`.
+- **Don't modify `/bond/`** — your edits are either reset on the next container start or belong to the developer's live host tree. Work in `/workspace/`.
 - **Don't hardcode ports** — read them from environment variables or config when possible.

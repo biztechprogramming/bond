@@ -29,8 +29,14 @@ if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "su
 fi
 
 # Use the bond repo at /bond.
+# Dev mode (BOND_DEV_SKIP_GIT): /bond is a bind-mount of the developer's host
+# working tree. Skip all git operations — a `git reset --hard` here would wipe
+# their uncommitted edits, and a fetch is pointless since the mount is already
+# live. The host-side adapter sets this only when BOND_DEV_MOUNT_SOURCE is on.
+if [ "${BOND_DEV_SKIP_GIT:-}" = "1" ]; then
+    echo "[entrypoint] Dev mode: /bond is a host mount — skipping git clone/fetch/reset."
 # If not present, clone fresh. Always pull latest on startup.
-if [ ! -d "/bond/.git" ]; then
+elif [ ! -d "/bond/.git" ]; then
     echo "[entrypoint] Cloning bond repo..."
     git clone "${BOND_REPO_URL:-git@github.com:biztechprogramming/bond.git}" /bond
     echo "[entrypoint] Clone complete."

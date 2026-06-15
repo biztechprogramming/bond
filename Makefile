@@ -22,6 +22,15 @@ dev:
 	@sleep 1
 	@$(MAKE) -j3 backend gateway frontend
 
+# Like `make dev`, but agent containers bind-mount your local working tree at
+# /bond — edits go live after an agent restart (no commit/push/re-clone). The
+# orchestrator runs natively here (not via docker-compose), so BOND_HOST_HOME
+# stays unset, which is the signal the adapter uses to enable the source mount.
+dev-mounted: export BOND_DEV_MOUNT_SOURCE=1
+dev-mounted:
+	@echo "Starting Bond (dev-mounted: agents mount local source at /bond)..."
+	@$(MAKE) dev
+
 # Backend (FastAPI)
 backend:
 	set -a && . ./.env && set +a && \
