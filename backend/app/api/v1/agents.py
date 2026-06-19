@@ -620,7 +620,22 @@ async def agent_branch_status(agent_id: str):
         "head_sha": payload.get("head_sha"),
         "active_turns": payload.get("active_turns"),
         "pending_reload": payload.get("pending_reload", False),
+        "dev_mounted": payload.get("dev_mounted", False),
     }
+
+
+@router.post("/{agent_id}/reload")
+async def agent_reload(agent_id: str):
+    """Reload the agent's worker in place (Design Doc 116 §3.6).
+
+    In dev-mounted mode this is the only safe code refresh: the worker
+    self-replaces via os.execv to pick up the developer's already-live mounted
+    edits, with no git operations against /bond.
+    """
+    status, payload = await _call_worker(agent_id, "POST", "/reload", json_body={}, timeout=20.0)
+    if status >= 400:
+        raise HTTPException(status_code=status, detail=payload.get("detail", "Reload failed"))
+    return payload
 
 
 @router.post("/{agent_id}/pull")

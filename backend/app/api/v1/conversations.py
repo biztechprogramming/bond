@@ -726,7 +726,7 @@ async def conversation_turn(
 
         logger.info(f"[CONVERSATIONS] Ensuring container is running for agent {agent_id}")
         try:
-            info = await get_sandbox_manager().ensure_running(agent_dict)
+            info = await get_sandbox_manager().ensure_running_for(agent_dict, conversation_id)
             logger.info(f"[CONVERSATIONS] Container running at worker_url: {info['worker_url']}")
         except RuntimeError as e:
             logger.error(f"[CONVERSATIONS] Failed to start container: {e}")

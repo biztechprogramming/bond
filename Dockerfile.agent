@@ -4,8 +4,11 @@
 # Usage:
 #   docker build -f Dockerfile.agent -t bond-agent-worker .
 #
-# The Bond library is mounted read-only at /bond (not baked in),
-# so code changes don't require image rebuilds — just restart the container.
+# The Bond library is mounted at /bond at runtime (not baked in), so code
+# changes don't require image rebuilds — just restart the container. The mount
+# is one of: a per-agent clone reset to origin on each start (default), a
+# read-only mount of the repo (deploy agents), or a writable bind-mount of the
+# developer's host working tree (BOND_DEV_MOUNT_SOURCE / `make dev-mounted`).
 
 FROM node:22-bookworm-slim AS node-base
 

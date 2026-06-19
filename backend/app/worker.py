@@ -612,6 +612,18 @@ def _bond_root() -> Path:
     return Path("/bond") if Path("/bond").exists() else Path("/workspace/bond")
 
 
+def _dev_mounted() -> bool:
+    """True when /bond is a bind-mount of the developer's host working tree
+    (BOND_DEV_MOUNT_SOURCE → BOND_DEV_SKIP_GIT, set by the sandbox adapter).
+
+    In this mode git operations against /bond are unsafe: a fetch/reset/checkout
+    would mutate (or `reset --hard` away) the developer's uncommitted edits. The
+    only safe refresh is an in-place self-replace, which picks up the already-live
+    mounted code.
+    """
+    return os.environ.get("BOND_DEV_SKIP_GIT") == "1"
+
+
 def _git_branch(root: Path) -> str:
     """Current branch name, or 'unknown' on failure."""
     import subprocess as _sp
@@ -680,11 +692,17 @@ async def _do_branch_reload(branch: str):
     if not bond_root.exists():
         return
 
-    _sp.run(["git", "fetch", "origin"], cwd=bond_root, capture_output=True, timeout=30)
-    _sp.run(["git", "checkout", branch], cwd=bond_root, capture_output=True, timeout=10)
-    _sp.run(["git", "pull", "--ff-only"], cwd=bond_root, capture_output=True, timeout=30)
-    os.environ["BOND_GIT_BRANCH"] = branch
-    _persist_branch_choice(branch)
+    if _dev_mounted():
+        # /bond is the developer's live host tree — never run git here. The
+        # caller still self-replaces, which is the whole point: pick up the
+        # already-mounted edits. We only refresh the prompt manifest below.
+        logger.info("Reload (dev-mounted): skipping git fetch/checkout/pull on /bond")
+    else:
+        _sp.run(["git", "fetch", "origin"], cwd=bond_root, capture_output=True, timeout=30)
+        _sp.run(["git", "checkout", branch], cwd=bond_root, capture_output=True, timeout=10)
+        _sp.run(["git", "pull", "--ff-only"], cwd=bond_root, capture_output=True, timeout=30)
+        os.environ["BOND_GIT_BRANCH"] = branch
+        _persist_branch_choice(branch)
 
     prompts_dir = bond_root / "prompts"
     if prompts_dir.exists():
@@ -747,6 +765,7 @@ async def get_branch():
         "head_sha": _git_head_sha(bond_root),
         "active_turns": _state.active_turns,
         "pending_reload": _state.pending_reload,
+        "dev_mounted": _dev_mounted(),
     }
 
 
@@ -795,6 +814,17 @@ async def pull_endpoint():
     """
     import subprocess as _sp
 
+    if _dev_mounted():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Pull is disabled in dev-mounted mode: /bond is your local "
+                          "working tree and a hard reset would discard uncommitted edits. "
+                          "Use Reload code instead.",
+                "dev_mounted": True,
+            },
+        )
+
     async with _state.turn_lock:
         if _state.active_turns > 0:
             return JSONResponse(
@@ -839,6 +869,16 @@ async def checkout_endpoint(request: Request):
     Refuses with 409 if a turn is active.
     """
     import subprocess as _sp
+
+    if _dev_mounted():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Branch switch is disabled in dev-mounted mode: /bond is your "
+                          "local working tree. Switch branches on the host instead.",
+                "dev_mounted": True,
+            },
+        )
 
     body = {}
     try:

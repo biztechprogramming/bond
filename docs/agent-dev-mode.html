@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bond — Agent Dev Mode: What's Changing</title>
+<style>
+  :root{
+    --bg:#0f1320; --panel:#171c2c; --panel2:#1e2438; --ink:#e7ecf5; --muted:#9aa6bf;
+    --line:#2a3350; --accent:#5b9bff; --good:#37d39a; --warn:#ffb454; --bad:#ff6b6b;
+    --prod:#7c8aa8; --dev:#5b9bff;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0c0f1a,#0f1320 240px);color:var(--ink);
+    font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:0 0 80px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  header{padding:48px 0 28px;border-bottom:1px solid var(--line);margin-bottom:36px}
+  h1{font-size:30px;margin:0 0 8px;letter-spacing:-.4px}
+  h1 .sub{color:var(--accent)}
+  .lede{color:var(--muted);font-size:17px;max-width:760px;margin:0}
+  .meta{margin-top:18px;display:flex;gap:10px;flex-wrap:wrap}
+  .pill{font-size:12px;padding:4px 11px;border-radius:99px;border:1px solid var(--line);background:var(--panel);color:var(--muted)}
+  .pill.branch{color:var(--accent);border-color:#2a4a86}
+  h2{font-size:21px;margin:48px 0 6px;letter-spacing:-.2px}
+  h2 .n{color:var(--accent);font-variant-numeric:tabular-nums;margin-right:10px}
+  .note{color:var(--muted);margin:0 0 18px}
+  section{scroll-margin-top:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:14px 0}
+  code{font-family:var(--mono);background:#222a42;padding:2px 6px;border-radius:5px;font-size:.86em;color:#cdd9f5}
+  .mono{font-family:var(--mono)}
+  /* before/after columns */
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:760px){.cols{grid-template-columns:1fr}}
+  .col{border:1px solid var(--line);border-radius:14px;padding:18px;background:var(--panel)}
+  .col h3{margin:0 0 4px;font-size:15px;display:flex;align-items:center;gap:8px}
+  .col .tag{font-size:11px;padding:3px 8px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  .tag.before{background:#3a2230;color:#ff9d9d}
+  .tag.after{background:#143028;color:#7af0c4}
+  .col .cap{color:var(--muted);font-size:13px;margin:0 0 14px}
+  /* stack diagram */
+  .stack{display:flex;flex-direction:column;align-items:stretch;gap:0}
+  .host{border:1.5px dashed #46527a;border-radius:12px;padding:12px;position:relative;margin-top:14px}
+  .host .hlabel{position:absolute;top:-10px;left:14px;background:var(--panel);padding:0 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .box{border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin:8px 0;background:var(--panel2);font-size:13.5px}
+  .box .t{font-weight:600}
+  .box .d{color:var(--muted);font-size:12px}
+  .box.cont{border-color:#2a4a86;background:#16203a}
+  .box.native{border-color:#1f6b50;background:#102a22}
+  .box.agent{border-color:#5a4620;background:#2a2113}
+  .arrow{text-align:center;color:var(--muted);font-size:13px;margin:2px 0}
+  .arrow.bad{color:var(--bad)} .arrow.good{color:var(--good)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px}
+  .swatch{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+  /* loop steps */
+  .loop{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap}
+  .step{flex:1;min-width:120px;border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:var(--panel2);position:relative}
+  .step .num{font-size:11px;color:var(--accent);font-weight:700}
+  .step .lbl{font-size:13px;margin-top:3px}
+  .step .sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .chev{align-self:center;color:var(--muted)}
+  .loop.before .step{border-color:#4a2a38}
+  .loop.after .step{border-color:#1f5a46}
+  .killbox{background:#2a1822;border-color:#5a2a38 !important}
+  /* table */
+  table{width:100%;border-collapse:collapse;margin:6px 0;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  tr:last-child td{border-bottom:none}
+  td .mono{font-size:12.5px;color:#cdd9f5}
+  .status{font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600;white-space:nowrap}
+  .s-done{background:#143028;color:#7af0c4}
+  .s-todo{background:#3a2c12;color:#ffce8a}
+  .s-none{background:#222a42;color:#9fb0d6}
+  .badtxt{color:var(--bad);font-weight:600}
+  .goodtxt{color:var(--good);font-weight:600}
+  .warntxt{color:var(--warn);font-weight:600}
+  /* callouts */
+  .callout{border-left:3px solid var(--accent);background:var(--panel2);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0}
+  .callout.warn{border-color:var(--warn)}
+  .callout.bad{border-color:var(--bad)}
+  .callout .h{font-weight:600;margin-bottom:3px}
+  .callout .h.warn{color:var(--warn)} .callout .h.bad{color:var(--bad)}
+  pre{background:#0c1120;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+     font-family:var(--mono);font-size:13px;line-height:1.55;color:#cdd9f5;margin:10px 0}
+  pre .c{color:#6f7da0}
+  pre .g{color:#7af0c4}
+  pre .b{color:#ff9d9d}
+  .foot{margin-top:50px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+  .audience{display:grid;grid-template-columns:170px 1fr;gap:0;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:10px 0}
+  .audience>div{padding:14px 16px;border-bottom:1px solid var(--line)}
+  .audience .who{background:var(--panel2);font-weight:600;font-size:14px}
+  .audience>div:nth-last-child(-n+2){border-bottom:none}
+  .who .tiny{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Agent <span class="sub">Dev Mode</span> — what's changing</h1>
+  <p class="lede">Keep the Docker isolation for agents, but stop letting it tax the edit loop. The change makes the orchestrator run natively in development and lets agent containers run your <em>local working tree</em> directly — so iterating no longer means commit → push → re-clone.</p>
+  <div class="meta">
+    <span class="pill branch">branch: feat/agent-dev-mode</span>
+    <span class="pill">5 files changed · gated behind dev flags</span>
+    <span class="pill">production path untouched</span>
+  </div>
+</header>
+
+<!-- TLDR -->
+<section>
+  <h2><span class="n">0</span>The one-sentence version</h2>
+  <div class="card">
+    Today, to test <em>any</em> Bond code change inside an agent you must <span class="badtxt">commit → push → restart</span> (the agent re-clones from <code>origin</code> on every start). Dev mode replaces that with <span class="goodtxt">edit → reload</span> by bind-mounting your host repo into the agent and skipping the git reset — <strong>without removing isolation</strong>, because it's the agents that stay containerized, not your editor.
+  </div>
+</section>
+
+<!-- ARCHITECTURE -->
+<section>
+  <h2><span class="n">1</span>Where the isolation boundary moves</h2>
+  <p class="note">The difficulty was never "Docker." It was that <strong>the orchestrator itself</strong> ran inside a container and drove Docker through the host socket — forcing a whole layer of path-mirroring hacks. Dev mode runs the orchestrator natively; only agents stay isolated.</p>
+  <div class="cols">
+    <div class="col">
+      <h3><span class="tag before">Before</span> containerized orchestrator</h3>
+      <p class="cap">bond-bond runs in a container and reaches the host Docker daemon via a mounted socket. Needs <code>$HOME:$HOME</code> path-mirroring + <code>BOND_HOST_HOME</code> translation so bind-mount paths resolve on the host.</p>
+      <div class="host"><span class="hlabel">Host machine</span>
+        <div class="box cont"><div class="t">bond-bond container</div><div class="d">backend + gateway + frontend · mounts /var/run/docker.sock, $HOME:$HOME:ro</div></div>
+        <div class="arrow bad">│ docker.sock + path translation ▼</div>
+        <div class="box agent"><div class="t">agent container</div><div class="d">/bond = per-agent clone, reset to origin on start</div></div>
+      </div>
+      <div class="legend"><span><span class="swatch" style="background:#16203a;border:1px solid #2a4a86"></span>containerized</span></div>
+    </div>
+    <div class="col">
+      <h3><span class="tag after">After (dev)</span> native orchestrator</h3>
+      <p class="cap">bond-bond runs on the host with direct Docker access. The socket-mount + path-mirroring layer simply goes <em>dormant</em> (no code deleted). Agents still containerized.</p>
+      <div class="host"><span class="hlabel">Host machine</span>
+        <div class="box native"><div class="t">bond-bond (native process)</div><div class="d">make dev-mounted · uvicorn --reload · direct docker access</div></div>
+        <div class="arrow good">│ docker run · mounts your real repo ▼</div>
+        <div class="box agent"><div class="t">agent container</div><div class="d">/bond = <span class="goodtxt">live bind-mount of host working tree</span></div></div>
+      </div>
+      <div class="legend">
+        <span><span class="swatch" style="background:#102a22;border:1px solid #1f6b50"></span>native</span>
+        <span><span class="swatch" style="background:#2a2113;border:1px solid #5a4620"></span>agent (isolated)</span>
+      </div>
+    </div>
+  </div>
+  <div class="callout"><div class="h">Isolation preserved</div>The agent is still a separate container with its own memory/CPU limits, network, and credentials. What changed is <em>how its copy of the Bond source arrives</em> — and that the orchestrator no longer needs to live in a box itself.</div>
+</section>
+
+<!-- CODE DELIVERY -->
+<section>
+  <h2><span class="n">2</span>The core change: how code reaches the agent</h2>
+  <p class="note">This is the single biggest friction-killer. Same container, different mount.</p>
+  <div class="cols">
+    <div class="col">
+      <h3><span class="tag before">Before</span> re-clone from origin</h3>
+<pre><span class="c"># adapters.py — non-deploy agent</span>
+bond_volume = <span class="b">"bond-clone-&lt;agent_id&gt;"</span>
+docker volume create $bond_volume
+-v $bond_volume:/bond:rw
+
+<span class="c"># agent-entrypoint.sh, every start:</span>
+git fetch origin
+git reset <span class="b">--hard</span> origin/$branch  </pre>
+      <p class="cap">Your local edits are <span class="badtxt">invisible</span> to the agent. Only what's pushed to <code>origin</code> exists inside.</p>
+    </div>
+    <div class="col">
+      <h3><span class="tag after">After (dev)</span> mount the host tree</h3>
+<pre><span class="c"># adapters.py — when BOND_DEV_MOUNT_SOURCE=1</span>
+-v $PROJECT_ROOT:/bond:rw
+-e BOND_DEV_SKIP_GIT=1
+
+<span class="c"># agent-entrypoint.sh:</span>
+<span class="g">if [ "$BOND_DEV_SKIP_GIT" = "1" ]; then</span>
+<span class="g">  # skip clone/fetch/reset entirely</span>
+<span class="g">fi</span></pre>
+      <p class="cap"><code>/bond</code> <em>is</em> your working tree. The skip-git guard is what stops <code>reset --hard</code> from <span class="badtxt">wiping your uncommitted edits</span>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- DEV LOOP -->
+<section>
+  <h2><span class="n">3</span>The developer's edit loop</h2>
+  <p class="note">From a six-step round-trip through GitHub to a two-step local cycle.</p>
+
+  <p style="margin:6px 0 4px;font-size:13px;color:var(--muted)">BEFORE</p>
+  <div class="loop before">
+    <div class="step"><div class="num">1</div><div class="lbl">Edit code</div></div>
+    <div class="chev">→</div>
+    <div class="step"><div class="num">2</div><div class="lbl">Commit</div></div>
+    <div class="chev">→</div>
+    <div class="step"><div class="num">3</div><div class="lbl">Push to origin</div></div>
+    <div class="chev">→</div>
+    <div class="step"><div class="num">4</div><div class="lbl">Restart agent</div><div class="sub">re-clone + reset</div></div>
+    <div class="chev">→</div>
+    <div class="step"><div class="num">5</div><div class="lbl">Wait ~10s boot</div></div>
+    <div class="chev">→</div>
+    <div class="step"><div class="num">6</div><div class="lbl">Test</div></div>
+  </div>
+
+  <p style="margin:16px 0 4px;font-size:13px;color:var(--muted)">AFTER (dev-mounted)</p>
+  <div class="loop after">
+    <div class="step"><div class="num">1</div><div class="lbl">Edit code</div><div class="sub">on host, in /bond tree</div></div>
+    <div class="chev">→</div>
+    <div class="step"><div class="num">2</div><div class="lbl">Reload</div><div class="sub">worker self-re-exec, PID stable</div></div>
+    <div class="chev">→</div>
+    <div class="step"><div class="num">3</div><div class="lbl">Test</div></div>
+  </div>
+  <div class="callout"><div class="h">No commit, no push, no image rebuild.</div>Backend (bond-bond) edits auto-apply via <code>uvicorn --reload</code>. Agent/worker edits need one reload — the worker's existing <code>POST /reload</code> does an <code>os.execv</code> self-replace in place (container never exits).</div>
+</section>
+
+<!-- BOND MODES -->
+<section>
+  <h2><span class="n">4</span>The three modes of <code>/bond</code></h2>
+  <p class="note">The same path means different things depending on agent type / flag. The docs now say so (they previously just claimed "read-only").</p>
+  <table>
+    <thead><tr><th>Mode</th><th>What <code>/bond</code> is</th><th>Git on start</th><th>Edits persist?</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Default</strong><br><span style="color:var(--muted);font-size:12px">normal agents</span></td><td class="mono">bond-clone-&lt;id&gt; named volume</td><td><code>reset --hard origin/&lt;branch&gt;</code></td><td>No — thrown away each start</td></tr>
+      <tr><td><strong>Deploy</strong><br><span style="color:var(--muted);font-size:12px">deploy-* agents</span></td><td class="mono">$PROJECT_ROOT:/bond:ro</td><td>none (read-only)</td><td>N/A — immutable</td></tr>
+      <tr><td><strong>Dev-mounted</strong> <span class="status s-done">new</span><br><span style="color:var(--muted);font-size:12px">BOND_DEV_MOUNT_SOURCE</span></td><td class="mono">$PROJECT_ROOT:/bond:rw</td><td><span class="goodtxt">skipped</span> (BOND_DEV_SKIP_GIT)</td><td><span class="goodtxt">Yes — it's your host tree</span></td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn"><div class="h warn">Shared tree caveat</div>In dev-mounted mode all agents share <em>one</em> working tree (your repo). Great for iterating; it means it is <strong>not</strong> the mode for testing per-agent branch isolation. Unset the flag to get back independent per-agent clones.</div>
+</section>
+
+<!-- FILES CHANGED -->
+<section>
+  <h2><span class="n">5</span>What I changed (already done)</h2>
+  <table>
+    <thead><tr><th>File</th><th>Change</th><th></th></tr></thead>
+    <tbody>
+      <tr><td class="mono">backend/app/sandbox/<br>adapters.py</td><td>New dev branch in mount logic: when <code>BOND_DEV_MOUNT_SOURCE</code> set &amp; orchestrator native, mount host tree at <code>/bond:rw</code> + inject <code>BOND_DEV_SKIP_GIT=1</code>.</td><td><span class="status s-done">done</span></td></tr>
+      <tr><td class="mono">scripts/<br>agent-entrypoint.sh</td><td>Skip the clone / fetch / <code>reset --hard</code> block when <code>BOND_DEV_SKIP_GIT=1</code> — the guard that protects your uncommitted edits.</td><td><span class="status s-done">done</span></td></tr>
+      <tr><td class="mono">Makefile</td><td>New <code>make dev-mounted</code> target — native services with the dev flag exported.</td><td><span class="status s-done">done</span></td></tr>
+      <tr><td class="mono">prompts/<br>bond-architecture.md</td><td>Reconciled the <code>/bond</code> docs to describe all three real modes (was inaccurately "read-only").</td><td><span class="status s-done">done</span></td></tr>
+      <tr><td class="mono">Dockerfile.agent</td><td>Updated the header comment to match the three mount modes.</td><td><span class="status s-done">done</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- INTERACTION IMPACT -->
+<section>
+  <h2><span class="n">6</span>How interaction changes — by audience</h2>
+  <div class="audience">
+    <div class="who">End-user<span class="tiny">chats with agents (prod)</span></div>
+    <div><span class="goodtxt">No change.</span> The default <code>docker compose</code> path is untouched — per-agent clone, reset-on-restart, containerized orchestrator. Nothing to learn.</div>
+    <div class="who">Developer<span class="tiny">iterating on Bond</span></div>
+    <div>Launch with <code>make dev-mounted</code> instead of <code>docker compose up</code> (needs SpacetimeDB up + native toolchain). Then <strong>edit → reload</strong>. The reload is the one new habit to internalize — code doesn't hot-apply inside the worker automatically.</div>
+    <div class="who">UI / control surface<span class="tiny">"refresh agent code"</span></div>
+    <div><span class="warntxt">Needs a change (not yet done).</span> See below — the existing git-based controls are unsafe against a mounted tree.</div>
+  </div>
+</section>
+
+<!-- STILL TO DO -->
+<section>
+  <h2><span class="n">7</span>The piece still to build</h2>
+  <p class="note">Bond's frontend exposes per-agent <strong>Pull / Branch-switch / Reload</strong> controls (Design Doc 116). They assume <code>/bond</code> is a throwaway clone. Against your mounted working tree they misbehave:</p>
+  <table>
+    <thead><tr><th>Control</th><th>Worker action</th><th>In dev-mounted mode</th><th></th></tr></thead>
+    <tbody>
+      <tr><td><strong>Pull</strong></td><td class="mono">git reset --hard origin/&lt;branch&gt;</td><td class="badtxt">Destroys your uncommitted edits across the shared tree</td><td><span class="status s-todo">gate off</span></td></tr>
+      <tr><td><strong>Branch switch</strong></td><td class="mono">git checkout &lt;branch&gt;</td><td class="badtxt">Switches your working branch for every agent at once</td><td><span class="status s-todo">gate off</span></td></tr>
+      <tr><td><strong>Reload</strong></td><td class="mono">checkout → os.execv</td><td>The re-exec is what you want; the checkout step must be skipped</td><td><span class="status s-todo">no-git path</span></td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><div class="h">Implemented ✓</div>When an agent is in dev-mounted mode the UI now collapses to a single safe <strong>"Reload code"</strong> button (pure <code>os.execv</code>, no git) and hides Pull / Branch-switch. Three layers: the worker exposes <code>dev_mounted</code> on <code>/branch</code>, makes <code>/reload</code> git-free, and refuses <code>/pull</code> + <code>/checkout</code> with 409; the backend surfaces the flag and adds a <code>/reload</code> proxy; <code>ConversationInfoPanel.tsx</code> renders the dev-mounted control. The worker-level 409s are the real backstop — even an un-gated UI can't mutate your tree.</div>
+</section>
+
+<!-- ROADMAP -->
+<section>
+  <h2><span class="n">8</span>Where this sits in the bigger picture</h2>
+  <table>
+    <thead><tr><th>Lever</th><th>Effect</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td><strong>A</strong> — Mount local source into agents</td><td>Kills the commit/push/re-clone tax</td><td><span class="status s-done">done</span></td></tr>
+      <tr><td><strong>B</strong> — Native orchestrator in dev</td><td>Removes socket-in-container + path-mirroring complexity</td><td><span class="status s-done">done</span></td></tr>
+      <tr><td><strong>(6/7)</strong> — Gate git-based refresh UI</td><td>Makes dev-mounted mode safe to actually use</td><td><span class="status s-done">done</span></td></tr>
+      <tr><td><strong>C</strong> — Persist SandboxManager state (Doc 118)</td><td>Makes backend hot-reload non-destructive</td><td><span class="status s-none">next</span></td></tr>
+      <tr><td><strong>D</strong> — Consolidate 7 compose files / docs</td><td>Lowers cost of every future change</td><td><span class="status s-none">later</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="foot">
+  Generated to explain the <span class="mono">feat/agent-dev-mode</span> change set. All implemented edits are gated behind <span class="mono">BOND_DEV_MOUNT_SOURCE</span> / <span class="mono">BOND_DEV_SKIP_GIT</span>; production behaviour is the default and unchanged. Open this file in any browser — it has no external dependencies.
+</div>
+
+</div>
+</body>
+</html>

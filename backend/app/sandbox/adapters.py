@@ -442,11 +442,32 @@ class LocalContainerAdapter:
         project_root = _PROJECT_ROOT
         agent_name = agent.get("name", "")
         is_deploy_agent = agent_name.startswith("deploy-")
+        # Dev mode (BOND_DEV_MOUNT_SOURCE): bind-mount the host working tree at
+        # /bond so local edits are live inside agents — no commit/push/re-clone.
+        # Only meaningful when bond-bond runs natively (project_root is a real
+        # host path); a containerized bond-bond would mount its own /app.
+        dev_mount_source = bool(os.environ.get("BOND_DEV_MOUNT_SOURCE")) and "BOND_HOST_HOME" not in os.environ
 
         if is_deploy_agent:
             cmd.extend(["-v", f"{project_root}:/bond:ro"])
+        elif dev_mount_source:
+            # rw (not ro) so the worker can write __pycache__ etc.; the
+            # entrypoint skips git fetch/reset (BOND_DEV_SKIP_GIT) so this
+            # working tree is never reset --hard out from under the developer.
+            cmd.extend(["-v", f"{project_root}:/bond:rw"])
+            cmd.extend(["-e", "BOND_DEV_SKIP_GIT=1"])
+            logger.info("Dev mode: mounting host source %s at /bond for agent %s", project_root, agent_id)
         else:
-            bond_volume = f"bond-clone-{agent_id}"
+            # Each instance gets its OWN clone (separate clones, not worktrees —
+            # so replicas can live on different machines). The entrypoint clones
+            # into this volume on first start. Per-instance suffix keeps the
+            # clones isolated; absent _instance it stays the single-agent name.
+            instance = agent.get("_instance")
+            bond_volume = (
+                f"bond-clone-{agent_id}"
+                if instance is None
+                else f"bond-clone-{agent_id}-{instance}"
+            )
             await asyncio.create_subprocess_exec(
                 "docker", "volume", "create", bond_volume,
                 stdout=asyncio.subprocess.DEVNULL,
