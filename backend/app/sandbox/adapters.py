@@ -249,8 +249,13 @@ class LocalContainerAdapter:
             if len(parts) < 3:
                 continue
             name, image, ports = parts[0], parts[1], parts[2]
-            if not image.startswith("bond-agent-"):
-                continue
+            # Identify worker containers by the worker port they publish, NOT by
+            # image name. Matching on image is fragile (Doc 119): rebuilding an
+            # agent image leaves any still-running agent on a now-dangling image
+            # that `docker ps` prints by ID, so the old `bond-agent-` name filter
+            # silently dropped it — and _allocate_port then handed its port out a
+            # second time ("port is already allocated"). The published internal
+            # port (18791) in the worker host-port range is the reliable signal.
             host_port: int | None = None
             for entry in ports.split(","):
                 entry = entry.strip()
@@ -264,10 +269,13 @@ class LocalContainerAdapter:
                     break
                 except ValueError:
                     continue
-            if host_port is not None:
-                self._port_map[name] = host_port
-                reconciled += 1
-                logger.info("reconcile_port_map: %s -> %d", name, host_port)
+            if host_port is None:
+                continue
+            if not (_PORT_RANGE_START <= host_port <= _PORT_RANGE_END):
+                continue
+            self._port_map[name] = host_port
+            reconciled += 1
+            logger.info("reconcile_port_map: %s -> %d (image=%s)", name, host_port, image)
         return reconciled
 
     # -- Credential mounts (shared helper) --
