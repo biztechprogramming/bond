@@ -246,14 +246,26 @@ export async function initBackupScheduler(config: GatewayConfig): Promise<void> 
   // Check for missed backups
   await checkMissedBackups(schedule, config);
 
-  // Hourly run_on_startup
+  // Hourly run_on_startup — but only when we actually missed an hourly window.
+  // A fresh container replacing one that backed up minutes ago shouldn't redo a
+  // full dump (spinning a temp STDB) on every boot (Doc 119 §3.3).
   const hourly = schedule.tiers.hourly;
   if (hourly?.enabled && hourly?.run_on_startup) {
-    console.log("[backup-scheduler] Running startup hourly backup");
-    // Run in background so we don't block server startup
-    runBackup("hourly", config, schedule.verification).catch(err => {
-      console.error("[backup-scheduler] Startup backup failed:", err.message);
-    });
+    const lastHourly = getLastBackupTime("hourly");
+    const minutesSinceLast = lastHourly
+      ? (Date.now() - lastHourly.getTime()) / (1000 * 60)
+      : Infinity;
+    if (minutesSinceLast >= 60) {
+      console.log("[backup-scheduler] Running startup hourly backup");
+      // Run in background so we don't block server startup
+      runBackup("hourly", config, schedule.verification).catch(err => {
+        console.error("[backup-scheduler] Startup backup failed:", err.message);
+      });
+    } else {
+      console.log(
+        `[backup-scheduler] Skipping startup hourly backup — last ran ${Math.round(minutesSinceLast)}m ago`,
+      );
+    }
   }
 
   console.log("[backup-scheduler] Scheduler initialized");

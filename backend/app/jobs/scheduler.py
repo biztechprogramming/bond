@@ -23,6 +23,10 @@ class _JobEntry:
     interval_seconds: int
     last_run: float = 0.0
     running: bool = False
+    # Delay before the *first* run, so heavy startup jobs (model/skill sync,
+    # which hit external provider APIs) don't compete with container cold start.
+    # The recurring cadence (interval_seconds) is unaffected. See Doc 119 §3.2.
+    first_run_delay_seconds: float = 30.0
 
 
 class JobScheduler:
@@ -42,10 +46,24 @@ class JobScheduler:
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
-    def register(self, name: str, fn: JobFn, interval_seconds: int) -> None:
-        """Register a recurring job."""
+    def register(
+        self,
+        name: str,
+        fn: JobFn,
+        interval_seconds: int,
+        first_run_delay_seconds: float = 30.0,
+    ) -> None:
+        """Register a recurring job.
+
+        The first run is deferred by ``first_run_delay_seconds`` (default 30s)
+        so startup sync work stays off the boot critical path; subsequent runs
+        follow ``interval_seconds``.
+        """
         self._jobs[name] = _JobEntry(
-            name=name, fn=fn, interval_seconds=interval_seconds
+            name=name,
+            fn=fn,
+            interval_seconds=interval_seconds,
+            first_run_delay_seconds=first_run_delay_seconds,
         )
         logger.info("Registered job %r (every %ds)", name, interval_seconds)
 
@@ -61,7 +79,8 @@ class JobScheduler:
         await self._run_job(entry)
 
     async def start(self) -> None:
-        """Start the scheduler loop. Runs all jobs immediately on first tick."""
+        """Start the scheduler loop. Each job's first run is deferred by its
+        first_run_delay_seconds so it doesn't compete with container startup."""
         self._stop_event.clear()
         self._task = asyncio.create_task(self._loop(), name="job-scheduler")
         logger.info("Job scheduler started with %d job(s)", len(self._jobs))
@@ -80,10 +99,15 @@ class JobScheduler:
 
     async def _loop(self) -> None:
         """Main scheduler loop — checks every 30s for due jobs."""
-        # Run all jobs immediately on startup
+        # Defer each job's first run instead of running them all immediately at
+        # boot. Seed last_run so a job first becomes "due" first_run_delay_seconds
+        # from now; the 30s tick below then picks it up. This keeps the initial
+        # provider-API sync off the container cold-start window (Doc 119 §3.2).
+        now = time.monotonic()
         for entry in self._jobs.values():
-            if not self._stop_event.is_set():
-                await self._run_job(entry)
+            entry.last_run = (
+                now - entry.interval_seconds + entry.first_run_delay_seconds
+            )
 
         while not self._stop_event.is_set():
             try:

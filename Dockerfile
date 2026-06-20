@@ -55,7 +55,7 @@ EXPOSE 18788 18789 18790
 # Simple process manager: first-run credential display, then start services
 CMD ["sh", "-c", "\
   bash scripts/first-run.sh && \
-  uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 & \
+  uv run --no-sync uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 & \
   cd gateway && NODE_OPTIONS='--experimental-global-webcrypto' pnpm exec tsx src/index.ts & \
   cd frontend && pnpm start & \
   wait"]
