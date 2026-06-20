@@ -188,21 +188,37 @@ class SandboxManager:
     ) -> None:
         """Poll worker /health until it responds with correct agent_id, or raise.
 
+        Doc 119 §C: ``timeout`` is a *stall* budget, not an absolute deadline.
+        The agent entrypoint may clone large agent_repos before the worker even
+        starts — a fresh clone of a 20k-file repo can take minutes — and that
+        work happens inside this window. Counting it against a fixed wall-clock
+        budget made big-repo first-starts fail with "connection refused". So we
+        only fail when the container makes *no progress* (its log output stops
+        growing) for ``timeout`` seconds. A hard cap still bounds the total wait.
+
         Also fast-fails if the container itself exits during polling, so callers
         don't have to wait the full timeout when the worker has already crashed.
         """
         start = time.monotonic()
         last_error = ""
         last_state_check = -1.0  # force one check on the first iteration
+        # Progress tracking (stall detection)
+        last_log_size = -1
+        last_progress = start
+        hard_cap = max(timeout, 600.0)  # absolute backstop, never wait forever
 
         async with httpx.AsyncClient(timeout=2.0) as client:
             while True:
-                elapsed = time.monotonic() - start
-                if elapsed >= timeout:
+                now = time.monotonic()
+                elapsed = now - start
+                stalled = now - last_progress
+                if stalled >= timeout or elapsed >= hard_cap:
                     logs = await self._capture_container_logs(container_id)
+                    reason = "no progress" if stalled >= timeout else "hard cap"
                     logger.error(
-                        "Health check timeout for agent %s after %.1fs — container logs:\n%s",
-                        agent_id, elapsed, logs,
+                        "Health check timeout for agent %s after %.1fs (%s, stalled %.1fs) "
+                        "— container logs:\n%s",
+                        agent_id, elapsed, reason, stalled, logs,
                     )
                     raise RuntimeError(
                         f"Health check timeout for agent {agent_id} after {elapsed:.1f}s. "
@@ -227,10 +243,15 @@ class SandboxManager:
                 except httpx.HTTPError as exc:
                     last_error = str(exc)
 
-                # Every ~2s, check whether the container has already exited.
-                # If so, raise immediately instead of waiting the full timeout.
+                # Every ~2s, check container state + whether it's making progress.
+                # Exit → raise immediately. Growing logs (e.g. an in-flight clone)
+                # → reset the stall clock so big provisioning work isn't killed.
                 if elapsed - last_state_check >= 2.0:
                     last_state_check = elapsed
+                    logs_now = await self._capture_container_logs(container_id, tail=500)
+                    if len(logs_now) != last_log_size:
+                        last_log_size = len(logs_now)
+                        last_progress = now
                     state = await self._container_state(container_id, host_id)
                     if not state["running"]:
                         logs = await self._capture_container_logs(container_id)

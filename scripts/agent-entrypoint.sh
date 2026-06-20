@@ -170,15 +170,14 @@ for r in repos:
         rc = subprocess.run(["git", "fetch", "--all", "--prune"], cwd=dest, env=env).returncode
         if rc != 0:
             print(f"[entrypoint] WARN: fetch failed for {name}")
-        if active_branch:
-            rc = subprocess.run(["git", "checkout", active_branch], cwd=dest, env=env).returncode
-            if rc != 0:
-                rc = subprocess.run(
-                    ["git", "checkout", "-b", active_branch, f"origin/{active_branch}"],
-                    cwd=dest, env=env,
-                ).returncode
-            if rc != 0:
-                print(f"[entrypoint] WARN: could not checkout {active_branch} on {name}")
+        # Branch switching for an already-cloned repo is owned by the worker, not
+        # the entrypoint (Design Doc 113 §5.2, Doc 119 §A). The worker runs
+        # _reconcile_repo_branches() at each turn: it switches only when the tree
+        # is clean and, when there's uncommitted work, leaves the repo untouched
+        # and asks the user in chat how to proceed. A naive `git checkout` here
+        # aborts on a dirty tree ("Your local changes would be overwritten") and
+        # — being block-buffered behind that git stderr — made cold starts look
+        # wedged. So we deliberately do NOT switch branches here anymore.
     else:
         branch = active_branch or default_branch
         print(f"[entrypoint] Cloning {name} ({url}) into {dest}...")
