@@ -135,6 +135,12 @@ RUN mkdir -p /data /data/shared /config /workspace /opt/opensandbox
 # Worker is invoked as: python -m backend.app.worker --port 18791
 ENV PYTHONPATH=/bond
 
+# Use litellm's bundled model-cost map instead of fetching it from GitHub on
+# every `import litellm` — that network round-trip added ~0.3s to each agent
+# cold start (worker.py imports litellm at module load). The bundled map is
+# fine for our cost reporting. (Doc 119 cold-start work.)
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
+
 # Langfuse observability — config is passed at runtime via the sandbox
 # adapter (see opensandbox_adapter.py). No defaults baked into the image.
 
