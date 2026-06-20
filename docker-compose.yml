@@ -43,7 +43,7 @@ services:
       - SPACETIMEDB_TOKEN=${SPACETIMEDB_TOKEN:-}
     command: >-
       sh -lc "bash scripts/first-run.sh &&
-      uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 &
+      uv run --no-sync uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 &
       cd /app/gateway && NODE_OPTIONS='--experimental-global-webcrypto' ./node_modules/.bin/tsx watch src/index.ts &
       cd /app/frontend && pnpm start &
       wait"

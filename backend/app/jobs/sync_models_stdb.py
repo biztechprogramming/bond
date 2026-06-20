@@ -295,9 +295,16 @@ async def sync_models_stdb(session_factory: async_sessionmaker[AsyncSession]) ->
 
             except httpx.HTTPStatusError as e:
                 total_errors += 1
-                logger.warning(
+                status = e.response.status_code
+                # 401/403 just means this provider has no valid key configured —
+                # an expected, non-actionable state. Log it at debug so a missing
+                # key doesn't spam every startup; surface real HTTP faults at
+                # warning (Doc 119 §3.2).
+                level = logging.DEBUG if status in (401, 403) else logging.WARNING
+                logger.log(
+                    level,
                     "sync_models: %s HTTP %d: %s",
-                    provider_id, e.response.status_code, e.response.text[:200],
+                    provider_id, status, e.response.text[:200],
                 )
             except Exception:
                 total_errors += 1

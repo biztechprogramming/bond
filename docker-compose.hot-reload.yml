@@ -17,7 +17,7 @@ services:
       - ./backend:/app/backend
     command: >-
       sh -lc "bash scripts/first-run.sh &&
-      uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload --reload-dir /app/backend &
+      uv run --no-sync uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload --reload-dir /app/backend &
       cd /app/gateway && NODE_OPTIONS='--experimental-global-webcrypto' ./node_modules/.bin/tsx watch src/index.ts &
       cd /app/frontend && pnpm start &
       wait"

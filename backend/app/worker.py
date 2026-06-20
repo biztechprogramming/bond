@@ -100,6 +100,13 @@ class WorkerState:
         self.pending_reload_branch: str | None = None
         self.mcp_proxy: Any = None  # MCPProxyClient instance (Design Doc 054)
         self.branch_heartbeat_task: asyncio.Task | None = None  # Design Doc 113 §3.3
+        # Startup readiness (Doc 119 §C): the heavy, network-bound init (DB,
+        # persistence, schema reflection, skills embedding, branch checkout, MCP
+        # proxy) runs in a background task so the HTTP port binds immediately and
+        # the manager's health check passes in seconds instead of timing out at
+        # 90s under load. Turns await `ready` before running.
+        self.ready: asyncio.Event | None = None
+        self.init_task: asyncio.Task | None = None
 
 
 _state = WorkerState()
@@ -228,34 +235,35 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):
-    """Lifespan handler — startup and shutdown."""
+    """Lifespan handler — startup and shutdown.
+
+    Doc 119 §C: only the cheap, local bootstrap runs before ``yield`` so uvicorn
+    binds the port within a second or two. Everything network-bound — DB init,
+    persistence, SpacetimeDB schema reflection, skills embedding, the startup
+    branch checkout (git fetch/checkout/pull) and MCP proxy setup — is pushed
+    into a background task. Previously these ran serially before bind and, under
+    memory/network pressure, summed past the manager's 90s health window, so the
+    worker never opened its port and every start failed with "connection refused".
+    """
     config_path = os.environ.get("BOND_WORKER_CONFIG", "/config/agent.json")
     data_dir = os.environ.get("BOND_WORKER_DATA_DIR", "/data")
-    await _startup(config_path, data_dir)
 
-    # Startup branch checkout
-    await _checkout_preferred_branch()
+    # Fast, local-only bootstrap (no network) so /health can answer immediately.
+    _bootstrap_minimal(config_path, data_dir)
 
-    # MCP Proxy Setup (Design Doc 054: host-side MCP via broker)
-    try:
-        from backend.app.agent.tools.mcp_proxy import MCPProxyClient
-        agent_token = os.environ.get("BOND_AGENT_TOKEN", "")
-        if _state.persistence and _state.persistence.mode == "api" and agent_token:
-            gateway_url = _state.persistence.gateway_url
-            _state.mcp_proxy = MCPProxyClient(gateway_url, _state.agent_id, agent_token)
-            await _state.mcp_proxy.list_tools()
-            logger.info("MCP proxy client initialized (gateway=%s, tools=%d)", gateway_url, len(_state.mcp_proxy._tool_cache))
-        else:
-            _state.mcp_proxy = None
-            logger.info("MCP proxy client not initialized (no API persistence or token)")
-    except Exception as e:
-        _state.mcp_proxy = None
-        logger.error(f"Failed to initialize MCP proxy client: {e}")
-
-    # Branch heartbeat — Design Doc 113 §3.3
-    _state.branch_heartbeat_task = asyncio.create_task(_branch_heartbeat_loop())
+    _state.ready = asyncio.Event()
+    _state.init_task = asyncio.create_task(_background_init())
 
     yield
+
+    # Stop background init if it's still running at shutdown.
+    init_task = getattr(_state, "init_task", None)
+    if init_task and not init_task.done():
+        init_task.cancel()
+        try:
+            await init_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     # Cancel branch heartbeat on shutdown
     bh_task = getattr(_state, "branch_heartbeat_task", None)
@@ -277,6 +285,54 @@ async def _lifespan(application: FastAPI):
     # Do NOT kill them on shutdown.
 
     await _shutdown()
+
+
+async def _background_init() -> None:
+    """Heavy, network-bound startup — runs after the port is already bound.
+
+    Doc 119 §C. Sets ``_state.ready`` when finished (even on failure) so turns,
+    which wait on it, are never blocked forever. Each step is independently
+    guarded so one slow/failed dependency can't sink the rest.
+    """
+    try:
+        await _heavy_startup()
+
+        # Startup branch checkout (git fetch/checkout/pull — network).
+        try:
+            await _checkout_preferred_branch()
+        except Exception as e:
+            logger.warning("Startup branch checkout failed: %s", e)
+
+        # MCP Proxy Setup (Design Doc 054: host-side MCP via broker).
+        try:
+            from backend.app.agent.tools.mcp_proxy import MCPProxyClient
+            agent_token = os.environ.get("BOND_AGENT_TOKEN", "")
+            if _state.persistence and _state.persistence.mode == "api" and agent_token:
+                gateway_url = _state.persistence.gateway_url
+                _state.mcp_proxy = MCPProxyClient(gateway_url, _state.agent_id, agent_token)
+                await _state.mcp_proxy.list_tools()
+                logger.info(
+                    "MCP proxy client initialized (gateway=%s, tools=%d)",
+                    gateway_url, len(_state.mcp_proxy._tool_cache),
+                )
+            else:
+                _state.mcp_proxy = None
+                logger.info("MCP proxy client not initialized (no API persistence or token)")
+        except Exception as e:
+            _state.mcp_proxy = None
+            logger.error("Failed to initialize MCP proxy client: %s", e)
+
+        # Branch heartbeat — Design Doc 113 §3.3
+        _state.branch_heartbeat_task = asyncio.create_task(_branch_heartbeat_loop())
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("[startup] background init failed")
+    finally:
+        if _state.ready is not None:
+            _state.ready.set()
+    logger.info("Worker fully ready (background init complete)")
+
 
 async def _branch_heartbeat_loop():
     """Periodically report each agent_repo's current branch back to bond.
@@ -501,31 +557,35 @@ async def _reconcile_repo_branches() -> list[dict]:
         if current == target:
             continue
 
-        # Stash dirty state (-u to include untracked) so checkout can succeed
-        # without losing in-progress work. Stashing on a clean tree is a no-op
-        # and exits 0 with "No local changes to save".
-        stash_msg = f"bond auto-stash before switch {current}→{target}"
-        stash_result = _sp.run(
-            ["git", "stash", "push", "-u", "-m", stash_msg],
-            cwd=workdir, capture_output=True, text=True, timeout=15,
-        )
-        if stash_result.returncode != 0:
-            logger.error(
-                "[reconcile-branches] %s: stash failed: %s",
-                name, stash_result.stderr.strip(),
+        # Doc 119 §A: if the working tree has uncommitted work, do NOT switch or
+        # silently stash behind the user's back — this is a chat app. Leave the
+        # repo exactly where it is and report a "conflict"; the turn handler
+        # surfaces it so the agent can ask the user how to proceed (commit /
+        # stash / discard / stay) and then act on their answer with git.
+        dirty = _sp.run(
+            ["git", "status", "--porcelain"],
+            cwd=workdir, capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        if dirty:
+            dirty_files = [ln[3:] for ln in dirty.splitlines()[:10]]
+            logger.info(
+                "[reconcile-branches] %s: switch %s→%s blocked by uncommitted work "
+                "(%d file(s)) — leaving as-is, asking user",
+                name, current, target, len(dirty.splitlines()),
             )
             notifications.append({
                 "repo_id": repo_id,
                 "name": name,
-                "status": "stash_failed",
+                "status": "conflict",
                 "from": current,
                 "to": target,
-                "error": stash_result.stderr.strip()[:500],
+                "dirty_files": dirty_files,
+                "dirty_count": len(dirty.splitlines()),
             })
             continue
 
-        # Try local checkout first; fall back to creating a tracking branch
-        # from origin if the branch doesn't exist locally yet.
+        # Clean tree — switch. Try a local checkout first, then fall back to
+        # creating a tracking branch from origin if it doesn't exist locally yet.
         co = _sp.run(
             ["git", "checkout", target],
             cwd=workdir, capture_output=True, text=True, timeout=15,
@@ -551,26 +611,66 @@ async def _reconcile_repo_branches() -> list[dict]:
             })
             continue
 
-        logger.info(
-            "[reconcile-branches] %s: %s → %s (stash: %s)",
-            name, current, target,
-            "yes" if "No local changes" not in stash_result.stdout else "no",
-        )
+        logger.info("[reconcile-branches] %s: %s → %s", name, current, target)
         notifications.append({
             "repo_id": repo_id,
             "name": name,
             "status": "switched",
             "from": current,
             "to": target,
-            "stashed": "No local changes" not in stash_result.stdout,
+            "stashed": False,
         })
 
     return notifications
 
 
+def _build_branch_conflict_preamble(notes: list[dict]) -> str:
+    """Build a turn-prefix that asks the user how to resolve branch conflicts.
+
+    Doc 119 §A. When _reconcile_repo_branches() reports a "conflict" (a requested
+    branch switch blocked by uncommitted work), we prepend this to the user's
+    message so the agent raises it conversationally and offers options, then acts
+    on the answer. Returns "" when there are no conflicts.
+    """
+    conflicts = [n for n in notes if n.get("status") == "conflict"]
+    if not conflicts:
+        return ""
+
+    lines = [
+        "[SYSTEM NOTICE — a workspace branch switch needs the user's decision; "
+        "nothing has been changed or discarded]",
+    ]
+    for c in conflicts:
+        files = ", ".join(c.get("dirty_files") or []) or "uncommitted changes"
+        extra = c.get("dirty_count", 0)
+        more = f" (+{extra - len(c.get('dirty_files') or [])} more)" if extra and extra > len(c.get("dirty_files") or []) else ""
+        lines.append(
+            f"- Repo `{c.get('name')}`: the user asked to switch it from "
+            f"`{c.get('from')}` to `{c.get('to')}`, but it has uncommitted work "
+            f"({files}{more}). It was left untouched on `{c.get('from')}`."
+        )
+    lines.append(
+        "Before doing anything else, briefly tell the user about this and ask how "
+        "they want to handle each repo: (1) commit the changes, then switch; "
+        "(2) stash them, then switch; (3) discard them and switch; or (4) stay on "
+        "the current branch. Then carry out their choice with git. Do not switch "
+        "or discard anything until they answer."
+    )
+    lines.append("\n--- the user's actual message follows ---\n\n")
+    return "\n".join(lines)
+
+
 async def _checkout_preferred_branch():
     """Checkout the preferred branch on startup."""
     import subprocess as _sp
+
+    # In dev-mounted mode /bond is the developer's live working tree; a
+    # fetch/checkout here would mutate (or clobber) their uncommitted edits.
+    # The mount is already live, so there's nothing to check out. (matches the
+    # contract documented on _dev_mounted())
+    if _dev_mounted():
+        logger.info("[startup] dev-mounted /bond — skipping branch checkout")
+        return
 
     # Try to get preferred branch from gateway
     target_branch = os.environ.get("BOND_GIT_BRANCH", "main")
@@ -1104,10 +1204,15 @@ async def turn(request: Request) -> StreamingResponse:
     import asyncio
     event_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
+    # The effective message can be prefixed with a branch-conflict notice once
+    # reconcile runs inside event_stream (Doc 119 §A). run_loop reads this holder
+    # at call time — after the prefix is set — so the agent sees the notice.
+    msg_holder = {"message": message}
+
     async def run_loop():
         try:
             response_text, tool_calls_made = await _run_agent_loop(
-                message, history, conversation_id, event_queue=event_queue, plan_id=plan_id,
+                msg_holder["message"], history, conversation_id, event_queue=event_queue, plan_id=plan_id,
             )
             
             # Note: Assistant message is persisted by the backend (turn_stdb.py)
@@ -1126,6 +1231,17 @@ async def turn(request: Request) -> StreamingResponse:
         async with _state.turn_lock:
             _state.active_turns += 1
         try:
+            # Doc 119 §C: heavy init runs in the background. If it hasn't finished
+            # (slow cold start under load), wait for it here rather than running a
+            # turn against half-initialized state. /health already returned ok, so
+            # the manager considers the worker up; we just hold the first turn.
+            if _state.ready is not None and not _state.ready.is_set():
+                yield _sse_event("status", {"state": "starting", "conversation_id": conversation_id})
+                try:
+                    await asyncio.wait_for(_state.ready.wait(), timeout=120.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Turn proceeding before background init finished (>120s)")
+
             yield _sse_event("status", {"state": "thinking", "conversation_id": conversation_id})
 
             # Apply user-set active_branch overrides before the turn runs.
@@ -1137,6 +1253,14 @@ async def turn(request: Request) -> StreamingResponse:
                 reconcile_notes = [{"status": "error", "error": str(e)[:500]}]
             for note in reconcile_notes:
                 yield _sse_event("repo_branch_reconcile", note)
+
+            # Doc 119 §A: when a requested branch switch is blocked by uncommitted
+            # work, reconcile leaves the repo untouched and reports a "conflict".
+            # Surface it conversationally — prefix the turn so the agent raises it
+            # with the user and offers options (commit / stash / discard / stay).
+            conflict_preamble = _build_branch_conflict_preamble(reconcile_notes)
+            if conflict_preamble:
+                msg_holder["message"] = conflict_preamble + msg_holder["message"]
 
             task = asyncio.create_task(run_loop())
             while True:
@@ -2410,8 +2534,13 @@ async def _run_agent_loop(
 
 
 
-async def _startup(config_path: str, data_dir: str) -> None:
-    """Initialize the worker on startup."""
+def _bootstrap_minimal(config_path: str, data_dir: str) -> None:
+    """Fast, local-only bootstrap (Doc 119 §C).
+
+    Runs synchronously before the HTTP port binds. Touches no network so it
+    completes in milliseconds — just enough for /health and /branch to answer
+    correctly. The expensive init is deferred to _heavy_startup().
+    """
     _state.start_time = time.time()
     _state.data_dir = Path(data_dir)
 
@@ -2450,6 +2579,13 @@ async def _startup(config_path: str, data_dir: str) -> None:
     if not os.environ.get("BOND_HOME"):
         os.environ["BOND_HOME"] = "/bond-home"
 
+
+async def _heavy_startup() -> None:
+    """Network-bound init (Doc 119 §C) — runs in the background after bind.
+
+    DB init, persistence, SpacetimeDB schema reflection and skills embedding.
+    Relies on _bootstrap_minimal() having already loaded config/agent_id.
+    """
     # Initialize agent DB
     _state.agent_db = await init_agent_db(_state.data_dir, load_vec_extension=True)
     

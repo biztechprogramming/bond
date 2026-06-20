@@ -23,7 +23,12 @@ fi
 # If the mounted SSH key authenticates to github.com, rewrite all github.com
 # HTTPS URLs to SSH form. Per-repo HTTPS configs (or missing/expired PATs) can
 # no longer silently shadow the agent's working SSH credentials.
+# Probe github SSH auth ONCE here and reuse the result for the bond-agent
+# gitconfig mirror below — the probe is a network round-trip (~1s) and running
+# it twice per boot was pure cold-start tax.
+GITHUB_SSH_OK=0
 if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    GITHUB_SSH_OK=1
     git config --global url."git@github.com:".insteadOf "https://github.com/"
     echo "[entrypoint] github.com SSH verified; HTTPS URLs rewritten to SSH."
 fi
@@ -165,15 +170,14 @@ for r in repos:
         rc = subprocess.run(["git", "fetch", "--all", "--prune"], cwd=dest, env=env).returncode
         if rc != 0:
             print(f"[entrypoint] WARN: fetch failed for {name}")
-        if active_branch:
-            rc = subprocess.run(["git", "checkout", active_branch], cwd=dest, env=env).returncode
-            if rc != 0:
-                rc = subprocess.run(
-                    ["git", "checkout", "-b", active_branch, f"origin/{active_branch}"],
-                    cwd=dest, env=env,
-                ).returncode
-            if rc != 0:
-                print(f"[entrypoint] WARN: could not checkout {active_branch} on {name}")
+        # Branch switching for an already-cloned repo is owned by the worker, not
+        # the entrypoint (Design Doc 113 §5.2, Doc 119 §A). The worker runs
+        # _reconcile_repo_branches() at each turn: it switches only when the tree
+        # is clean and, when there's uncommitted work, leaves the repo untouched
+        # and asks the user in chat how to proceed. A naive `git checkout` here
+        # aborts on a dirty tree ("Your local changes would be overwritten") and
+        # — being block-buffered behind that git stderr — made cold starts look
+        # wedged. So we deliberately do NOT switch branches here anymore.
     else:
         branch = active_branch or default_branch
         print(f"[entrypoint] Cloning {name} ({url}) into {dest}...")
@@ -333,7 +337,7 @@ fi
 # Mirror the github.com HTTPS→SSH rewrite into bond-agent's gitconfig so it
 # applies after privilege drop (the worker runs as bond-agent, not root).
 if ! grep -q 'insteadOf = https://github.com/' "$BOND_AGENT_GITCONFIG" 2>/dev/null; then
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    if [ "$GITHUB_SSH_OK" = "1" ]; then
         cat >> "$BOND_AGENT_GITCONFIG" <<'EOF'
 [url "git@github.com:"]
 	insteadOf = https://github.com/
