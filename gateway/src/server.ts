@@ -232,9 +232,19 @@ export function startGatewayServer(config: GatewayConfig): GatewayServer {
   async function resolveWorkerUrl(agentId?: string): Promise<{ workerUrl: string | null; workerToken: string | null; containerId: string }> {
     if (!agentId) return { workerUrl: null, workerToken: null, containerId: "default" };
     try {
+      // Short timeout to avoid a startup deadlock: the worker calls
+      // GET /container/branch *during its own lifespan boot*, and /agent/resolve
+      // re-enters ensure_running() — which is already holding this agent's lock
+      // waiting for that very worker to become healthy. Without a timeout this
+      // hangs the full worker-side 5s and adds it to every cold start. Failing
+      // fast just means we report branch preference without live worker status
+      // (correct: the worker isn't accepting yet). See Doc 119 §cold-start.
+      const controller = new AbortController();
+      const resolveTimeout = setTimeout(() => controller.abort(), 700);
       const resp = await fetch(`${config.backendUrl}/api/v1/agent/resolve?agent_id=${encodeURIComponent(agentId)}`, {
         headers: { "Authorization": `Bearer ${config.apiKey}` },
-      });
+        signal: controller.signal,
+      }).finally(() => clearTimeout(resolveTimeout));
       if (resp.ok) {
         const resolved = await resp.json();
         if (resolved.mode === "container" && resolved.worker_url) {

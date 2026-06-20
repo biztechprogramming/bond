@@ -41,6 +41,15 @@ from backend.app.sandbox.workspace_cloner import (
 
 logger = logging.getLogger("bond.sandbox.manager")
 
+# Health-check budget when we expect a worker to ALREADY be up: recovering a
+# container after a bond-bond restart, or re-checking one we think is running.
+# Such a worker either answers /health in well under a second or it's dead —
+# there's no "still booting" state to wait out, so a long timeout just stalls
+# the first turn (a stale-but-running container used to cost a full 60s here
+# before we gave up and recreated). Fresh container creates keep the longer
+# default timeout in _wait_for_health, since those genuinely need boot time.
+_RECOVERED_HEALTH_TIMEOUT = 5.0
+
 
 class SandboxManager:
     """Manages persistent Docker containers for agent code execution.
@@ -257,7 +266,8 @@ class SandboxManager:
 
         try:
             await self._wait_for_health(
-                worker_url, agent_id, container_id, timeout=60.0, host_id="local",
+                worker_url, agent_id, container_id,
+                timeout=_RECOVERED_HEALTH_TIMEOUT, host_id="local",
             )
         except RuntimeError:
             logger.warning("Recovered container %s unhealthy, removing", key)
@@ -397,7 +407,8 @@ class SandboxManager:
                 elif await self._is_running(cid, host_id):
                     try:
                         await self._wait_for_health(
-                            worker_url, agent_id, cid, timeout=60.0, host_id=host_id,
+                            worker_url, agent_id, cid,
+                            timeout=_RECOVERED_HEALTH_TIMEOUT, host_id=host_id,
                         )
                         self._containers[key]["last_used"] = time.time()
                         return {"worker_url": worker_url, "container_id": cid}

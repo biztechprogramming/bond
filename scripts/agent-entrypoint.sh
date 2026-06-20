@@ -23,7 +23,12 @@ fi
 # If the mounted SSH key authenticates to github.com, rewrite all github.com
 # HTTPS URLs to SSH form. Per-repo HTTPS configs (or missing/expired PATs) can
 # no longer silently shadow the agent's working SSH credentials.
+# Probe github SSH auth ONCE here and reuse the result for the bond-agent
+# gitconfig mirror below — the probe is a network round-trip (~1s) and running
+# it twice per boot was pure cold-start tax.
+GITHUB_SSH_OK=0
 if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    GITHUB_SSH_OK=1
     git config --global url."git@github.com:".insteadOf "https://github.com/"
     echo "[entrypoint] github.com SSH verified; HTTPS URLs rewritten to SSH."
 fi
@@ -333,7 +338,7 @@ fi
 # Mirror the github.com HTTPS→SSH rewrite into bond-agent's gitconfig so it
 # applies after privilege drop (the worker runs as bond-agent, not root).
 if ! grep -q 'insteadOf = https://github.com/' "$BOND_AGENT_GITCONFIG" 2>/dev/null; then
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    if [ "$GITHUB_SSH_OK" = "1" ]; then
         cat >> "$BOND_AGENT_GITCONFIG" <<'EOF'
 [url "git@github.com:"]
 	insteadOf = https://github.com/

@@ -233,7 +233,15 @@ export class BranchManager {
     const targetUrl = workerUrl || this.workerUrl;
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
+      // Short timeout on purpose. A live worker answers /branch in well under
+      // 100ms; the only time this stalls is when the worker is mid-startup and
+      // not yet accepting — which happens on EVERY cold start, because the
+      // worker itself calls GET /container/branch during its lifespan boot and
+      // this callback races against a server that isn't listening yet. A 3s
+      // wait there added ~3-5s to every agent cold start. "Offline" is the
+      // correct answer during that window, so fail fast and return it.
+      const controller_timeout_ms = 1000;
+      const timeout = setTimeout(() => controller.abort(), controller_timeout_ms);
 
       const headers: Record<string, string> = {};
       if (workerToken) headers["Authorization"] = `Bearer ${workerToken}`;
