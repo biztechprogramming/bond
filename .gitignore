@@ -53,3 +53,7 @@ workspace-state.json
 gateway/data/whatsapp-auth/*.json
 gateway/data/integrations.json
 gateway/data/channels.json
+
+# Claude Code local tooling (per-machine settings + lock files, not shared)
+.claude/settings.local.json
+.claude/*.lock
