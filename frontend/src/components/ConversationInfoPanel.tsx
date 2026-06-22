@@ -8,6 +8,14 @@ interface BranchInfo {
   lastCommit: string;
 }
 
+interface AgentRepo {
+  id: string;
+  name: string;
+  default_branch: string;
+  active_branch: string;   // user-desired target (what reconcile will check out)
+  observed_branch: string; // heartbeat-observed actual branch
+}
+
 interface BranchStatus {
   container_id: string;
   branch: string;
@@ -48,6 +56,11 @@ export default function ConversationInfoPanel({
   const [reloading, setReloading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingBranch, setPendingBranch] = useState<string | null>(null);
+  // Per-repo workspace branch state (Design Doc 120).
+  const [repos, setRepos] = useState<AgentRepo[]>([]);
+  const [repoBranches, setRepoBranches] = useState<Record<string, BranchInfo[]>>({});
+  const [openRepoId, setOpenRepoId] = useState<string | null>(null);
+  const [repoSwitching, setRepoSwitching] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const branchRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +111,63 @@ export default function ConversationInfoPanel({
       }
     } catch { /* ignore */ }
   }, []);
+
+  // ── Workspace repos (Design Doc 120) ───────────────────────────────────
+  // Each agent_repo carries a user-desired active_branch and a heartbeat-
+  // observed observed_branch. The list lives in SpacetimeDB; we read it via the
+  // backend REST endpoint and refresh on turn boundaries (when reconcile runs).
+  const fetchRepos = useCallback(async () => {
+    if (!agentId) { setRepos([]); return; }
+    try {
+      const resp = await apiFetch(`${BACKEND_API}/agents/${encodeURIComponent(agentId)}/repos`);
+      if (resp.ok) setRepos(await resp.json());
+    } catch { /* ignore */ }
+  }, [agentId]);
+
+  // Lazily fetch one repo's branch list when its picker opens (proxies to the
+  // worker, which is where the repo is mounted).
+  const fetchRepoBranches = useCallback(async (repoId: string) => {
+    if (!agentId) return;
+    try {
+      const resp = await apiFetch(
+        `${BACKEND_API}/agents/${encodeURIComponent(agentId)}/repos/${encodeURIComponent(repoId)}/branches`,
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        const list = (data.branches || []) as Array<{ name: string; lastCommit: string }>;
+        setRepoBranches((m) => ({ ...m, [repoId]: list.map((b) => ({ name: b.name, lastCommit: b.lastCommit })) }));
+      }
+    } catch { /* ignore */ }
+  }, [agentId]);
+
+  // Set a repo's desired branch. The worker's turn-boundary reconcile does the
+  // actual checkout (or asks the user in chat if the tree is dirty); we just
+  // record the intent here, so this never touches the working tree directly.
+  const switchRepoBranch = useCallback(async (repoId: string, branch: string) => {
+    if (!agentId || repoSwitching) return;
+    setRepoSwitching(repoId);
+    setActionError(null);
+    try {
+      const resp = await apiFetch(
+        `${BACKEND_API}/agents/${encodeURIComponent(agentId)}/repos/${encodeURIComponent(repoId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ active_branch: branch }),
+        },
+      );
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        setActionError(data.detail || `Set branch failed (${resp.status})`);
+      } else {
+        await fetchRepos();
+      }
+    } catch (e) {
+      setActionError(`Set branch failed: ${(e as Error).message}`);
+    }
+    setRepoSwitching(null);
+    setOpenRepoId(null);
+  }, [agentId, repoSwitching, fetchRepos]);
 
   // Pull the worker's /bond to latest of its current branch (Design Doc 116 §3.7).
   const doPull = useCallback(async () => {
@@ -174,12 +244,23 @@ export default function ConversationInfoPanel({
     if (branchDropdownOpen) fetchBranches();
   }, [branchDropdownOpen, fetchBranches]);
 
+  // Refresh the repo list when the panel opens and after each turn (reconcile
+  // runs at turn boundaries, so observed_branch may have just changed).
+  useEffect(() => {
+    if (expanded) fetchRepos();
+  }, [expanded, fetchRepos, turnCompleted, branchChangedSignal]);
+
+  useEffect(() => {
+    if (openRepoId) fetchRepoBranches(openRepoId);
+  }, [openRepoId, fetchRepoBranches]);
+
   // Close panel on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         setExpanded(false);
         setBranchDropdownOpen(false);
+        setOpenRepoId(null);
       }
     };
     document.addEventListener("mousedown", handler);
@@ -531,6 +612,148 @@ export default function ConversationInfoPanel({
               )}
             </div>
           </div>
+
+          {/* Section: Workspace repos (Design Doc 120) — per-repo branch view + picker */}
+          {repos.length > 0 && (
+            <div style={sectionStyle}>
+              <div style={labelStyle}>Workspace repos</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {repos.map((repo) => {
+                  // "unknown" is the schema sentinel default (see Doc 120 §5.1);
+                  // treat it and "" as "not yet observed".
+                  const observedRaw = repo.observed_branch === "unknown" ? "" : repo.observed_branch;
+                  const observed = observedRaw || "—";
+                  const desired = (repo.active_branch || "").trim();
+                  // Desired differs from observed → a switch is queued for the next
+                  // turn (or blocked by uncommitted work, in which case the agent
+                  // asks in chat). We can't yet tell those apart here, so label it
+                  // honestly as pending.
+                  const pending =
+                    !!desired &&
+                    !!observedRaw &&
+                    !observedRaw.startsWith("detached:") &&
+                    desired !== observedRaw;
+                  const isOpen = openRepoId === repo.id;
+                  const list = repoBranches[repo.id] || [];
+                  return (
+                    <div key={repo.id} style={{ position: "relative" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span
+                          title={repo.name}
+                          style={{
+                            fontSize: "0.74rem",
+                            color: "#8888a0",
+                            minWidth: "64px",
+                            maxWidth: "96px",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {repo.name}
+                        </span>
+                        <button
+                          onClick={() => setOpenRepoId(isOpen ? null : repo.id)}
+                          disabled={!agentId || repoSwitching === repo.id}
+                          style={{
+                            backgroundColor: "#1e1e2e",
+                            borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
+                            borderRadius: "6px",
+                            padding: "4px 10px",
+                            color: "#e0e0e8",
+                            fontSize: "0.78rem",
+                            cursor: !agentId ? "not-allowed" : "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            fontFamily: "monospace",
+                            flex: 1,
+                            minWidth: 0,
+                            opacity: !agentId ? 0.55 : 1,
+                          }}
+                        >
+                          <span style={{ fontSize: "0.78rem" }}>🔀</span>
+                          <span style={{ flex: 1, textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {observed}
+                          </span>
+                          {pending && (
+                            <span
+                              title={`Switching to ${desired} — applies on the next message, or the agent will ask if there are uncommitted changes`}
+                              style={{ fontSize: "0.68rem", color: "#ffa06c", flexShrink: 0 }}
+                            >
+                              ⏳ {desired}
+                            </span>
+                          )}
+                          {repoSwitching === repo.id && (
+                            <span style={{ fontSize: "0.68rem", color: "#ffa06c" }}>…</span>
+                          )}
+                          <span style={{ fontSize: "0.6rem", color: "#5a5a6e", flexShrink: 0 }}>{isOpen ? "▲" : "▼"}</span>
+                        </button>
+                      </div>
+
+                      {isOpen && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "calc(100% + 4px)",
+                            left: 0,
+                            right: 0,
+                            minWidth: "180px",
+                            backgroundColor: "#1e1e2e",
+                            borderWidth: "1px", borderStyle: "solid", borderColor: "#2a2a3e",
+                            borderRadius: "8px",
+                            overflow: "hidden",
+                            zIndex: 160,
+                            boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+                            maxHeight: "240px",
+                            overflowY: "auto",
+                          }}
+                        >
+                          {list.length === 0 && (
+                            <div style={{ padding: "10px 14px", color: "#5a5a6e", fontSize: "0.76rem" }}>
+                              Loading…
+                            </div>
+                          )}
+                          {list.map((b) => {
+                            const isCurrent = b.name === observedRaw;
+                            const isDesired = b.name === desired;
+                            return (
+                              <div
+                                key={b.name}
+                                onClick={() => !isDesired && switchRepoBranch(repo.id, b.name)}
+                                style={{
+                                  padding: "8px 14px",
+                                  cursor: isDesired ? "default" : "pointer",
+                                  fontSize: "0.78rem",
+                                  fontFamily: "monospace",
+                                  color: isCurrent ? "#6c8aff" : "#e0e0e8",
+                                  backgroundColor: isCurrent ? "#12121a" : "transparent",
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (!isDesired) (e.currentTarget as HTMLElement).style.backgroundColor = "#2a2a3e";
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isDesired) (e.currentTarget as HTMLElement).style.backgroundColor = isCurrent ? "#12121a" : "transparent";
+                                }}
+                              >
+                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.name}</span>
+                                {isCurrent && <span style={{ color: "#6c8aff", fontSize: "0.66rem", flexShrink: 0 }}>current</span>}
+                                {!isCurrent && isDesired && <span style={{ color: "#ffa06c", fontSize: "0.66rem", flexShrink: 0 }}>queued</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Section: Worker */}
           <div style={sectionStyle}>

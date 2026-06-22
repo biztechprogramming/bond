@@ -102,6 +102,7 @@ def _row_to_dict(row: dict) -> dict:
         "name": row["name"],
         "default_branch": row["default_branch"],
         "active_branch": row["active_branch"] or "",
+        "observed_branch": row.get("observed_branch") or "",
         "credential_id": row["credential_id"] or "",
         "last_synced_at": int(row["last_synced_at"]) if row.get("last_synced_at") else 0,
         "created_at": int(row.get("created_at") or 0),
@@ -150,10 +151,13 @@ async def create_repo(agent_id: str, body: RepoCreate):
     repo_id = str(ULID())
     now = int(time.time() * 1000)
 
+    # observed_branch starts empty (repo not cloned/observed yet). Writing ''
+    # via SQL is fine — the SDK's falsy-default quirk only affects the schema's
+    # column annotation, not row writes (Doc 120 §5.1).
     await stdb.query(f"""
         INSERT INTO agent_repos (
             id, agent_id, url, name, default_branch, active_branch, credential_id,
-            last_synced_at, created_at, updated_at
+            last_synced_at, created_at, updated_at, observed_branch
         ) VALUES (
             '{repo_id}',
             '{agent_id}',
@@ -164,7 +168,8 @@ async def create_repo(agent_id: str, body: RepoCreate):
             '{_escape_sql(body.credential_id)}',
             0,
             {now},
-            {now}
+            {now},
+            ''
         )
     """)
 
@@ -225,10 +230,12 @@ class BranchHeartbeat(BaseModel):
 
 @router.post("/{agent_id}/repos/{repo_id}/branch")
 async def report_branch(agent_id: str, repo_id: str, body: BranchHeartbeat):
-    """Worker → bond: the agent's current branch on this repo (Phase 2).
+    """Worker → bond: the agent's OBSERVED current branch on this repo.
 
-    Updates active_branch and last_synced_at. Idempotent — calling with the
-    same branch repeatedly only bumps last_synced_at.
+    Writes observed_branch (the heartbeat's view of reality), NOT active_branch
+    (the user's desired target). Keeping them separate (Doc 120 §3) stops the
+    heartbeat from clobbering a requested switch that's blocked by a dirty tree.
+    Updates last_synced_at; idempotent — same branch only bumps the timestamp.
     """
     stdb = get_stdb()
     rows = await stdb.query(
@@ -244,12 +251,41 @@ async def report_branch(agent_id: str, repo_id: str, body: BranchHeartbeat):
     now = int(time.time() * 1000)
     await stdb.query(
         f"UPDATE agent_repos SET "
-        f"active_branch = '{_escape_sql(branch)}', "
+        f"observed_branch = '{_escape_sql(branch)}', "
         f"last_synced_at = {now}, "
         f"updated_at = {now} "
         f"WHERE id = '{repo_id}'"
     )
     return {"success": True, "branch": branch, "last_synced_at": now}
+
+
+@router.get("/{agent_id}/repos/{repo_id}/branches")
+async def list_repo_branches(agent_id: str, repo_id: str):
+    """List a workspace repo's branches for the UI picker (Doc 120 §5.3).
+
+    Proxies to the agent's worker, which is the only place the repo is mounted.
+    Returns {"branches": [...], "current": "..."} on success. If no container is
+    running, returns an empty list rather than erroring — the picker just falls
+    back to free-text entry.
+    """
+    rows = await get_stdb().query(
+        f"SELECT id FROM agent_repos WHERE id = '{repo_id}' AND agent_id = '{agent_id}'"
+    )
+    if not rows:
+        raise HTTPException(404, "Repo not found for this agent")
+
+    # _call_worker lives in agents.py alongside _get_running_worker; reuse it.
+    from backend.app.api.v1.agents import _call_worker
+
+    status, payload = await _call_worker(
+        agent_id, "GET", f"/repos/{repo_id}/branches", timeout=15.0
+    )
+    if status == 503:
+        # No running worker — the picker degrades to free-text.
+        return {"branches": [], "current": "", "online": False}
+    if status >= 400:
+        raise HTTPException(status, payload.get("detail", "Could not list branches"))
+    return {**payload, "online": True}
 
 
 @router.delete("/{agent_id}/repos/{repo_id}")

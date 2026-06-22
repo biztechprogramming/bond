@@ -79,11 +79,19 @@ const spacetimedb = schema({
       url: t.string(), // canonical clone URL (ssh or https)
       name: t.string(), // mount name; container path = /workspace/{name}
       defaultBranch: t.string(), // resolved from HEAD on first clone
-      activeBranch: t.string(), // current branch the agent has checked out
+      activeBranch: t.string(), // user-DESIRED branch; reconcile checks this out at turn start
       credentialId: t.string(), // FK to git_credentials; empty = resolve by host_pattern
       lastSyncedAt: t.u64(), // 0 = never synced
       createdAt: t.u64(),
       updatedAt: t.u64(),
+      // Appended (not inserted) so the column order is unchanged — SpacetimeDB
+      // treats a mid-table insert as a reorder, which needs a manual migration.
+      // Default is "unknown", NOT "": the SDK omits falsy defaults from the
+      // module schema (index.mjs `if (meta.defaultValue)`), so an empty-string
+      // default fails the ADD COLUMN migration ("requires a default value
+      // annotation"). The sentinel only lands on rows that exist at migration
+      // time and is overwritten within one heartbeat tick (Doc 120 §3).
+      observedBranch: t.string().default("unknown"), // heartbeat-OBSERVED actual branch
     }
   ),
 

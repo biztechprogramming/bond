@@ -444,16 +444,12 @@ async def _branch_heartbeat_loop():
                 if last_seen.get(repo_id) == branch:
                     continue  # unchanged
 
-                # Baseline (first observation): record without posting. The
-                # entrypoint already aligned local to whatever active_branch was
-                # at container start, so a redundant POST here would race with
-                # any user-set target the user changed between entrypoint exit
-                # and the first heartbeat tick (Design Doc 113 §5.2).
-                if repo_id not in last_seen:
-                    last_seen[repo_id] = branch
-                    continue
-
-                # Report
+                # Report. This now writes observed_branch (Doc 120 §3), a column
+                # distinct from the user-desired active_branch, so the old
+                # baseline-skip (Doc 113 §5.2 — added to avoid clobbering a
+                # user-set target) is no longer needed: posting the first
+                # observation can't overwrite the user's request. Posting the
+                # baseline means the UI shows the real branch immediately.
                 try:
                     resp = await client.post(
                         f"{bond_api_url}/api/v1/agents/{agent_id}/repos/{repo_id}/branch",
@@ -1064,6 +1060,70 @@ async def fetch_endpoint():
         branches.append({"name": name, "sha": sha, "lastCommit": last_commit})
 
     return {"branches": branches}
+
+
+@app.get("/repos/{repo_id}/branches")
+async def repo_branches(repo_id: str):
+    """List the branches of one workspace repo (Design Doc 120 §5.2).
+
+    Resolves the repo's /workspace/{name} dir from /config/repos.json and
+    returns its known branches (local heads + remote-tracking refs), most
+    recently committed first. Read-only: no fetch, no working-tree change, so
+    it's safe to call while the agent is busy. Only the worker container has
+    the repos mounted, so this can't live on the backend.
+    """
+    import subprocess as _sp
+
+    repos_config_path = Path("/config/repos.json")
+    if not repos_config_path.is_file():
+        return JSONResponse(status_code=404, content={"detail": "no repos configured"})
+
+    try:
+        cfg = json.loads(repos_config_path.read_text())
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": f"could not read repos config: {e}"})
+
+    name = ""
+    for repo in cfg.get("repos", []):
+        if repo.get("id") == repo_id:
+            name = repo.get("name") or ""
+            break
+    if not name:
+        return JSONResponse(status_code=404, content={"detail": "repo not found"})
+
+    workdir = Path("/workspace") / name
+    if not (workdir / ".git").is_dir():
+        return JSONResponse(status_code=409, content={"detail": "repo not cloned yet"})
+
+    current = _sp.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=workdir, capture_output=True, text=True, timeout=5,
+    ).stdout.strip()
+
+    listing = _sp.run(
+        [
+            "git", "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short) %(objectname:short) %(committerdate:iso8601)",
+            "refs/heads", "refs/remotes/origin",
+        ],
+        cwd=workdir, capture_output=True, text=True, timeout=10,
+    )
+    branches: list[dict] = []
+    seen: set[str] = set()
+    for line in (listing.stdout or "").splitlines():
+        parts = line.strip().split(" ", 2)
+        if len(parts) < 2:
+            continue
+        ref, sha = parts[0], parts[1]
+        last_commit = parts[2] if len(parts) > 2 else ""
+        bname = ref[len("origin/"):] if ref.startswith("origin/") else ref
+        if bname == "HEAD" or bname in seen:
+            continue
+        seen.add(bname)
+        branches.append({"name": bname, "sha": sha, "lastCommit": last_commit})
+
+    return {"branches": branches, "current": current}
 
 
 

@@ -53,6 +53,7 @@ export const AgentRepos = __t.object("AgentRepos", {
   lastSyncedAt: __t.u64(),
   createdAt: __t.u64(),
   updatedAt: __t.u64(),
+  observedBranch: __t.string(),
 });
 export type AgentRepos = __Infer<typeof AgentRepos>;
 
