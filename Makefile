@@ -72,8 +72,16 @@ lint:
 # Run migrations (tries local first, falls back to Docker)
 # Usage: make migrate              — run all pending up migrations
 #        make migrate VERSION=30   — force migration to version 30 (must be within ±3/+2 of current)
+#
+# Prefer the v2.2.0 CLI when installed: prod SpacetimeDB is v2.2.0, and the
+# bare `spacetime` on PATH may be an older build (e.g. 2.0.2) that REGENERATES
+# the TypeScript bindings in a pre-2.2.0 format (no `accessor:` on indexes),
+# which then fails `next build`. Falls back to plain `spacetime` if the pinned
+# binary isn't present (Doc 120 §5.1).
 migrate:
-	@./scripts/migrate.sh $(ARGS)
+	@BIN="$(HOME)/.local/bin/spacetime-2.2.0"; \
+		[ -x "$$BIN" ] && export SPACETIME_BIN="$$BIN"; \
+		./scripts/migrate.sh $(ARGS)
 
 # Publish to the staging SpacetimeDB (docker-compose.spacetimedb-next.yml).
 # Uses the v2.2.0 CLI; for `spacetime generate` to work it requires the

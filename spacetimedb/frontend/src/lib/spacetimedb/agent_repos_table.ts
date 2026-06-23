@@ -21,4 +21,5 @@ export default __t.row({
   lastSyncedAt: __t.u64().name("last_synced_at"),
   createdAt: __t.u64().name("created_at"),
   updatedAt: __t.u64().name("updated_at"),
+  observedBranch: __t.string().name("observed_branch"),
 });
