@@ -62,6 +62,20 @@ else
     echo "[entrypoint] Pull complete."
 fi
 
+# Check out the vendored skill submodules (Design Doc 047). A plain `git clone`
+# / `git reset` leaves vendor/skills/* as empty gitlinks, which silently breaks
+# L2 skill activation: the skills tool reads SKILL.md from
+# /bond/vendor/skills/<repo>/... (cwd is /bond), so an empty checkout makes
+# every vendored skill un-activatable. --init registers the submodules first
+# (they are absent from a fresh clone's .git/config); we check out the pinned
+# commit here (not --remote) — advancing to upstream latest is the daily
+# sync_skills job's responsibility, not the cold-start path.
+if [ "${BOND_DEV_SKIP_GIT:-}" != "1" ] && [ -d /bond/.git ]; then
+    echo "[entrypoint] Initializing skill submodules..."
+    (cd /bond && git submodule update --init --recursive vendor/skills/) || \
+        echo "[entrypoint] WARN: skill submodule init failed — vendored skills may be unavailable."
+fi
+
 # --- Agent repos (Design Doc 113) ---
 # Read /config/repos.json (written by the host adapter) and clone each repo
 # into /workspace/{name}, fetching on subsequent runs. Supports both HTTPS

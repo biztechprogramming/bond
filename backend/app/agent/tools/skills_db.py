@@ -94,9 +94,10 @@ _MIGRATIONS = [
 ]
 
 
-async def _get_db() -> aiosqlite.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    db = await aiosqlite.connect(str(DB_PATH))
+async def _get_db(db_path: Path | None = None) -> aiosqlite.Connection:
+    path = Path(db_path) if db_path is not None else DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = await aiosqlite.connect(str(path))
     db.row_factory = aiosqlite.Row
     await db.executescript(_SCHEMA)
     # Run migrations for columns that may not exist in older databases
@@ -113,8 +114,15 @@ async def _get_db() -> aiosqlite.Connection:
 # Indexing
 # ---------------------------------------------------------------------------
 
-async def index_skills_from_json(catalog_path: str | Path) -> int:
+async def index_skills_from_json(
+    catalog_path: str | Path, db_path: Path | None = None
+) -> int:
     """Load a skills.json catalog into the skill_index table.
+
+    When ``db_path`` is given, index into that database instead of the default
+    ``DB_PATH``. The periodic sync job uses this to write the catalog to the
+    shared agent-data database that gets bind-mounted into agent containers,
+    rather than the indexer process's own (unmounted) data dir.
 
     Returns the number of skills indexed.
     """
@@ -122,7 +130,7 @@ async def index_skills_from_json(catalog_path: str | Path) -> int:
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     now = time.time()
 
-    db = await _get_db()
+    db = await _get_db(db_path)
     try:
         # Clear and re-insert (full reindex)
         await db.execute("DELETE FROM skill_index")
