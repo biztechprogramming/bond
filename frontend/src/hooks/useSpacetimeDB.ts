@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAvailableModels, getSettings, getProviderApiKeys, getProviders, getMcpServers, getResources, getComponents, getEnvironments, getComponentResources, getAlerts, getResourceEnvironments, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow, type SettingRow, type ProviderApiKeyRow, type ProviderRow, type McpServerRow, type ResourceRow, type ComponentRow, type EnvironmentRow, type ComponentResourceRow, type AlertRow, type ResourceEnvironmentRow } from '@/lib/spacetimedb-client';
+import { onDataChange, getConnection, getConversations, getWorkPlans, getWorkItems, getAgents, getAgentChannels, getAgentMounts, getAgentRepos, getAvailableModels, getSettings, getProviderApiKeys, getProviders, getMcpServers, getResources, getComponents, getEnvironments, getComponentResources, getAlerts, getResourceEnvironments, type Conversation, type WorkPlan, type WorkItem, type AgentRow, type AgentChannelRow, type AgentMountRow, type AgentRepoRow, type SettingRow, type ProviderApiKeyRow, type ProviderRow, type McpServerRow, type ResourceRow, type ComponentRow, type EnvironmentRow, type ComponentResourceRow, type AlertRow, type ResourceEnvironmentRow } from '@/lib/spacetimedb-client';
 
 /**
  * useSpacetimeDB React hook.
@@ -86,6 +86,13 @@ export function useAgentChannels(agentId: string): AgentChannelRow[] {
  */
 export function useAgentMounts(agentId: string): AgentMountRow[] {
   return useSpacetimeDB(() => getAgentMounts(agentId), [agentId]);
+}
+
+/**
+ * Hook to get repos for an agent from SpacetimeDB with live updates.
+ */
+export function useAgentRepos(agentId: string): AgentRepoRow[] {
+  return useSpacetimeDB(() => getAgentRepos(agentId), [agentId]);
 }
 
 /**
