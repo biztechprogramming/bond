@@ -36,14 +36,19 @@ backend:
 	set -a && . ./.env && set +a && \
 	uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 18790 --reload
 
+NVM_NODE_BIN := $(HOME)/.nvm/versions/node/$(shell ls $(HOME)/.nvm/versions/node/ 2>/dev/null | sort -V | tail -1)/bin
+export PATH := $(NVM_NODE_BIN):$(PATH)
+
+PKG_MANAGER := $(shell python3 -c "import json; print(json.load(open('$(HOME)/.bond/config.json')).get('package_manager', 'pnpm'))" 2>/dev/null || echo "pnpm")
+
 # Gateway (TypeScript WebSocket server)
 gateway:
 	set -a && . ./.env && set +a && \
-	cd gateway && pnpm dev
+	cd gateway && $(PKG_MANAGER) dev
 
 # Frontend (Next.js)
 frontend:
-	cd frontend && pnpm dev --hostname 0.0.0.0
+	cd frontend && $(PKG_MANAGER) dev --hostname 0.0.0.0
 
 # First-run setup wizard
 setup:
@@ -60,14 +65,14 @@ install:
 # Run tests
 test:
 	uv run pytest
-	cd gateway && pnpm test
-	cd frontend && pnpm test
+	cd gateway && $(PKG_MANAGER) test
+	cd frontend && $(PKG_MANAGER) test
 
 # Lint
 lint:
 	uv run ruff check backend/
-	cd gateway && pnpm lint
-	cd frontend && pnpm lint
+	cd gateway && $(PKG_MANAGER) lint
+	cd frontend && $(PKG_MANAGER) lint
 
 # Run migrations (tries local first, falls back to Docker)
 # Usage: make migrate              — run all pending up migrations
