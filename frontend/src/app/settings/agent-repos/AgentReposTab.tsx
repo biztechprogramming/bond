@@ -52,6 +52,12 @@ function deriveName(url: string): string {
     const idx = s.lastIndexOf(sep);
     if (idx >= 0) s = s.slice(idx + 1);
   }
+  // decode percent-encoding (e.g. Approval%20Ace → Approval Ace)
+  try { s = decodeURIComponent(s); } catch { /* leave as-is if malformed */ }
+  // replace invalid chars (spaces, %, etc.) with hyphens
+  s = s.replace(/[^A-Za-z0-9_.-]+/g, "-");
+  // strip leading chars that would fail mount name validation
+  s = s.replace(/^[^A-Za-z0-9]+/, "");
   return s || "repo";
 }
 
