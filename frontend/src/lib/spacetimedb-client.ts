@@ -374,6 +374,19 @@ export interface AgentMountRow {
   readonly: boolean;
 }
 
+export interface AgentRepoRow {
+  id: string;
+  agentId: string;
+  url: string;
+  name: string;
+  defaultBranch: string;
+  activeBranch: string;
+  credentialId: string;
+  lastSyncedAt: bigint | number;
+  createdAt: bigint | number;
+  updatedAt: bigint | number;
+}
+
 export interface LlmModelRow {
   id: string;
   provider: string;
@@ -417,6 +430,17 @@ export function getAgentMounts(agentId: string): AgentMountRow[] {
     const m = row as unknown as AgentMountRow;
     if (m.agentId === agentId) rows.push(m);
   }
+  return rows;
+}
+
+export function getAgentRepos(agentId: string): AgentRepoRow[] {
+  if (!db || !(db.db as any).agent_repos) return [];
+  const rows: AgentRepoRow[] = [];
+  for (const row of (db.db as any).agent_repos.iter()) {
+    const repo = row as unknown as AgentRepoRow;
+    if (repo.agentId === agentId) rows.push(repo);
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name));
   return rows;
 }
 
