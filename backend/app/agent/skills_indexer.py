@@ -15,7 +15,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
-_YAML_KV_RE = re.compile(r'^(\w[\w-]*):\s*(.+)$', re.MULTILINE)
+_YAML_KV_RE = re.compile(r'^(\w[\w-]*):\s*(.*)$', re.MULTILINE)
+_BLOCK_SCALAR_RE = re.compile(r'^([|>])[-+]?\s*$')
 
 
 def parse_frontmatter(text: str) -> dict[str, str]:
@@ -23,11 +24,42 @@ def parse_frontmatter(text: str) -> dict[str, str]:
     if not m:
         return {}
     block = m.group(1)
+    lines = block.splitlines()
     result: dict[str, str] = {}
-    for kv in _YAML_KV_RE.finditer(block):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        kv = re.match(r'^(\w[\w-]*):\s*(.*)$', line)
+        if not kv:
+            i += 1
+            continue
         key = kv.group(1)
-        val = kv.group(2).strip().strip('"').strip("'")
-        result[key] = val
+        val = kv.group(2).strip()
+        if _BLOCK_SCALAR_RE.match(val):
+            # Collect indented block lines
+            i += 1
+            indent = None
+            block_lines = []
+            while i < len(lines):
+                bl = lines[i]
+                if bl == '' or bl.startswith(' ') or bl.startswith('\t'):
+                    if bl.strip() == '':
+                        block_lines.append('')
+                    else:
+                        stripped = bl.lstrip()
+                        if indent is None:
+                            indent = len(bl) - len(stripped)
+                        block_lines.append(bl[indent:] if indent else stripped)
+                    i += 1
+                else:
+                    break
+            # Strip trailing empty lines for |- style
+            while block_lines and block_lines[-1] == '':
+                block_lines.pop()
+            result[key] = '\n'.join(block_lines)
+        else:
+            result[key] = val.strip('"').strip("'")
+            i += 1
     return result
 
 
