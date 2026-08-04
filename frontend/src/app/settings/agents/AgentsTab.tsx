@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import DirBrowser from "@/components/shared/DirBrowser";
 import { BACKEND_API , apiFetch } from "@/lib/config";
 import { useAvailableModels, useSpacetimeDB } from "@/hooks/useSpacetimeDB";
-import { getAgents as getAgentRows, getAgentChannels, getAgentMounts, getConnection } from "@/lib/spacetimedb-client";
+import { getAgents as getAgentRows, getAgentChannels, getAgentMounts, getAgentRepos, getConnection } from "@/lib/spacetimedb-client";
 import { randomId } from "@/lib/random-id";
 import AgentReposTab from "../agent-repos/AgentReposTab";
 
@@ -25,6 +25,14 @@ interface ChannelConfig {
   sandbox_override: string | null;
 }
 
+interface AgentRepoSummary {
+  id: string;
+  name: string;
+  url: string;
+  default_branch: string;
+  active_branch: string;
+}
+
 interface Agent {
   id: string;
   name: string;
@@ -41,6 +49,7 @@ interface Agent {
   is_active: boolean;
   workspace_mounts: WorkspaceMount[];
   channels: ChannelConfig[];
+  repos: AgentRepoSummary[];
 }
 
 // Fallbacks if the API is unreachable
@@ -56,6 +65,7 @@ function mapAgentRows(agentRows: import("@/lib/spacetimedb-client").AgentRow[]):
   return agentRows.map((a) => {
     const channels = getAgentChannels(a.id);
     const mounts = getAgentMounts(a.id);
+    const repos = getAgentRepos(a.id);
     let tools: string[] = [];
     try { tools = JSON.parse(a.tools || "[]"); } catch { tools = []; }
     return {
@@ -84,6 +94,13 @@ function mapAgentRows(agentRows: import("@/lib/spacetimedb-client").AgentRow[]):
         channel: c.channel,
         enabled: c.enabled,
         sandbox_override: c.sandboxOverride || null,
+      })),
+      repos: repos.map((repo) => ({
+        id: repo.id,
+        name: repo.name,
+        url: repo.url,
+        default_branch: repo.defaultBranch,
+        active_branch: repo.activeBranch,
       })),
     };
   });
@@ -584,6 +601,7 @@ export default function AgentsTab() {
     is_active: true,
     workspace_mounts: [],
     channels: [{ channel: "webchat", enabled: true, sandbox_override: null }],
+    repos: [],
   });
 
   const startCreate = () => {
@@ -836,6 +854,9 @@ export default function AgentsTab() {
                 <div style={styles.cardMeta}>{agent.model}</div>
                 <div style={styles.cardMeta}>
                   Channels: {agent.channels?.map((c) => c.channel).join(", ") || "none"}
+                </div>
+                <div style={styles.cardMeta}>
+                  Repos: {agent.repos.length > 0 ? agent.repos.map((repo) => repo.name).join(", ") : "none"}
                 </div>
               </div>
             ))}
