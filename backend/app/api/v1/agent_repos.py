@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -69,6 +70,12 @@ def derive_repo_name(url: str) -> str:
     for sep in ("/", ":"):
         if sep in url:
             url = url.rsplit(sep, 1)[-1]
+    # decode percent-encoding (e.g. Approval%20Ace → Approval Ace)
+    url = unquote(url)
+    # replace invalid chars (spaces, %, etc.) with hyphens
+    url = re.sub(r"[^A-Za-z0-9_.-]+", "-", url)
+    # strip leading chars that would fail _MOUNT_NAME_RE (e.g. dots, dashes)
+    url = re.sub(r"^[^A-Za-z0-9]+", "", url)
     return url or "repo"
 
 

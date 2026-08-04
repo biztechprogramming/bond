@@ -180,13 +180,13 @@ export default function GitCredentialsTab() {
                 type="text"
                 value={editing.host_pattern}
                 onChange={(e) => setEditing({ ...editing, host_pattern: e.target.value })}
-                placeholder="github.com or *.gitlab.example.com or *"
+                placeholder="github.com or dev.azure.com or *.gitlab.example.com or *"
                 style={{ display: "block", width: "100%" }}
               />
             </label>
             {editing.auth_type === "https_pat" && (
               <label>
-                Username (optional)
+                Username
                 <input
                   type="text"
                   value={editing.username}
@@ -194,6 +194,12 @@ export default function GitCredentialsTab() {
                   placeholder="Leave empty for x-access-token"
                   style={{ display: "block", width: "100%" }}
                 />
+                {editing.host_pattern.includes("azure.com") && (
+                  <span style={{ fontSize: "11px", color: "#888", marginTop: "4px", display: "block" }}>
+                    Azure DevOps: set this to your org name (e.g. <code>alliedim</code>) to match the username embedded in your clone URLs.
+                    Generate a PAT at <strong>User settings → Personal access tokens</strong> with <em>Code (Read)</em> scope.
+                  </span>
+                )}
               </label>
             )}
             <label>

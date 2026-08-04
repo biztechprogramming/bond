@@ -16,7 +16,7 @@ if [ -d "/tmp/.ssh" ]; then
     # Only run ssh-keyscan if known_hosts doesn't already have github.com
     # (baked into image at build time to save ~1-2s network roundtrip)
     if ! grep -q "github.com" ~/.ssh/known_hosts 2>/dev/null; then
-        ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+        ssh-keyscan -H github.com ssh.dev.azure.com >> ~/.ssh/known_hosts 2>/dev/null || true
     fi
 fi
 
@@ -112,10 +112,16 @@ if https_repos:
             continue
         url = r.get("url", "")
         parsed = urlparse(url if url.startswith(("http://", "https://")) else f"https://{url}")
-        if not parsed.netloc:
+        if not parsed.hostname:
             continue
-        username = cred.get("username") or "x-access-token"
-        lines.append(f"{parsed.scheme}://{quote(username, safe='')}:{quote(secret, safe='')}@{parsed.netloc}")
+        # Prefer credential-configured username, then URL-embedded username, then fallback.
+        # Azure DevOps URLs embed the org name as userinfo (alliedim@dev.azure.com);
+        # the .git-credentials entry must use the same username for git to match it.
+        username = cred.get("username") or parsed.username or "x-access-token"
+        host = parsed.hostname
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        lines.append(f"{parsed.scheme}://{quote(username, safe='')}:{quote(secret, safe='')}@{host}")
     creds_path.write_text("\n".join(lines) + ("\n" if lines else ""))
     creds_path.chmod(0o600)
 
