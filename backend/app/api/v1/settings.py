@@ -20,6 +20,7 @@ from backend.app.services.settings_service import (
     SettingsService,
     SettingsValidationError,
 )
+from backend.app.config import BOND_JSON_PATH, get_settings
 
 logger = logging.getLogger("bond.api.settings")
 
@@ -120,6 +121,34 @@ async def get_llm_current():
         logger.error("Failed to fetch LLM current config: %s", e)
         raise HTTPException(status_code=503, detail="SpacetimeDB unavailable")
     return asdict(current)
+
+
+class LlmUpdate(BaseModel):
+    provider: str
+    model: str
+
+
+@router.patch("/llm/current")
+async def update_llm_current(body: LlmUpdate):
+    """Update the LLM provider and model in bond.json."""
+    import json
+
+    try:
+        existing: dict = {}
+        if BOND_JSON_PATH.exists():
+            with open(BOND_JSON_PATH) as f:
+                existing = json.load(f)
+        existing.setdefault("llm", {})
+        existing["llm"]["provider"] = body.provider
+        existing["llm"]["model"] = body.model
+        with open(BOND_JSON_PATH, "w") as f:
+            json.dump(existing, f, indent=2)
+        get_settings.cache_clear()
+    except Exception as e:
+        logger.error("Failed to update bond.json: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"provider": body.provider, "model": body.model}
 
 
 # ── Single-key endpoints (must come after /embedding/* and /llm/* routes) ──
