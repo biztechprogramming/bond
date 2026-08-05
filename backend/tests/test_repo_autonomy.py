@@ -34,7 +34,7 @@ def _make_agent(**overrides) -> dict:
         "id": "agent-test-020",
         "name": "tester",
         "sandbox_image": "bond-agent-worker:latest",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "utility_model": "claude-sonnet-4-6",
         "system_prompt": "You are helpful.",
         "tools": ["respond"],

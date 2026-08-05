@@ -108,14 +108,14 @@ def setup() -> None:
 
     # Default models per provider
     default_models = {
-        "anthropic": "claude-sonnet-4-20250514",
+        "anthropic": "claude-sonnet-4-6",
         "openai": "gpt-4o",
         "google": "gemini-2.0-flash",
         "deepseek": "deepseek-chat",
         "groq": "llama-3.3-70b-versatile",
         "mistral": "mistral-large-latest",
         "ollama": "llama3.2",
-        "openrouter": "anthropic/claude-sonnet-4-20250514",
+        "openrouter": "anthropic/claude-sonnet-4-6",
         "xai": "grok-3-mini",
     }
 

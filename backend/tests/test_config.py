@@ -59,6 +59,6 @@ def test_load_bond_json_with_file(tmp_path):
         config = load_bond_json()
         assert config["llm"]["provider"] == "openai"
         # Default model should still be there from merge
-        assert config["llm"]["model"] == "claude-sonnet-4-20250514"
+        assert config["llm"]["model"] == "claude-sonnet-4-6"
     finally:
         cfg.BOND_JSON_PATH = original

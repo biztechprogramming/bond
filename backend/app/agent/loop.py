@@ -43,7 +43,7 @@ async def _load_default_agent(db: AsyncSession) -> dict[str, Any]:
         "id": "default",
         "name": "bond",
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
-        "model": "anthropic/claude-sonnet-4-20250514",
+        "model": "anthropic/claude-sonnet-4-6",
         "sandbox_image": None,
         "tools": '["respond","search_memory","memory_save","memory_update"]',
         "max_iterations": 80,
@@ -106,7 +106,7 @@ async def _load_agent_by_id(db: AsyncSession, agent_id: str) -> dict[str, Any]:
         "id": agent_id,
         "name": "bond",
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
-        "model": "anthropic/claude-sonnet-4-20250514",
+        "model": "anthropic/claude-sonnet-4-6",
         "sandbox_image": None,
         "tools": '["respond","search_memory","memory_save","memory_update"]',
         "max_iterations": 80,
@@ -372,6 +372,7 @@ async def agent_turn(
     stream: bool = False,
     db: AsyncSession | None = None,
     agent_id: str | None = None,
+    model: str | None = None,
 ) -> str | AsyncIterator[str]:
     """Execute a single agent turn with tool-use loop.
 
@@ -387,6 +388,10 @@ async def agent_turn(
             messages.extend(history)
         messages.append({"role": "user", "content": user_message})
         logger.info("Agent turn (simple): %d messages in context", len(messages))
+        if model:
+            provider = model.split("/")[0] if "/" in model else None
+            model_id = model.split("/", 1)[1] if "/" in model else model
+            return await chat_completion(messages, stream=stream, provider=provider, model=model_id)
         return await chat_completion(messages, stream=stream)
 
     # Full tool-use loop
@@ -487,7 +492,7 @@ async def agent_turn(
     }
 
     # Resolve LLM settings
-    model_string = agent.get("model", "anthropic/claude-sonnet-4-20250514")
+    model_string = agent.get("model", "anthropic/claude-sonnet-4-6")
     provider = model_string.split("/")[0] if "/" in model_string else "anthropic"
     api_key = await _resolve_api_key(provider)
 

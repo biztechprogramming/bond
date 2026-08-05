@@ -766,7 +766,10 @@ async def _stream_host_turn_stdb(
     try:
         yield _sse("status", {"state": "thinking", "conversation_id": conversation_id})
 
-        result = await agent_turn(user_message, history, stream=False, agent_id=agent_id, db=None)
+        agent_model = agent_row.get("model") or agent_row.get("modelId")
+        agent_system_prompt = agent_row.get("system_prompt") or agent_row.get("systemPrompt")
+        result = await agent_turn(user_message, history, stream=False, agent_id=agent_id, db=None,
+                                  model=agent_model, system_prompt=agent_system_prompt)
 
         yield _sse("chunk", {"content": result})
 

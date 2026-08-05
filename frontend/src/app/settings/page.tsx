@@ -289,7 +289,7 @@ export default function SettingsPage() {
             </div>
             <div style={s.field}>
               <label style={s.label}>Model</label>
-              <div style={s.readOnly}>{llmCurrent?.model || "claude-sonnet-4-20250514"} (from bond.json)</div>
+              <div style={s.readOnly}>{llmCurrent?.model || "claude-sonnet-4-6"} (from bond.json)</div>
             </div>
             {llmCurrent && (
               <div style={{ ...s.modelDetails, marginTop: "12px" }}>

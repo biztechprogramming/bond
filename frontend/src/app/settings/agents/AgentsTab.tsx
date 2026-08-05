@@ -54,8 +54,8 @@ interface Agent {
 
 // Fallbacks if the API is unreachable
 const DEFAULT_MODELS = [
-  "anthropic/claude-sonnet-4-20250514",
-  "anthropic/claude-opus-4-6",
+  "anthropic/claude-sonnet-4-6",
+  "anthropic/claude-opus-4-7",
 ];
 
 const ALL_CHANNELS = ["webchat", "signal", "telegram", "discord", "whatsapp", "email", "slack"];

@@ -72,7 +72,7 @@ async def test_resolve_container_mode_agent(resolve_client):
     async with aiosqlite.connect(os.environ["BOND_VECTOR_DB_PATH"]) as db:
         await db.execute(
             "INSERT INTO agents (id, name, display_name, system_prompt, model, sandbox_image, tools, is_default, is_active) "
-            "VALUES ('agent-container-1', 'container-agent', 'Container Agent', 'test', 'anthropic/claude-sonnet-4-20250514', 'bond-sandbox:latest', '[]', 0, 1)"
+            "VALUES ('agent-container-1', 'container-agent', 'Container Agent', 'test', 'anthropic/claude-sonnet-4-6', 'bond-sandbox:latest', '[]', 0, 1)"
         )
         await db.commit()
 

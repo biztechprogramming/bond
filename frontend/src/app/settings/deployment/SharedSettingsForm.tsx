@@ -18,8 +18,8 @@ interface Props {
 }
 
 const DEFAULT_MODELS = [
-  "anthropic/claude-sonnet-4-20250514",
-  "anthropic/claude-opus-4-6",
+  "anthropic/claude-sonnet-4-6",
+  "anthropic/claude-opus-4-7",
 ];
 
 export default function SharedSettingsForm({

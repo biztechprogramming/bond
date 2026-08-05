@@ -366,7 +366,7 @@ async def _call_llm(prompt: str) -> str:
     _prompt_msgs = [{"role": "user", "content": prompt}]
     ensure_oauth_system_prefix(_prompt_msgs, extra_kwargs=extra)
     response = await litellm.acompletion(
-        model="anthropic/claude-sonnet-4-20250514",
+        model="anthropic/claude-sonnet-4-6",
         messages=_prompt_msgs,
         temperature=0.7,
         max_tokens=4096,
