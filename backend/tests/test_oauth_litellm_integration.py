@@ -382,7 +382,7 @@ async def test_opus_succeeds_with_claude_code_identity(oauth_token: str):
     print("\n  Calling Opus WITH Claude Code identity...")
 
     response = await litellm.acompletion(
-        model="anthropic/claude-opus-4-6",
+        model="anthropic/claude-opus-4-7",
         api_key=oauth_token,
         extra_headers=OAUTH_EXTRA_HEADERS,
         messages=[
@@ -487,7 +487,7 @@ async def test_cancellable_llm_call_with_tool_history(oauth_token: str):
     messages.append({"role": "user", "content": "What's the status of the coding agent?"})
 
     print(f"  Total messages: {len(messages)}")
-    print(f"  Model: anthropic/claude-opus-4-6")
+    print(f"  Model: anthropic/claude-opus-4-7")
 
     # 5. Tool definitions (simplified but valid)
     tool_defs = [
@@ -524,7 +524,7 @@ async def test_cancellable_llm_call_with_tool_history(oauth_token: str):
     #    (_cancellable_llm_call is just: litellm.acompletion(**kwargs) with interrupt support)
     try:
         response = await litellm.acompletion(
-            model="anthropic/claude-opus-4-6",
+            model="anthropic/claude-opus-4-7",
             messages=messages,
             tools=tool_defs,
             temperature=0.7,
@@ -632,7 +632,7 @@ async def test_cancellable_with_model_dump_and_lifecycle(oauth_token: str):
 
     try:
         response = await litellm.acompletion(
-            model="anthropic/claude-opus-4-6",
+            model="anthropic/claude-opus-4-7",
             messages=messages,
             tools=tool_defs,
             temperature=0.7,

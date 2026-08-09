@@ -1,8 +1,9 @@
 /**
  * Integration test for OAuth credential flow via pi-ai.
  *
- * Reads REAL credentials from ~/.claude/.credentials.json, refreshes if
- * expired, and makes an actual API call to Anthropic to prove the flow works.
+ * Reads REAL credentials from the platform credential store (macOS Keychain
+ * or ~/.claude/.credentials.json), refreshes if expired, and makes an actual
+ * API call to Anthropic to prove the flow works.
  */
 
 import { describe, it, expect } from "vitest";
@@ -17,12 +18,13 @@ import {
 } from "./provider-oauth.js";
 
 describe("provider-oauth", () => {
-  it("reads credentials from ~/.claude/.credentials.json", async () => {
+  it("reads credentials from platform credential store", async () => {
     const creds = await readClaudeCredentials();
-    expect(creds.claudeAiOauth).toBeDefined();
-    expect(creds.claudeAiOauth.accessToken).toBeTruthy();
-    expect(creds.claudeAiOauth.refreshToken).toBeTruthy();
-    expect(creds.claudeAiOauth.expiresAt).toBeGreaterThan(0);
+    expect(creds).not.toBeNull();
+    expect(creds!.claudeAiOauth).toBeDefined();
+    expect(creds!.claudeAiOauth.accessToken).toBeTruthy();
+    expect(creds!.claudeAiOauth.refreshToken).toBeTruthy();
+    expect(creds!.claudeAiOauth.expiresAt).toBeGreaterThan(0);
   });
 
   it("detects OAuth tokens correctly", () => {
@@ -41,24 +43,29 @@ describe("provider-oauth", () => {
 
   it("converts between credential formats", async () => {
     const creds = await readClaudeCredentials();
-    const piCreds = toPiAiCredentials(creds);
-    expect(piCreds.access).toBe(creds.claudeAiOauth.accessToken);
-    expect(piCreds.refresh).toBe(creds.claudeAiOauth.refreshToken);
-    expect(piCreds.expires).toBe(creds.claudeAiOauth.expiresAt);
+    expect(creds).not.toBeNull();
+    const piCreds = toPiAiCredentials(creds!);
+    expect(piCreds.access).toBe(creds!.claudeAiOauth.accessToken);
+    expect(piCreds.refresh).toBe(creds!.claudeAiOauth.refreshToken);
+    expect(piCreds.expires).toBe(creds!.claudeAiOauth.expiresAt);
 
-    const roundTripped = fromPiAiCredentials(piCreds, creds);
-    expect(roundTripped.claudeAiOauth.accessToken).toBe(creds.claudeAiOauth.accessToken);
+    const roundTripped = fromPiAiCredentials(piCreds, creds!);
+    expect(roundTripped.claudeAiOauth.accessToken).toBe(creds!.claudeAiOauth.accessToken);
   });
 
   it("gets a valid access token (refreshing if needed)", async () => {
-    const { accessToken, wasRefreshed } = await getValidAccessToken();
+    const result = await getValidAccessToken();
+    expect(result).not.toBeNull();
+    const { accessToken, wasRefreshed } = result!;
     expect(accessToken).toBeTruthy();
     expect(isOAuthToken(accessToken)).toBe(true);
     console.log(`Token ${wasRefreshed ? "was refreshed" : "was still valid"}`);
   }, 30_000);
 
   it("makes a real API call to Anthropic with OAuth token + headers", async () => {
-    const { accessToken } = await getValidAccessToken();
+    const result = await getValidAccessToken();
+    expect(result).not.toBeNull();
+    const { accessToken } = result!;
     const headers = buildOAuthHeaders();
 
     // OAuth tokens use Bearer auth (Authorization header), not x-api-key

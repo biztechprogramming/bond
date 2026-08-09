@@ -25,6 +25,16 @@ export interface SystemEventRow {
 
 export type SystemEventHandler = (event: SystemEventRow) => void;
 
+export interface McpServerRow {
+  id: string;
+  name: string;
+  agentId: string | null;
+  methodPermissions: string;
+  enabled: boolean;
+}
+
+export type McpPermissionsHandler = (servers: McpServerRow[]) => void;
+
 const RECONNECT_DELAY_MS = 5_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 
@@ -129,5 +139,95 @@ function scheduleReconnect(
     }, delay);
   };
 
+  attempt();
+}
+
+/**
+ * Initialize a SpacetimeDB WebSocket subscription for MCP server permissions.
+ *
+ * Calls onPermissions immediately with the current table state and again
+ * whenever any mcp_servers row is inserted, updated, or deleted.
+ */
+export async function initMcpPermissionsSubscription(
+  config: GatewayConfig,
+  onPermissions: McpPermissionsHandler,
+): Promise<DbConnection> {
+  const wsUri = config.spacetimedbUrl
+    .replace(/^http:\/\//, "ws://")
+    .replace(/^https:\/\//, "wss://");
+
+  let reconnectDelay = RECONNECT_DELAY_MS;
+
+  function connect(): Promise<DbConnection> {
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+
+      const conn = DbConnection.builder()
+        .withUri(wsUri)
+        .withDatabaseName(config.spacetimedbModuleName)
+        .withToken(config.spacetimedbToken)
+        .onConnect((ctx, identity) => {
+          console.log("[stdb-mcp] Connected, identity:", identity.toHexString());
+          reconnectDelay = RECONNECT_DELAY_MS;
+
+          ctx.subscriptionBuilder()
+            .onApplied(() => {
+              console.log("[stdb-mcp] Subscription active — watching mcp_servers");
+              refresh();
+              if (!resolved) {
+                resolved = true;
+                resolve(conn);
+              }
+            })
+            .onError((errCtx) => {
+              console.error("[stdb-mcp] Subscription error:", errCtx?.event);
+            })
+            .subscribe(["SELECT * FROM mcp_servers"]);
+        })
+        .onConnectError((_ctx, err) => {
+          console.error("[stdb-mcp] Connection failed:", err);
+          if (!resolved) {
+            resolved = true;
+            reject(err);
+          }
+          scheduleMcpReconnect(config, onPermissions, reconnectDelay);
+        })
+        .build();
+
+      function refresh() {
+        const rows: McpServerRow[] = [];
+        for (const row of conn.db.mcp_servers.iter()) {
+          rows.push(row as unknown as McpServerRow);
+        }
+        onPermissions(rows);
+      }
+
+      conn.db.mcp_servers.onInsert(refresh);
+      conn.db.mcp_servers.onUpdate(refresh);
+      conn.db.mcp_servers.onDelete(refresh);
+    });
+  }
+
+  return connect();
+}
+
+function scheduleMcpReconnect(
+  config: GatewayConfig,
+  onPermissions: McpPermissionsHandler,
+  initialDelay: number,
+): void {
+  let delay = initialDelay;
+  const attempt = () => {
+    console.log(`[stdb-mcp] Reconnecting in ${delay}ms...`);
+    setTimeout(async () => {
+      try {
+        await initMcpPermissionsSubscription(config, onPermissions);
+        console.log("[stdb-mcp] Reconnected successfully");
+      } catch {
+        delay = Math.min(delay * 2, MAX_RECONNECT_DELAY_MS);
+        attempt();
+      }
+    }, delay);
+  };
   attempt();
 }

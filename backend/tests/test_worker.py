@@ -41,7 +41,7 @@ async def worker_client(agent_db, tmp_path):
     _state.start_time = 1000000.0
     _state.config = {
         "agent_id": "test-agent",
-        "model": "anthropic/claude-sonnet-4-20250514",
+        "model": "anthropic/claude-sonnet-4-6",
         "system_prompt": "You are a test agent.",
         "tools": ["respond", "search_memory", "memory_save", "file_read", "file_write", "code_execute"],
         "max_iterations": 5,

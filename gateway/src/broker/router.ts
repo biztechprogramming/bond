@@ -13,6 +13,7 @@ import { executeCommand } from "./executor.js";
 import { handleDeploy } from "./deploy-handler.js";
 import type { GatewayConfig } from "../config/index.js";
 import { filterFaucetTools, isFaucetTool, isBondDatabaseTool } from "../mcp/faucet-filter.js";
+import { initMcpPermissionsSubscription } from "../spacetimedb/subscription.js";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -53,33 +54,27 @@ export function createBrokerRouter(config: BrokerConfig, gatewayConfig?: Gateway
   const mcpPolicy = new MCPPolicyEngine();
   const startTime = Date.now();
 
-  // Periodically load per-server method permissions from backend
-  const loadMcpPermissions = async () => {
-    try {
-      const resp = await fetch(`${BACKEND_BASE}/api/v1/mcp/servers/permissions`);
-      if (resp.ok) {
-        const data = await resp.json() as {
-          servers: Array<{
-            server_name: string;
-            agent_id: string | null;
-            method_permissions: Record<string, "allow" | "deny">;
-          }>;
-        };
-        mcpPolicy.loadServerPermissions(
-          data.servers.map((s) => ({
-            serverName: s.server_name,
-            agentId: s.agent_id,
-            permissions: s.method_permissions,
-          })),
-        );
-      }
-    } catch {
-      // Backend may not be up yet; will retry on next interval
-    }
-  };
-  // Load once at startup, then every 30s
-  loadMcpPermissions();
-  setInterval(loadMcpPermissions, 30_000);
+  // Load MCP server permissions — via SpacetimeDB live subscription when available,
+  // falling back to polling the backend HTTP endpoint if SpacetimeDB isn't configured.
+  if (gatewayConfig?.spacetimedbUrl && gatewayConfig?.spacetimedbToken) {
+    initMcpPermissionsSubscription(gatewayConfig, (servers) => {
+      mcpPolicy.loadServerPermissions(
+        servers.map((s) => ({
+          serverName: s.name,
+          agentId: s.agentId ?? null,
+          permissions: (() => {
+            try { return JSON.parse(s.methodPermissions) as Record<string, "allow" | "deny">; }
+            catch { return {}; }
+          })(),
+        })),
+      );
+    }).catch((err) => {
+      console.warn("[broker] SpacetimeDB MCP subscription failed, falling back to HTTP poll:", err?.message ?? err);
+      startMcpPermissionsPoll(mcpPolicy);
+    });
+  } else {
+    startMcpPermissionsPoll(mcpPolicy);
+  }
 
   // Health check — no auth
   router.get("/health", (_req: Request, res: Response) => {
@@ -316,4 +311,32 @@ export function createBrokerRouter(config: BrokerConfig, gatewayConfig?: Gateway
   });
 
   return router;
+}
+
+function startMcpPermissionsPoll(mcpPolicy: MCPPolicyEngine): void {
+  const load = async () => {
+    try {
+      const resp = await fetch(`${BACKEND_BASE}/api/v1/mcp/servers/permissions`);
+      if (resp.ok) {
+        const data = await resp.json() as {
+          servers: Array<{
+            server_name: string;
+            agent_id: string | null;
+            method_permissions: Record<string, "allow" | "deny">;
+          }>;
+        };
+        mcpPolicy.loadServerPermissions(
+          data.servers.map((s) => ({
+            serverName: s.server_name,
+            agentId: s.agent_id,
+            permissions: s.method_permissions,
+          })),
+        );
+      }
+    } catch {
+      // Backend may not be up yet; will retry on next interval
+    }
+  };
+  load();
+  setInterval(load, 30_000);
 }

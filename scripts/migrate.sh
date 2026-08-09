@@ -143,6 +143,19 @@ if curl -s --max-time 3 "$SPACETIMEDB_URL/v1/health" > /dev/null 2>&1; then
         "$SPACETIME_BIN" generate --lang typescript --out-dir "$PROJECT_ROOT/spacetimedb/frontend/src/lib/spacetimedb" --module-path "$SPACETIMEDB_MODULE_PATH"
         set -e
         echo "TypeScript bindings regenerated."
+
+        # Seed initial provider catalog into SpacetimeDB (idempotent)
+        echo ""
+        echo "Seeding LLM providers into SpacetimeDB..."
+        set +e
+        (cd "$PROJECT_ROOT" && uv run python backend/seed_providers.py)
+        SEED_RC=$?
+        set -e
+        if [ $SEED_RC -eq 0 ]; then
+            echo "LLM providers seeded."
+        else
+            echo "WARNING: Provider seeding exited with status $SEED_RC (non-fatal)."
+        fi
     else
         echo "WARNING: SpacetimeDB publish failed with status $PUBLISH_RC."
         PUBLISH_RC=1

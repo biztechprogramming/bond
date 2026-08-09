@@ -18,6 +18,8 @@ from backend.app.core.vault import Vault
 
 logger = logging.getLogger("bond.agent.llm")
 
+litellm.drop_params = True
+
 
 # ---------------------------------------------------------------------------
 # Overflow error types (Doc 091: Overflow Recovery)
@@ -40,7 +42,7 @@ class OutputTruncatedError(Exception):
 # ---------------------------------------------------------------------------
 
 MODEL_CONTEXT_LIMITS: dict[str, int] = {
-    "claude-sonnet-4-20250514": 200_000,
+    "claude-sonnet-4-6": 200_000,
     "claude-3-5-sonnet-20241022": 200_000,
     "claude-3-haiku-20240307": 200_000,
     "gpt-4o": 128_000,

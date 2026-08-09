@@ -51,7 +51,7 @@ def _make_agent(**overrides) -> dict:
         "id": "agent-abc123",
         "name": "sandbox",
         "sandbox_image": "python:3.12-slim",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "utility_model": "claude-sonnet-4-6",
         "system_prompt": "You are helpful.",
         "tools": ["respond"],

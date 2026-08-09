@@ -17,7 +17,7 @@ BOND_JSON_PATH = BOND_HOME / "bond.json"
 _DEFAULTS: dict[str, Any] = {
     "llm": {
         "provider": "anthropic",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
     },
     "backend": {
         "host": "127.0.0.1",
@@ -48,7 +48,7 @@ class Settings(BaseModel):
 
     # LLM
     llm_provider: str = "anthropic"
-    llm_model: str = "claude-sonnet-4-20250514"
+    llm_model: str = "claude-sonnet-4-6"
 
     # Backend
     backend_host: str = "127.0.0.1"
@@ -123,7 +123,7 @@ def get_settings() -> Settings:
     return Settings(
         bond_home=Path(os.environ.get("BOND_HOME", BOND_HOME)),
         llm_provider=os.environ.get("BOND_LLM_PROVIDER", llm.get("provider", "anthropic")),
-        llm_model=os.environ.get("BOND_LLM_MODEL", llm.get("model", "claude-sonnet-4-20250514")),
+        llm_model=os.environ.get("BOND_LLM_MODEL", llm.get("model", "claude-sonnet-4-6")),
         backend_host=os.environ.get("BOND_BACKEND_HOST", backend.get("host", "127.0.0.1")),
         backend_port=int(os.environ.get("BOND_BACKEND_PORT", backend.get("port", 18790))),
         gateway_scheme=os.environ.get("BOND_GATEWAY_SCHEME", gateway.get("scheme", "http")),

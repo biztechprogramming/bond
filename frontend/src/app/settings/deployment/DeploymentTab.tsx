@@ -72,8 +72,8 @@ export default function DeploymentTab() {
   const agents = useMemo(() => allAgents.filter(a => a.name.startsWith("deploy-")), [allAgents]);
 
   const shared = useMemo(() => ({
-    model: settingsMap["deployment.shared.model"] || "anthropic/claude-sonnet-4-20250514",
-    utility_model: settingsMap["deployment.shared.utility_model"] || "anthropic/claude-sonnet-4-20250514",
+    model: settingsMap["deployment.shared.model"] || "anthropic/claude-sonnet-4-6",
+    utility_model: settingsMap["deployment.shared.utility_model"] || "anthropic/claude-sonnet-4-6",
     sandbox_image: settingsMap["deployment.shared.sandbox_image"] || "",
   }), [settingsMap]);
   const [sharedOverride, setSharedOverride] = useState<{ model: string; utility_model: string; sandbox_image: string } | null>(null);

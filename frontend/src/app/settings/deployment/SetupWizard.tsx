@@ -88,8 +88,8 @@ ${resources}`;
 
 export default function SetupWizard({ environments, availableModels, sandboxImages, existingMounts, onCreated }: Props) {
   const [shared, setShared] = useState({
-    model: availableModels.length > 0 ? availableModels[0].id : "anthropic/claude-sonnet-4-20250514",
-    utility_model: availableModels.length > 0 ? availableModels[0].id : "anthropic/claude-sonnet-4-20250514",
+    model: availableModels.length > 0 ? availableModels[0].id : "anthropic/claude-sonnet-4-6",
+    utility_model: availableModels.length > 0 ? availableModels[0].id : "anthropic/claude-sonnet-4-6",
     sandbox_image: "",
   });
 

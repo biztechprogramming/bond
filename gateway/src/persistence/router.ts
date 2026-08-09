@@ -168,9 +168,13 @@ export function createPersistenceRouter(config: GatewayConfig) {
       if (isOAuth) {
         try {
           const { getValidAccessToken } = await import("../oauth/provider-oauth.js");
-          const { accessToken } = await getValidAccessToken();
-          authMode = "oauth";
-          returnValue = accessToken;
+          const result = await getValidAccessToken();
+          if (result) {
+            authMode = "oauth";
+            returnValue = result.accessToken;
+          } else {
+            console.warn(`[persistence] No OAuth credentials found for ${providerId} — falling back to stored value`);
+          }
         } catch (oauthErr: any) {
           console.error(`[persistence] OAuth refresh failed for ${providerId}:`, oauthErr.message);
           // Fall through with the original value — caller will get a 401 from the provider

@@ -13,7 +13,7 @@ import McpTab from "./mcp/McpTab";
 import DatabasesTab from "./databases/DatabasesTab";
 import GitCredentialsTab from "./git-credentials/GitCredentialsTab";
 import { BACKEND_API , apiFetch } from "@/lib/config";
-import { useSettings, useProviderApiKeys } from "@/hooks/useSpacetimeDB";
+import { useSettings, useProviderApiKeys, useProviders, useAvailableModels } from "@/hooks/useSpacetimeDB";
 import { getConnection } from "@/lib/spacetimedb-client";
 
 const API_BASE = `${BACKEND_API}/settings`;
@@ -109,6 +109,12 @@ export default function SettingsPage() {
 
   // LLM state
   const [llmCurrent, setLlmCurrent] = useState<LlmCurrent | null>(null);
+  const [llmProvider, setLlmProvider] = useState("");
+  const [llmModel, setLlmModel] = useState("");
+  const [llmSaving, setLlmSaving] = useState(false);
+  const [llmSaveMsg, setLlmSaveMsg] = useState("");
+  const providers = useProviders();
+  const availableModels = useAvailableModels();
 
   // API key state
   const [voyageKey, setVoyageKey] = useState("");
@@ -138,7 +144,10 @@ export default function SettingsPage() {
       setSelectedModel(cur.model);
       setSelectedDimension(cur.dimension);
       setSelectedMode(cur.execution_mode);
-      setLlmCurrent(await llmCurrentRes.json());
+      const llmData = await llmCurrentRes.json();
+      setLlmCurrent(llmData);
+      setLlmProvider(llmData?.provider || "");
+      setLlmModel(llmData?.model || "");
     } catch { /* API not available */ }
   }, []);
 
@@ -285,11 +294,61 @@ export default function SettingsPage() {
             <h2 style={s.sectionTitle}>LLM Configuration</h2>
             <div style={s.field}>
               <label style={s.label}>Provider</label>
-              <div style={s.readOnly}>{llmCurrent?.provider || "anthropic"} (from bond.json)</div>
+              <select
+                style={s.select}
+                value={llmProvider}
+                onChange={(e) => { setLlmProvider(e.target.value); setLlmModel(""); }}
+              >
+                {providers.filter(p => p.isEnabled).map(p => (
+                  <option key={p.id} value={p.id}>{p.displayName}</option>
+                ))}
+              </select>
             </div>
             <div style={s.field}>
               <label style={s.label}>Model</label>
-              <div style={s.readOnly}>{llmCurrent?.model || "claude-sonnet-4-20250514"} (from bond.json)</div>
+              <select
+                style={s.select}
+                value={llmModel}
+                onChange={(e) => setLlmModel(e.target.value)}
+              >
+                {availableModels
+                  .filter(m => {
+                    const selectedProvider = providers.find(p => p.id === llmProvider);
+                    return selectedProvider ? m.id.startsWith(selectedProvider.litellmPrefix + "/") : true;
+                  })
+                  .map(m => <option key={m.id} value={m.id.split("/").slice(1).join("/")}>{m.name}</option>)
+                }
+                {llmModel && !availableModels.find(m => m.id.endsWith("/" + llmModel) || m.id === llmModel) && (
+                  <option value={llmModel}>{llmModel}</option>
+                )}
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
+              <button
+                style={{ ...s.button, opacity: llmSaving ? 0.6 : 1 }}
+                disabled={llmSaving}
+                onClick={async () => {
+                  setLlmSaving(true);
+                  setLlmSaveMsg("");
+                  try {
+                    const res = await apiFetch(`${API_BASE}/llm/current`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ provider: llmProvider, model: llmModel }),
+                    });
+                    if (res.ok) {
+                      setLlmSaveMsg("Saved — restart backend to apply");
+                      await fetchSettings();
+                    } else {
+                      setLlmSaveMsg("Save failed");
+                    }
+                  } catch { setLlmSaveMsg("Save failed"); }
+                  finally { setLlmSaving(false); }
+                }}
+              >
+                {llmSaving ? "Saving…" : "Save"}
+              </button>
+              {llmSaveMsg && <span style={{ color: llmSaveMsg.includes("failed") ? "#f87171" : "#86efac", fontSize: "0.85rem" }}>{llmSaveMsg}</span>}
             </div>
             {llmCurrent && (
               <div style={{ ...s.modelDetails, marginTop: "12px" }}>

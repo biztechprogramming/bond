@@ -1,7 +1,7 @@
 {
   "llm": {
     "provider": "anthropic",
-    "model": "claude-sonnet-4-20250514"
+    "model": "claude-sonnet-4-6"
   },
   "backend": {
     "host": "0.0.0.0",

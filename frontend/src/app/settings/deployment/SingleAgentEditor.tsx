@@ -39,8 +39,8 @@ interface Props {
 const ALL_CHANNELS = ["webchat", "signal", "telegram", "discord", "whatsapp", "email", "slack"];
 
 const DEFAULT_MODELS = [
-  "anthropic/claude-sonnet-4-20250514",
-  "anthropic/claude-opus-4-6",
+  "anthropic/claude-sonnet-4-6",
+  "anthropic/claude-opus-4-7",
 ];
 
 export default function SingleAgentEditor({ agent, sharedModel, sharedUtilityModel, availableModels, onBack, onSaved }: Props) {
