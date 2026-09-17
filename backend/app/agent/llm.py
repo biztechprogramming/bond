@@ -195,28 +195,25 @@ async def chat_completion(
         model_string, _has_oauth_headers, len(messages), _sys_preview,
     )
 
+    async def _complete(**kwargs):
+        try:
+            return await litellm.acompletion(model=model_string, messages=messages, drop_params=True, **kwargs, **extra_kwargs)
+        except litellm.BadRequestError as e:
+            if "temperature" in str(e):
+                logger.warning("Model %s rejected temperature, retrying without it", model_string)
+                kwargs.pop("temperature", None)
+                return await litellm.acompletion(model=model_string, messages=messages, drop_params=True, **kwargs, **extra_kwargs)
+            raise
+
     if stream:
-        response = await litellm.acompletion(
-            model=model_string,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-            **extra_kwargs,
-        )
+        response = await _complete(temperature=temperature, max_tokens=max_tokens, stream=True)
         return _stream_response(response)
     else:
         # Doc 090: estimate input tokens for logging
         from backend.app.agent.context_pipeline import _estimate_messages_tokens
         input_tokens = _estimate_messages_tokens(messages)
 
-        response = await litellm.acompletion(
-            model=model_string,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **extra_kwargs,
-        )
+        response = await _complete(temperature=temperature, max_tokens=max_tokens)
 
         # Doc 090: log token counts
         output_tokens = 0

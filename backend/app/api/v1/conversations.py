@@ -78,17 +78,15 @@ async def create_conversation(
 ):
     stdb = get_stdb()
     agent_id = body.agent_id
+    if agent_id:
+        check = await stdb.query(f"SELECT id FROM agents WHERE id = '{agent_id}' LIMIT 1")
+        if not check:
+            agent_id = None
     if not agent_id:
-        default_agents = await stdb.query("SELECT id FROM agents WHERE isDefault = true LIMIT 1")
+        default_agents = await stdb.query("SELECT id FROM agents WHERE is_default = true LIMIT 1")
         if not default_agents:
-            agent_id = "01JBOND0000000000000DEFAULT"
-        else:
-            agent_id = default_agents[0]["id"]
-
-    # Verify agent exists
-    agent_rows = await stdb.query(f"SELECT id FROM agents WHERE id = '{agent_id}'")
-    if not agent_rows:
-        raise HTTPException(status_code=404, detail="Agent not found in SpacetimeDB")
+            raise HTTPException(status_code=503, detail="No agents configured in SpacetimeDB")
+        agent_id = default_agents[0]["id"]
 
     conv_id = body.id or str(ULID())
     await stdb.call_reducer("create_conversation", [conv_id, agent_id, body.channel or "webchat", body.title or ""])
@@ -356,7 +354,7 @@ class ConversationTurnRequest(BaseModel):
 
 
 def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\\ndata: {json.dumps(data)}\\n\\n"
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 async def _stream_container_turn(
@@ -470,16 +468,18 @@ async def conversation_turn(
         logger.info(f"[CONVERSATIONS] Conversation {conversation_id} not found, creating new one")
         # Auto-create with the specified agent or default from SpacetimeDB
         agent_id = req.agent_id
+        if agent_id:
+            check = await stdb.query(f"SELECT id FROM agents WHERE id = '{agent_id}' LIMIT 1")
+            if not check:
+                logger.warning(f"[CONVERSATIONS] Requested agent {agent_id} not found, falling back to default")
+                agent_id = None
         if not agent_id:
-            # Query SpacetimeDB for the default agent
-            default_agents = await stdb.query("SELECT id FROM agents WHERE isDefault = true LIMIT 1")
-            if not default_agents:
-                # Last resort fallback if SpacetimeDB agents table is truly empty
-                agent_id = "01JBOND0000000000000DEFAULT"
-                logger.info(f"[CONVERSATIONS] No default agent found, using fallback: {agent_id}")
-            else:
+            default_agents = await stdb.query("SELECT id FROM agents WHERE is_default = true LIMIT 1")
+            if default_agents:
                 agent_id = default_agents[0]["id"]
                 logger.info(f"[CONVERSATIONS] Using default agent: {agent_id}")
+            else:
+                raise HTTPException(status_code=503, detail="No agents configured in SpacetimeDB")
         
         await stdb.call_reducer("create_conversation", [conversation_id, agent_id, req.channel or "webchat", ""])
         logger.info(f"[CONVERSATIONS] Created new conversation {conversation_id} with agent {agent_id}")
@@ -621,8 +621,18 @@ async def conversation_turn(
     agent_rows = await stdb.query(f"SELECT * FROM agents WHERE id = '{agent_id}'")
     agent_row = agent_rows[0] if agent_rows else None
     if agent_row is None:
-        logger.error(f"[CONVERSATIONS] Agent {agent_id} not found in SpacetimeDB")
-        raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found in SpacetimeDB")
+        logger.warning(f"[CONVERSATIONS] Agent {agent_id} not found, falling back to default agent")
+        default_agents = await stdb.query("SELECT * FROM agents WHERE is_default = true LIMIT 1")
+        if not default_agents:
+            logger.error(f"[CONVERSATIONS] Agent {agent_id} not found in SpacetimeDB")
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found in SpacetimeDB")
+        agent_row = default_agents[0]
+        agent_id = agent_row["id"]
+        logger.info(f"[CONVERSATIONS] Using default agent {agent_id} as fallback")
+        try:
+            await stdb.call_reducer("update_conversation_agent", [conversation_id, agent_id])
+        except Exception as e:
+            logger.warning(f"[CONVERSATIONS] Could not persist agent fallback for {conversation_id}: {e}")
 
     if agent_row.get("sandbox_image") or agent_row.get("sandboxImage"):
         # Container agent — ensure running, proxy SSE

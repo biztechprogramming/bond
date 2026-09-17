@@ -113,6 +113,7 @@ export default function SettingsPage() {
   const [llmModel, setLlmModel] = useState("");
   const [llmSaving, setLlmSaving] = useState(false);
   const [llmSaveMsg, setLlmSaveMsg] = useState("");
+  const [modelSyncing, setModelSyncing] = useState(false);
   const providers = useProviders();
   const availableModels = useAvailableModels();
 
@@ -306,22 +307,57 @@ export default function SettingsPage() {
             </div>
             <div style={s.field}>
               <label style={s.label}>Model</label>
-              <select
-                style={s.select}
-                value={llmModel}
-                onChange={(e) => setLlmModel(e.target.value)}
-              >
-                {availableModels
-                  .filter(m => {
-                    const selectedProvider = providers.find(p => p.id === llmProvider);
-                    return selectedProvider ? m.id.startsWith(selectedProvider.litellmPrefix + "/") : true;
-                  })
-                  .map(m => <option key={m.id} value={m.id.split("/").slice(1).join("/")}>{m.name}</option>)
+              {(() => {
+                const selectedProvider = providers.find(p => p.id === llmProvider);
+                const modelsForProvider = availableModels.filter(m =>
+                  selectedProvider ? m.id.startsWith(selectedProvider.litellmPrefix + "/") : true
+                );
+                if (modelsForProvider.length === 0) {
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <input
+                        style={s.input}
+                        value={llmModel}
+                        onChange={(e) => setLlmModel(e.target.value)}
+                        placeholder="e.g. gpt-4o"
+                      />
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "0.8rem", color: "#9ca3af" }}>
+                          No models synced yet. Set an API key in the API Keys tab, then
+                        </span>
+                        <button
+                          style={{ ...s.button, fontSize: "0.8rem", padding: "2px 8px", opacity: modelSyncing ? 0.6 : 1 }}
+                          disabled={modelSyncing}
+                          onClick={async () => {
+                            setModelSyncing(true);
+                            try {
+                              await apiFetch(`${API_BASE}/llm/sync-models`, { method: "POST" });
+                            } finally {
+                              setModelSyncing(false);
+                            }
+                          }}
+                        >
+                          {modelSyncing ? "Syncing…" : "Refresh"}
+                        </button>
+                      </div>
+                    </div>
+                  );
                 }
-                {llmModel && !availableModels.find(m => m.id.endsWith("/" + llmModel) || m.id === llmModel) && (
-                  <option value={llmModel}>{llmModel}</option>
-                )}
-              </select>
+                return (
+                  <select
+                    style={s.select}
+                    value={llmModel}
+                    onChange={(e) => setLlmModel(e.target.value)}
+                  >
+                    {modelsForProvider.map(m => (
+                      <option key={m.id} value={m.id.split("/").slice(1).join("/")}>{m.name}</option>
+                    ))}
+                    {llmModel && !availableModels.find(m => m.id.endsWith("/" + llmModel) || m.id === llmModel) && (
+                      <option value={llmModel}>{llmModel}</option>
+                    )}
+                  </select>
+                );
+              })()}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
               <button

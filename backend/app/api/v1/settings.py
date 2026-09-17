@@ -130,7 +130,7 @@ class LlmUpdate(BaseModel):
 
 @router.patch("/llm/current")
 async def update_llm_current(body: LlmUpdate):
-    """Update the LLM provider and model in bond.json."""
+    """Update the LLM provider and model in bond.json and all default agents."""
     import json
 
     try:
@@ -148,7 +148,43 @@ async def update_llm_current(body: LlmUpdate):
         logger.error("Failed to update bond.json: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
+    # Also update all default agents' model in SpacetimeDB so host-mode agents
+    # use the new provider immediately (agents store their own model string).
+    try:
+        from backend.app.core.spacetimedb import get_stdb
+        stdb = get_stdb()
+
+        # Get the litellm prefix for this provider (e.g. "openai" → "openai", "google" → "gemini")
+        provider_rows = await stdb.query(
+            f"SELECT litellm_prefix FROM providers WHERE id = '{body.provider}'"
+        )
+        litellm_prefix = body.provider  # fallback to provider id
+        if provider_rows:
+            raw = provider_rows[0].get("litellm_prefix", body.provider)
+            if raw:
+                litellm_prefix = raw
+
+        full_model = f"{litellm_prefix}/{body.model}"
+        escaped_model = full_model.replace("'", "''")
+
+        # Update all agents that are marked as default
+        await stdb.query(f"UPDATE agents SET model = '{escaped_model}' WHERE is_default = true")
+        logger.info("Updated default agents model to %s", full_model)
+    except Exception as e:
+        # Non-fatal — bond.json was updated, agents just keep old model
+        logger.warning("Failed to update default agent model in SpacetimeDB: %s", e)
+
     return {"provider": body.provider, "model": body.model}
+
+
+@router.post("/llm/sync-models")
+async def trigger_model_sync(request: Request):
+    """Trigger a model catalog sync and wait for it to complete."""
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if not scheduler:
+        raise HTTPException(status_code=503, detail="Scheduler not available")
+    await scheduler.trigger("sync_models")
+    return {"status": "ok"}
 
 
 # ── Single-key endpoints (must come after /embedding/* and /llm/* routes) ──
